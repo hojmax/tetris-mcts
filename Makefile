@@ -1,4 +1,4 @@
-.PHONY: run build clean rebuild
+.PHONY: run build clean rebuild test
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -9,7 +9,8 @@ run: .build_marker
 	uv run python tetris_game.py
 
 # Build marker file to track if build is up to date
-.build_marker: tetris_core/src/lib.rs tetris_core/Cargo.toml tetris_core/pyproject.toml
+RUST_SRC := $(wildcard tetris_core/src/*.rs)
+.build_marker: $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
 	$(CARGO_ENV) && uv run maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@touch .build_marker
 
@@ -21,6 +22,10 @@ rebuild:
 	$(CARGO_ENV) && uv run maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@touch .build_marker
 	uv run python tetris_game.py
+
+# Run tests
+test:
+	cd tetris_core && $(CARGO_ENV) && cargo test
 
 # Clean build artifacts
 clean:

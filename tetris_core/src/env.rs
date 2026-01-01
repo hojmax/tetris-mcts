@@ -34,8 +34,6 @@ pub struct TetrisEnv {
     #[pyo3(get)]
     pub lines_cleared: u32,
     #[pyo3(get)]
-    pub level: u32,
-    #[pyo3(get)]
     pub game_over: bool,
     /// Total attack/lines sent (replaces old score)
     #[pyo3(get)]
@@ -346,9 +344,8 @@ impl TetrisEnv {
             self.last_attack_result = None;
         }
 
-        // Update lines cleared and level
+        // Update lines cleared
         self.lines_cleared += num_lines;
-        self.level = (self.lines_cleared / 10) + 1;
     }
 }
 
@@ -362,7 +359,6 @@ impl TetrisEnv {
             height,
             attack: 0,
             lines_cleared: 0,
-            level: 1,
             game_over: false,
             combo: 0,
             back_to_back: false,
@@ -388,7 +384,6 @@ impl TetrisEnv {
         self.board_colors = vec![vec![None; self.width]; self.height];
         self.attack = 0;
         self.lines_cleared = 0;
-        self.level = 1;
         self.game_over = false;
         self.combo = 0;
         self.back_to_back = false;
@@ -893,7 +888,6 @@ mod tests {
         assert_eq!(env.height, 20);
         assert_eq!(env.attack, 0);
         assert_eq!(env.lines_cleared, 0);
-        assert_eq!(env.level, 1);
         assert_eq!(env.combo, 0);
         assert!(!env.back_to_back);
         assert!(!env.game_over);
@@ -912,13 +906,11 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         env.attack = 100;
         env.lines_cleared = 10;
-        env.level = 2;
         env.combo = 5;
         env.back_to_back = true;
         env.reset();
         assert_eq!(env.attack, 0);
         assert_eq!(env.lines_cleared, 0);
-        assert_eq!(env.level, 1);
         assert_eq!(env.combo, 0);
         assert!(!env.back_to_back);
         assert!(!env.game_over);
@@ -1149,7 +1141,6 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         let cloned = env.clone_state();
         assert_eq!(env.attack, cloned.attack);
-        assert_eq!(env.level, cloned.level);
         assert_eq!(env.width, cloned.width);
         assert_eq!(env.height, cloned.height);
         assert_eq!(env.lines_cleared, cloned.lines_cleared);
@@ -1224,14 +1215,6 @@ mod tests {
             let _color = env.get_color_for_type(i);
             // Just ensure it doesn't panic
         }
-    }
-
-    #[test]
-    fn test_level_progression() {
-        let mut env = TetrisEnv::new(10, 20);
-        env.lines_cleared = 10;
-        env.level = (env.lines_cleared / 10) + 1;
-        assert_eq!(env.level, 2);
     }
 
     #[test]

@@ -220,15 +220,15 @@ pub const TETROMINOS: [[[[u8; 4]; 4]; 4]; 7] = [
     ],
 ];
 
-/// Colors for each tetromino (RGB)
+/// Colors for each tetromino (RGB) - matching Jstris style
 pub const COLORS: [(u8, u8, u8); 7] = [
-    (0, 255, 255),   // I - Cyan
-    (255, 255, 0),   // O - Yellow
-    (128, 0, 128),   // T - Purple
-    (0, 255, 0),     // S - Green
-    (255, 0, 0),     // Z - Red
-    (0, 0, 255),     // J - Blue
-    (255, 165, 0),   // L - Orange
+    (93, 173, 212),   // I - Light blue/Cyan
+    (219, 174, 63),   // O - Golden yellow
+    (178, 74, 156),   // T - Magenta
+    (114, 184, 65),   // S - Green
+    (204, 65, 65),    // Z - Red
+    (59, 84, 165),    // J - Blue
+    (227, 127, 59),   // L - Orange
 ];
 
 /// Number of piece types (tetromino variants)
