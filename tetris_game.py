@@ -19,9 +19,10 @@ except ImportError:
 CELL_SIZE = 30
 BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
-SIDEBAR_WIDTH = 200
+LEFT_SIDEBAR_WIDTH = 100  # For HOLD piece
+RIGHT_SIDEBAR_WIDTH = 120  # For NEXT pieces and score
 
-WINDOW_WIDTH = BOARD_WIDTH * CELL_SIZE + SIDEBAR_WIDTH
+WINDOW_WIDTH = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE + RIGHT_SIDEBAR_WIDTH
 WINDOW_HEIGHT = BOARD_HEIGHT * CELL_SIZE
 
 # Colors
@@ -153,16 +154,20 @@ class TetrisGame:
                     }
 
                 # Rotation keys (no DAS needed)
-                elif event.key == pygame.K_UP or event.key == pygame.K_x:
+                elif event.key == pygame.K_UP or event.key == pygame.K_s:
                     self.env.rotate_cw()
 
-                elif event.key == pygame.K_z or event.key == pygame.K_LCTRL:
+                elif event.key == pygame.K_a:
                     self.env.rotate_ccw()
 
                 # Hard drop
                 elif event.key == pygame.K_SPACE:
                     self.env.hard_drop()
                     self.fall_time = 0
+
+                # Hold piece
+                elif event.key == pygame.K_d:
+                    self.env.hold()
 
             if event.type == pygame.KEYUP:
                 if event.key == pygame.K_LEFT:
@@ -250,6 +255,9 @@ class TetrisGame:
         if self.paused or self.env.game_over:
             return
 
+        # Update lock delay timer
+        self.env.update_lock_delay(dt)
+
         self.fall_time += dt
         fall_speed = self.get_fall_speed()
 
@@ -262,8 +270,10 @@ class TetrisGame:
             self.fall_time = 0
 
     def draw_board(self):
+        board_x = LEFT_SIDEBAR_WIDTH  # Board starts after left sidebar
+
         # Draw board background
-        board_rect = pygame.Rect(0, 0, BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
+        board_rect = pygame.Rect(board_x, 0, BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
         pygame.draw.rect(self.screen, BLACK, board_rect)
 
         # Draw grid lines
@@ -271,15 +281,15 @@ class TetrisGame:
             pygame.draw.line(
                 self.screen,
                 DARK_GRAY,
-                (x * CELL_SIZE, 0),
-                (x * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
+                (board_x + x * CELL_SIZE, 0),
+                (board_x + x * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
             )
         for y in range(BOARD_HEIGHT + 1):
             pygame.draw.line(
                 self.screen,
                 DARK_GRAY,
-                (0, y * CELL_SIZE),
-                (BOARD_WIDTH * CELL_SIZE, y * CELL_SIZE)
+                (board_x, y * CELL_SIZE),
+                (board_x + BOARD_WIDTH * CELL_SIZE, y * CELL_SIZE)
             )
 
         # Draw locked pieces
@@ -295,7 +305,7 @@ class TetrisGame:
                     else:
                         color = GRAY
 
-                    self.draw_cell(x, y, color)
+                    self.draw_cell(board_x + x * CELL_SIZE, y * CELL_SIZE, color)
 
         # Draw ghost piece
         ghost = self.env.get_ghost_piece()
@@ -306,7 +316,7 @@ class TetrisGame:
 
             for (x, y) in ghost.get_cells():
                 if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
-                    self.screen.blit(ghost_surface, (x * CELL_SIZE + 1, y * CELL_SIZE + 1))
+                    self.screen.blit(ghost_surface, (board_x + x * CELL_SIZE + 1, y * CELL_SIZE + 1))
 
         # Draw current piece
         piece = self.env.get_current_piece()
@@ -314,13 +324,13 @@ class TetrisGame:
             color = piece.get_color()
             for (x, y) in piece.get_cells():
                 if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
-                    self.draw_cell(x, y, color)
+                    self.draw_cell(board_x + x * CELL_SIZE, y * CELL_SIZE, color)
 
-    def draw_cell(self, x, y, color):
-        """Draw a single cell with 3D effect."""
+    def draw_cell(self, px, py, color):
+        """Draw a single cell with 3D effect at pixel coordinates."""
         rect = pygame.Rect(
-            x * CELL_SIZE + 1,
-            y * CELL_SIZE + 1,
+            px + 1,
+            py + 1,
             CELL_SIZE - 2,
             CELL_SIZE - 2
         )
@@ -339,69 +349,73 @@ class TetrisGame:
         pygame.draw.line(self.screen, shadow, rect.topright, rect.bottomright, 2)
 
     def draw_sidebar(self):
-        sidebar_x = BOARD_WIDTH * CELL_SIZE
-        sidebar_rect = pygame.Rect(sidebar_x, 0, SIDEBAR_WIDTH, WINDOW_HEIGHT)
-        pygame.draw.rect(self.screen, DARK_GRAY, sidebar_rect)
+        # Draw left sidebar (HOLD)
+        left_rect = pygame.Rect(0, 0, LEFT_SIDEBAR_WIDTH, WINDOW_HEIGHT)
+        pygame.draw.rect(self.screen, DARK_GRAY, left_rect)
 
-        # Draw next piece preview
+        # HOLD label
+        hold_label = self.font.render("HOLD", True, WHITE)
+        self.screen.blit(hold_label, (15, 15))
+
+        # HOLD box
+        hold_box_rect = pygame.Rect(10, 50, 80, 70)
+        pygame.draw.rect(self.screen, BLACK, hold_box_rect)
+        pygame.draw.rect(self.screen, GRAY, hold_box_rect, 1)
+
+        hold_piece = self.env.get_hold_piece()
+        if hold_piece:
+            hold_used = self.env.is_hold_used()
+            color = hold_piece.get_color()
+            if hold_used:
+                color = tuple(c // 2 for c in color)
+            shape = hold_piece.get_shape()
+            for dy, row in enumerate(shape):
+                for dx, cell in enumerate(row):
+                    if cell == 1:
+                        rect = pygame.Rect(20 + dx * 16, 60 + dy * 16, 14, 14)
+                        pygame.draw.rect(self.screen, color, rect)
+
+        # Draw right sidebar (NEXT + stats)
+        right_x = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE
+        right_rect = pygame.Rect(right_x, 0, RIGHT_SIDEBAR_WIDTH, WINDOW_HEIGHT)
+        pygame.draw.rect(self.screen, DARK_GRAY, right_rect)
+
+        # NEXT label
         next_label = self.font.render("NEXT", True, WHITE)
-        self.screen.blit(next_label, (sidebar_x + 20, 20))
+        self.screen.blit(next_label, (right_x + 15, 15))
 
-        next_piece = self.env.get_next_piece()
-        if next_piece:
-            preview_x = sidebar_x + 30
-            preview_y = 60
-            color = next_piece.get_color()
-            shape = next_piece.get_shape()
+        # Draw next 5 pieces
+        next_pieces = self.env.get_next_pieces(5)
+        for i, piece in enumerate(next_pieces):
+            box_y = 50 + i * 55
+            box_rect = pygame.Rect(right_x + 10, box_y, 80, 50)
+            pygame.draw.rect(self.screen, BLACK, box_rect)
+            pygame.draw.rect(self.screen, GRAY, box_rect, 1)
 
+            color = piece.get_color()
+            shape = piece.get_shape()
             for dy, row in enumerate(shape):
                 for dx, cell in enumerate(row):
                     if cell == 1:
                         rect = pygame.Rect(
-                            preview_x + dx * 20,
-                            preview_y + dy * 20,
-                            18, 18
+                            right_x + 20 + dx * 14,
+                            box_y + 8 + dy * 14,
+                            12, 12
                         )
                         pygame.draw.rect(self.screen, color, rect)
 
-        # Draw score
-        score_label = self.font.render("SCORE", True, WHITE)
-        self.screen.blit(score_label, (sidebar_x + 20, 180))
+        # Stats at bottom
+        stats_y = 340
+        score_label = self.small_font.render("SCORE", True, WHITE)
+        self.screen.blit(score_label, (right_x + 15, stats_y))
         score_value = self.font.render(str(self.env.score), True, WHITE)
-        self.screen.blit(score_value, (sidebar_x + 20, 220))
+        self.screen.blit(score_value, (right_x + 15, stats_y + 20))
 
-        # Draw lines
-        lines_label = self.font.render("LINES", True, WHITE)
-        self.screen.blit(lines_label, (sidebar_x + 20, 280))
-        lines_value = self.font.render(str(self.env.lines_cleared), True, WHITE)
-        self.screen.blit(lines_value, (sidebar_x + 20, 320))
+        lines_label = self.small_font.render(f"LINES: {self.env.lines_cleared}", True, WHITE)
+        self.screen.blit(lines_label, (right_x + 15, stats_y + 55))
 
-        # Draw level
-        level_label = self.font.render("LEVEL", True, WHITE)
-        self.screen.blit(level_label, (sidebar_x + 20, 380))
-        level_value = self.font.render(str(self.env.level), True, WHITE)
-        self.screen.blit(level_value, (sidebar_x + 20, 420))
-
-        # Draw controls
-        controls_y = 480
-        controls = [
-            "CONTROLS:",
-            "< > : Move",
-            "v : Soft drop",
-            "^/X : Rotate CW",
-            "Z/Ctrl : Rotate CCW",
-            "SPACE : Hard drop",
-            "P : Pause",
-            "R : Restart",
-            "ESC : Quit",
-            "",
-            f"DAS: {self.das}ms",
-            f"ARR: {self.arr}ms"
-        ]
-
-        for i, line in enumerate(controls):
-            text = self.small_font.render(line, True, WHITE)
-            self.screen.blit(text, (sidebar_x + 20, controls_y + i * 22))
+        level_label = self.small_font.render(f"LEVEL: {self.env.level}", True, WHITE)
+        self.screen.blit(level_label, (right_x + 15, stats_y + 77))
 
     def draw_overlay(self):
         if self.paused:
@@ -410,19 +424,23 @@ class TetrisGame:
             self.draw_message("GAME OVER", f"Score: {self.env.score} | Press R to restart")
 
     def draw_message(self, title, subtitle):
-        # Semi-transparent overlay
+        board_x = LEFT_SIDEBAR_WIDTH
+        board_center_x = board_x + BOARD_WIDTH * CELL_SIZE // 2
+        board_center_y = BOARD_HEIGHT * CELL_SIZE // 2
+
+        # Semi-transparent overlay over board area
         overlay = pygame.Surface((BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
-        self.screen.blit(overlay, (0, 0))
+        self.screen.blit(overlay, (board_x, 0))
 
         # Title
         title_text = self.font.render(title, True, WHITE)
-        title_rect = title_text.get_rect(center=(BOARD_WIDTH * CELL_SIZE // 2, BOARD_HEIGHT * CELL_SIZE // 2 - 20))
+        title_rect = title_text.get_rect(center=(board_center_x, board_center_y - 20))
         self.screen.blit(title_text, title_rect)
 
         # Subtitle
         subtitle_text = self.small_font.render(subtitle, True, WHITE)
-        subtitle_rect = subtitle_text.get_rect(center=(BOARD_WIDTH * CELL_SIZE // 2, BOARD_HEIGHT * CELL_SIZE // 2 + 20))
+        subtitle_rect = subtitle_text.get_rect(center=(board_center_x, board_center_y + 20))
         self.screen.blit(subtitle_text, subtitle_rect)
 
     def draw(self):
