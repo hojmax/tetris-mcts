@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Tetris game with Rust backend and Pygame visualization.
+Implements proper SRS rotation and DAS/ARR for responsive controls.
 """
 
 import pygame
@@ -35,28 +36,70 @@ class TetrisGame:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        pygame.display.set_caption("Tetris (Rust Backend)")
+        pygame.display.set_caption("Tetris (Rust Backend + SRS)")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
 
         self.env = TetrisEnv(BOARD_WIDTH, BOARD_HEIGHT)
         self.fall_time = 0
-        self.fall_speed = 500  # milliseconds
         self.paused = False
 
-        # Key repeat settings
-        self.das_delay = 170  # Delayed Auto Shift delay (ms)
-        self.das_interval = 50  # Auto repeat interval (ms)
+        # DAS (Delayed Auto Shift) and ARR (Auto Repeat Rate) settings
+        # DAS: delay before auto-repeat starts (ms)
+        # ARR: interval between auto-repeats once DAS triggers (ms)
+        # Lower values = faster movement. ARR=0 means instant movement.
+        self.das = 110  # TF DAS / NullpoMino style
+        self.arr = 0    # TF ARR - instant movement
+
+        # Soft drop speed multiplier (how many times faster than normal gravity)
+        self.soft_drop_factor = 20
+
+        # Key state tracking for DAS/ARR
+        # Structure: {key: {'pressed_time': int, 'das_charged': bool, 'last_move_time': int}}
         self.key_states = {}
 
+        # Track which direction keys are held for prioritization
+        self.left_held = False
+        self.right_held = False
+        self.down_held = False
+
     def get_fall_speed(self):
-        """Get fall speed based on current level."""
+        """Get fall speed based on current level (in milliseconds)."""
         level = self.env.level
-        # Speed increases with level
-        speeds = [500, 450, 400, 350, 300, 250, 200, 150, 100, 80, 60]
-        idx = min(level - 1, len(speeds) - 1)
-        return speeds[idx]
+        # Standard Tetris gravity curve (approximately)
+        if level <= 0:
+            return 1000
+        elif level == 1:
+            return 1000
+        elif level == 2:
+            return 793
+        elif level == 3:
+            return 618
+        elif level == 4:
+            return 473
+        elif level == 5:
+            return 355
+        elif level == 6:
+            return 262
+        elif level == 7:
+            return 190
+        elif level == 8:
+            return 135
+        elif level == 9:
+            return 94
+        elif level == 10:
+            return 64
+        elif level <= 13:
+            return 43
+        elif level <= 16:
+            return 28
+        elif level <= 19:
+            return 18
+        elif level <= 29:
+            return 11
+        else:
+            return 5
 
     def handle_events(self):
         current_time = pygame.time.get_ticks()
@@ -75,61 +118,133 @@ class TetrisGame:
 
                 if event.key == pygame.K_r:
                     self.env.reset()
+                    self.fall_time = 0
                     continue
 
                 if self.paused or self.env.game_over:
                     continue
 
-                # Handle key presses
+                # Movement keys with DAS/ARR
                 if event.key == pygame.K_LEFT:
+                    self.left_held = True
                     self.env.move_left()
                     self.key_states[pygame.K_LEFT] = {
-                        'pressed': current_time,
-                        'last_repeat': current_time
+                        'pressed_time': current_time,
+                        'das_charged': False,
+                        'last_move_time': current_time
                     }
+
                 elif event.key == pygame.K_RIGHT:
+                    self.right_held = True
                     self.env.move_right()
                     self.key_states[pygame.K_RIGHT] = {
-                        'pressed': current_time,
-                        'last_repeat': current_time
+                        'pressed_time': current_time,
+                        'das_charged': False,
+                        'last_move_time': current_time
                     }
+
                 elif event.key == pygame.K_DOWN:
+                    self.down_held = True
                     self.env.move_down()
                     self.key_states[pygame.K_DOWN] = {
-                        'pressed': current_time,
-                        'last_repeat': current_time
+                        'pressed_time': current_time,
+                        'das_charged': False,
+                        'last_move_time': current_time
                     }
+
+                # Rotation keys (no DAS needed)
                 elif event.key == pygame.K_UP or event.key == pygame.K_x:
                     self.env.rotate_cw()
-                elif event.key == pygame.K_z:
+
+                elif event.key == pygame.K_z or event.key == pygame.K_LCTRL:
                     self.env.rotate_ccw()
+
+                # Hard drop
                 elif event.key == pygame.K_SPACE:
                     self.env.hard_drop()
                     self.fall_time = 0
 
             if event.type == pygame.KEYUP:
-                if event.key in self.key_states:
-                    del self.key_states[event.key]
+                if event.key == pygame.K_LEFT:
+                    self.left_held = False
+                    if pygame.K_LEFT in self.key_states:
+                        del self.key_states[pygame.K_LEFT]
 
-        # Handle key repeats (DAS)
+                elif event.key == pygame.K_RIGHT:
+                    self.right_held = False
+                    if pygame.K_RIGHT in self.key_states:
+                        del self.key_states[pygame.K_RIGHT]
+
+                elif event.key == pygame.K_DOWN:
+                    self.down_held = False
+                    if pygame.K_DOWN in self.key_states:
+                        del self.key_states[pygame.K_DOWN]
+
+        # Handle DAS/ARR for held keys
         if not self.paused and not self.env.game_over:
-            keys = pygame.key.get_pressed()
-            for key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_DOWN]:
-                if keys[key] and key in self.key_states:
-                    state = self.key_states[key]
-                    time_held = current_time - state['pressed']
-                    time_since_repeat = current_time - state['last_repeat']
-
-                    if time_held > self.das_delay and time_since_repeat > self.das_interval:
-                        if key == pygame.K_LEFT:
-                            self.env.move_left()
-                        elif key == pygame.K_RIGHT:
-                            self.env.move_right()
-                        elif key == pygame.K_DOWN:
-                            self.env.move_down()
-                        state['last_repeat'] = current_time
+            self._handle_das_arr(current_time)
 
         return True
+
+    def _handle_das_arr(self, current_time):
+        """Handle Delayed Auto Shift and Auto Repeat Rate for movement keys."""
+
+        # Process horizontal movement (left/right)
+        # If both are held, most recent press wins (or we can cancel - here we use most recent)
+        for key in [pygame.K_LEFT, pygame.K_RIGHT]:
+            if key not in self.key_states:
+                continue
+
+            state = self.key_states[key]
+            time_held = current_time - state['pressed_time']
+            time_since_move = current_time - state['last_move_time']
+
+            # Check if DAS has charged
+            if not state['das_charged']:
+                if time_held >= self.das:
+                    state['das_charged'] = True
+                    # Immediate move when DAS charges
+                    if key == pygame.K_LEFT:
+                        self.env.move_left()
+                    else:
+                        self.env.move_right()
+                    state['last_move_time'] = current_time
+            else:
+                # DAS is charged, apply ARR
+                if self.arr == 0:
+                    # ARR=0 means instant: move all the way
+                    if key == pygame.K_LEFT:
+                        while self.env.move_left():
+                            pass
+                    else:
+                        while self.env.move_right():
+                            pass
+                    state['last_move_time'] = current_time
+                elif time_since_move >= self.arr:
+                    if key == pygame.K_LEFT:
+                        self.env.move_left()
+                    else:
+                        self.env.move_right()
+                    state['last_move_time'] = current_time
+
+        # Process soft drop (down key)
+        if pygame.K_DOWN in self.key_states:
+            state = self.key_states[pygame.K_DOWN]
+            time_held = current_time - state['pressed_time']
+            time_since_move = current_time - state['last_move_time']
+
+            # Soft drop uses faster interval (like ARR but for dropping)
+            soft_drop_interval = max(self.arr, 30)  # At least 30ms between drops
+
+            if not state['das_charged']:
+                if time_held >= self.das:
+                    state['das_charged'] = True
+                    self.env.move_down()
+                    state['last_move_time'] = current_time
+            else:
+                if time_since_move >= soft_drop_interval:
+                    self.env.move_down()
+                    state['last_move_time'] = current_time
 
     def update(self, dt):
         if self.paused or self.env.game_over:
@@ -137,6 +252,10 @@ class TetrisGame:
 
         self.fall_time += dt
         fall_speed = self.get_fall_speed()
+
+        # If down is held, use faster gravity (soft drop)
+        if self.down_held:
+            fall_speed = fall_speed // self.soft_drop_factor
 
         if self.fall_time >= fall_speed:
             self.env.tick()
@@ -264,22 +383,25 @@ class TetrisGame:
         self.screen.blit(level_value, (sidebar_x + 20, 420))
 
         # Draw controls
-        controls_y = 500
+        controls_y = 480
         controls = [
             "CONTROLS:",
-            "← → : Move",
-            "↓ : Soft drop",
-            "↑/X : Rotate CW",
-            "Z : Rotate CCW",
+            "< > : Move",
+            "v : Soft drop",
+            "^/X : Rotate CW",
+            "Z/Ctrl : Rotate CCW",
             "SPACE : Hard drop",
             "P : Pause",
             "R : Restart",
-            "ESC : Quit"
+            "ESC : Quit",
+            "",
+            f"DAS: {self.das}ms",
+            f"ARR: {self.arr}ms"
         ]
 
         for i, line in enumerate(controls):
             text = self.small_font.render(line, True, WHITE)
-            self.screen.blit(text, (sidebar_x + 20, controls_y + i * 25))
+            self.screen.blit(text, (sidebar_x + 20, controls_y + i * 22))
 
     def draw_overlay(self):
         if self.paused:

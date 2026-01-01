@@ -1,56 +1,224 @@
 use pyo3::prelude::*;
 use rand::Rng;
 
-// Tetromino shapes (4 rotations each)
-const TETROMINOS: [[[u8; 4]; 4]; 7] = [
-    // I
+/// Rotation states: 0=spawn, 1=R (CW from spawn), 2=180°, 3=L (CCW from spawn)
+/// All tetromino shapes in all 4 rotation states
+/// Shape format: [piece_type][rotation_state][row][col]
+
+const TETROMINOS: [[[[u8; 4]; 4]; 4]; 7] = [
+    // I piece - index 0
     [
-        [0, 0, 0, 0],
-        [1, 1, 1, 1],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
+        // State 0 (spawn)
+        [
+            [0, 0, 0, 0],
+            [1, 1, 1, 1],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State R (CW from spawn)
+        [
+            [0, 0, 1, 0],
+            [0, 0, 1, 0],
+            [0, 0, 1, 0],
+            [0, 0, 1, 0],
+        ],
+        // State 2 (180°)
+        [
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [1, 1, 1, 1],
+            [0, 0, 0, 0],
+        ],
+        // State L (CCW from spawn)
+        [
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+        ],
     ],
-    // O
+    // O piece - index 1
     [
-        [0, 0, 0, 0],
-        [0, 1, 1, 0],
-        [0, 1, 1, 0],
-        [0, 0, 0, 0],
+        // All states are the same for O
+        [
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ],
+        [
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ],
+        [
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ],
+        [
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ],
     ],
-    // T
+    // T piece - index 2
     [
-        [0, 0, 0, 0],
-        [1, 1, 1, 0],
-        [0, 1, 0, 0],
-        [0, 0, 0, 0],
+        // State 0 (spawn)
+        [
+            [0, 1, 0, 0],
+            [1, 1, 1, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State R
+        [
+            [0, 1, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State 2
+        [
+            [0, 0, 0, 0],
+            [1, 1, 1, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State L
+        [
+            [0, 1, 0, 0],
+            [1, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
     ],
-    // S
+    // S piece - index 3
     [
-        [0, 0, 0, 0],
-        [0, 1, 1, 0],
-        [1, 1, 0, 0],
-        [0, 0, 0, 0],
+        // State 0 (spawn)
+        [
+            [0, 1, 1, 0],
+            [1, 1, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State R
+        [
+            [0, 1, 0, 0],
+            [0, 1, 1, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 0],
+        ],
+        // State 2
+        [
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [1, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State L
+        [
+            [1, 0, 0, 0],
+            [1, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
     ],
-    // Z
+    // Z piece - index 4
     [
-        [0, 0, 0, 0],
-        [1, 1, 0, 0],
-        [0, 1, 1, 0],
-        [0, 0, 0, 0],
+        // State 0 (spawn)
+        [
+            [1, 1, 0, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State R
+        [
+            [0, 0, 1, 0],
+            [0, 1, 1, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State 2
+        [
+            [0, 0, 0, 0],
+            [1, 1, 0, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ],
+        // State L
+        [
+            [0, 1, 0, 0],
+            [1, 1, 0, 0],
+            [1, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
     ],
-    // J
+    // J piece - index 5
     [
-        [0, 0, 0, 0],
-        [1, 1, 1, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 0],
+        // State 0 (spawn)
+        [
+            [1, 0, 0, 0],
+            [1, 1, 1, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State R
+        [
+            [0, 1, 1, 0],
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State 2
+        [
+            [0, 0, 0, 0],
+            [1, 1, 1, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 0],
+        ],
+        // State L
+        [
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+            [1, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
     ],
-    // L
+    // L piece - index 6
     [
-        [0, 0, 0, 0],
-        [1, 1, 1, 0],
-        [1, 0, 0, 0],
-        [0, 0, 0, 0],
+        // State 0 (spawn)
+        [
+            [0, 0, 1, 0],
+            [1, 1, 1, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State R
+        [
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 1, 1, 0],
+            [0, 0, 0, 0],
+        ],
+        // State 2
+        [
+            [0, 0, 0, 0],
+            [1, 1, 1, 0],
+            [1, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+        // State L
+        [
+            [1, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 0, 0],
+        ],
     ],
 ];
 
@@ -65,26 +233,60 @@ const COLORS: [(u8, u8, u8); 7] = [
     (255, 165, 0),   // L - Orange
 ];
 
-fn rotate_shape(shape: [[u8; 4]; 4], clockwise: bool) -> [[u8; 4]; 4] {
-    let mut rotated = [[0u8; 4]; 4];
-    for y in 0..4 {
-        for x in 0..4 {
-            if clockwise {
-                rotated[x][3 - y] = shape[y][x];
-            } else {
-                rotated[3 - x][y] = shape[y][x];
-            }
-        }
+/// SRS Wall kick data for J, L, S, T, Z pieces
+/// Note: y is inverted (positive = down in our coordinate system)
+/// States: 0=spawn, 1=R, 2=180, 3=L
+fn get_jlstz_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
+    match (from_state, to_state) {
+        // 0->R
+        (0, 1) => [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+        // R->0
+        (1, 0) => [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+        // R->2
+        (1, 2) => [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+        // 2->R
+        (2, 1) => [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+        // 2->L
+        (2, 3) => [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+        // L->2
+        (3, 2) => [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+        // L->0
+        (3, 0) => [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+        // 0->L
+        (0, 3) => [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+        _ => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
     }
-    rotated
 }
 
-fn get_cells_for_piece(piece: &Piece) -> Vec<(i32, i32)> {
+/// SRS Wall kick data for I piece
+fn get_i_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
+    match (from_state, to_state) {
+        // 0->R
+        (0, 1) => [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],
+        // R->0
+        (1, 0) => [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
+        // R->2
+        (1, 2) => [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
+        // 2->R
+        (2, 1) => [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],
+        // 2->L
+        (2, 3) => [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
+        // L->2
+        (3, 2) => [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],
+        // L->0
+        (3, 0) => [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],
+        // 0->L
+        (0, 3) => [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
+        _ => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+    }
+}
+
+fn get_cells_for_shape(shape: &[[u8; 4]; 4], x: i32, y: i32) -> Vec<(i32, i32)> {
     let mut cells = Vec::new();
     for dy in 0..4 {
         for dx in 0..4 {
-            if piece.shape[dy][dx] == 1 {
-                cells.push((piece.x + dx as i32, piece.y + dy as i32));
+            if shape[dy][dx] == 1 {
+                cells.push((x + dx as i32, y + dy as i32));
             }
         }
     }
@@ -102,7 +304,6 @@ pub struct Piece {
     pub y: i32,
     #[pyo3(get)]
     pub rotation: usize,
-    shape: [[u8; 4]; 4],
 }
 
 #[pymethods]
@@ -114,12 +315,14 @@ impl Piece {
             x: 3,
             y: 0,
             rotation: 0,
-            shape: TETROMINOS[piece_type],
         }
     }
 
     pub fn get_shape(&self) -> Vec<Vec<u8>> {
-        self.shape.iter().map(|row| row.to_vec()).collect()
+        TETROMINOS[self.piece_type][self.rotation]
+            .iter()
+            .map(|row| row.to_vec())
+            .collect()
     }
 
     pub fn get_color(&self) -> (u8, u8, u8) {
@@ -127,7 +330,7 @@ impl Piece {
     }
 
     pub fn get_cells(&self) -> Vec<(i32, i32)> {
-        get_cells_for_piece(self)
+        get_cells_for_shape(&TETROMINOS[self.piece_type][self.rotation], self.x, self.y)
     }
 }
 
@@ -152,6 +355,110 @@ pub struct TetrisEnv {
     next_piece: Option<Piece>,
 }
 
+// Internal helper methods (not exposed to Python)
+impl TetrisEnv {
+    fn is_valid_position_for(&self, piece: &Piece) -> bool {
+        let shape = &TETROMINOS[piece.piece_type][piece.rotation];
+        for (x, y) in get_cells_for_shape(shape, piece.x, piece.y) {
+            if x < 0 || x >= self.width as i32 || y >= self.height as i32 {
+                return false;
+            }
+            if y >= 0 && self.board[y as usize][x as usize] != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_valid_position_for_shape(&self, shape: &[[u8; 4]; 4], x: i32, y: i32) -> bool {
+        for (cx, cy) in get_cells_for_shape(shape, x, y) {
+            if cx < 0 || cx >= self.width as i32 || cy >= self.height as i32 {
+                return false;
+            }
+            if cy >= 0 && self.board[cy as usize][cx as usize] != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn spawn_piece_internal(&mut self) {
+        let mut rng = rand::thread_rng();
+
+        if self.next_piece.is_none() {
+            self.next_piece = Some(Piece::new(rng.gen_range(0..7)));
+        }
+
+        self.current_piece = self.next_piece.take();
+        self.next_piece = Some(Piece::new(rng.gen_range(0..7)));
+
+        // Reset position - spawn centrally
+        if let Some(ref mut piece) = self.current_piece {
+            piece.x = (self.width as i32 - 4) / 2;
+            piece.y = 0;
+            piece.rotation = 0;
+        }
+
+        // Check if spawn position is valid
+        if let Some(ref piece) = self.current_piece {
+            if !self.is_valid_position_for(piece) {
+                self.game_over = true;
+            }
+        }
+    }
+
+    fn lock_piece_internal(&mut self) {
+        if let Some(ref piece) = self.current_piece.clone() {
+            let shape = &TETROMINOS[piece.piece_type][piece.rotation];
+            for (x, y) in get_cells_for_shape(shape, piece.x, piece.y) {
+                if y >= 0 && y < self.height as i32 && x >= 0 && x < self.width as i32 {
+                    self.board[y as usize][x as usize] = 1;
+                    self.board_colors[y as usize][x as usize] = Some(piece.piece_type);
+                }
+            }
+            self.clear_lines_internal();
+            self.spawn_piece_internal();
+        }
+    }
+
+    fn clear_lines_internal(&mut self) {
+        let mut lines_to_clear = Vec::new();
+
+        for y in 0..self.height {
+            if self.board[y].iter().all(|&cell| cell != 0) {
+                lines_to_clear.push(y);
+            }
+        }
+
+        let num_lines = lines_to_clear.len() as u32;
+
+        // Remove cleared lines
+        for &y in lines_to_clear.iter().rev() {
+            self.board.remove(y);
+            self.board_colors.remove(y);
+        }
+
+        // Add new empty lines at top
+        for _ in 0..num_lines {
+            self.board.insert(0, vec![0; self.width]);
+            self.board_colors.insert(0, vec![None; self.width]);
+        }
+
+        // Update score
+        self.lines_cleared += num_lines;
+        self.score += match num_lines {
+            1 => 100 * self.level,
+            2 => 300 * self.level,
+            3 => 500 * self.level,
+            4 => 800 * self.level,
+            _ => 0,
+        };
+
+        // Update level
+        self.level = (self.lines_cleared / 10) + 1;
+    }
+}
+
 #[pymethods]
 impl TetrisEnv {
     #[new]
@@ -169,7 +476,7 @@ impl TetrisEnv {
             current_piece: None,
             next_piece: None,
         };
-        env.spawn_piece();
+        env.spawn_piece_internal();
         env
     }
 
@@ -182,7 +489,7 @@ impl TetrisEnv {
         self.game_over = false;
         self.current_piece = None;
         self.next_piece = None;
-        self.spawn_piece();
+        self.spawn_piece_internal();
     }
 
     pub fn get_board(&self) -> Vec<Vec<u8>> {
@@ -203,42 +510,6 @@ impl TetrisEnv {
 
     pub fn get_color_for_type(&self, piece_type: usize) -> (u8, u8, u8) {
         COLORS[piece_type]
-    }
-
-    fn spawn_piece(&mut self) {
-        let mut rng = rand::thread_rng();
-
-        if self.next_piece.is_none() {
-            self.next_piece = Some(Piece::new(rng.gen_range(0..7)));
-        }
-
-        self.current_piece = self.next_piece.take();
-        self.next_piece = Some(Piece::new(rng.gen_range(0..7)));
-
-        // Reset position
-        if let Some(ref mut piece) = self.current_piece {
-            piece.x = (self.width as i32 - 4) / 2;
-            piece.y = 0;
-        }
-
-        // Check if spawn position is valid
-        if let Some(ref piece) = self.current_piece {
-            if !self.is_valid_position_for(piece) {
-                self.game_over = true;
-            }
-        }
-    }
-
-    fn is_valid_position_for(&self, piece: &Piece) -> bool {
-        for (x, y) in get_cells_for_piece(piece) {
-            if x < 0 || x >= self.width as i32 || y >= self.height as i32 {
-                return false;
-            }
-            if y >= 0 && self.board[y as usize][x as usize] != 0 {
-                return false;
-            }
-        }
-        true
     }
 
     pub fn move_left(&mut self) -> bool {
@@ -284,7 +555,7 @@ impl TetrisEnv {
             }
         }
         // Could not move down, lock the piece
-        self.lock_piece();
+        self.lock_piece_internal();
         false
     }
 
@@ -300,29 +571,38 @@ impl TetrisEnv {
         drop_distance
     }
 
+    /// Rotate clockwise using SRS wall kicks
     pub fn rotate_cw(&mut self) -> bool {
         if self.game_over {
             return false;
         }
         if let Some(ref piece) = self.current_piece {
-            let mut test_piece = piece.clone();
-            test_piece.shape = rotate_shape(test_piece.shape, true);
-            test_piece.rotation = (test_piece.rotation + 1) % 4;
+            let from_state = piece.rotation;
+            let to_state = (piece.rotation + 1) % 4;
+            let new_shape = &TETROMINOS[piece.piece_type][to_state];
 
-            // Try original position first
-            if self.is_valid_position_for(&test_piece) {
-                self.current_piece = Some(test_piece);
-                return true;
-            }
+            // Get appropriate kicks based on piece type
+            let kicks = if piece.piece_type == 0 {
+                // I piece
+                get_i_kicks(from_state, to_state)
+            } else if piece.piece_type == 1 {
+                // O piece - no kicks needed, but also no real rotation
+                [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]
+            } else {
+                // J, L, S, T, Z pieces
+                get_jlstz_kicks(from_state, to_state)
+            };
 
-            // Try wall kicks
-            let kicks: [(i32, i32); 6] = [(-1, 0), (1, 0), (-2, 0), (2, 0), (0, -1), (0, -2)];
+            // Try each kick
             for (dx, dy) in kicks.iter() {
-                let mut kicked = test_piece.clone();
-                kicked.x += dx;
-                kicked.y += dy;
-                if self.is_valid_position_for(&kicked) {
-                    self.current_piece = Some(kicked);
+                let new_x = piece.x + dx;
+                let new_y = piece.y + dy;
+                if self.is_valid_position_for_shape(new_shape, new_x, new_y) {
+                    let mut new_piece = piece.clone();
+                    new_piece.x = new_x;
+                    new_piece.y = new_y;
+                    new_piece.rotation = to_state;
+                    self.current_piece = Some(new_piece);
                     return true;
                 }
             }
@@ -330,84 +610,43 @@ impl TetrisEnv {
         false
     }
 
+    /// Rotate counter-clockwise using SRS wall kicks
     pub fn rotate_ccw(&mut self) -> bool {
         if self.game_over {
             return false;
         }
         if let Some(ref piece) = self.current_piece {
-            let mut test_piece = piece.clone();
-            test_piece.shape = rotate_shape(test_piece.shape, false);
-            test_piece.rotation = (test_piece.rotation + 3) % 4;
+            let from_state = piece.rotation;
+            let to_state = (piece.rotation + 3) % 4; // +3 is same as -1 mod 4
+            let new_shape = &TETROMINOS[piece.piece_type][to_state];
 
-            // Try original position first
-            if self.is_valid_position_for(&test_piece) {
-                self.current_piece = Some(test_piece);
-                return true;
-            }
+            // Get appropriate kicks based on piece type
+            let kicks = if piece.piece_type == 0 {
+                // I piece
+                get_i_kicks(from_state, to_state)
+            } else if piece.piece_type == 1 {
+                // O piece - no kicks needed
+                [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]
+            } else {
+                // J, L, S, T, Z pieces
+                get_jlstz_kicks(from_state, to_state)
+            };
 
-            // Try wall kicks
-            let kicks: [(i32, i32); 6] = [(1, 0), (-1, 0), (2, 0), (-2, 0), (0, -1), (0, -2)];
+            // Try each kick
             for (dx, dy) in kicks.iter() {
-                let mut kicked = test_piece.clone();
-                kicked.x += dx;
-                kicked.y += dy;
-                if self.is_valid_position_for(&kicked) {
-                    self.current_piece = Some(kicked);
+                let new_x = piece.x + dx;
+                let new_y = piece.y + dy;
+                if self.is_valid_position_for_shape(new_shape, new_x, new_y) {
+                    let mut new_piece = piece.clone();
+                    new_piece.x = new_x;
+                    new_piece.y = new_y;
+                    new_piece.rotation = to_state;
+                    self.current_piece = Some(new_piece);
                     return true;
                 }
             }
         }
         false
-    }
-
-    fn lock_piece(&mut self) {
-        if let Some(ref piece) = self.current_piece.clone() {
-            for (x, y) in get_cells_for_piece(&piece) {
-                if y >= 0 && y < self.height as i32 && x >= 0 && x < self.width as i32 {
-                    self.board[y as usize][x as usize] = 1;
-                    self.board_colors[y as usize][x as usize] = Some(piece.piece_type);
-                }
-            }
-            self.clear_lines();
-            self.spawn_piece();
-        }
-    }
-
-    fn clear_lines(&mut self) {
-        let mut lines_to_clear = Vec::new();
-
-        for y in 0..self.height {
-            if self.board[y].iter().all(|&cell| cell != 0) {
-                lines_to_clear.push(y);
-            }
-        }
-
-        let num_lines = lines_to_clear.len() as u32;
-
-        // Remove cleared lines
-        for &y in lines_to_clear.iter().rev() {
-            self.board.remove(y);
-            self.board_colors.remove(y);
-        }
-
-        // Add new empty lines at top
-        for _ in 0..num_lines {
-            self.board.insert(0, vec![0; self.width]);
-            self.board_colors.insert(0, vec![None; self.width]);
-        }
-
-        // Update score
-        self.lines_cleared += num_lines;
-        self.score += match num_lines {
-            1 => 100 * self.level,
-            2 => 300 * self.level,
-            3 => 500 * self.level,
-            4 => 800 * self.level,
-            _ => 0,
-        };
-
-        // Update level
-        self.level = (self.lines_cleared / 10) + 1;
     }
 
     pub fn step(&mut self, action: u8) -> (u32, bool) {
@@ -435,10 +674,10 @@ impl TetrisEnv {
     pub fn get_ghost_piece(&self) -> Option<Piece> {
         if let Some(ref piece) = self.current_piece {
             let mut ghost = piece.clone();
-            while self.is_valid_position_for(&ghost) {
+            let shape = &TETROMINOS[ghost.piece_type][ghost.rotation];
+            while self.is_valid_position_for_shape(shape, ghost.x, ghost.y + 1) {
                 ghost.y += 1;
             }
-            ghost.y -= 1;
             Some(ghost)
         } else {
             None
