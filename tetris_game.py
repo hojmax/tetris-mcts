@@ -55,10 +55,10 @@ class TetrisGame:
 
         # Soft drop settings
         self.soft_drop_das = 0    # No delay for soft drop auto-repeat (instant)
-        self.soft_drop_arr = 10   # 10ms between soft drop repeats (very fast)
+        self.soft_drop_arr = 25   # 25ms between soft drop repeats (~40 cells/sec)
 
         # Soft drop speed multiplier (how many times faster than normal gravity)
-        self.soft_drop_factor = 40
+        self.soft_drop_factor = 20
 
         # Key state tracking for DAS/ARR
         # Structure: {key: {'pressed_time': int, 'das_charged': bool, 'last_move_time': int}}
@@ -236,22 +236,19 @@ class TetrisGame:
                         self.env.move_right()
                     state['last_move_time'] = current_time
 
-        # Process soft drop (down key)
+        # Process soft drop (down key) - uses separate, faster settings
         if pygame.K_DOWN in self.key_states:
             state = self.key_states[pygame.K_DOWN]
             time_held = current_time - state['pressed_time']
             time_since_move = current_time - state['last_move_time']
 
-            # Soft drop uses faster interval (like ARR but for dropping)
-            soft_drop_interval = max(self.arr, 30)  # At least 30ms between drops
-
             if not state['das_charged']:
-                if time_held >= self.das:
+                if time_held >= self.soft_drop_das:
                     state['das_charged'] = True
                     self.env.move_down()
                     state['last_move_time'] = current_time
             else:
-                if time_since_move >= soft_drop_interval:
+                if time_since_move >= self.soft_drop_arr:
                     self.env.move_down()
                     state['last_move_time'] = current_time
 
