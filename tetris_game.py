@@ -53,8 +53,12 @@ class TetrisGame:
         self.das = 110  # TF DAS / NullpoMino style
         self.arr = 0    # TF ARR - instant movement
 
+        # Soft drop settings
+        self.soft_drop_das = 0    # No delay for soft drop auto-repeat (instant)
+        self.soft_drop_arr = 10   # 10ms between soft drop repeats (very fast)
+
         # Soft drop speed multiplier (how many times faster than normal gravity)
-        self.soft_drop_factor = 20
+        self.soft_drop_factor = 40
 
         # Key state tracking for DAS/ARR
         # Structure: {key: {'pressed_time': int, 'das_charged': bool, 'last_move_time': int}}

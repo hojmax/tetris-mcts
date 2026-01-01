@@ -9,6 +9,10 @@ use rand::thread_rng;
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::piece::{get_cells_for_shape, Piece, COLORS, TETROMINOS};
+use crate::scoring::{
+    calculate_attack, combo_attack, determine_clear_type, AttackResult,
+    BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,
+};
 
 /// Generate a new shuffled bag of 7 pieces (7-bag randomizer)
 pub fn generate_bag() -> Vec<usize> {
@@ -16,6 +20,9 @@ pub fn generate_bag() -> Vec<usize> {
     bag.shuffle(&mut thread_rng());
     bag
 }
+
+/// T piece index
+const T_PIECE: usize = 2;
 
 #[pyclass]
 #[derive(Clone)]
@@ -25,13 +32,20 @@ pub struct TetrisEnv {
     #[pyo3(get)]
     pub height: usize,
     #[pyo3(get)]
-    pub score: u32,
-    #[pyo3(get)]
     pub lines_cleared: u32,
     #[pyo3(get)]
     pub level: u32,
     #[pyo3(get)]
     pub game_over: bool,
+    /// Total attack/lines sent (replaces old score)
+    #[pyo3(get)]
+    pub attack: u32,
+    /// Current combo count (resets when no lines cleared)
+    #[pyo3(get)]
+    pub combo: u32,
+    /// Whether back-to-back is active
+    #[pyo3(get)]
+    pub back_to_back: bool,
     board: Vec<Vec<u8>>,
     board_colors: Vec<Vec<Option<usize>>>,
     current_piece: Option<Piece>,
@@ -47,6 +61,12 @@ pub struct TetrisEnv {
     lock_delay_max: u32,
     /// Number of moves/rotates allowed during lock delay
     lock_moves_remaining: u32,
+    /// Whether the last move was a rotation (for T-spin detection)
+    last_move_was_rotation: bool,
+    /// Which kick was used for the last rotation (0 = no kick, 1-4 = kick index)
+    last_kick_index: usize,
+    /// Last attack result from line clear
+    last_attack_result: Option<AttackResult>,
 }
 
 // Internal helper methods (not exposed to Python)
@@ -125,6 +145,10 @@ impl TetrisEnv {
         // Clear lock delay for new piece
         self.clear_lock_delay();
 
+        // Reset rotation tracking for new piece
+        self.last_move_was_rotation = false;
+        self.last_kick_index = 0;
+
         // Check if spawn position is valid
         if self.is_valid_position_for(&piece) {
             self.current_piece = Some(piece);
@@ -142,6 +166,10 @@ impl TetrisEnv {
         piece.y = 0;
         piece.rotation = 0;
 
+        // Reset rotation tracking
+        self.last_move_was_rotation = false;
+        self.last_kick_index = 0;
+
         // Check if spawn position is valid
         if self.is_valid_position_for(&piece) {
             self.current_piece = Some(piece);
@@ -151,8 +179,92 @@ impl TetrisEnv {
         }
     }
 
+    /// Check if the T piece at the given position has a T-spin
+    /// Returns (is_tspin, is_mini)
+    fn check_tspin(&self, piece: &Piece) -> (bool, bool) {
+        // Only T piece can T-spin
+        if piece.piece_type != T_PIECE {
+            return (false, false);
+        }
+
+        // Must have been a rotation
+        if !self.last_move_was_rotation {
+            return (false, false);
+        }
+
+        // Check the 4 corners around the T piece center
+        // T piece center is at (x+1, y+1) in its local coordinate system
+        let center_x = piece.x + 1;
+        let center_y = piece.y + 1;
+
+        let corners = [
+            (center_x - 1, center_y - 1), // Top-left
+            (center_x + 1, center_y - 1), // Top-right
+            (center_x - 1, center_y + 1), // Bottom-left
+            (center_x + 1, center_y + 1), // Bottom-right
+        ];
+
+        let mut filled_corners = 0;
+        for (cx, cy) in corners.iter() {
+            if self.is_cell_filled(*cx, *cy) {
+                filled_corners += 1;
+            }
+        }
+
+        // T-spin requires at least 3 corners filled
+        if filled_corners < 3 {
+            return (false, false);
+        }
+
+        // Determine which corners are "front" based on rotation
+        // Front corners are the ones the T is "pointing" towards
+        let front_corners = match piece.rotation {
+            0 => [(center_x - 1, center_y - 1), (center_x + 1, center_y - 1)], // Pointing up
+            1 => [(center_x + 1, center_y - 1), (center_x + 1, center_y + 1)], // Pointing right
+            2 => [(center_x - 1, center_y + 1), (center_x + 1, center_y + 1)], // Pointing down
+            3 => [(center_x - 1, center_y - 1), (center_x - 1, center_y + 1)], // Pointing left
+            _ => return (false, false),
+        };
+
+        let front_filled = front_corners
+            .iter()
+            .filter(|(cx, cy)| self.is_cell_filled(*cx, *cy))
+            .count();
+
+        // Full T-spin: both front corners filled, OR used kick 4 (the special T-spin kick)
+        // Mini T-spin: only 1 front corner filled (and 3+ total corners)
+        if front_filled == 2 || self.last_kick_index == 4 {
+            (true, false) // Full T-spin
+        } else {
+            (true, true) // Mini T-spin
+        }
+    }
+
+    /// Check if a cell is filled (occupied or out of bounds)
+    fn is_cell_filled(&self, x: i32, y: i32) -> bool {
+        if x < 0 || x >= self.width as i32 || y < 0 || y >= self.height as i32 {
+            return true; // Out of bounds counts as filled
+        }
+        self.board[y as usize][x as usize] != 0
+    }
+
+    /// Check if the board is completely empty (perfect clear)
+    fn is_perfect_clear(&self) -> bool {
+        for row in &self.board {
+            for &cell in row {
+                if cell != 0 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     fn lock_piece_internal(&mut self) {
         if let Some(ref piece) = self.current_piece.clone() {
+            // Check for T-spin before locking
+            let (is_tspin, is_mini) = self.check_tspin(&piece);
+
             let shape = &TETROMINOS[piece.piece_type][piece.rotation];
             for (x, y) in get_cells_for_shape(shape, piece.x, piece.y) {
                 if y >= 0 && y < self.height as i32 && x >= 0 && x < self.width as i32 {
@@ -160,14 +272,17 @@ impl TetrisEnv {
                     self.board_colors[y as usize][x as usize] = Some(piece.piece_type);
                 }
             }
-            self.clear_lines_internal();
+
+            // Clear lines and calculate attack
+            self.clear_lines_internal(is_tspin, is_mini);
+
             // Reset hold_used when a new piece spawns after locking
             self.hold_used = false;
             self.spawn_piece_internal();
         }
     }
 
-    fn clear_lines_internal(&mut self) {
+    fn clear_lines_internal(&mut self, is_tspin: bool, is_mini: bool) {
         let mut lines_to_clear = Vec::new();
 
         for y in 0..self.height {
@@ -190,17 +305,49 @@ impl TetrisEnv {
             self.board_colors.insert(0, vec![None; self.width]);
         }
 
-        // Update score
-        self.lines_cleared += num_lines;
-        self.score += match num_lines {
-            1 => 100 * self.level,
-            2 => 300 * self.level,
-            3 => 500 * self.level,
-            4 => 800 * self.level,
-            _ => 0,
-        };
+        // Calculate attack
+        if num_lines > 0 {
+            // Determine clear type
+            let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);
 
-        // Update level
+            // Check for perfect clear
+            let is_pc = self.is_perfect_clear();
+
+            // Calculate attack with current combo and B2B state
+            let (attack_value, new_b2b) =
+                calculate_attack(clear_type, self.combo, self.back_to_back, is_pc);
+
+            // Build attack result
+            let mut result = AttackResult::new();
+            result.clear_type = format!("{:?}", clear_type);
+            result.lines_cleared = num_lines;
+            result.base_attack = clear_type.base_attack();
+            result.combo_attack = combo_attack(self.combo);
+            result.back_to_back_attack = if self.back_to_back && clear_type.is_difficult() {
+                BACK_TO_BACK_BONUS
+            } else {
+                0
+            };
+            result.perfect_clear_attack = if is_pc { PERFECT_CLEAR_ATTACK } else { 0 };
+            result.total_attack = attack_value;
+            result.combo = self.combo + 1;
+            result.back_to_back_active = new_b2b;
+            result.is_tspin = is_tspin;
+            result.is_perfect_clear = is_pc;
+
+            // Update state
+            self.attack += attack_value;
+            self.combo += 1;
+            self.back_to_back = new_b2b;
+            self.last_attack_result = Some(result);
+        } else {
+            // No lines cleared - reset combo
+            self.combo = 0;
+            self.last_attack_result = None;
+        }
+
+        // Update lines cleared and level
+        self.lines_cleared += num_lines;
         self.level = (self.lines_cleared / 10) + 1;
     }
 }
@@ -213,10 +360,12 @@ impl TetrisEnv {
         let mut env = TetrisEnv {
             width,
             height,
-            score: 0,
+            attack: 0,
             lines_cleared: 0,
             level: 1,
             game_over: false,
+            combo: 0,
+            back_to_back: false,
             board: vec![vec![0; width]; height],
             board_colors: vec![vec![None; width]; height],
             current_piece: None,
@@ -226,6 +375,9 @@ impl TetrisEnv {
             lock_delay_ms: None,
             lock_delay_max: 500, // 500ms lock delay
             lock_moves_remaining: 15, // 15 moves/rotates allowed during lock delay
+            last_move_was_rotation: false,
+            last_kick_index: 0,
+            last_attack_result: None,
         };
         env.spawn_piece_internal();
         env
@@ -234,16 +386,21 @@ impl TetrisEnv {
     pub fn reset(&mut self) {
         self.board = vec![vec![0; self.width]; self.height];
         self.board_colors = vec![vec![None; self.width]; self.height];
-        self.score = 0;
+        self.attack = 0;
         self.lines_cleared = 0;
         self.level = 1;
         self.game_over = false;
+        self.combo = 0;
+        self.back_to_back = false;
         self.current_piece = None;
         self.piece_queue.clear();
         self.hold_piece = None;
         self.hold_used = false;
         self.lock_delay_ms = None;
         self.lock_moves_remaining = 15;
+        self.last_move_was_rotation = false;
+        self.last_kick_index = 0;
+        self.last_attack_result = None;
         self.spawn_piece_internal();
     }
 
@@ -290,6 +447,11 @@ impl TetrisEnv {
         self.hold_used
     }
 
+    /// Get the last attack result (from the most recent line clear)
+    pub fn get_last_attack_result(&self) -> Option<AttackResult> {
+        self.last_attack_result.clone()
+    }
+
     /// Hold the current piece (swap with hold slot)
     /// Returns true if hold was successful, false if already used this turn
     pub fn hold(&mut self) -> bool {
@@ -334,6 +496,8 @@ impl TetrisEnv {
                 if was_grounded && self.lock_delay_ms.is_some() {
                     self.reset_lock_delay();
                 }
+                // Movement clears rotation flag
+                self.last_move_was_rotation = false;
                 return true;
             }
         }
@@ -354,6 +518,8 @@ impl TetrisEnv {
                 if was_grounded && self.lock_delay_ms.is_some() {
                     self.reset_lock_delay();
                 }
+                // Movement clears rotation flag
+                self.last_move_was_rotation = false;
                 return true;
             }
         }
@@ -379,6 +545,8 @@ impl TetrisEnv {
                     // Not grounded anymore, clear lock delay
                     self.lock_delay_ms = None;
                 }
+                // Movement clears rotation flag
+                self.last_move_was_rotation = false;
                 return true;
             }
         }
@@ -405,11 +573,12 @@ impl TetrisEnv {
             test_piece.y -= 1; // Go back to last valid position
             if drop_distance > 0 {
                 test_piece.y = piece.y + drop_distance as i32;
+                // Hard drop clears rotation flag (unless drop distance is 0)
+                self.last_move_was_rotation = false;
             }
             self.current_piece = Some(test_piece);
         }
-        self.score += drop_distance * 2;
-        // Hard drop locks immediately
+        // Hard drop locks immediately (no score for drop distance in attack mode)
         self.lock_piece_internal();
         drop_distance
     }
@@ -438,7 +607,7 @@ impl TetrisEnv {
             };
 
             // Try each kick
-            for (dx, dy) in kicks.iter() {
+            for (kick_idx, (dx, dy)) in kicks.iter().enumerate() {
                 let new_x = piece.x + dx;
                 let new_y = piece.y + dy;
                 if self.is_valid_position_for_shape(new_shape, new_x, new_y) {
@@ -451,6 +620,9 @@ impl TetrisEnv {
                     if was_grounded && self.lock_delay_ms.is_some() {
                         self.reset_lock_delay();
                     }
+                    // Track that last move was a rotation
+                    self.last_move_was_rotation = true;
+                    self.last_kick_index = kick_idx;
                     return true;
                 }
             }
@@ -482,7 +654,7 @@ impl TetrisEnv {
             };
 
             // Try each kick
-            for (dx, dy) in kicks.iter() {
+            for (kick_idx, (dx, dy)) in kicks.iter().enumerate() {
                 let new_x = piece.x + dx;
                 let new_y = piece.y + dy;
                 if self.is_valid_position_for_shape(new_shape, new_x, new_y) {
@@ -495,6 +667,9 @@ impl TetrisEnv {
                     if was_grounded && self.lock_delay_ms.is_some() {
                         self.reset_lock_delay();
                     }
+                    // Track that last move was a rotation
+                    self.last_move_was_rotation = true;
+                    self.last_kick_index = kick_idx;
                     return true;
                 }
             }
@@ -503,8 +678,8 @@ impl TetrisEnv {
     }
 
     pub fn step(&mut self, action: u8) -> (u32, bool) {
-        // Actions: 0=nothing, 1=left, 2=right, 3=down, 4=rotate_cw, 5=rotate_ccw, 6=hard_drop
-        let old_score = self.score;
+        // Actions: 0=nothing, 1=left, 2=right, 3=down, 4=rotate_cw, 5=rotate_ccw, 6=hard_drop, 7=hold
+        let old_attack = self.attack;
 
         match action {
             1 => {
@@ -525,10 +700,13 @@ impl TetrisEnv {
             6 => {
                 self.hard_drop();
             }
+            7 => {
+                self.hold();
+            }
             _ => {}
         }
 
-        let reward = self.score - old_score;
+        let reward = self.attack - old_attack;
         (reward, self.game_over)
     }
 
@@ -594,6 +772,78 @@ impl TetrisEnv {
     pub fn clone_state(&self) -> TetrisEnv {
         self.clone()
     }
+
+    /// Deprecated: Use `attack` instead. Returns attack for backwards compatibility.
+    #[getter]
+    pub fn score(&self) -> u32 {
+        self.attack
+    }
+
+    /// Get all possible placements for the current piece
+    ///
+    /// Returns a list of Placement objects, each containing:
+    /// - piece: The final piece position after hard drop
+    /// - moves: The sequence of action codes to reach this placement
+    /// - column: The x position (column) of the placement
+    /// - rotation: The rotation state (0-3)
+    ///
+    /// The move sequence uses these action codes:
+    /// 1=left, 2=right, 3=down, 4=rotate_cw, 5=rotate_ccw, 6=hard_drop
+    pub fn get_all_placements(&self) -> Vec<crate::moves::Placement> {
+        use crate::moves::{find_all_placements, Board};
+
+        if let Some(ref piece) = self.current_piece {
+            let board = Board::new(self.width, self.height, self.board.clone());
+            find_all_placements(&board, piece.piece_type, piece.x, piece.y)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get all possible placements for a specific piece type
+    ///
+    /// This allows querying placements for any piece, not just the current one.
+    /// Useful for planning ahead with known upcoming pieces.
+    pub fn get_placements_for_piece(&self, piece_type: usize) -> Vec<crate::moves::Placement> {
+        use crate::moves::{find_all_placements, Board};
+
+        if piece_type >= 7 {
+            return Vec::new();
+        }
+
+        let board = Board::new(self.width, self.height, self.board.clone());
+        let spawn_x = (self.width as i32 - 4) / 2;
+        let spawn_y = 0;
+        find_all_placements(&board, piece_type, spawn_x, spawn_y)
+    }
+
+    /// Get all possible placements for both current piece and after using hold
+    ///
+    /// Returns a tuple of (current_piece_placements, hold_piece_placements)
+    /// If hold has already been used this turn, hold_piece_placements will be empty.
+    pub fn get_all_placements_with_hold(&self) -> (Vec<crate::moves::Placement>, Vec<crate::moves::Placement>) {
+        use crate::moves::{find_all_placements_with_hold, Board};
+
+        if self.hold_used {
+            // Can't use hold again this turn
+            return (self.get_all_placements(), Vec::new());
+        }
+
+        if let Some(ref piece) = self.current_piece {
+            let board = Board::new(self.width, self.height, self.board.clone());
+            let next_piece = self.piece_queue.first().copied().unwrap_or(0);
+            find_all_placements_with_hold(
+                &board,
+                piece.piece_type,
+                self.hold_piece,
+                next_piece,
+                piece.x,
+                piece.y,
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        }
+    }
 }
 
 // Additional methods for testing (not exposed to Python)
@@ -617,6 +867,19 @@ impl TetrisEnv {
     pub fn get_piece_queue(&self) -> &Vec<usize> {
         &self.piece_queue
     }
+
+    /// Force set the current piece (for testing)
+    #[cfg(test)]
+    pub fn set_current_piece(&mut self, piece: Piece) {
+        self.current_piece = Some(piece);
+    }
+
+    /// Set rotation tracking (for testing)
+    #[cfg(test)]
+    pub fn set_last_rotation(&mut self, was_rotation: bool, kick_index: usize) {
+        self.last_move_was_rotation = was_rotation;
+        self.last_kick_index = kick_index;
+    }
 }
 
 #[cfg(test)]
@@ -628,9 +891,11 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         assert_eq!(env.width, 10);
         assert_eq!(env.height, 20);
-        assert_eq!(env.score, 0);
+        assert_eq!(env.attack, 0);
         assert_eq!(env.lines_cleared, 0);
         assert_eq!(env.level, 1);
+        assert_eq!(env.combo, 0);
+        assert!(!env.back_to_back);
         assert!(!env.game_over);
         assert!(env.current_piece.is_some());
     }
@@ -645,13 +910,17 @@ mod tests {
     #[test]
     fn test_env_reset() {
         let mut env = TetrisEnv::new(10, 20);
-        env.score = 1000;
+        env.attack = 100;
         env.lines_cleared = 10;
         env.level = 2;
+        env.combo = 5;
+        env.back_to_back = true;
         env.reset();
-        assert_eq!(env.score, 0);
+        assert_eq!(env.attack, 0);
         assert_eq!(env.lines_cleared, 0);
         assert_eq!(env.level, 1);
+        assert_eq!(env.combo, 0);
+        assert!(!env.back_to_back);
         assert!(!env.game_over);
     }
 
@@ -691,7 +960,6 @@ mod tests {
     #[test]
     fn test_rotate_cw() {
         let mut env = TetrisEnv::new(10, 20);
-        // Move down a bit to give room for rotation
         env.move_down();
         env.move_down();
         let initial_rotation = env.current_piece.as_ref().unwrap().rotation;
@@ -699,6 +967,7 @@ mod tests {
         if rotated {
             let new_rotation = env.current_piece.as_ref().unwrap().rotation;
             assert_eq!(new_rotation, (initial_rotation + 1) % 4);
+            assert!(env.last_move_was_rotation);
         }
     }
 
@@ -712,7 +981,18 @@ mod tests {
         if rotated {
             let new_rotation = env.current_piece.as_ref().unwrap().rotation;
             assert_eq!(new_rotation, (initial_rotation + 3) % 4);
+            assert!(env.last_move_was_rotation);
         }
+    }
+
+    #[test]
+    fn test_movement_clears_rotation_flag() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.move_down();
+        env.rotate_cw();
+        assert!(env.last_move_was_rotation);
+        env.move_left();
+        assert!(!env.last_move_was_rotation);
     }
 
     #[test]
@@ -720,17 +1000,7 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         let drop_distance = env.hard_drop();
         assert!(drop_distance > 0);
-        // After hard drop, a new piece should spawn
         assert!(env.current_piece.is_some());
-    }
-
-    #[test]
-    fn test_hard_drop_scoring() {
-        let mut env = TetrisEnv::new(10, 20);
-        let initial_score = env.score;
-        let drop_distance = env.hard_drop();
-        // Hard drop should add 2 points per cell dropped
-        assert_eq!(env.score, initial_score + drop_distance * 2);
     }
 
     #[test]
@@ -740,9 +1010,7 @@ mod tests {
         assert!(ghost.is_some());
         let ghost = ghost.unwrap();
         let current = env.current_piece.as_ref().unwrap();
-        // Ghost should be below or at same position as current piece
         assert!(ghost.y >= current.y);
-        // Ghost should have same piece type and rotation
         assert_eq!(ghost.piece_type, current.piece_type);
         assert_eq!(ghost.rotation, current.rotation);
     }
@@ -750,9 +1018,7 @@ mod tests {
     #[test]
     fn test_7bag_randomizer() {
         let env = TetrisEnv::new(10, 20);
-        // Queue should have at least 6 pieces (since current piece was taken from it)
         assert!(env.piece_queue.len() >= 6);
-        // All pieces in queue should be valid types (0-6)
         for &pt in &env.piece_queue {
             assert!(pt < 7);
         }
@@ -785,7 +1051,6 @@ mod tests {
     fn test_hold_twice_fails() {
         let mut env = TetrisEnv::new(10, 20);
         env.hold();
-        // Second hold in same turn should fail
         let result = env.hold();
         assert!(!result);
     }
@@ -798,16 +1063,12 @@ mod tests {
         let held_type = env.hold_piece.unwrap();
         assert_eq!(held_type, first_type);
 
-        // Simulate piece locking and new piece spawning
         env.hard_drop();
 
-        // Now we can hold again
         let second_type = env.current_piece.as_ref().unwrap().piece_type;
         env.hold();
 
-        // Should have swapped - current should be the first type we held
         assert_eq!(env.current_piece.as_ref().unwrap().piece_type, first_type);
-        // Hold should now contain second type
         assert_eq!(env.hold_piece, Some(second_type));
     }
 
@@ -829,18 +1090,15 @@ mod tests {
     #[test]
     fn test_lock_delay_starts_when_grounded() {
         let mut env = TetrisEnv::new(10, 20);
-        // Move piece to bottom
         for _ in 0..25 {
             env.move_down();
         }
-        // After reaching bottom, lock delay should start
         assert!(env.lock_delay_ms.is_some() || env.is_grounded());
     }
 
     #[test]
     fn test_lock_delay_progress() {
         let env = TetrisEnv::new(10, 20);
-        // Initially should be 0
         assert_eq!(env.get_lock_delay_progress(), 0.0);
     }
 
@@ -890,45 +1148,44 @@ mod tests {
     fn test_clone_state() {
         let env = TetrisEnv::new(10, 20);
         let cloned = env.clone_state();
-        assert_eq!(env.score, cloned.score);
+        assert_eq!(env.attack, cloned.attack);
         assert_eq!(env.level, cloned.level);
         assert_eq!(env.width, cloned.width);
         assert_eq!(env.height, cloned.height);
         assert_eq!(env.lines_cleared, cloned.lines_cleared);
+        assert_eq!(env.combo, cloned.combo);
+        assert_eq!(env.back_to_back, cloned.back_to_back);
     }
 
     #[test]
     fn test_step_actions() {
         let mut env = TetrisEnv::new(10, 20);
-
-        // Test all actions don't crash
         env.step(0); // noop
         env.step(1); // left
         env.step(2); // right
         env.step(3); // down
         env.step(4); // rotate_cw
         env.step(5); // rotate_ccw
-
+        env.step(7); // hold
         assert!(!env.game_over);
     }
 
     #[test]
-    fn test_step_returns_reward() {
+    fn test_step_returns_attack() {
         let mut env = TetrisEnv::new(10, 20);
         let (reward, game_over) = env.step(6); // hard_drop
-        // Hard drop should give some reward
-        assert!(reward > 0);
+        // May or may not have attack depending on line clears
         assert!(!game_over);
+        // reward is the attack gained this step
+        assert!(reward >= 0);
     }
 
     #[test]
     fn test_wall_collision_left() {
         let mut env = TetrisEnv::new(10, 20);
-        // Move all the way left
         for _ in 0..10 {
             env.move_left();
         }
-        // Additional moves should fail
         let piece = env.current_piece.as_ref().unwrap();
         let cells = piece.get_cells();
         for (x, _) in cells {
@@ -939,7 +1196,6 @@ mod tests {
     #[test]
     fn test_wall_collision_right() {
         let mut env = TetrisEnv::new(10, 20);
-        // Move all the way right
         for _ in 0..10 {
             env.move_right();
         }
@@ -965,21 +1221,9 @@ mod tests {
     fn test_get_color_for_type() {
         let env = TetrisEnv::new(10, 20);
         for i in 0..7 {
-            let color = env.get_color_for_type(i);
-            assert!(color.0 <= 255 && color.1 <= 255 && color.2 <= 255);
+            let _color = env.get_color_for_type(i);
+            // Just ensure it doesn't panic
         }
-    }
-
-    #[test]
-    fn test_scoring_single_line() {
-        let mut env = TetrisEnv::new(10, 20);
-        // Fill bottom row except one cell
-        for x in 0..9 {
-            env.set_cell(x, 19, 1);
-        }
-        // The scoring happens when a piece locks and completes a line
-        // This is tested implicitly through the clear_lines_internal function
-        assert_eq!(env.level, 1);
     }
 
     #[test]
@@ -1014,10 +1258,8 @@ mod tests {
     #[test]
     fn test_is_piece_grounded() {
         let mut env = TetrisEnv::new(10, 20);
-        // Initially piece should not be grounded
         assert!(!env.is_piece_grounded());
 
-        // Move piece all the way down
         for _ in 0..25 {
             env.move_down();
         }
@@ -1056,5 +1298,64 @@ mod tests {
         for row in board {
             assert_eq!(row.len(), 10);
         }
+    }
+
+    #[test]
+    fn test_perfect_clear_detection() {
+        let env = TetrisEnv::new(10, 20);
+        assert!(env.is_perfect_clear()); // Empty board is perfect clear
+    }
+
+    #[test]
+    fn test_perfect_clear_with_cells() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.set_cell(0, 19, 1);
+        assert!(!env.is_perfect_clear());
+    }
+
+    #[test]
+    fn test_tspin_requires_t_piece() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Create an I piece
+        let piece = Piece::with_position(0, 3, 10, 0);
+        env.set_current_piece(piece);
+        env.set_last_rotation(true, 0);
+
+        let (is_tspin, _) = env.check_tspin(env.current_piece.as_ref().unwrap());
+        assert!(!is_tspin);
+    }
+
+    #[test]
+    fn test_tspin_requires_rotation() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Create a T piece
+        let piece = Piece::with_position(T_PIECE, 3, 10, 0);
+        env.set_current_piece(piece);
+        env.set_last_rotation(false, 0); // No rotation
+
+        let (is_tspin, _) = env.check_tspin(env.current_piece.as_ref().unwrap());
+        assert!(!is_tspin);
+    }
+
+    #[test]
+    fn test_combo_resets_on_no_clear() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.combo = 5;
+        // Lock a piece without clearing lines
+        env.clear_lines_internal(false, false);
+        assert_eq!(env.combo, 0);
+    }
+
+    #[test]
+    fn test_score_returns_attack() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.attack = 42;
+        assert_eq!(env.score(), 42);
+    }
+
+    #[test]
+    fn test_get_last_attack_result_initially_none() {
+        let env = TetrisEnv::new(10, 20);
+        assert!(env.get_last_attack_result().is_none());
     }
 }
