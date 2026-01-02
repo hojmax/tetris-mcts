@@ -31,3 +31,4 @@ Training:
 * Policy head predicts the distributions over the nodes visisted during search.
 * Please read 1712.01815v1.pdf for more details.
 * Difference is we train a tiny network which is then saved to disk and loaded and run with rust. We do the tree search in rust only, and training in python. So the tree structure
+* I wonder if faster to call the gpu from rust for some of the kernel operations? Like how fast is it to do CPU only for these small networks, vs. calling gpu from rust.
