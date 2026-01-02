@@ -21,9 +21,11 @@ BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
 LEFT_SIDEBAR_WIDTH = 120
 RIGHT_SIDEBAR_WIDTH = 120
+TOP_PADDING = 40
+BOTTOM_PADDING = 20
 
 WINDOW_WIDTH = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE + RIGHT_SIDEBAR_WIDTH
-WINDOW_HEIGHT = BOARD_HEIGHT * CELL_SIZE
+WINDOW_HEIGHT = TOP_PADDING + BOARD_HEIGHT * CELL_SIZE + BOTTOM_PADDING
 
 # Colors
 BLACK = (0, 0, 0)
@@ -63,6 +65,11 @@ class TetrisGame:
         # Mini block size for sidebar pieces
         self.mini_cell_size = 20
 
+        # Move inspection mode
+        self.inspect_mode = False
+        self.placements = []
+        self.placement_index = 0
+
     def get_fall_speed(self):
         """Get fall speed in milliseconds (constant gravity)."""
         return 1000
@@ -87,7 +94,25 @@ class TetrisGame:
                     self.fall_time = 0
                     continue
 
+                if event.key == pygame.K_m and not self.env.game_over:
+                    self.inspect_mode = not self.inspect_mode
+                    if self.inspect_mode:
+                        # Get all placements for current piece
+                        self.placements = self.env.get_all_placements()
+                        self.placement_index = 0
+                    continue
+
                 if self.paused or self.env.game_over:
+                    continue
+
+                # In inspect mode, left/right cycle through placements
+                if self.inspect_mode:
+                    if event.key == pygame.K_LEFT:
+                        if self.placements:
+                            self.placement_index = (self.placement_index - 1) % len(self.placements)
+                    elif event.key == pygame.K_RIGHT:
+                        if self.placements:
+                            self.placement_index = (self.placement_index + 1) % len(self.placements)
                     continue
 
                 if event.key == pygame.K_LEFT:
@@ -210,7 +235,7 @@ class TetrisGame:
                     state['last_move_time'] = current_time
 
     def update(self, dt):
-        if self.paused or self.env.game_over:
+        if self.paused or self.env.game_over or self.inspect_mode:
             return
 
         self.env.update_lock_delay(dt)
@@ -226,9 +251,10 @@ class TetrisGame:
 
     def draw_board(self):
         board_x = LEFT_SIDEBAR_WIDTH
+        board_y = TOP_PADDING
 
         # Draw board background
-        board_rect = pygame.Rect(board_x, 0, BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
+        board_rect = pygame.Rect(board_x, board_y, BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
         pygame.draw.rect(self.screen, BLACK, board_rect)
 
         # Draw grid lines
@@ -236,15 +262,15 @@ class TetrisGame:
             pygame.draw.line(
                 self.screen,
                 GRID_COLOR,
-                (board_x + x * CELL_SIZE, 0),
-                (board_x + x * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
+                (board_x + x * CELL_SIZE, board_y),
+                (board_x + x * CELL_SIZE, board_y + BOARD_HEIGHT * CELL_SIZE)
             )
         for y in range(BOARD_HEIGHT + 1):
             pygame.draw.line(
                 self.screen,
                 GRID_COLOR,
-                (board_x, y * CELL_SIZE),
-                (board_x + BOARD_WIDTH * CELL_SIZE, y * CELL_SIZE)
+                (board_x, board_y + y * CELL_SIZE),
+                (board_x + BOARD_WIDTH * CELL_SIZE, board_y + y * CELL_SIZE)
             )
 
         # Draw border around the board
@@ -263,29 +289,45 @@ class TetrisGame:
                     else:
                         color = GRAY
 
-                    self.draw_cell(board_x + x * CELL_SIZE, y * CELL_SIZE, color)
+                    self.draw_cell(board_x + x * CELL_SIZE, board_y + y * CELL_SIZE, color)
 
-        # Draw ghost piece (outline only)
-        ghost = self.env.get_ghost_piece()
-        if ghost:
-            color = ghost.get_color()
-            for (x, y) in ghost.get_cells():
-                if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
-                    rect = pygame.Rect(
-                        board_x + x * CELL_SIZE + 1,
-                        y * CELL_SIZE + 1,
-                        CELL_SIZE - 2,
-                        CELL_SIZE - 2
-                    )
-                    pygame.draw.rect(self.screen, color, rect, 2)
+        if self.inspect_mode:
+            # Draw placement ghost in inspect mode
+            if self.placements:
+                placement = self.placements[self.placement_index]
+                piece = placement.piece
+                color = piece.get_color()
+                for (x, y) in piece.get_cells():
+                    if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+                        rect = pygame.Rect(
+                            board_x + x * CELL_SIZE + 1,
+                            board_y + y * CELL_SIZE + 1,
+                            CELL_SIZE - 2,
+                            CELL_SIZE - 2
+                        )
+                        pygame.draw.rect(self.screen, color, rect, 2)
+        else:
+            # Draw ghost piece (outline only)
+            ghost = self.env.get_ghost_piece()
+            if ghost:
+                color = ghost.get_color()
+                for (x, y) in ghost.get_cells():
+                    if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+                        rect = pygame.Rect(
+                            board_x + x * CELL_SIZE + 1,
+                            board_y + y * CELL_SIZE + 1,
+                            CELL_SIZE - 2,
+                            CELL_SIZE - 2
+                        )
+                        pygame.draw.rect(self.screen, color, rect, 2)
 
-        # Draw current piece
-        piece = self.env.get_current_piece()
-        if piece:
-            color = piece.get_color()
-            for (x, y) in piece.get_cells():
-                if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
-                    self.draw_cell(board_x + x * CELL_SIZE, y * CELL_SIZE, color)
+            # Draw current piece
+            piece = self.env.get_current_piece()
+            if piece:
+                color = piece.get_color()
+                for (x, y) in piece.get_cells():
+                    if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+                        self.draw_cell(board_x + x * CELL_SIZE, board_y + y * CELL_SIZE, color)
 
     def draw_cell(self, px, py, color):
         """Draw a single cell (flat style) at pixel coordinates."""
@@ -333,7 +375,7 @@ class TetrisGame:
             hold_used = self.env.is_hold_used()
             # Draw hold piece centered in left sidebar
             center_x = LEFT_SIDEBAR_WIDTH // 2
-            center_y = 60
+            center_y = TOP_PADDING + 50
             if hold_used:
                 # Dim the color if hold was used this turn
                 original_color = hold_piece.get_color()
@@ -366,35 +408,46 @@ class TetrisGame:
             else:
                 self.draw_mini_piece(hold_piece, center_x, center_y)
 
-        # Lines display in bottom right corner
+        # Attack display in bottom right corner
         right_x = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE
-        lines_text = f"Lines: {self.env.lines_cleared}"
-        lines_surface = self.font.render(lines_text, True, WHITE)
-        self.screen.blit(lines_surface, (right_x + 15, WINDOW_HEIGHT - 40))
+        attack_text = f"Attack: {self.env.attack}"
+        attack_surface = self.font.render(attack_text, True, WHITE)
+        self.screen.blit(attack_surface, (right_x + 15, WINDOW_HEIGHT - BOTTOM_PADDING - 15))
 
         # Right sidebar - NEXT pieces
-        right_x = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE
         next_pieces = self.env.get_next_pieces(5)
 
         for i, piece in enumerate(next_pieces):
             center_x = right_x + RIGHT_SIDEBAR_WIDTH // 2
-            center_y = 40 + i * 55
+            center_y = TOP_PADDING + 30 + i * 55
             self.draw_mini_piece(piece, center_x, center_y)
 
     def draw_overlay(self):
-        if self.paused:
+        if self.inspect_mode:
+            # Draw placement counter above the board (in padding area)
+            board_x = LEFT_SIDEBAR_WIDTH
+            total = len(self.placements)
+            if total > 0:
+                counter_text = f"{self.placement_index + 1}/{total}"
+            else:
+                counter_text = "0/0"
+            counter_surface = self.font.render(counter_text, True, WHITE)
+            counter_rect = counter_surface.get_rect(center=(board_x + BOARD_WIDTH * CELL_SIZE // 2, TOP_PADDING // 2))
+            self.screen.blit(counter_surface, counter_rect)
+        elif self.paused:
             self.draw_message("PAUSED", "Press P to continue")
         elif self.env.game_over:
             self.draw_message("GAME OVER", f"Attack: {self.env.attack} | Press R to restart")
 
     def draw_message(self, title, subtitle):
         board_x = LEFT_SIDEBAR_WIDTH
+        board_y = TOP_PADDING
         board_center_x = board_x + BOARD_WIDTH * CELL_SIZE // 2
-        board_center_y = BOARD_HEIGHT * CELL_SIZE // 2
+        board_center_y = board_y + BOARD_HEIGHT * CELL_SIZE // 2
 
         overlay = pygame.Surface((BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
-        self.screen.blit(overlay, (board_x, 0))
+        self.screen.blit(overlay, (board_x, board_y))
 
         title_text = self.font.render(title, True, WHITE)
         title_rect = title_text.get_rect(center=(board_center_x, board_center_y - 20))

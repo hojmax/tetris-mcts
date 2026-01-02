@@ -277,27 +277,34 @@ pub fn find_all_placements(
         }
     }
 
-    // Convert final positions to Placement structs
-    let mut placements: Vec<Placement> = final_positions
-        .into_iter()
-        .map(|((x, y, rotation), mut moves)| {
+    // Deduplicate by actual cells occupied (not just x, y, rotation)
+    // This handles cases like O piece where different rotations look identical
+    let mut seen_cells: HashSet<Vec<(i32, i32)>> = HashSet::new();
+    let mut placements: Vec<Placement> = Vec::new();
+
+    for ((x, y, rotation), mut moves) in final_positions {
+        let shape = &TETROMINOS[piece_type][rotation];
+        let mut cells: Vec<(i32, i32)> = get_cells_for_shape(shape, x, y);
+        cells.sort(); // Normalize for comparison
+
+        if seen_cells.insert(cells) {
             // Add hard drop to complete the move sequence
             moves.push(Action::HardDrop.to_u8());
 
-            Placement {
+            placements.push(Placement {
                 piece: Piece::with_position(piece_type, x, y, rotation),
                 moves,
                 column: x,
                 rotation,
-            }
-        })
-        .collect();
+            });
+        }
+    }
 
-    // Sort by column then rotation for consistent ordering
+    // Sort by rotation first, then column
     placements.sort_by(|a, b| {
-        a.column
-            .cmp(&b.column)
-            .then_with(|| a.rotation.cmp(&b.rotation))
+        a.rotation
+            .cmp(&b.rotation)
+            .then_with(|| a.column.cmp(&b.column))
     });
 
     placements
@@ -505,13 +512,13 @@ mod tests {
         let board = empty_board(10, 20);
         let placements = find_all_placements(&board, 2, 3, 0); // T piece
 
-        // Check that placements are sorted by column, then rotation
+        // Check that placements are sorted by rotation first, then column
         for i in 1..placements.len() {
             let prev = &placements[i - 1];
             let curr = &placements[i];
             assert!(
-                prev.column < curr.column
-                    || (prev.column == curr.column && prev.rotation <= curr.rotation),
+                prev.rotation < curr.rotation
+                    || (prev.rotation == curr.rotation && prev.column <= curr.column),
                 "Placements not sorted: {:?} should come before {:?}",
                 prev,
                 curr
