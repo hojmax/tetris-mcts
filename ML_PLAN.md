@@ -15,7 +15,7 @@ We adapt AlphaZero (Silver et al., 2017) for single-player stochastic Tetris:
 
 ## 1. Neural Network Architecture
 
-### Input Representation (243 features total)
+### Input Representation
 
 | Component      | Shape      | Encoding                        |
 | -------------- | ---------- | ------------------------------- |
@@ -24,28 +24,31 @@ We adapt AlphaZero (Silver et al., 2017) for single-player stochastic Tetris:
 | Hold piece     | 8          | One-hot (7 pieces + empty)      |
 | Hold available | 1          | Binary (can use hold this turn) |
 | Next queue     | 5 x 7 = 35 | One-hot encoded per slot        |
+| Move number    | 1          | Normalized: move_idx / 100      |
 
-**Total input**: 200 + 7 + 8 + 1 + 35 = **251 features**
+**Total input**: 200 + 7 + 8 + 1 + 35 + 1 = **252 features**
+
+Move number lets the value head learn that later positions have less remaining future attack (due to 100-move episode cap).
 
 ### Network Structure
 
 ```
 Input Board (20x10x1)
     │
-    ├──► Conv2D(1, 32, kernel=3x3, padding=1) + ReLU
+    ├──► Conv2D(1, 32, kernel=3x3, padding=1) + BatchNorm2d + ReLU
     │        │
     │        ▼
-    │    Conv2D(32, 64, kernel=3x3, padding=1) + ReLU
+    │    Conv2D(32, 64, kernel=3x3, padding=1) + BatchNorm2d + ReLU
     │        │
     │        ▼
     │    Flatten → 20*10*64 = 12,800
     │
-Auxiliary Input (51 features: current + hold + hold_avail + next_queue)
+Auxiliary Input (52 features: current + hold + hold_avail + next_queue + move_num)
     │
     └──► Concat with flattened board features
               │
               ▼
-         FC(12851, 256) + ReLU
+         FC(12852, 256) + LayerNorm + ReLU
               │
               ├──────────────────┐
               ▼                  ▼
@@ -56,6 +59,9 @@ Auxiliary Input (51 features: current + hold + hold_avail + next_queue)
               ▼                  ▼
          π(a|s)              V(s) = predicted attack
 ```
+
+- **BatchNorm2d** after conv layers: stabilizes training, normalizes across batch
+- **LayerNorm** after FC: ensures both heads receive well-scaled features
 
 ### Output Space
 
@@ -371,22 +377,36 @@ Attack values per action:
 - Combo bonus: scales with combo count
 
 ```rust
-fn compute_value(game_states: &[GameState], move_idx: usize) -> f32 {
-    // Value = discounted sum of future attack
-    // V(s_t) = sum_{k=0}^{T-t} gamma^k * attack_{t+k}
-    let mut value = 0.0;
+const MAX_MOVES: usize = 100;
+const DROP_LAST_N: usize = 10;  // Drop last 10 moves from training
+
+fn compute_training_examples(game: &Game) -> Vec<TrainingExample> {
+    let mut examples = Vec::new();
     let gamma = 0.99;
 
-    for (k, state) in game_states[move_idx..].iter().enumerate() {
-        let attack = state.attack_this_move as f32;
-        value += gamma.powi(k as i32) * attack;
+    // Only use first (MAX_MOVES - DROP_LAST_N) moves for training
+    // Last moves have incomplete value targets since game was cut off
+    let usable_moves = game.moves.len().saturating_sub(DROP_LAST_N);
+
+    for move_idx in 0..usable_moves {
+        // Value = discounted sum of future attack
+        let mut value = 0.0;
+        for (k, state) in game.states[move_idx..].iter().enumerate() {
+            value += gamma.powi(k as i32) * state.attack as f32;
+        }
+
+        examples.push(TrainingExample {
+            state: game.states[move_idx].clone(),
+            policy: game.mcts_policies[move_idx].clone(),
+            value,
+        });
     }
 
-    value
+    examples
 }
 ```
 
-Value head is linear (no activation), so it directly predicts cumulative attack. MSE loss will train it to output the actual expected attack values.
+**Why drop the last N moves?** Since games are capped at 100 moves, the value target for move 99 only includes attack from that single move. The value target for move 90 includes 10 moves of future attack. By dropping the last 10 moves, all training examples have at least 10 moves of future context for their value targets.
 
 ### Data Format (Save to Disk)
 
@@ -463,53 +483,106 @@ config = {
 }
 ```
 
-### Training Script
+### Parallel Training Architecture
+
+Self-play and training run in parallel:
+
+- **Self-play process** (Rust): Continuously generates games, fills replay buffer
+- **Training process** (Python): Continuously trains on buffer
+- **Weight sync**: Every N training steps, export new weights for self-play
+
+```
+┌─────────────────┐         ┌─────────────────┐
+│   Self-Play     │         │    Training     │
+│    (Rust)       │         │    (Python)     │
+│                 │         │                 │
+│  Load weights ◄─┼─────────┼─ Export weights │
+│       │         │         │       ▲         │
+│       ▼         │         │       │         │
+│  Play games     │         │  Train on batch │
+│       │         │         │       ▲         │
+│       ▼         │  shared │       │         │
+│  Write to ──────┼─────────┼► Read from      │
+│  buffer         │  buffer │  buffer         │
+└─────────────────┘         └─────────────────┘
+```
 
 ```python
-def train():
+# Shared replay buffer (e.g., memory-mapped file or Redis)
+WEIGHT_SYNC_INTERVAL = 1000  # Sync weights every N training steps
+
+def training_process():
     model = TetrisNet()
     optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'])
-    replay_buffer = ReplayBuffer(config['buffer_size'])
+    replay_buffer = SharedReplayBuffer(config['buffer_size'])
 
-    for iteration in range(config['num_iterations']):
-        # 1. Export current model for Rust
-        export_model_for_rust(model, f'models/model_iter_{iteration}.bin')
+    # Export initial weights
+    export_weights(model, 'weights/latest.bin')
 
-        # 2. Self-play in Rust (subprocess)
-        subprocess.run([
-            'cargo', 'run', '--release', '--',
-            '--model', f'models/model_iter_{iteration}.bin',
-            '--num-games', str(config['num_games_per_iteration']),
-            '--output', f'data/games_iter_{iteration}.npz'
-        ])
+    step = 0
+    while True:
+        # Wait for minimum buffer size
+        if replay_buffer.size() < config['min_buffer_size']:
+            time.sleep(1)
+            continue
 
-        # 3. Load new data into replay buffer
-        new_data = np.load(f'data/games_iter_{iteration}.npz')
-        replay_buffer.add(new_data)
+        # Training step
+        batch = replay_buffer.sample(config['batch_size'])
+        optimizer.zero_grad()
+        loss, p_loss, v_loss = compute_loss(model, batch)
+        loss.backward()
+        optimizer.step()
+        step += 1
 
-        # 4. Training steps
-        for step in range(config['training_steps_per_iter']):
-            batch = replay_buffer.sample(config['batch_size'])
+        # Logging
+        wandb.log({
+            'loss': loss.item(),
+            'policy_loss': p_loss.item(),
+            'value_loss': v_loss.item(),
+            'step': step,
+            'buffer_size': replay_buffer.size(),
+        })
 
-            optimizer.zero_grad()
-            loss, p_loss, v_loss = compute_loss(model, batch)
-            loss.backward()
-            optimizer.step()
+        # Sync weights to self-play
+        if step % WEIGHT_SYNC_INTERVAL == 0:
+            export_weights(model, 'weights/latest.bin')
+            wandb.log({'weight_version': step // WEIGHT_SYNC_INTERVAL})
 
-            # Logging
-            wandb.log({
-                'loss': loss.item(),
-                'policy_loss': p_loss.item(),
-                'value_loss': v_loss.item(),
-                'iteration': iteration,
-                'step': step,
-            })
+        # Evaluation
+        if step % config['eval_interval'] == 0:
+            metrics = evaluate_model(model)
+            wandb.log(metrics)
+            torch.save(model.state_dict(), f'checkpoints/model_{step}.pt')
 
-        # 5. Evaluation
-        if iteration % config['checkpoint_interval'] == 0:
-            avg_score = evaluate_model(model, num_games=20)
-            wandb.log({'eval_score': avg_score, 'iteration': iteration})
-            torch.save(model.state_dict(), f'checkpoints/model_{iteration}.pt')
+def selfplay_process():
+    """Rust process that continuously generates games"""
+    # Runs: cargo run --release -- --weights weights/latest.bin --buffer shared_buffer
+    # Automatically reloads weights when file changes
+    pass
+```
+
+```rust
+// Rust self-play worker
+fn selfplay_loop(buffer_path: &str, weights_path: &str) {
+    let mut model = load_weights(weights_path);
+    let mut last_weights_modified = get_modified_time(weights_path);
+
+    loop {
+        // Check for new weights
+        let current_modified = get_modified_time(weights_path);
+        if current_modified > last_weights_modified {
+            model = load_weights(weights_path);
+            last_weights_modified = current_modified;
+            println!("Loaded new weights");
+        }
+
+        // Play one game
+        let examples = play_game(&model, MAX_MOVES);
+
+        // Append to shared buffer
+        append_to_buffer(buffer_path, &examples);
+    }
+}
 ```
 
 ---
@@ -722,18 +795,6 @@ fn evaluate(model: &Model) -> EvalMetrics {
 - `eval/avg_combo_length` - average combo length when combo > 0
 - `eval/back_to_back_count` - number of back-to-back clears
 - `eval/back_to_back_attack` - total attack from B2B bonuses
-
-**Derived strategy metrics**:
-
-- `eval/tetris_rate` - tetrises / total line clears (higher = stacking for 4-wides)
-- `eval/tspin_rate` - t-spin clears / total clears
-- `eval/clean_rate` - (tetrises + t-spins) / total clears (efficient play)
-
-These metrics reveal the learned strategy:
-
-- High `tetris_rate` → model learned to stack and clear 4 lines
-- High `tspin_rate` → model learned T-spin setups
-- High `attack_per_piece` → efficient attacking overall
 
 ---
 
