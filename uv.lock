@@ -45,16 +45,23 @@ wheels = [
 ]
 
 [[package]]
+name = "tetris-core"
+version = "0.1.0"
+source = { directory = "tetris_core" }
+
+[[package]]
 name = "tetris-mcts"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "maturin" },
     { name = "pygame" },
+    { name = "tetris-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "maturin" },
     { name = "pygame" },
+    { name = "tetris-core", directory = "tetris_core" },
 ]
