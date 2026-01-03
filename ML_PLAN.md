@@ -4,7 +4,7 @@ A comprehensive guide to implementing AlphaZero-style training for Tetris, with 
 
 ## Overview
 
-We adapt AlphaZero (Silver et al., 2017) for single-player stochastic Tetris:
+We adapt [AlphaZero](alphazero.pdf) (Silver et al., 2017) for single-player stochastic Tetris:
 
 - **Self-play**: Rust MCTS generates training data
 - **Neural Network**: PyTorch CNN with policy and value heads
