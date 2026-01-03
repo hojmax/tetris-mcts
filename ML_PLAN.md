@@ -51,10 +51,10 @@ Auxiliary Input (51 features: current + hold + hold_avail + next_queue)
               ▼                  ▼
          Policy Head        Value Head
          FC(256, 734)       FC(256, 1)
-         Softmax            Tanh
+         Softmax            (linear)
               │                  │
               ▼                  ▼
-         π(a|s)              V(s) ∈ [-1, 1]
+         π(a|s)              V(s) = predicted attack
 ```
 
 ### Output Space
@@ -62,8 +62,9 @@ Auxiliary Input (51 features: current + hold + hold_avail + next_queue)
 - **Policy head**: 734 outputs (all valid piece placements)
   - Each output corresponds to a unique (x, y, rotation) position
   - Invalid moves are masked before softmax
-- **Value head**: 1 output, predicts expected game outcome
-  - Scaled by max lines possible or normalized score
+- **Value head**: 1 output (linear, no activation)
+  - Predicts discounted cumulative attack from current state
+  - MSE loss against actual attack values
 
 ### Move Indexing
 
@@ -234,6 +235,7 @@ impl BagState {
 ```
 
 **Example lookahead**:
+
 - Current bag: 5/7 consumed, remaining = [T, L]
 - Queue shows: [T, L, I, O, S, ...]
 - Pieces 0-1 (T, L) are deterministic from current bag
@@ -241,6 +243,7 @@ impl BagState {
 - Beyond visible queue: use bag state to compute probabilities
 
 **During MCTS simulation**:
+
 ```rust
 fn simulate_chance_node(state: &GameState) -> Vec<(Piece, f32, GameState)> {
     let bag = &state.bag_state;
@@ -356,6 +359,7 @@ fn get_mcts_policy(root: &MCTSNode, temperature: f32) -> Vec<f32> {
 The reward is **attack** (lines sent to opponent). This is what we maximize.
 
 Attack values per action:
+
 - Single: 0 attack
 - Double: 1 attack
 - Triple: 2 attack
@@ -382,7 +386,7 @@ fn compute_value(game_states: &[GameState], move_idx: usize) -> f32 {
 }
 ```
 
-Note: Value head output uses tanh (range [-1, 1]), so normalize attack values appropriately during training. Typical games might accumulate 50-200 total attack, so divide by a scaling factor (e.g., 100).
+Value head is linear (no activation), so it directly predicts cumulative attack. MSE loss will train it to output the actual expected attack values.
 
 ### Data Format (Save to Disk)
 
@@ -598,18 +602,6 @@ For tiny networks (< 100K params), manual Rust implementation may be faster than
 
 ## 7. Exploration Strategies
 
-### Temperature Annealing
-
-```rust
-fn get_temperature(move_number: u32) -> f32 {
-    if move_number < 15 {
-        1.0  // High exploration early
-    } else {
-        0.1  // Near-deterministic later
-    }
-}
-```
-
 ### Dirichlet Noise at Root
 
 Add noise to prior probabilities at root node for exploration:
@@ -624,21 +616,6 @@ fn add_dirichlet_noise(priors: &mut [f32], alpha: f32, epsilon: f32) {
 
 // AlphaZero uses alpha=0.3 for chess, epsilon=0.25
 // For Tetris with 734 actions, try alpha=0.15, epsilon=0.25
-```
-
-### Forced Playouts
-
-Ensure minimum exploration of all valid moves:
-
-```rust
-fn expand_with_forced_playouts(node: &mut MCTSNode, min_visits: u32) {
-    for action in node.valid_actions() {
-        if node.children[action].visit_count < min_visits {
-            // Force at least min_visits to each action
-            force_visit(&mut node.children[action]);
-        }
-    }
-}
 ```
 
 ---
@@ -682,9 +659,9 @@ fn expand_with_forced_playouts(node: &mut MCTSNode, min_visits: u32) {
 
 ---
 
-## 9. Metrics to Track
+## 9. Metrics to Track (WandB)
 
-### Training Metrics (WandB)
+### Training Metrics
 
 - `loss`, `policy_loss`, `value_loss`
 - `policy_entropy` (should decrease over training)
@@ -694,47 +671,96 @@ fn expand_with_forced_playouts(node: &mut MCTSNode, min_visits: u32) {
 
 ### Self-Play Metrics
 
-- `avg_game_length` (moves per game)
+- `avg_game_length` (pieces placed per game)
 - `avg_attack` (total attack per game)
-- `avg_attack_per_piece` (efficiency metric)
-- `avg_mcts_simulations`
+- `avg_attack_per_piece` (efficiency)
 - `games_per_second`
 
-### Evaluation Metrics
+### Evaluation Metrics (Fixed Seeds)
 
-- `eval_avg_attack` (total attack, no exploration)
-- `eval_max_attack`
-- `eval_game_length`
-- `eval_tetrises` (count of 4-line clears)
-- Compare against: random policy, heuristic policy, previous checkpoints
+**Important**: Use the same set of seeds (e.g., seeds 0-19) for evaluation throughout training. Cap each game at 100 moves for consistent comparison.
+
+```rust
+const EVAL_SEEDS: [u64; 20] = [0, 1, 2, ..., 19];
+const EVAL_MAX_MOVES: u32 = 100;
+
+fn evaluate(model: &Model) -> EvalMetrics {
+    let mut metrics = EvalMetrics::default();
+    for seed in EVAL_SEEDS {
+        let game = play_game_with_seed(model, seed, EVAL_MAX_MOVES, /*no exploration*/);
+        metrics.accumulate(&game);
+    }
+    metrics.average()
+}
+```
+
+**Core metrics** (over 100 moves per seed):
+
+- `eval/avg_attack` - total attack averaged over eval games
+- `eval/max_attack` - best single game
+- `eval/avg_lines` - total lines cleared
+- `eval/attack_per_piece` - attack / 100 moves
+
+**Line clear breakdown** (count per game, averaged):
+
+- `eval/clears_0` - pieces placed with no line clear
+- `eval/clears_1` - singles
+- `eval/clears_2` - doubles
+- `eval/clears_3` - triples
+- `eval/clears_4` - tetrises
+
+**T-spin breakdown**:
+
+- `eval/tspin_mini` - T-spin minis
+- `eval/tspin_single` - T-spin singles
+- `eval/tspin_double` - T-spin doubles
+- `eval/tspin_triple` - T-spin triples
+
+**Combo & back-to-back**:
+
+- `eval/max_combo` - longest combo achieved
+- `eval/avg_combo_length` - average combo length when combo > 0
+- `eval/back_to_back_count` - number of back-to-back clears
+- `eval/back_to_back_attack` - total attack from B2B bonuses
+
+**Derived strategy metrics**:
+
+- `eval/tetris_rate` - tetrises / total line clears (higher = stacking for 4-wides)
+- `eval/tspin_rate` - t-spin clears / total clears
+- `eval/clean_rate` - (tetrises + t-spins) / total clears (efficient play)
+
+These metrics reveal the learned strategy:
+
+- High `tetris_rate` → model learned to stack and clear 4 lines
+- High `tspin_rate` → model learned T-spin setups
+- High `attack_per_piece` → efficient attacking overall
 
 ---
 
 ## 10. Hyperparameter Recommendations
 
-| Parameter           | Initial Value | Notes                                |
-| ------------------- | ------------- | ------------------------------------ |
-| MCTS simulations    | 100           | Increase for stronger play           |
-| c_puct              | 1.5           | Exploration constant                 |
-| Temperature (early) | 1.0           | First 15 moves                       |
-| Temperature (late)  | 0.1           | Move 15+                             |
-| Dirichlet alpha     | 0.15          | Lower than chess due to more actions |
-| Dirichlet epsilon   | 0.25          | Standard AlphaZero value             |
-| Batch size          | 256           |                                      |
-| Learning rate       | 0.001         | With Adam                            |
-| Discount factor     | 0.99          | For value computation                |
-| Replay buffer       | 100K          | Examples, not games                  |
-| Training steps/iter | 1000          |                                      |
-| Games per iteration | 100           |                                      |
+| Parameter           | Initial Value | Notes                                          |
+| ------------------- | ------------- | ---------------------------------------------- |
+| MCTS simulations    | 100           | Increase for stronger play                     |
+| c_puct              | 1.5           | Exploration constant                           |
+| Temperature         | 0             | Argmax (stochastic queue provides exploration) |
+| Dirichlet alpha     | 0.15          | Lower than chess due to more actions           |
+| Dirichlet epsilon   | 0.25          | Standard AlphaZero value                       |
+| Batch size          | 256           |                                                |
+| Learning rate       | 0.001         | With Adam                                      |
+| Discount factor     | 0.99          | For value computation                          |
+| Replay buffer       | 100K          | Examples, not games                            |
+| Training steps/iter | 1000          |                                                |
+| Games per iteration | 100           |                                                |
 
 ---
 
 ## Appendix: Key Differences from Original AlphaZero
 
-1. **Single-player**: No adversarial opponent, value predicts score not win/loss
+1. **Single-player**: No adversarial opponent, value predicts attack not win/loss
 2. **Stochastic**: Must handle random piece spawns with chance nodes
 3. **Action space**: 734 valid placements (vs 4672 for chess)
 4. **Tiny network**: Optimized for CPU inference in Rust
 5. **7-bag randomizer**: Not uniform distribution, must track bag state
 6. **No game symmetry**: Unlike chess/Go, limited board symmetries to exploit
-7. **Variable episode length**: Games can be very short or very long
+7. **Fixed episode length**: All games capped at 100 moves
