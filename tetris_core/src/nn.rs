@@ -7,13 +7,9 @@ use tract_onnx::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, QUEUE_SIZE};
 use crate::env::TetrisEnv;
 use crate::piece::NUM_PIECE_TYPES;
-
-// Constants matching Python network
-const BOARD_HEIGHT: usize = 20;
-const BOARD_WIDTH: usize = 10;
-const QUEUE_SIZE: usize = 5;
 const AUX_FEATURES: usize = 52;  // 7 + 8 + 1 + 35 + 1
 const MAX_MOVES: usize = 100;
 

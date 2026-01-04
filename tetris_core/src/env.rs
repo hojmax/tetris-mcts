@@ -6,6 +6,7 @@
 use pyo3::prelude::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use std::collections::VecDeque;
 
 use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES};
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
@@ -49,7 +50,7 @@ pub struct TetrisEnv {
     board_colors: Vec<Vec<Option<usize>>>,
     current_piece: Option<Piece>,
     /// Queue of upcoming piece types (7-bag system)
-    piece_queue: Vec<usize>,
+    piece_queue: VecDeque<usize>,
     /// Held piece type (None if no piece is held)
     hold_piece: Option<usize>,
     /// The bag position of the held piece (for precise 7-bag tracking)
@@ -105,15 +106,7 @@ impl TetrisEnv {
 
     fn is_valid_position_for(&self, piece: &Piece) -> bool {
         let shape = &TETROMINOS[piece.piece_type][piece.rotation];
-        for (x, y) in get_cells_for_shape(shape, piece.x, piece.y) {
-            if x < 0 || x >= self.width as i32 || y >= self.height as i32 {
-                return false;
-            }
-            if y >= 0 && self.board[y as usize][x as usize] != 0 {
-                return false;
-            }
-        }
-        true
+        self.is_valid_position_for_shape(shape, piece.x, piece.y)
     }
 
     fn is_valid_position_for_shape(&self, shape: &[[u8; 4]; 4], x: i32, y: i32) -> bool {
@@ -131,8 +124,8 @@ impl TetrisEnv {
     /// Ensure the piece queue has at least `count` pieces
     fn fill_queue(&mut self, count: usize) {
         while self.piece_queue.len() < count {
-            let mut bag = generate_bag();
-            self.piece_queue.append(&mut bag);
+            let bag = generate_bag();
+            self.piece_queue.extend(bag);
         }
     }
 
@@ -140,8 +133,8 @@ impl TetrisEnv {
         // Ensure we have enough pieces in the queue (need at least 6 for preview + 1 for current)
         self.fill_queue(7);
 
-        // Take the first piece from the queue
-        let piece_type = self.piece_queue.remove(0);
+        // Take the first piece from the queue (O(1) with VecDeque)
+        let piece_type = self.piece_queue.pop_front().expect("Queue should not be empty after fill_queue");
         let mut piece = Piece::new(piece_type);
 
         // Set spawn position - centrally at top
@@ -163,11 +156,10 @@ impl TetrisEnv {
         self.last_move_was_rotation = false;
         self.last_kick_index = 0;
 
-        // Check if spawn position is valid
-        if self.is_valid_position_for(&piece) {
-            self.current_piece = Some(piece);
-        } else {
-            self.current_piece = Some(piece);
+        // Set piece and check if spawn position is valid
+        let is_valid = self.is_valid_position_for(&piece);
+        self.current_piece = Some(piece);
+        if !is_valid {
             self.game_over = true;
         }
     }
@@ -184,11 +176,10 @@ impl TetrisEnv {
         self.last_move_was_rotation = false;
         self.last_kick_index = 0;
 
-        // Check if spawn position is valid
-        if self.is_valid_position_for(&piece) {
-            self.current_piece = Some(piece);
-        } else {
-            self.current_piece = Some(piece);
+        // Set piece and check if spawn position is valid
+        let is_valid = self.is_valid_position_for(&piece);
+        self.current_piece = Some(piece);
+        if !is_valid {
             self.game_over = true;
         }
     }
@@ -275,7 +266,7 @@ impl TetrisEnv {
     }
 
     fn lock_piece_internal(&mut self) {
-        if let Some(ref piece) = self.current_piece.clone() {
+        if let Some(piece) = self.current_piece.clone() {
             // Check for T-spin before locking
             let (is_tspin, is_mini) = self.check_tspin(&piece);
 
@@ -381,7 +372,7 @@ impl TetrisEnv {
             board: vec![vec![0; width]; height],
             board_colors: vec![vec![None; width]; height],
             current_piece: None,
-            piece_queue: Vec::new(),
+            piece_queue: VecDeque::new(),
             hold_piece: None,
             hold_piece_bag_position: None,
             hold_used: false,
@@ -435,7 +426,7 @@ impl TetrisEnv {
 
     /// Get the next piece (first in queue)
     pub fn get_next_piece(&self) -> Option<Piece> {
-        self.piece_queue.first().map(|&pt| Piece::new(pt))
+        self.piece_queue.front().map(|&pt| Piece::new(pt))
     }
 
     /// Get multiple next pieces from the queue
@@ -542,7 +533,7 @@ impl TetrisEnv {
     /// WARNING: This bypasses normal 7-bag generation. Only use for MCTS simulation.
     pub fn push_queue_piece(&mut self, piece_type: usize) {
         if piece_type < 7 {
-            self.piece_queue.push(piece_type);
+            self.piece_queue.push_back(piece_type);
         }
     }
 
@@ -1038,7 +1029,7 @@ impl TetrisEnv {
 
         if let Some(ref piece) = self.current_piece {
             let board = Board::new(self.width, self.height, self.board.clone());
-            let next_piece = self.piece_queue.first().copied().unwrap_or(0);
+            let next_piece = self.piece_queue.front().copied().unwrap_or(0);
             find_all_placements_with_hold(
                 &board,
                 piece.piece_type,
@@ -1071,7 +1062,7 @@ impl TetrisEnv {
 
     /// Get the current piece queue (for testing)
     #[cfg(test)]
-    pub fn get_piece_queue(&self) -> &Vec<usize> {
+    pub fn get_piece_queue(&self) -> &VecDeque<usize> {
         &self.piece_queue
     }
 

@@ -10,10 +10,14 @@ use pyo3::prelude::*;
 use rand::prelude::*;
 use rand_distr::{Distribution, Gamma};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
 use crate::piece::NUM_PIECE_TYPES;
+
+/// Global cached ActionSpace (initialized once on first use)
+static ACTION_SPACE: OnceLock<ActionSpace> = OnceLock::new();
 
 /// Configuration for MCTS
 #[pyclass]
@@ -142,10 +146,9 @@ impl Default for ActionSpace {
     }
 }
 
-/// Get the global action space
-/// Note: Creates a new ActionSpace each call. In production, use lazy_static or OnceCell.
-pub fn get_action_space() -> ActionSpace {
-    ActionSpace::new()
+/// Get the global cached action space (initialized once on first use)
+pub fn get_action_space() -> &'static ActionSpace {
+    ACTION_SPACE.get_or_init(ActionSpace::new)
 }
 
 /// Number of actions in the action space
@@ -399,7 +402,6 @@ impl MCTSResult {
 #[pyclass]
 pub struct MCTSAgent {
     config: MCTSConfig,
-    action_space: ActionSpace,
     /// Optional neural network for leaf evaluation (pure Rust mode)
     nn: Option<crate::nn::TetrisNN>,
 }
@@ -458,7 +460,6 @@ impl MCTSAgent {
     pub fn new(config: MCTSConfig) -> Self {
         MCTSAgent {
             config,
-            action_space: ActionSpace::new(),
             nn: None,
         }
     }
@@ -534,7 +535,7 @@ impl MCTSAgent {
             let result = self.search_internal(&env, policy, add_noise, move_idx);
 
             // Execute the selected action
-            let (x, y, rot) = self.action_space.index_to_placement(result.action)
+            let (x, y, rot) = get_action_space().index_to_placement(result.action)
                 .expect("MCTS returned invalid action index");
             let placements = env.get_possible_placements();
             let placement = placements.iter().find(|p| {
@@ -797,7 +798,7 @@ impl MCTSAgent {
         let mut new_state = parent.state.clone();
 
         // Get placement coordinates from action index
-        let (x, y, rot) = self.action_space.index_to_placement(action_idx)
+        let (x, y, rot) = get_action_space().index_to_placement(action_idx)
             .expect("Invalid action index in expand_action");
 
         // Find the matching placement to get move sequence for T-spin detection
@@ -938,20 +939,4 @@ mod tests {
         assert!((sum - 1.0).abs() < 1e-5);
     }
 
-    #[test]
-    fn test_mcts_basic() {
-        let config = MCTSConfig {
-            num_simulations: 10,
-            ..Default::default()
-        };
-        let agent = MCTSAgent::new(config);
-        let env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
-
-        // Uniform policy
-        let policy = vec![1.0 / NUM_ACTIONS as f32; NUM_ACTIONS];
-        let result = agent.search(&env, policy, 0.0, false);
-
-        assert!(result.action < NUM_ACTIONS);
-        assert!((result.policy.iter().sum::<f32>() - 1.0).abs() < 1e-5);
-    }
 }

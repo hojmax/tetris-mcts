@@ -272,13 +272,6 @@ impl Piece {
         }
     }
 
-    pub fn get_shape(&self) -> Vec<Vec<u8>> {
-        TETROMINOS[self.piece_type][self.rotation]
-            .iter()
-            .map(|row| row.to_vec())
-            .collect()
-    }
-
     pub fn get_color(&self) -> (u8, u8, u8) {
         COLORS[self.piece_type]
     }
@@ -378,14 +371,6 @@ mod tests {
             let base_cells: Vec<(i32, i32)> = get_cells_for_shape(&TETROMINOS[1][0], 0, 0);
             assert_eq!(cells, base_cells, "O piece rotation {} should match spawn state", rotation);
         }
-    }
-
-    #[test]
-    fn test_get_shape() {
-        let piece = Piece::new(2); // T piece
-        let shape = piece.get_shape();
-        assert_eq!(shape.len(), 4);
-        assert_eq!(shape[0].len(), 4);
     }
 
     #[test]
