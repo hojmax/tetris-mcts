@@ -35,49 +35,6 @@ impl TetrisNN {
         })
     }
 
-    /// Run inference on a single state
-    ///
-    /// Returns (policy, value) where:
-    /// - policy: Vec<f32> of length 734 (softmax probabilities)
-    /// - value: f32 predicted cumulative attack
-    pub fn predict(&self, env: &TetrisEnv, move_number: usize) -> TractResult<(Vec<f32>, f32)> {
-        let (board_tensor, aux_tensor) = encode_state(env, move_number);
-
-        // Create tract tensors with batch dimension
-        let board = tract_ndarray::Array4::from_shape_vec(
-            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
-            board_tensor,
-        )?.into_tensor();
-
-        let aux = tract_ndarray::Array2::from_shape_vec(
-            (1, AUX_FEATURES),
-            aux_tensor,
-        )?.into_tensor();
-
-        // Run inference
-        let outputs = self.model.run(tvec!(board.into(), aux.into()))?;
-
-        // Extract policy logits (shape: 1, 734)
-        let policy_logits: Vec<f32> = outputs[0]
-            .to_array_view::<f32>()?
-            .iter()
-            .copied()
-            .collect();
-
-        // Extract value (shape: 1, 1)
-        let value = outputs[1]
-            .to_array_view::<f32>()?
-            .iter()
-            .next()
-            .copied()
-            .unwrap_or(0.0);
-
-        // Apply softmax to policy
-        let policy = softmax(&policy_logits);
-
-        Ok((policy, value))
-    }
-
     /// Run inference with action mask applied
     pub fn predict_masked(
         &self,
@@ -172,13 +129,6 @@ fn encode_state(env: &TetrisEnv, move_number: usize) -> (Vec<f32>, Vec<f32>) {
     (board_tensor, aux)
 }
 
-/// Softmax function
-fn softmax(logits: &[f32]) -> Vec<f32> {
-    let max_logit = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-    let exp_sum: f32 = logits.iter().map(|&x| (x - max_logit).exp()).sum();
-    logits.iter().map(|&x| (x - max_logit).exp() / exp_sum).collect()
-}
-
 /// Softmax with mask (invalid actions get 0 probability)
 fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
     let max_logit = logits
@@ -237,16 +187,6 @@ mod tests {
 
         assert_eq!(board.len(), BOARD_HEIGHT * BOARD_WIDTH);
         assert_eq!(aux.len(), AUX_FEATURES);
-    }
-
-    #[test]
-    fn test_softmax() {
-        let logits = vec![1.0, 2.0, 3.0];
-        let probs = softmax(&logits);
-
-        assert!((probs.iter().sum::<f32>() - 1.0).abs() < 1e-5);
-        assert!(probs[2] > probs[1]);
-        assert!(probs[1] > probs[0]);
     }
 
     #[test]

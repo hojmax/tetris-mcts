@@ -92,16 +92,6 @@ impl Board {
         true
     }
 
-    /// Check if a piece at the given state is grounded (cannot move down)
-    fn is_grounded(&self, piece_type: usize, state: &PieceState) -> bool {
-        let below = PieceState {
-            x: state.x,
-            y: state.y + 1,
-            rotation: state.rotation,
-        };
-        !self.is_valid_position(piece_type, &below)
-    }
-
     /// Get the final y position after hard dropping from a state
     fn get_drop_y(&self, piece_type: usize, state: &PieceState) -> i32 {
         let mut y = state.y;

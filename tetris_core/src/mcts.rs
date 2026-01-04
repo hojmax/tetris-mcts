@@ -263,25 +263,13 @@ impl DecisionNode {
 
         // Normalize priors over valid actions
         let sum: f32 = self.action_priors.iter().sum();
-        if sum > 0.0 {
-            for p in &mut self.action_priors {
-                *p /= sum;
-            }
-        } else {
-            // Uniform if all zeros
-            let uniform = 1.0 / self.valid_actions.len() as f32;
-            for p in &mut self.action_priors {
-                *p = uniform;
-            }
+        for p in &mut self.action_priors {
+            *p /= sum;
         }
     }
 
     /// Add Dirichlet noise to priors (for root exploration)
     pub fn add_dirichlet_noise(&mut self, alpha: f32, epsilon: f32) {
-        if self.action_priors.is_empty() {
-            return;
-        }
-
         let noise = sample_dirichlet(alpha, self.action_priors.len());
         for (prior, n) in self.action_priors.iter_mut().zip(noise.iter()) {
             *prior = (1.0 - epsilon) * *prior + epsilon * n;
@@ -289,17 +277,13 @@ impl DecisionNode {
     }
 
     /// Select best action using PUCT formula
-    pub fn select_action(&self, c_puct: f32) -> Option<usize> {
-        if self.valid_actions.is_empty() {
-            return None;
-        }
-
+    pub fn select_action(&self, c_puct: f32) -> usize {
         let sqrt_total = (self.visit_count as f32).sqrt();
-        let mut best_action = None;
+        let mut best_action = self.valid_actions[0];
         let mut best_value = f32::NEG_INFINITY;
 
         for (i, &action_idx) in self.valid_actions.iter().enumerate() {
-            let prior = self.action_priors.get(i).copied().unwrap_or(1.0 / self.valid_actions.len() as f32);
+            let prior = self.action_priors[i];
 
             let (q, n) = if let Some(child) = self.children.get(&action_idx) {
                 (child.mean_value(), child.visit_count())
@@ -313,7 +297,7 @@ impl DecisionNode {
 
             if value > best_value {
                 best_value = value;
-                best_action = Some(action_idx);
+                best_action = action_idx;
             }
         }
 
@@ -343,18 +327,6 @@ impl ChanceNode {
             bag_remaining,
             piece_order,
             round_robin_idx: 0,
-        }
-    }
-
-    /// Get probability for each piece type based on bag state
-    pub fn get_piece_probabilities(&self) -> Vec<(usize, f32)> {
-        if self.bag_remaining.is_empty() {
-            // New bag - all pieces equally likely
-            (0..NUM_PIECE_TYPES).map(|p| (p, 1.0 / NUM_PIECE_TYPES as f32)).collect()
-        } else {
-            // Only pieces in remaining bag
-            let prob = 1.0 / self.bag_remaining.len() as f32;
-            self.bag_remaining.iter().map(|&p| (p, prob)).collect()
         }
     }
 
@@ -769,10 +741,7 @@ impl MCTSAgent {
             }
 
             // Select action
-            let action_idx = match node.select_action(self.config.c_puct) {
-                Some(a) => a,
-                None => break,
-            };
+            let action_idx = node.select_action(self.config.c_puct);
 
             // Check if child exists
             if !node.children.contains_key(&action_idx) {
