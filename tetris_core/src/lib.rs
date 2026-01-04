@@ -14,6 +14,7 @@
 
 use pyo3::prelude::*;
 
+pub mod constants;
 pub mod env;
 pub mod kicks;
 pub mod mcts;

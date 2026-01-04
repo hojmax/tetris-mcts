@@ -163,7 +163,7 @@ pub fn get_action_mask(env: &TetrisEnv) -> Vec<bool> {
     use crate::mcts::{get_action_space, NUM_ACTIONS};
 
     let action_space = get_action_space();
-    let placements = env.get_all_placements();
+    let placements = env.get_possible_placements();
 
     let mut mask = vec![false; NUM_ACTIONS];
 

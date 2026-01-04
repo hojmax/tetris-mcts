@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
+use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES};
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::piece::{get_cells_for_shape, Piece, COLORS, TETROMINOS};
 use crate::scoring::{
@@ -91,7 +92,7 @@ impl TetrisEnv {
     /// Clear lock delay state (called when piece spawns)
     fn clear_lock_delay(&mut self) {
         self.lock_delay_ms = None;
-        self.lock_moves_remaining = 15;
+        self.lock_moves_remaining = DEFAULT_LOCK_MOVES;
     }
 
     fn is_valid_position_for(&self, piece: &Piece) -> bool {
@@ -369,8 +370,8 @@ impl TetrisEnv {
             hold_piece: None,
             hold_used: false,
             lock_delay_ms: None,
-            lock_delay_max: 500, // 500ms lock delay
-            lock_moves_remaining: 15, // 15 moves/rotates allowed during lock delay
+            lock_delay_max: DEFAULT_LOCK_DELAY_MS,
+            lock_moves_remaining: DEFAULT_LOCK_MOVES,
             last_move_was_rotation: false,
             last_kick_index: 0,
             last_attack_result: None,
@@ -392,7 +393,7 @@ impl TetrisEnv {
         self.hold_piece = None;
         self.hold_used = false;
         self.lock_delay_ms = None;
-        self.lock_moves_remaining = 15;
+        self.lock_moves_remaining = DEFAULT_LOCK_MOVES;
         self.last_move_was_rotation = false;
         self.last_kick_index = 0;
         self.last_attack_result = None;
@@ -777,7 +778,7 @@ impl TetrisEnv {
     /// Directly place the current piece at the specified position and lock it.
     ///
     /// This is more efficient than stepping through individual moves when you
-    /// already know the final placement from get_all_placements().
+    /// already know the final placement from get_possible_placements().
     ///
     /// Args:
     ///     x: The x position (column) for the piece
@@ -794,13 +795,13 @@ impl TetrisEnv {
         self.place_piece_internal(x, y, rotation, None)
     }
 
-    /// Execute a placement from get_all_placements() with full T-spin detection.
+    /// Execute a placement from get_possible_placements() with full T-spin detection.
     ///
     /// This uses the move sequence to properly detect T-spins including
     /// the mini vs proper distinction based on which kick was used.
     ///
     /// Args:
-    ///     placement: A Placement object from get_all_placements()
+    ///     placement: A Placement object from get_possible_placements()
     ///
     /// Returns:
     ///     The attack gained from this placement (including line clears)
@@ -904,7 +905,7 @@ impl TetrisEnv {
     ///
     /// The move sequence uses these action codes:
     /// 1=left, 2=right, 3=down, 4=rotate_cw, 5=rotate_ccw, 6=hard_drop
-    pub fn get_all_placements(&self) -> Vec<crate::moves::Placement> {
+    pub fn get_possible_placements(&self) -> Vec<crate::moves::Placement> {
         use crate::moves::{find_all_placements, Board};
 
         if let Some(ref piece) = self.current_piece {
@@ -936,12 +937,12 @@ impl TetrisEnv {
     ///
     /// Returns a tuple of (current_piece_placements, hold_piece_placements)
     /// If hold has already been used this turn, hold_piece_placements will be empty.
-    pub fn get_all_placements_with_hold(&self) -> (Vec<crate::moves::Placement>, Vec<crate::moves::Placement>) {
+    pub fn get_possible_placements_with_hold(&self) -> (Vec<crate::moves::Placement>, Vec<crate::moves::Placement>) {
         use crate::moves::{find_all_placements_with_hold, Board};
 
         if self.hold_used {
             // Can't use hold again this turn
-            return (self.get_all_placements(), Vec::new());
+            return (self.get_possible_placements(), Vec::new());
         }
 
         if let Some(ref piece) = self.current_piece {

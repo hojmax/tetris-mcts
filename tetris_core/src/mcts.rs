@@ -11,6 +11,7 @@ use rand::prelude::*;
 use rand_distr::{Distribution, Gamma};
 use std::collections::HashMap;
 
+use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
 use crate::piece::NUM_PIECE_TYPES;
 
@@ -113,7 +114,7 @@ impl ActionSpace {
                 if shape[dy][dx] == 1 {
                     let cx = x + dx as i32;
                     let cy = y + dy as i32;
-                    if cx < 0 || cx >= 10 || cy < 0 || cy >= 20 {
+                    if cx < 0 || cx >= BOARD_WIDTH as i32 || cy < 0 || cy >= BOARD_HEIGHT as i32 {
                         return false;
                     }
                 }
@@ -342,7 +343,7 @@ impl ChanceNode {
 /// Get valid action indices for a state
 pub fn get_valid_action_indices(env: &TetrisEnv) -> Vec<usize> {
     let action_space = get_action_space();
-    let placements = env.get_all_placements();
+    let placements = env.get_possible_placements();
 
     let mut indices = Vec::new();
     for p in placements {
@@ -494,20 +495,18 @@ impl MCTSAgent {
     /// Args:
     ///     max_moves: Maximum moves per game (default 100)
     ///     add_noise: Whether to add Dirichlet noise (for exploration)
-    ///     drop_last_n: Drop last N moves from training data (incomplete values)
     ///
     /// Returns:
     ///     GameResult with training examples, or None if no model loaded
-    #[pyo3(signature = (max_moves=100, add_noise=true, drop_last_n=10))]
+    #[pyo3(signature = (max_moves=100, add_noise=true))]
     pub fn play_game(
         &self,
         max_moves: u32,
         add_noise: bool,
-        drop_last_n: u32,
     ) -> Option<GameResult> {
         let nn = self.nn.as_ref()?;
 
-        let mut env = TetrisEnv::new(10, 20);
+        let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
         let mut states: Vec<(TetrisEnv, u32, Vec<f32>, Vec<bool>)> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
 
@@ -519,14 +518,14 @@ impl MCTSAgent {
             // Get action mask
             let mask = crate::nn::get_action_mask(&env);
             if !mask.iter().any(|&x| x) {
-                break; // No valid actions
+                // This should only happen if game is over - if not, it's a bug
+                debug_assert!(env.game_over, "No valid actions but game not over - this is a bug");
+                break;
             }
 
             // Get NN policy and value for root
-            let (policy, value) = match nn.predict_masked(&env, move_idx as usize, &mask) {
-                Ok(pv) => pv,
-                Err(_) => break,
-            };
+            let (policy, value) = nn.predict_masked(&env, move_idx as usize, &mask)
+                .expect("Neural network prediction failed during self-play");
 
             // Store state before making move
             states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
@@ -535,15 +534,13 @@ impl MCTSAgent {
             let result = self.search_internal(&env, policy, value, add_noise, move_idx);
 
             // Execute the selected action
-            let (x, y, rot) = self.action_space.index_to_placement(result.action).unwrap_or((0, 0, 0));
-            let placements = env.get_all_placements();
-            let attack = if let Some(placement) = placements.iter().find(|p| {
+            let (x, y, rot) = self.action_space.index_to_placement(result.action)
+                .expect("MCTS returned invalid action index");
+            let placements = env.get_possible_placements();
+            let placement = placements.iter().find(|p| {
                 p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
-            }) {
-                env.execute_placement(placement)
-            } else {
-                env.place_piece(x, y, rot)
-            };
+            }).expect("MCTS selected action not found in valid placements");
+            let attack = env.execute_placement(placement);
             attacks.push(attack);
 
             // Update stored policy with MCTS policy
@@ -554,20 +551,19 @@ impl MCTSAgent {
 
         // Compute value targets (cumulative attack from each position)
         let num_states = states.len();
+        debug_assert_eq!(states.len(), attacks.len(), "States and attacks should have same length");
+
         let mut values = vec![0.0f32; num_states];
         let mut cumulative = 0u32;
         for i in (0..num_states).rev() {
-            if i < attacks.len() {
-                cumulative += attacks[i];
-            }
+            cumulative += attacks[i];
             values[i] = cumulative as f32;
         }
 
-        // Build training examples (drop last N moves)
-        let usable = num_states.saturating_sub(drop_last_n as usize);
-        let mut examples = Vec::with_capacity(usable);
+        // Build training examples (use all moves)
+        let mut examples = Vec::with_capacity(num_states);
 
-        for i in 0..usable {
+        for i in 0..num_states {
             let (ref state, move_num, ref policy, ref mask) = states[i];
 
             let board: Vec<u8> = state.get_board()
@@ -615,22 +611,20 @@ impl MCTSAgent {
     ///     num_games: Number of games to play
     ///     max_moves: Maximum moves per game
     ///     add_noise: Whether to add Dirichlet noise
-    ///     drop_last_n: Drop last N moves from each game
     ///
     /// Returns:
     ///     List of all training examples from all games
-    #[pyo3(signature = (num_games, max_moves=100, add_noise=true, drop_last_n=10))]
+    #[pyo3(signature = (num_games, max_moves=100, add_noise=true))]
     pub fn generate_games(
         &self,
         num_games: u32,
         max_moves: u32,
         add_noise: bool,
-        drop_last_n: u32,
     ) -> Vec<TrainingExample> {
         let mut all_examples = Vec::new();
 
         for _ in 0..num_games {
-            if let Some(result) = self.play_game(max_moves, add_noise, drop_last_n) {
+            if let Some(result) = self.play_game(max_moves, add_noise) {
                 all_examples.extend(result.examples);
             }
         }
@@ -667,15 +661,22 @@ impl MCTSAgent {
         let mut result_policy = vec![0.0; NUM_ACTIONS];
         let total_visits: u32 = root.children.values().map(|c| c.visit_count()).sum();
 
-        if total_visits > 0 {
+        debug_assert!(total_visits > 0, "MCTS should have visits after simulations");
+
+        let action = if self.config.temperature == 0.0 {
+            // Argmax: find the action with most visits
+            let (best_action, _) = root.children.iter()
+                .max_by_key(|(_, child)| child.visit_count())
+                .map(|(&idx, child)| (idx, child.visit_count()))
+                .expect("MCTS root should have children after simulations");
+
+            // One-hot policy for argmax
+            result_policy[best_action] = 1.0;
+            best_action
+        } else {
+            // Proportional to visit_count ^ (1/temp)
             for (&action_idx, child) in &root.children {
-                if self.config.temperature == 0.0 {
-                    // Argmax
-                    result_policy[action_idx] = if child.visit_count() == total_visits { 1.0 } else { 0.0 };
-                } else {
-                    // Proportional to visit_count ^ (1/temp)
-                    result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / self.config.temperature);
-                }
+                result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / self.config.temperature);
             }
 
             // Normalize
@@ -685,16 +686,7 @@ impl MCTSAgent {
                     *p /= sum;
                 }
             }
-        } else {
-            // Use prior policy if no visits
-            result_policy = policy;
-        }
 
-        // Select action
-        let action = if self.config.temperature == 0.0 {
-            // Argmax
-            result_policy.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i).unwrap_or(0)
-        } else {
             // Sample from policy
             sample_action(&result_policy)
         };
@@ -750,15 +742,12 @@ impl MCTSAgent {
                 node.children.insert(action_idx, child);
 
                 // Get attack and leaf state from the new node
-                let (leaf_attack, leaf_value) = match node.children.get(&action_idx) {
-                    Some(MCTSNode::Chance(chance_node)) => {
-                        let attack = chance_node.attack as f32;
-                        // Evaluate leaf with NN if available
-                        let value = self.evaluate_leaf(&chance_node.state, root_move_number + depth + 1);
-                        (attack, value)
-                    }
-                    _ => (0.0, 0.0),
+                let chance_node = match node.children.get(&action_idx) {
+                    Some(MCTSNode::Chance(cn)) => cn,
+                    _ => panic!("BUG: expand_action should create ChanceNode"),
                 };
+                let leaf_attack = chance_node.attack as f32;
+                let leaf_value = self.evaluate_leaf(&chance_node.state, root_move_number + depth + 1);
 
                 // Add this step to path with its attack
                 path.push((current, action_idx, leaf_attack));
@@ -769,50 +758,40 @@ impl MCTSAgent {
             }
 
             // Traverse to child - get attack at this step
-            let step_attack = match node.children.get(&action_idx) {
-                Some(MCTSNode::Chance(chance_node)) => chance_node.attack as f32,
-                _ => 0.0,
+            let chance_node = match node.children.get_mut(&action_idx) {
+                Some(MCTSNode::Chance(cn)) => cn,
+                _ => panic!("BUG: Decision node child should be ChanceNode"),
             };
+            let step_attack = chance_node.attack as f32;
             path.push((current, action_idx, step_attack));
             depth += 1;
 
-            match node.children.get_mut(&action_idx) {
-                Some(MCTSNode::Chance(chance_node)) => {
-                    // Round-robin piece selection (randomized order, balanced exploration)
-                    let piece = chance_node.select_piece_round_robin();
+            // Round-robin piece selection (randomized order, balanced exploration)
+            let piece = chance_node.select_piece_round_robin();
 
-                    // Get or create decision node for this piece
-                    if !chance_node.children.contains_key(&piece) {
-                        let decision_child = self.expand_chance(chance_node, piece, root_move_number + depth);
-                        chance_node.children.insert(piece, decision_child);
-                    }
+            // Get or create decision node for this piece
+            if !chance_node.children.contains_key(&piece) {
+                let decision_child = self.expand_chance(chance_node, piece, root_move_number + depth);
+                chance_node.children.insert(piece, decision_child);
+            }
 
-                    match chance_node.children.get_mut(&piece) {
-                        Some(MCTSNode::Decision(decision_node)) => {
-                            current = decision_node as *mut DecisionNode;
-                        }
-                        _ => break,
-                    }
+            match chance_node.children.get_mut(&piece) {
+                Some(MCTSNode::Decision(decision_node)) => {
+                    current = decision_node as *mut DecisionNode;
                 }
-                _ => break,
+                _ => panic!("BUG: ChanceNode child should be DecisionNode"),
             }
         }
-
-        // Terminal or no valid actions - backpropagate with root value as fallback
-        self.backup_with_value(&path, root_value);
     }
 
     /// Evaluate a leaf state with the neural network
     fn evaluate_leaf(&self, env: &TetrisEnv, move_number: u32) -> f32 {
-        if let Some(ref nn) = self.nn {
-            // Use NN to evaluate
-            let mask = crate::nn::get_action_mask(env);
-            if let Ok((_, value)) = nn.predict_masked(env, move_number as usize, &mask) {
-                return value;
-            }
-        }
-        // No NN or evaluation failed - return 0 (no estimated future value)
-        0.0
+        let nn = self.nn.as_ref()
+            .expect("Neural network required for MCTS leaf evaluation");
+        let mask = crate::nn::get_action_mask(env);
+        let (_, value) = nn.predict_masked(env, move_number as usize, &mask)
+            .expect("Neural network prediction failed during leaf evaluation");
+        value
     }
 
     /// Expand an action from a decision node (creates chance node)
@@ -820,19 +799,15 @@ impl MCTSAgent {
         let mut new_state = parent.state.clone();
 
         // Get placement coordinates from action index
-        let (x, y, rot) = self.action_space.index_to_placement(action_idx).unwrap_or((0, 0, 0));
+        let (x, y, rot) = self.action_space.index_to_placement(action_idx)
+            .expect("Invalid action index in expand_action");
 
         // Find the matching placement to get move sequence for T-spin detection
-        let placements = new_state.get_all_placements();
-        let attack = if let Some(placement) = placements.iter().find(|p| {
+        let placements = new_state.get_possible_placements();
+        let placement = placements.iter().find(|p| {
             p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
-        }) {
-            // Use execute_placement for proper T-spin detection
-            new_state.execute_placement(placement)
-        } else {
-            // Fallback to direct placement
-            new_state.place_piece(x, y, rot)
-        };
+        }).expect("Action not found in valid placements during expansion");
+        let attack = new_state.execute_placement(placement);
 
         // Compute remaining bag (simplified - just use all pieces)
         // In a real implementation, we'd track the 7-bag state
@@ -846,24 +821,19 @@ impl MCTSAgent {
         let mut new_state = parent.state.clone();
 
         // Set the current piece to the sampled piece type
-        // This allows MCTS to explore different possible next pieces
+        // TODO: This is conceptually wrong - we should be adding pieces to end of queue,
+        // not changing the current piece. See POSSIBLE_ADDITIONS.md for details.
         new_state.set_current_piece_type(piece);
 
         let mut node = DecisionNode::new(new_state.clone(), move_number);
 
-        // Set priors from neural network if available, otherwise uniform
-        if let Some(ref nn) = self.nn {
-            let mask = crate::nn::get_action_mask(&new_state);
-            if let Ok((policy, _)) = nn.predict_masked(&new_state, move_number as usize, &mask) {
-                node.set_priors(&policy);
-            } else {
-                let uniform = 1.0 / node.valid_actions.len().max(1) as f32;
-                node.action_priors = vec![uniform; node.valid_actions.len()];
-            }
-        } else {
-            let uniform = 1.0 / node.valid_actions.len().max(1) as f32;
-            node.action_priors = vec![uniform; node.valid_actions.len()];
-        }
+        // Set priors from neural network
+        let nn = self.nn.as_ref()
+            .expect("Neural network required for MCTS chance node expansion");
+        let mask = crate::nn::get_action_mask(&new_state);
+        let (policy, _) = nn.predict_masked(&new_state, move_number as usize, &mask)
+            .expect("Neural network prediction failed during chance node expansion");
+        node.set_priors(&policy);
 
         MCTSNode::Decision(node)
     }
@@ -875,6 +845,19 @@ impl MCTSAgent {
     ///
     /// This ensures consistent value estimates regardless of depth - a node at depth 5
     /// and depth 50 will have comparable Q values if the positions are equally good.
+    ///
+    /// ## No double counting
+    /// The path contains only DecisionNode pointers. For each entry (node, action, _):
+    /// - We update `node.children[action]` (a ChanceNode)
+    /// - We update `node` itself (a DecisionNode)
+    ///
+    /// These are DIFFERENT objects. The next entry's "node" is a child of the previous
+    /// ChanceNode, not the ChanceNode itself:
+    /// ```text
+    /// root (DecisionNode) ──action_A──> ChanceNode_A ──piece_X──> node_B (DecisionNode)
+    /// path[0] = (root, action_A)                                  path[1] = (node_B, action_B)
+    /// ```
+    /// Each node is updated exactly once.
     ///
     /// Args:
     ///     path: List of (node_ptr, action_idx, attack_at_step)
@@ -888,7 +871,7 @@ impl MCTSAgent {
         let total_attack: f32 = path.iter().map(|(_, _, reward)| reward).sum();
         let total_value = total_attack + leaf_value;
 
-        // All nodes get the same total value
+        // Update each DecisionNode and its child ChanceNode (no double counting - see doc above)
         for &(node_ptr, action_idx, _) in path.iter() {
             let node = unsafe { &mut *node_ptr };
 
@@ -962,7 +945,7 @@ mod tests {
             ..Default::default()
         };
         let agent = MCTSAgent::new(config);
-        let env = TetrisEnv::new(10, 20);
+        let env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
 
         // Uniform policy
         let policy = vec![1.0 / NUM_ACTIONS as f32; NUM_ACTIONS];
