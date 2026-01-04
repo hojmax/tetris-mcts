@@ -52,6 +52,8 @@ pub struct TetrisEnv {
     piece_queue: Vec<usize>,
     /// Held piece type (None if no piece is held)
     hold_piece: Option<usize>,
+    /// The bag position of the held piece (for precise 7-bag tracking)
+    hold_piece_bag_position: Option<u32>,
     /// Whether hold has been used for the current piece (can only hold once per piece)
     hold_used: bool,
     /// Lock delay timer in milliseconds (None = piece not grounded)
@@ -67,8 +69,11 @@ pub struct TetrisEnv {
     /// Last attack result from line clear
     last_attack_result: Option<AttackResult>,
     /// Total pieces spawned (including current). Used for 7-bag tracking.
-    /// Position in current bag cycle = pieces_spawned % 7
+    /// This is 1-indexed: after spawning the first piece, pieces_spawned = 1.
     pieces_spawned: u32,
+    /// The bag position (0-indexed global position) of the current piece.
+    /// For the first piece spawned, this is 0.
+    current_piece_bag_position: u32,
 }
 
 // Internal helper methods (not exposed to Python)
@@ -143,6 +148,10 @@ impl TetrisEnv {
         piece.x = (self.width as i32 - 4) / 2;
         piece.y = 0;
         piece.rotation = 0;
+
+        // Track bag position BEFORE incrementing pieces_spawned
+        // The piece we're spawning was at queue position 0, which is global position pieces_spawned
+        self.current_piece_bag_position = self.pieces_spawned;
 
         // Track pieces spawned for 7-bag state
         self.pieces_spawned += 1;
@@ -374,6 +383,7 @@ impl TetrisEnv {
             current_piece: None,
             piece_queue: Vec::new(),
             hold_piece: None,
+            hold_piece_bag_position: None,
             hold_used: false,
             lock_delay_ms: None,
             lock_delay_max: DEFAULT_LOCK_DELAY_MS,
@@ -382,6 +392,7 @@ impl TetrisEnv {
             last_kick_index: 0,
             last_attack_result: None,
             pieces_spawned: 0,
+            current_piece_bag_position: 0,
         };
         env.spawn_piece_internal();
         env
@@ -398,6 +409,7 @@ impl TetrisEnv {
         self.current_piece = None;
         self.piece_queue.clear();
         self.hold_piece = None;
+        self.hold_piece_bag_position = None;
         self.hold_used = false;
         self.lock_delay_ms = None;
         self.lock_moves_remaining = DEFAULT_LOCK_MOVES;
@@ -405,6 +417,7 @@ impl TetrisEnv {
         self.last_kick_index = 0;
         self.last_attack_result = None;
         self.pieces_spawned = 0;
+        self.current_piece_bag_position = 0;
         self.spawn_piece_internal();
     }
 
@@ -473,7 +486,6 @@ impl TetrisEnv {
         // we need to look at which bag that position falls into and what's already used.
         //
         // Key insight: pieces at positions 0-6 are from bag 0, 7-13 from bag 1, etc.
-        // The current piece is at position (pieces_spawned - 1).
         // Queue positions are: pieces_spawned, pieces_spawned+1, ..., pieces_spawned+queue_len-1
         // The next piece to be added would be at position: pieces_spawned + queue_len
 
@@ -489,22 +501,31 @@ impl TetrisEnv {
         // Find which pieces are already used in this bag
         // The bag starts at position: bag_number * 7
         let bag_start = bag_number * 7;
+        let bag_end = bag_start + 7;
 
         // Pieces in current bag so far are those from bag_start to next_position-1
         let mut used_in_bag: Vec<usize> = Vec::new();
 
-        // Check current piece if it's in this bag
-        let current_pos = self.pieces_spawned.saturating_sub(1) as usize;
-        if current_pos >= bag_start && current_pos < bag_start + 7 {
+        // Check current piece if it's in this bag (using precise bag position)
+        let current_bag_pos = self.current_piece_bag_position as usize;
+        if current_bag_pos >= bag_start && current_bag_pos < bag_end {
             if let Some(ref piece) = self.current_piece {
                 used_in_bag.push(piece.piece_type);
+            }
+        }
+
+        // Check held piece if it's in this bag (using precise bag position)
+        if let (Some(hold_type), Some(hold_bag_pos)) = (self.hold_piece, self.hold_piece_bag_position) {
+            let hold_pos = hold_bag_pos as usize;
+            if hold_pos >= bag_start && hold_pos < bag_end {
+                used_in_bag.push(hold_type);
             }
         }
 
         // Check queue pieces
         for (i, &piece_type) in self.piece_queue.iter().enumerate() {
             let piece_pos = self.pieces_spawned as usize + i;
-            if piece_pos >= bag_start && piece_pos < bag_start + 7 {
+            if piece_pos >= bag_start && piece_pos < bag_end {
                 used_in_bag.push(piece_type);
             }
         }
@@ -534,15 +555,23 @@ impl TetrisEnv {
 
         if let Some(ref current) = self.current_piece {
             let current_type = current.piece_type;
+            let current_bag_pos = self.current_piece_bag_position;
 
             if let Some(held_type) = self.hold_piece {
                 // Swap: put current in hold, spawn held piece
+                // The held piece's bag position becomes the current piece's bag position
+                let held_bag_pos = self.hold_piece_bag_position
+                    .expect("hold_piece_bag_position should be set when hold_piece is Some");
+
                 self.hold_piece = Some(current_type);
+                self.hold_piece_bag_position = Some(current_bag_pos);
+                self.current_piece_bag_position = held_bag_pos;
                 self.hold_used = true;
                 self.spawn_piece_from_type(held_type);
             } else {
                 // No piece in hold: put current in hold, spawn next from queue
                 self.hold_piece = Some(current_type);
+                self.hold_piece_bag_position = Some(current_bag_pos);
                 self.hold_used = true;
                 self.spawn_piece_internal();
             }
@@ -907,8 +936,10 @@ impl TetrisEnv {
         }
 
         if let Some(ref piece) = self.current_piece {
+            debug_assert!(rotation < 4, "Invalid rotation: {}", rotation);
+
             let piece_type = piece.piece_type;
-            let shape = &TETROMINOS[piece_type][rotation % 4];
+            let shape = &TETROMINOS[piece_type][rotation];
 
             // Verify the position is valid
             if !self.is_valid_position_for_shape(shape, x, y) {
@@ -919,7 +950,7 @@ impl TetrisEnv {
             let mut new_piece = piece.clone();
             new_piece.x = x;
             new_piece.y = y;
-            new_piece.rotation = rotation % 4;
+            new_piece.rotation = rotation;
             self.current_piece = Some(new_piece);
 
             // Use the actual kick info from move generation
