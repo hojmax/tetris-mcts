@@ -3,3 +3,4 @@ tetris_core/target/
 .env
 *.egg-info/
 __pycache__/
+checkpoints
