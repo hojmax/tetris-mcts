@@ -8,7 +8,7 @@ import pygame
 import sys
 
 try:
-    from tetris_core import TetrisEnv, Piece
+    from tetris_core import TetrisEnv
 except ImportError:
     print("Error: tetris_core module not found.")
     print("Please build and install it first:")
@@ -109,37 +109,41 @@ class TetrisGame:
                 if self.inspect_mode:
                     if event.key == pygame.K_LEFT:
                         if self.placements:
-                            self.placement_index = (self.placement_index - 1) % len(self.placements)
+                            self.placement_index = (self.placement_index - 1) % len(
+                                self.placements
+                            )
                     elif event.key == pygame.K_RIGHT:
                         if self.placements:
-                            self.placement_index = (self.placement_index + 1) % len(self.placements)
+                            self.placement_index = (self.placement_index + 1) % len(
+                                self.placements
+                            )
                     continue
 
                 if event.key == pygame.K_LEFT:
                     self.left_held = True
                     self.env.move_left()
                     self.key_states[pygame.K_LEFT] = {
-                        'pressed_time': current_time,
-                        'das_charged': False,
-                        'last_move_time': current_time
+                        "pressed_time": current_time,
+                        "das_charged": False,
+                        "last_move_time": current_time,
                     }
 
                 elif event.key == pygame.K_RIGHT:
                     self.right_held = True
                     self.env.move_right()
                     self.key_states[pygame.K_RIGHT] = {
-                        'pressed_time': current_time,
-                        'das_charged': False,
-                        'last_move_time': current_time
+                        "pressed_time": current_time,
+                        "das_charged": False,
+                        "last_move_time": current_time,
                     }
 
                 elif event.key == pygame.K_DOWN:
                     self.down_held = True
                     self.env.move_down()
                     self.key_states[pygame.K_DOWN] = {
-                        'pressed_time': current_time,
-                        'das_charged': False,
-                        'last_move_time': current_time
+                        "pressed_time": current_time,
+                        "das_charged": False,
+                        "last_move_time": current_time,
                     }
 
                 elif event.key == pygame.K_UP or event.key == pygame.K_s:
@@ -182,8 +186,8 @@ class TetrisGame:
         horizontal_key = None
         if pygame.K_LEFT in self.key_states and pygame.K_RIGHT in self.key_states:
             # Both held - use most recently pressed
-            left_time = self.key_states[pygame.K_LEFT]['pressed_time']
-            right_time = self.key_states[pygame.K_RIGHT]['pressed_time']
+            left_time = self.key_states[pygame.K_LEFT]["pressed_time"]
+            right_time = self.key_states[pygame.K_RIGHT]["pressed_time"]
             horizontal_key = pygame.K_LEFT if left_time > right_time else pygame.K_RIGHT
         elif pygame.K_LEFT in self.key_states:
             horizontal_key = pygame.K_LEFT
@@ -192,17 +196,17 @@ class TetrisGame:
 
         if horizontal_key:
             state = self.key_states[horizontal_key]
-            time_held = current_time - state['pressed_time']
-            time_since_move = current_time - state['last_move_time']
+            time_held = current_time - state["pressed_time"]
+            time_since_move = current_time - state["last_move_time"]
 
-            if not state['das_charged']:
+            if not state["das_charged"]:
                 if time_held >= self.das:
-                    state['das_charged'] = True
+                    state["das_charged"] = True
                     if horizontal_key == pygame.K_LEFT:
                         self.env.move_left()
                     else:
                         self.env.move_right()
-                    state['last_move_time'] = current_time
+                    state["last_move_time"] = current_time
             else:
                 if self.arr == 0:
                     if horizontal_key == pygame.K_LEFT:
@@ -211,28 +215,28 @@ class TetrisGame:
                     else:
                         while self.env.move_right():
                             pass
-                    state['last_move_time'] = current_time
+                    state["last_move_time"] = current_time
                 elif time_since_move >= self.arr:
                     if horizontal_key == pygame.K_LEFT:
                         self.env.move_left()
                     else:
                         self.env.move_right()
-                    state['last_move_time'] = current_time
+                    state["last_move_time"] = current_time
 
         if pygame.K_DOWN in self.key_states:
             state = self.key_states[pygame.K_DOWN]
-            time_held = current_time - state['pressed_time']
-            time_since_move = current_time - state['last_move_time']
+            time_held = current_time - state["pressed_time"]
+            time_since_move = current_time - state["last_move_time"]
 
-            if not state['das_charged']:
+            if not state["das_charged"]:
                 if time_held >= self.soft_drop_das:
-                    state['das_charged'] = True
+                    state["das_charged"] = True
                     self.env.move_down()
-                    state['last_move_time'] = current_time
+                    state["last_move_time"] = current_time
             else:
                 if time_since_move >= self.soft_drop_arr:
                     self.env.move_down()
-                    state['last_move_time'] = current_time
+                    state["last_move_time"] = current_time
 
     def update(self, dt):
         if self.paused or self.env.game_over or self.inspect_mode:
@@ -254,7 +258,9 @@ class TetrisGame:
         board_y = TOP_PADDING
 
         # Draw board background
-        board_rect = pygame.Rect(board_x, board_y, BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE)
+        board_rect = pygame.Rect(
+            board_x, board_y, BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE
+        )
         pygame.draw.rect(self.screen, BLACK, board_rect)
 
         # Draw grid lines
@@ -263,14 +269,14 @@ class TetrisGame:
                 self.screen,
                 GRID_COLOR,
                 (board_x + x * CELL_SIZE, board_y),
-                (board_x + x * CELL_SIZE, board_y + BOARD_HEIGHT * CELL_SIZE)
+                (board_x + x * CELL_SIZE, board_y + BOARD_HEIGHT * CELL_SIZE),
             )
         for y in range(BOARD_HEIGHT + 1):
             pygame.draw.line(
                 self.screen,
                 GRID_COLOR,
                 (board_x, board_y + y * CELL_SIZE),
-                (board_x + BOARD_WIDTH * CELL_SIZE, board_y + y * CELL_SIZE)
+                (board_x + BOARD_WIDTH * CELL_SIZE, board_y + y * CELL_SIZE),
             )
 
         # Draw border around the board
@@ -289,7 +295,9 @@ class TetrisGame:
                     else:
                         color = GRAY
 
-                    self.draw_cell(board_x + x * CELL_SIZE, board_y + y * CELL_SIZE, color)
+                    self.draw_cell(
+                        board_x + x * CELL_SIZE, board_y + y * CELL_SIZE, color
+                    )
 
         if self.inspect_mode:
             # Draw placement ghost in inspect mode
@@ -297,13 +305,13 @@ class TetrisGame:
                 placement = self.placements[self.placement_index]
                 piece = placement.piece
                 color = piece.get_color()
-                for (x, y) in piece.get_cells():
+                for x, y in piece.get_cells():
                     if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                         rect = pygame.Rect(
                             board_x + x * CELL_SIZE + 1,
                             board_y + y * CELL_SIZE + 1,
                             CELL_SIZE - 2,
-                            CELL_SIZE - 2
+                            CELL_SIZE - 2,
                         )
                         pygame.draw.rect(self.screen, color, rect, 2)
         else:
@@ -311,13 +319,13 @@ class TetrisGame:
             ghost = self.env.get_ghost_piece()
             if ghost:
                 color = ghost.get_color()
-                for (x, y) in ghost.get_cells():
+                for x, y in ghost.get_cells():
                     if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                         rect = pygame.Rect(
                             board_x + x * CELL_SIZE + 1,
                             board_y + y * CELL_SIZE + 1,
                             CELL_SIZE - 2,
-                            CELL_SIZE - 2
+                            CELL_SIZE - 2,
                         )
                         pygame.draw.rect(self.screen, color, rect, 2)
 
@@ -325,9 +333,11 @@ class TetrisGame:
             piece = self.env.get_current_piece()
             if piece:
                 color = piece.get_color()
-                for (x, y) in piece.get_cells():
+                for x, y in piece.get_cells():
                     if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
-                        self.draw_cell(board_x + x * CELL_SIZE, board_y + y * CELL_SIZE, color)
+                        self.draw_cell(
+                            board_x + x * CELL_SIZE, board_y + y * CELL_SIZE, color
+                        )
 
     def draw_cell(self, px, py, color):
         """Draw a single cell (flat style) at pixel coordinates."""
@@ -364,7 +374,7 @@ class TetrisGame:
                         start_x + (dx - min_x) * self.mini_cell_size,
                         start_y + (dy - min_y) * self.mini_cell_size,
                         self.mini_cell_size - 1,
-                        self.mini_cell_size - 1
+                        self.mini_cell_size - 1,
                     )
                     pygame.draw.rect(self.screen, color, rect)
 
@@ -402,7 +412,7 @@ class TetrisGame:
                                 start_x + (dx - min_x) * self.mini_cell_size,
                                 start_y + (dy - min_y) * self.mini_cell_size,
                                 self.mini_cell_size - 1,
-                                self.mini_cell_size - 1
+                                self.mini_cell_size - 1,
                             )
                             pygame.draw.rect(self.screen, dimmed, rect)
             else:
@@ -412,7 +422,9 @@ class TetrisGame:
         right_x = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE
         attack_text = f"Attack: {self.env.attack}"
         attack_surface = self.font.render(attack_text, True, WHITE)
-        self.screen.blit(attack_surface, (right_x + 15, WINDOW_HEIGHT - BOTTOM_PADDING - 15))
+        self.screen.blit(
+            attack_surface, (right_x + 15, WINDOW_HEIGHT - BOTTOM_PADDING - 15)
+        )
 
         # Right sidebar - NEXT pieces
         next_pieces = self.env.get_next_pieces(5)
@@ -432,12 +444,16 @@ class TetrisGame:
             else:
                 counter_text = "0/0"
             counter_surface = self.font.render(counter_text, True, WHITE)
-            counter_rect = counter_surface.get_rect(center=(board_x + BOARD_WIDTH * CELL_SIZE // 2, TOP_PADDING // 2))
+            counter_rect = counter_surface.get_rect(
+                center=(board_x + BOARD_WIDTH * CELL_SIZE // 2, TOP_PADDING // 2)
+            )
             self.screen.blit(counter_surface, counter_rect)
         elif self.paused:
             self.draw_message("PAUSED", "Press P to continue")
         elif self.env.game_over:
-            self.draw_message("GAME OVER", f"Attack: {self.env.attack} | Press R to restart")
+            self.draw_message(
+                "GAME OVER", f"Attack: {self.env.attack} | Press R to restart"
+            )
 
     def draw_message(self, title, subtitle):
         board_x = LEFT_SIDEBAR_WIDTH
@@ -445,7 +461,9 @@ class TetrisGame:
         board_center_x = board_x + BOARD_WIDTH * CELL_SIZE // 2
         board_center_y = board_y + BOARD_HEIGHT * CELL_SIZE // 2
 
-        overlay = pygame.Surface((BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE), pygame.SRCALPHA)
+        overlay = pygame.Surface(
+            (BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE), pygame.SRCALPHA
+        )
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (board_x, board_y))
 
@@ -455,7 +473,9 @@ class TetrisGame:
 
         small_font = pygame.font.Font(None, 24)
         subtitle_text = small_font.render(subtitle, True, WHITE)
-        subtitle_rect = subtitle_text.get_rect(center=(board_center_x, board_center_y + 20))
+        subtitle_rect = subtitle_text.get_rect(
+            center=(board_center_x, board_center_y + 20)
+        )
         self.screen.blit(subtitle_text, subtitle_rect)
 
     def draw(self):

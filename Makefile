@@ -30,3 +30,11 @@ test:
 # Clean build artifacts
 clean:
 	rm -rf tetris_core/target .build_marker
+
+play:
+	uv run python scripts/tetris_game.py
+
+check:
+	uv run ruff check
+	uv run ruff format
+	uv run pyright

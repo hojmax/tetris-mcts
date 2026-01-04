@@ -11,7 +11,15 @@ dependencies = [
     "numpy",
     "torch",
     "wandb",
+    "ruff",
+    "pyright",
+    "structlog",
+    "simple-parsing",
+    "pydantic",
 ]
 
 [tool.uv.sources]
 tetris_core = { path = "tetris_core" }
+
+[tool.pyright]
+reportAttributeAccessIssue = "none"  # tetris_core is a native module

@@ -18,14 +18,19 @@ from dataclasses import dataclass
 
 from .action_space import NUM_ACTIONS
 from .network import (
-    BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE,
-    AUX_FEATURES, encode_state
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_PIECE_TYPES,
+    QUEUE_SIZE,
+    AUX_FEATURES,
+    encode_state,
 )
 
 
 @dataclass
 class TrainingExample:
     """Single training example from self-play."""
+
     board: np.ndarray  # (20, 10) bool
     current_piece: int  # 0-6
     hold_piece: Optional[int]  # 0-6 or None
@@ -111,34 +116,36 @@ def load_training_data(filepath: str | Path) -> list[TrainingExample]:
     """Load training examples from NPZ format."""
     data = np.load(filepath)
 
-    n = len(data['boards'])
+    n = len(data["boards"])
     examples = []
 
     for i in range(n):
         # Decode one-hot current piece
-        current_piece = int(np.argmax(data['current_pieces'][i]))
+        current_piece = int(np.argmax(data["current_pieces"][i]))
 
         # Decode one-hot hold piece
-        hold_idx = int(np.argmax(data['hold_pieces'][i]))
+        hold_idx = int(np.argmax(data["hold_pieces"][i]))
         hold_piece = hold_idx if hold_idx < NUM_PIECE_TYPES else None
 
         # Decode one-hot next queue
         next_queue = []
         for j in range(QUEUE_SIZE):
-            if np.any(data['next_queue'][i, j] > 0):
-                next_queue.append(int(np.argmax(data['next_queue'][i, j])))
+            if np.any(data["next_queue"][i, j] > 0):
+                next_queue.append(int(np.argmax(data["next_queue"][i, j])))
 
-        examples.append(TrainingExample(
-            board=data['boards'][i].astype(bool),
-            current_piece=current_piece,
-            hold_piece=hold_piece,
-            hold_available=bool(data['hold_available'][i]),
-            next_queue=next_queue,
-            move_number=int(data['move_numbers'][i] * 100),
-            policy_target=data['policy_targets'][i],
-            value_target=float(data['value_targets'][i]),
-            action_mask=data['action_masks'][i].astype(bool),
-        ))
+        examples.append(
+            TrainingExample(
+                board=data["boards"][i].astype(bool),
+                current_piece=current_piece,
+                hold_piece=hold_piece,
+                hold_available=bool(data["hold_available"][i]),
+                next_queue=next_queue,
+                move_number=int(data["move_numbers"][i] * 100),
+                policy_target=data["policy_targets"][i],
+                value_target=float(data["value_targets"][i]),
+                action_mask=data["action_masks"][i].astype(bool),
+            )
+        )
 
     return examples
 
@@ -150,22 +157,27 @@ class TetrisDataset(Dataset):
         """Load dataset from NPZ file."""
         data = np.load(filepath)
 
-        self.boards = torch.tensor(data['boards'].astype(np.float32)).unsqueeze(1)  # (N, 1, 20, 10)
+        self.boards = torch.tensor(data["boards"].astype(np.float32)).unsqueeze(
+            1
+        )  # (N, 1, 20, 10)
 
         # Build auxiliary features
-        n = len(data['boards'])
-        aux = np.concatenate([
-            data['current_pieces'],  # (N, 7)
-            data['hold_pieces'],  # (N, 8)
-            data['hold_available'].reshape(-1, 1).astype(np.float32),  # (N, 1)
-            data['next_queue'].reshape(n, -1),  # (N, 35)
-            data['move_numbers'].reshape(-1, 1),  # (N, 1)
-        ], axis=1)
+        n = len(data["boards"])
+        aux = np.concatenate(
+            [
+                data["current_pieces"],  # (N, 7)
+                data["hold_pieces"],  # (N, 8)
+                data["hold_available"].reshape(-1, 1).astype(np.float32),  # (N, 1)
+                data["next_queue"].reshape(n, -1),  # (N, 35)
+                data["move_numbers"].reshape(-1, 1),  # (N, 1)
+            ],
+            axis=1,
+        )
         self.aux_features = torch.tensor(aux.astype(np.float32))
 
-        self.policy_targets = torch.tensor(data['policy_targets'])
-        self.value_targets = torch.tensor(data['value_targets'])
-        self.action_masks = torch.tensor(data['action_masks'].astype(np.float32))
+        self.policy_targets = torch.tensor(data["policy_targets"])
+        self.value_targets = torch.tensor(data["value_targets"])
+        self.action_masks = torch.tensor(data["action_masks"].astype(np.float32))
 
     def __len__(self):
         return len(self.boards)
@@ -252,26 +264,26 @@ class ReplayBuffer:
         """Save buffer contents to file."""
         np.savez_compressed(
             filepath,
-            boards=self.boards[:self.size],
-            aux_features=self.aux_features[:self.size],
-            policy_targets=self.policy_targets[:self.size],
-            value_targets=self.value_targets[:self.size],
-            action_masks=self.action_masks[:self.size],
+            boards=self.boards[: self.size],
+            aux_features=self.aux_features[: self.size],
+            policy_targets=self.policy_targets[: self.size],
+            value_targets=self.value_targets[: self.size],
+            action_masks=self.action_masks[: self.size],
             pos=np.array([self.pos]),
         )
 
     def load(self, filepath: str | Path) -> None:
         """Load buffer contents from file."""
         data = np.load(filepath)
-        n = len(data['boards'])
+        n = len(data["boards"])
 
-        self.boards[:n] = data['boards']
-        self.aux_features[:n] = data['aux_features']
-        self.policy_targets[:n] = data['policy_targets']
-        self.value_targets[:n] = data['value_targets']
-        self.action_masks[:n] = data['action_masks']
+        self.boards[:n] = data["boards"]
+        self.aux_features[:n] = data["aux_features"]
+        self.policy_targets[:n] = data["policy_targets"]
+        self.value_targets[:n] = data["value_targets"]
+        self.action_masks[:n] = data["action_masks"]
         self.size = n
-        self.pos = int(data['pos'][0]) if n == self.max_size else n
+        self.pos = int(data["pos"][0]) if n == self.max_size else n
 
 
 class SharedReplayBuffer:
@@ -313,11 +325,11 @@ class SharedReplayBuffer:
             return
 
         all_data = {
-            'boards': [],
-            'aux_features': [],
-            'policy_targets': [],
-            'value_targets': [],
-            'action_masks': [],
+            "boards": [],
+            "aux_features": [],
+            "policy_targets": [],
+            "value_targets": [],
+            "action_masks": [],
         }
 
         for f in files:
@@ -325,33 +337,36 @@ class SharedReplayBuffer:
                 data = np.load(f)
 
                 # Build aux features from components
-                n = len(data['boards'])
-                aux = np.concatenate([
-                    data['current_pieces'],
-                    data['hold_pieces'],
-                    data['hold_available'].reshape(-1, 1).astype(np.float32),
-                    data['next_queue'].reshape(n, -1),
-                    data['move_numbers'].reshape(-1, 1),
-                ], axis=1)
+                n = len(data["boards"])
+                aux = np.concatenate(
+                    [
+                        data["current_pieces"],
+                        data["hold_pieces"],
+                        data["hold_available"].reshape(-1, 1).astype(np.float32),
+                        data["next_queue"].reshape(n, -1),
+                        data["move_numbers"].reshape(-1, 1),
+                    ],
+                    axis=1,
+                )
 
-                all_data['boards'].append(data['boards'].astype(np.float32))
-                all_data['aux_features'].append(aux.astype(np.float32))
-                all_data['policy_targets'].append(data['policy_targets'])
-                all_data['value_targets'].append(data['value_targets'])
-                all_data['action_masks'].append(data['action_masks'].astype(np.float32))
+                all_data["boards"].append(data["boards"].astype(np.float32))
+                all_data["aux_features"].append(aux.astype(np.float32))
+                all_data["policy_targets"].append(data["policy_targets"])
+                all_data["value_targets"].append(data["value_targets"])
+                all_data["action_masks"].append(data["action_masks"].astype(np.float32))
             except Exception as e:
                 print(f"Warning: Failed to load {f}: {e}")
 
-        if all_data['boards']:
-            self._cached_data = {
-                k: np.concatenate(v) for k, v in all_data.items()
-            }
+        if all_data["boards"]:
+            self._cached_data = {k: np.concatenate(v) for k, v in all_data.items()}
         else:
             self._cached_data = None
 
         self._cache_time = time.time()
 
-    def sample(self, batch_size: int, cache_ttl: float = 30.0) -> Optional[tuple[torch.Tensor, ...]]:
+    def sample(
+        self, batch_size: int, cache_ttl: float = 30.0
+    ) -> Optional[tuple[torch.Tensor, ...]]:
         """
         Sample a batch from the buffer.
 
@@ -369,18 +384,18 @@ class SharedReplayBuffer:
         if self._cached_data is None:
             return None
 
-        n = len(self._cached_data['boards'])
+        n = len(self._cached_data["boards"])
         if n == 0:
             return None
 
         indices = np.random.randint(0, n, size=min(batch_size, n))
 
         return (
-            torch.tensor(self._cached_data['boards'][indices]).unsqueeze(1),
-            torch.tensor(self._cached_data['aux_features'][indices]),
-            torch.tensor(self._cached_data['policy_targets'][indices]),
-            torch.tensor(self._cached_data['value_targets'][indices]),
-            torch.tensor(self._cached_data['action_masks'][indices]),
+            torch.tensor(self._cached_data["boards"][indices]).unsqueeze(1),
+            torch.tensor(self._cached_data["aux_features"][indices]),
+            torch.tensor(self._cached_data["policy_targets"][indices]),
+            torch.tensor(self._cached_data["value_targets"][indices]),
+            torch.tensor(self._cached_data["action_masks"][indices]),
         )
 
     def size(self) -> int:
@@ -389,7 +404,7 @@ class SharedReplayBuffer:
             self._refresh_cache()
         if self._cached_data is None:
             return 0
-        return len(self._cached_data['boards'])
+        return len(self._cached_data["boards"])
 
 
 if __name__ == "__main__":
@@ -400,19 +415,23 @@ if __name__ == "__main__":
     examples = []
     for i in range(10):
         board = np.random.randint(0, 2, (BOARD_HEIGHT, BOARD_WIDTH), dtype=np.uint8)
-        examples.append(TrainingExample(
-            board=board.astype(bool),
-            current_piece=i % 7,
-            hold_piece=(i + 1) % 7 if i % 2 == 0 else None,
-            hold_available=i % 3 != 0,
-            next_queue=[j % 7 for j in range(5)],
-            move_number=i * 10,
-            policy_target=np.random.dirichlet(np.ones(NUM_ACTIONS)).astype(np.float32),
-            value_target=float(i),
-            action_mask=np.random.randint(0, 2, NUM_ACTIONS).astype(bool),
-        ))
+        examples.append(
+            TrainingExample(
+                board=board.astype(bool),
+                current_piece=i % 7,
+                hold_piece=(i + 1) % 7 if i % 2 == 0 else None,
+                hold_available=i % 3 != 0,
+                next_queue=[j % 7 for j in range(5)],
+                move_number=i * 10,
+                policy_target=np.random.dirichlet(np.ones(NUM_ACTIONS)).astype(
+                    np.float32
+                ),
+                value_target=float(i),
+                action_mask=np.random.randint(0, 2, NUM_ACTIONS).astype(bool),
+            )
+        )
 
-    with tempfile.NamedTemporaryFile(suffix='.npz', delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
         filepath = f.name
 
     save_training_data(examples, filepath)

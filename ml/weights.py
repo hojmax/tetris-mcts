@@ -8,7 +8,6 @@ Supports:
 """
 
 import torch
-import torch.nn as nn
 import numpy as np
 from pathlib import Path
 from typing import Optional
@@ -36,12 +35,12 @@ def save_checkpoint(
         **extra_state: Additional state to save
     """
     state = {
-        'model_state_dict': model.state_dict(),
-        'step': step,
+        "model_state_dict": model.state_dict(),
+        "step": step,
         **extra_state,
     }
     if optimizer is not None:
-        state['optimizer_state_dict'] = optimizer.state_dict()
+        state["optimizer_state_dict"] = optimizer.state_dict()
 
     torch.save(state, filepath)
 
@@ -62,13 +61,13 @@ def load_checkpoint(
     Returns:
         Checkpoint state dict
     """
-    state = torch.load(filepath, map_location='cpu', weights_only=True)
+    state = torch.load(filepath, map_location="cpu", weights_only=True)
 
     if model is not None:
-        model.load_state_dict(state['model_state_dict'])
+        model.load_state_dict(state["model_state_dict"])
 
-    if optimizer is not None and 'optimizer_state_dict' in state:
-        optimizer.load_state_dict(state['optimizer_state_dict'])
+    if optimizer is not None and "optimizer_state_dict" in state:
+        optimizer.load_state_dict(state["optimizer_state_dict"])
 
     return state
 
@@ -90,6 +89,7 @@ def export_onnx(
         True if export succeeded, False if ONNX dependencies are missing
     """
     import warnings
+
     try:
         model.eval()
 
@@ -107,8 +107,8 @@ def export_onnx(
                 export_params=True,
                 opset_version=opset_version,
                 do_constant_folding=True,
-                input_names=['board', 'aux_features'],
-                output_names=['policy_logits', 'value'],
+                input_names=["board", "aux_features"],
+                output_names=["policy_logits", "value"],
                 verbose=False,
             )
         return True
@@ -138,25 +138,25 @@ def export_binary(
     model.eval()
     state_dict = model.state_dict()
 
-    with open(filepath, 'wb') as f:
+    with open(filepath, "wb") as f:
         # Header
-        f.write(b'TNET')
-        f.write(struct.pack('<I', 1))  # Version 1
-        f.write(struct.pack('<I', len(state_dict)))  # Num tensors
+        f.write(b"TNET")
+        f.write(struct.pack("<I", 1))  # Version 1
+        f.write(struct.pack("<I", len(state_dict)))  # Num tensors
 
         for name, tensor in state_dict.items():
             # Convert to numpy
             data = tensor.cpu().numpy().astype(np.float32)
 
             # Name
-            name_bytes = name.encode('utf-8')
-            f.write(struct.pack('<I', len(name_bytes)))
+            name_bytes = name.encode("utf-8")
+            f.write(struct.pack("<I", len(name_bytes)))
             f.write(name_bytes)
 
             # Dimensions
-            f.write(struct.pack('<I', len(data.shape)))
+            f.write(struct.pack("<I", len(data.shape)))
             for dim in data.shape:
-                f.write(struct.pack('<I', dim))
+                f.write(struct.pack("<I", dim))
 
             # Data (flattened, row-major)
             f.write(data.tobytes())
@@ -173,25 +173,25 @@ def load_binary(
         filepath: Path to binary weights file
         model: Model to load weights into
     """
-    with open(filepath, 'rb') as f:
+    with open(filepath, "rb") as f:
         # Header
         header = f.read(4)
-        assert header == b'TNET', f"Invalid header: {header}"
+        assert header == b"TNET", f"Invalid header: {header}"
 
-        version = struct.unpack('<I', f.read(4))[0]
+        version = struct.unpack("<I", f.read(4))[0]
         assert version == 1, f"Unsupported version: {version}"
 
-        num_tensors = struct.unpack('<I', f.read(4))[0]
+        num_tensors = struct.unpack("<I", f.read(4))[0]
 
         state_dict = {}
         for _ in range(num_tensors):
             # Name
-            name_len = struct.unpack('<I', f.read(4))[0]
-            name = f.read(name_len).decode('utf-8')
+            name_len = struct.unpack("<I", f.read(4))[0]
+            name = f.read(name_len).decode("utf-8")
 
             # Dimensions
-            num_dims = struct.unpack('<I', f.read(4))[0]
-            dims = tuple(struct.unpack('<I', f.read(4))[0] for _ in range(num_dims))
+            num_dims = struct.unpack("<I", f.read(4))[0]
+            dims = tuple(struct.unpack("<I", f.read(4))[0] for _ in range(num_dims))
 
             # Data
             num_elements = 1
@@ -221,18 +221,18 @@ def export_metadata(
         config: Optional training config
     """
     metadata = {
-        'step': step,
-        'eval_metrics': eval_metrics or {},
-        'config': config or {},
+        "step": step,
+        "eval_metrics": eval_metrics or {},
+        "config": config or {},
     }
 
-    with open(filepath, 'w') as f:
+    with open(filepath, "w") as f:
         json.dump(metadata, f, indent=2)
 
 
 def load_metadata(filepath: str | Path) -> dict:
     """Load metadata from JSON file."""
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         return json.load(f)
 
 
@@ -268,30 +268,30 @@ class WeightManager:
         # Save PyTorch checkpoint
         ckpt_path = self.checkpoint_dir / f"checkpoint_{step}.pt"
         save_checkpoint(model, optimizer, step, ckpt_path)
-        paths['checkpoint'] = ckpt_path
+        paths["checkpoint"] = ckpt_path
 
         if export_for_rust:
             # Export ONNX
             onnx_path = self.checkpoint_dir / "latest.onnx"
             export_onnx(model, onnx_path)
-            paths['onnx'] = onnx_path
+            paths["onnx"] = onnx_path
 
             # Export binary
             bin_path = self.checkpoint_dir / "latest.bin"
             export_binary(model, bin_path)
-            paths['binary'] = bin_path
+            paths["binary"] = bin_path
 
         # Save metadata
         meta_path = self.checkpoint_dir / "latest_metadata.json"
         export_metadata(meta_path, step, eval_metrics)
-        paths['metadata'] = meta_path
+        paths["metadata"] = meta_path
 
         # Update symlink to latest checkpoint
         latest_path = self.checkpoint_dir / "latest.pt"
         if latest_path.exists():
             latest_path.unlink()
         latest_path.symlink_to(ckpt_path.name)
-        paths['latest'] = latest_path
+        paths["latest"] = latest_path
 
         return paths
 
@@ -311,12 +311,12 @@ class WeightManager:
             return None
 
         state = load_checkpoint(latest_path, model, optimizer)
-        return state.get('step', 0)
+        return state.get("step", 0)
 
     def get_checkpoints(self) -> list[Path]:
         """Get list of all checkpoint files, sorted by step."""
         checkpoints = list(self.checkpoint_dir.glob("checkpoint_*.pt"))
-        checkpoints.sort(key=lambda p: int(p.stem.split('_')[1]))
+        checkpoints.sort(key=lambda p: int(p.stem.split("_")[1]))
         return checkpoints
 
     def cleanup_old_checkpoints(self, keep: int = 5) -> None:
@@ -356,7 +356,7 @@ if __name__ == "__main__":
 
     # Test ONNX export
     print("\nTesting ONNX export...")
-    with tempfile.NamedTemporaryFile(suffix='.onnx', delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as f:
         onnx_path = f.name
 
     try:
@@ -371,7 +371,7 @@ if __name__ == "__main__":
 
     # Test binary export
     print("\nTesting binary export/load...")
-    with tempfile.NamedTemporaryFile(suffix='.bin', delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
         bin_path = f.name
 
     export_binary(model, bin_path)

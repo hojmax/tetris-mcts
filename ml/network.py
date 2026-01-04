@@ -38,11 +38,11 @@ QUEUE_FEATURES = QUEUE_SIZE * NUM_PIECE_TYPES  # 35
 MOVE_NUMBER_FEATURES = 1
 
 AUX_FEATURES = (
-    CURRENT_PIECE_FEATURES +
-    HOLD_PIECE_FEATURES +
-    HOLD_AVAILABLE_FEATURES +
-    QUEUE_FEATURES +
-    MOVE_NUMBER_FEATURES
+    CURRENT_PIECE_FEATURES
+    + HOLD_PIECE_FEATURES
+    + HOLD_AVAILABLE_FEATURES
+    + QUEUE_FEATURES
+    + MOVE_NUMBER_FEATURES
 )  # 52
 
 TOTAL_FEATURES = BOARD_FEATURES + AUX_FEATURES  # 252
@@ -72,7 +72,9 @@ class TetrisNet(nn.Module):
         # Convolutional layers for board
         self.conv1 = nn.Conv2d(1, conv_filters[0], kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(conv_filters[0])
-        self.conv2 = nn.Conv2d(conv_filters[0], conv_filters[1], kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(
+            conv_filters[0], conv_filters[1], kernel_size=3, padding=1
+        )
         self.bn2 = nn.BatchNorm2d(conv_filters[1])
 
         # Flattened conv output size: 20 * 10 * 8 = 1,600
@@ -146,7 +148,7 @@ class TetrisNet(nn.Module):
 
         if action_mask is not None:
             # Mask invalid actions before softmax
-            policy_logits = policy_logits.masked_fill(action_mask == 0, float('-inf'))
+            policy_logits = policy_logits.masked_fill(action_mask == 0, float("-inf"))
 
         policy = F.softmax(policy_logits, dim=-1)
         return policy, value
@@ -210,7 +212,9 @@ def encode_state(
     aux.append(np.array([normalized_move], dtype=np.float32))
 
     aux_tensor = np.concatenate(aux)
-    assert aux_tensor.shape == (AUX_FEATURES,), f"Expected {AUX_FEATURES}, got {aux_tensor.shape}"
+    assert aux_tensor.shape == (AUX_FEATURES,), (
+        f"Expected {AUX_FEATURES}, got {aux_tensor.shape}"
+    )
 
     return board_tensor, aux_tensor
 
@@ -240,16 +244,16 @@ def encode_batch(states: list[dict]) -> tuple[torch.Tensor, torch.Tensor, torch.
 
     for state in states:
         board_t, aux_t = encode_state(
-            board=state['board'],
-            current_piece=state['current_piece'],
-            hold_piece=state.get('hold_piece'),
-            hold_available=state.get('hold_available', True),
-            next_queue=state.get('next_queue', []),
-            move_number=state.get('move_number', 0),
+            board=state["board"],
+            current_piece=state["current_piece"],
+            hold_piece=state.get("hold_piece"),
+            hold_available=state.get("hold_available", True),
+            next_queue=state.get("next_queue", []),
+            move_number=state.get("move_number", 0),
         )
         boards.append(board_t)
         aux_features.append(aux_t)
-        masks.append(state.get('action_mask', np.ones(NUM_ACTIONS, dtype=np.float32)))
+        masks.append(state.get("action_mask", np.ones(NUM_ACTIONS, dtype=np.float32)))
 
     return (
         torch.tensor(np.stack(boards)),

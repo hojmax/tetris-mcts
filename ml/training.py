@@ -13,23 +13,21 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import numpy as np
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import time
 
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-    print("Warning: wandb not available, logging disabled")
+import wandb
 
 from .network import TetrisNet
 from .data import ReplayBuffer, TetrisDataset, TrainingExample
 from .weights import WeightManager
 from .selfplay import (
-    generate_random_games, generate_mcts_games, evaluate_policy,
-    MAX_MOVES, EvalMetrics
+    generate_random_games,
+    generate_mcts_games,
+    evaluate_policy,
+    MAX_MOVES,
+    EvalMetrics,
 )
 
 try:
@@ -41,15 +39,16 @@ except ImportError:
 @dataclass
 class TrainingConfig:
     """Training hyperparameters."""
+
     # Network
-    conv_filters: list = None
+    conv_filters: list[int] = field(default_factory=lambda: [4, 8])
     fc_hidden: int = 128
 
     # Training
     batch_size: int = 256
     learning_rate: float = 0.001
     weight_decay: float = 1e-4
-    lr_schedule: str = 'cosine'  # 'cosine', 'step', 'none'
+    lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
     lr_warmup_steps: int = 1000
     lr_decay_steps: int = 100000
 
@@ -71,22 +70,16 @@ class TrainingConfig:
     training_steps_per_iter: int = 1000
     checkpoint_interval: int = 10
     eval_interval: int = 100
-    eval_seeds: list = None
+    eval_seeds: list[int] = field(default_factory=lambda: list(range(20)))
 
     # Paths
-    checkpoint_dir: str = 'checkpoints'
-    data_dir: str = 'data'
+    checkpoint_dir: str = "checkpoints"
+    data_dir: str = "data"
 
     # WandB
-    project_name: str = 'tetris-alphazero'
+    project_name: str = "tetris-alphazero"
     run_name: Optional[str] = None
     log_interval: int = 100
-
-    def __post_init__(self):
-        if self.conv_filters is None:
-            self.conv_filters = [4, 8]
-        if self.eval_seeds is None:
-            self.eval_seeds = list(range(20))
 
 
 def compute_loss(
@@ -121,14 +114,12 @@ def compute_loss(
     safe_masks[valid_counts.squeeze() == 0, 0] = 1  # Set first action as valid if none
 
     # Apply mask before softmax
-    masked_logits = policy_logits.masked_fill(safe_masks == 0, float('-inf'))
+    masked_logits = policy_logits.masked_fill(safe_masks == 0, float("-inf"))
     log_policy = F.log_softmax(masked_logits, dim=-1)
 
     # Replace -inf with 0 for numerical stability (won't contribute to loss anyway)
     log_policy = torch.where(
-        torch.isinf(log_policy),
-        torch.zeros_like(log_policy),
-        log_policy
+        torch.isinf(log_policy), torch.zeros_like(log_policy), log_policy
     )
 
     # Policy loss: cross-entropy with MCTS policy
@@ -158,7 +149,7 @@ def compute_metrics(
         policy_logits, value_pred = model(boards, aux_features)
 
         # Apply mask
-        masked_logits = policy_logits.masked_fill(action_masks == 0, float('-inf'))
+        masked_logits = policy_logits.masked_fill(action_masks == 0, float("-inf"))
         policy_probs = F.softmax(masked_logits, dim=-1)
 
         # Policy entropy
@@ -174,9 +165,9 @@ def compute_metrics(
         top1_acc = (pred_actions == target_actions).float().mean()
 
     return {
-        'policy_entropy': entropy.item(),
-        'value_error': value_error.item(),
-        'top1_accuracy': top1_acc.item(),
+        "policy_entropy": entropy.item(),
+        "value_error": value_error.item(),
+        "top1_accuracy": top1_acc.item(),
     }
 
 
@@ -187,7 +178,7 @@ class Trainer:
         self,
         config: TrainingConfig,
         model: Optional[TetrisNet] = None,
-        device: str = 'cpu',
+        device: str = "cpu",
     ):
         self.config = config
         self.device = torch.device(device)
@@ -225,13 +216,13 @@ class Trainer:
         Path(config.data_dir).mkdir(parents=True, exist_ok=True)
 
     def _create_scheduler(self):
-        if self.config.lr_schedule == 'cosine':
+        if self.config.lr_schedule == "cosine":
             return torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=self.config.lr_decay_steps,
                 eta_min=self.config.learning_rate * 0.01,
             )
-        elif self.config.lr_schedule == 'step':
+        elif self.config.lr_schedule == "step":
             return torch.optim.lr_scheduler.StepLR(
                 self.optimizer,
                 step_size=self.config.lr_decay_steps // 3,
@@ -268,11 +259,11 @@ class Trainer:
         self.step += 1
 
         metrics = {
-            'loss': total_loss.item(),
-            'policy_loss': policy_loss.item(),
-            'value_loss': value_loss.item(),
-            'grad_norm': grad_norm.item(),
-            'learning_rate': self.optimizer.param_groups[0]['lr'],
+            "loss": total_loss.item(),
+            "policy_loss": policy_loss.item(),
+            "value_loss": value_loss.item(),
+            "grad_norm": grad_norm.item(),
+            "learning_rate": self.optimizer.param_groups[0]["lr"],
         }
 
         # Compute additional metrics periodically
@@ -284,7 +275,9 @@ class Trainer:
 
         return metrics
 
-    def generate_data(self, num_games: int, use_mcts: bool = True) -> list[TrainingExample]:
+    def generate_data(
+        self, num_games: int, use_mcts: bool = True
+    ) -> list[TrainingExample]:
         """Generate self-play data using either MCTS or random policy."""
         print(f"Generating {num_games} games (MCTS={use_mcts})...")
 
@@ -292,6 +285,7 @@ class Trainer:
             # Export current model to ONNX for Rust inference
             onnx_path = Path(self.config.checkpoint_dir) / "selfplay.onnx"
             from .weights import export_onnx
+
             export_onnx(self.model, onnx_path)
 
             # Use MCTS with neural network (pure Rust)
@@ -338,13 +332,15 @@ class Trainer:
 
         # Generate self-play data
         start_time = time.time()
-        examples = self.generate_data(self.config.num_games_per_iteration, use_mcts=use_mcts)
+        examples = self.generate_data(
+            self.config.num_games_per_iteration, use_mcts=use_mcts
+        )
         self.buffer.add_batch(examples)
         data_time = time.time() - start_time
 
-        iteration_metrics['data_generation_time'] = data_time
-        iteration_metrics['buffer_size'] = len(self.buffer)
-        iteration_metrics['new_examples'] = len(examples)
+        iteration_metrics["data_generation_time"] = data_time
+        iteration_metrics["buffer_size"] = len(self.buffer)
+        iteration_metrics["new_examples"] = len(examples)
 
         # Training steps
         if len(self.buffer) >= self.config.min_buffer_size:
@@ -357,7 +353,7 @@ class Trainer:
                 step_metrics.append(metrics)
 
                 # Log to wandb
-                if log_to_wandb and WANDB_AVAILABLE and self.step % self.config.log_interval == 0:
+                if log_to_wandb and self.step % self.config.log_interval == 0:
                     wandb.log(metrics, step=self.step)
 
             train_time = time.time() - train_start
@@ -365,18 +361,18 @@ class Trainer:
             # Average metrics
             avg_metrics = {}
             for key in step_metrics[0]:
-                avg_metrics[f'avg_{key}'] = np.mean([m[key] for m in step_metrics])
+                avg_metrics[f"avg_{key}"] = np.mean([m[key] for m in step_metrics])
             iteration_metrics.update(avg_metrics)
-            iteration_metrics['training_time'] = train_time
+            iteration_metrics["training_time"] = train_time
 
         # Evaluate
         if self.iteration % self.config.eval_interval == 0:
             eval_metrics = self.evaluate()
-            iteration_metrics['eval_avg_attack'] = eval_metrics.avg_attack
-            iteration_metrics['eval_max_attack'] = eval_metrics.max_attack
-            iteration_metrics['eval_avg_moves'] = eval_metrics.avg_moves
+            iteration_metrics["eval_avg_attack"] = eval_metrics.avg_attack
+            iteration_metrics["eval_max_attack"] = eval_metrics.max_attack
+            iteration_metrics["eval_avg_moves"] = eval_metrics.avg_moves
 
-            if log_to_wandb and WANDB_AVAILABLE:
+            if log_to_wandb:
                 wandb.log(eval_metrics.to_dict(), step=self.step)
 
         # Save checkpoint
@@ -410,26 +406,25 @@ class Trainer:
             num_iterations = self.config.num_iterations
 
         # Initialize wandb
-        if WANDB_AVAILABLE:
-            wandb.init(
-                project=self.config.project_name,
-                name=self.config.run_name,
-                config=vars(self.config),
-            )
+        wandb.init(
+            project=self.config.project_name,
+            name=self.config.run_name,
+            config=vars(self.config),
+        )
 
         print(f"Starting training for {num_iterations} iterations")
         print(f"Config: {self.config}")
         print()
 
         for i in range(num_iterations):
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Iteration {i + 1}/{num_iterations}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             metrics = self.train_iteration()
 
             print(f"Buffer size: {metrics['buffer_size']}")
-            if 'avg_loss' in metrics:
+            if "avg_loss" in metrics:
                 print(f"Avg loss: {metrics['avg_loss']:.4f}")
                 print(f"Avg policy loss: {metrics['avg_policy_loss']:.4f}")
                 print(f"Avg value loss: {metrics['avg_value_loss']:.4f}")
@@ -437,15 +432,14 @@ class Trainer:
         # Final save
         self.save()
 
-        if WANDB_AVAILABLE:
-            wandb.finish()
+        wandb.finish()
 
 
 def train_from_data(
     data_path: str | Path,
     config: Optional[TrainingConfig] = None,
     num_epochs: int = 10,
-    device: str = 'cpu',
+    device: str = "cpu",
 ):
     """Train from pre-generated data file."""
     if config is None:
@@ -532,7 +526,7 @@ if __name__ == "__main__":
         config.data_dir = tmpdir
 
         # Create trainer
-        trainer = Trainer(config, device='cpu')
+        trainer = Trainer(config, device="cpu")
 
         print("Model parameters:", sum(p.numel() for p in trainer.model.parameters()))
         print()
@@ -546,7 +540,7 @@ if __name__ == "__main__":
         # Test save/load
         print("Testing save/load...")
         trainer.save()
-        trainer2 = Trainer(config, device='cpu')
+        trainer2 = Trainer(config, device="cpu")
         loaded = trainer2.load()
         print(f"Loaded: {loaded}, step: {trainer2.step}")
 

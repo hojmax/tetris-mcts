@@ -19,7 +19,9 @@ except ImportError:
     )
 
 from .action_space import (
-    NUM_ACTIONS, PLACEMENT_TO_ACTION, ACTION_TO_PLACEMENT,
+    NUM_ACTIONS,
+    PLACEMENT_TO_ACTION,
+    ACTION_TO_PLACEMENT,
     get_action_mask,
 )
 from .data import TrainingExample
@@ -37,6 +39,7 @@ BOARD_HEIGHT = 20
 @dataclass
 class GameHistory:
     """Stores history of a single game for training data extraction."""
+
     states: list[dict] = field(default_factory=list)
     policies: list[np.ndarray] = field(default_factory=list)
     attacks: list[int] = field(default_factory=list)  # Attack gained at each step
@@ -70,13 +73,13 @@ def get_state_dict(env: TetrisEnv, move_number: int) -> dict:
     action_mask = get_action_mask(board, current_piece_type)
 
     return {
-        'board': board,
-        'current_piece': current_piece_type,
-        'hold_piece': hold_piece_type,
-        'hold_available': hold_available,
-        'next_queue': next_queue,
-        'move_number': move_number,
-        'action_mask': action_mask,
+        "board": board,
+        "current_piece": current_piece_type,
+        "hold_piece": hold_piece_type,
+        "hold_available": hold_available,
+        "next_queue": next_queue,
+        "move_number": move_number,
+        "action_mask": action_mask,
     }
 
 
@@ -201,7 +204,7 @@ def play_game_random(
 
 
 def play_game_with_policy(
-    policy_fn: Callable[[dict, list[int]], tuple[int, np.ndarray]],
+    policy_fn: Callable[[dict, list[int], float], tuple[int, np.ndarray]],
     seed: Optional[int] = None,
     max_moves: int = MAX_MOVES,
     temperature: float = 1.0,
@@ -304,17 +307,19 @@ def history_to_examples(
     examples = []
     for i in range(usable_moves):
         state = history.states[i]
-        examples.append(TrainingExample(
-            board=state['board'].astype(bool),
-            current_piece=state['current_piece'],
-            hold_piece=state['hold_piece'],
-            hold_available=state['hold_available'],
-            next_queue=state['next_queue'],
-            move_number=state['move_number'],
-            policy_target=history.policies[i],
-            value_target=values[i],
-            action_mask=state['action_mask'].astype(bool),
-        ))
+        examples.append(
+            TrainingExample(
+                board=state["board"].astype(bool),
+                current_piece=state["current_piece"],
+                hold_piece=state["hold_piece"],
+                hold_available=state["hold_available"],
+                next_queue=state["next_queue"],
+                move_number=state["move_number"],
+                policy_target=history.policies[i],
+                value_target=values[i],
+                action_mask=state["action_mask"].astype(bool),
+            )
+        )
 
     return examples
 
@@ -373,6 +378,7 @@ def generate_random_games(
 @dataclass
 class EvalMetrics:
     """Evaluation metrics from a set of games."""
+
     num_games: int = 0
     total_attack: int = 0
     max_attack: int = 0
@@ -404,12 +410,12 @@ class EvalMetrics:
 
     def to_dict(self) -> dict:
         return {
-            'num_games': self.num_games,
-            'avg_attack': self.avg_attack,
-            'max_attack': self.max_attack,
-            'avg_lines': self.avg_lines,
-            'avg_moves': self.avg_moves,
-            'attack_per_piece': self.attack_per_piece,
+            "num_games": self.num_games,
+            "avg_attack": self.avg_attack,
+            "max_attack": self.max_attack,
+            "avg_lines": self.avg_lines,
+            "avg_moves": self.avg_moves,
+            "attack_per_piece": self.attack_per_piece,
         }
 
 
@@ -531,7 +537,9 @@ if __name__ == "__main__":
     # Test single game
     print("Playing single random game...")
     history = play_game_random(seed=42, max_moves=100, verbose=True)
-    print(f"Game finished: {len(history.states)} moves, {sum(history.attacks)} total attack")
+    print(
+        f"Game finished: {len(history.states)} moves, {sum(history.attacks)} total attack"
+    )
     print()
 
     # Convert to examples
@@ -539,7 +547,9 @@ if __name__ == "__main__":
     print(f"Generated {len(examples)} training examples")
     if examples:
         ex = examples[0]
-        print(f"First example: board={ex.board.shape}, policy={ex.policy_target.shape}, value={ex.value_target:.2f}")
+        print(
+            f"First example: board={ex.board.shape}, policy={ex.policy_target.shape}, value={ex.value_target:.2f}"
+        )
     print()
 
     # Generate batch of games
