@@ -66,6 +66,9 @@ pub struct TetrisEnv {
     last_kick_index: usize,
     /// Last attack result from line clear
     last_attack_result: Option<AttackResult>,
+    /// Total pieces spawned (including current). Used for 7-bag tracking.
+    /// Position in current bag cycle = pieces_spawned % 7
+    pieces_spawned: u32,
 }
 
 // Internal helper methods (not exposed to Python)
@@ -140,6 +143,9 @@ impl TetrisEnv {
         piece.x = (self.width as i32 - 4) / 2;
         piece.y = 0;
         piece.rotation = 0;
+
+        // Track pieces spawned for 7-bag state
+        self.pieces_spawned += 1;
 
         // Clear lock delay for new piece
         self.clear_lock_delay();
@@ -375,6 +381,7 @@ impl TetrisEnv {
             last_move_was_rotation: false,
             last_kick_index: 0,
             last_attack_result: None,
+            pieces_spawned: 0,
         };
         env.spawn_piece_internal();
         env
@@ -397,6 +404,7 @@ impl TetrisEnv {
         self.last_move_was_rotation = false;
         self.last_kick_index = 0;
         self.last_attack_result = None;
+        self.pieces_spawned = 0;
         self.spawn_piece_internal();
     }
 
@@ -446,6 +454,75 @@ impl TetrisEnv {
     /// Get the last attack result (from the most recent line clear)
     pub fn get_last_attack_result(&self) -> Option<AttackResult> {
         self.last_attack_result.clone()
+    }
+
+    /// Get the number of pieces spawned (for 7-bag tracking)
+    pub fn get_pieces_spawned(&self) -> u32 {
+        self.pieces_spawned
+    }
+
+    /// Get the possible piece types that could appear as the next unseen piece.
+    ///
+    /// This is used by MCTS for chance nodes. The possible pieces depend on
+    /// what's already in the queue (7-bag system).
+    ///
+    /// Returns a vector of piece type indices (0-6) that could appear next.
+    pub fn get_possible_next_pieces(&self) -> Vec<usize> {
+        // The queue contains pieces from consecutive bags.
+        // To find what pieces could appear at position queue.len(),
+        // we need to look at which bag that position falls into and what's already used.
+        //
+        // Key insight: pieces at positions 0-6 are from bag 0, 7-13 from bag 1, etc.
+        // The current piece is at position (pieces_spawned - 1).
+        // Queue positions are: pieces_spawned, pieces_spawned+1, ..., pieces_spawned+queue_len-1
+        // The next piece to be added would be at position: pieces_spawned + queue_len
+
+        let next_position = self.pieces_spawned as usize + self.piece_queue.len();
+        let bag_number = next_position / 7;
+        let position_in_bag = next_position % 7;
+
+        // If position_in_bag is 0, this is the start of a new bag - all pieces possible
+        if position_in_bag == 0 {
+            return (0..7).collect();
+        }
+
+        // Find which pieces are already used in this bag
+        // The bag starts at position: bag_number * 7
+        let bag_start = bag_number * 7;
+
+        // Pieces in current bag so far are those from bag_start to next_position-1
+        let mut used_in_bag: Vec<usize> = Vec::new();
+
+        // Check current piece if it's in this bag
+        let current_pos = self.pieces_spawned.saturating_sub(1) as usize;
+        if current_pos >= bag_start && current_pos < bag_start + 7 {
+            if let Some(ref piece) = self.current_piece {
+                used_in_bag.push(piece.piece_type);
+            }
+        }
+
+        // Check queue pieces
+        for (i, &piece_type) in self.piece_queue.iter().enumerate() {
+            let piece_pos = self.pieces_spawned as usize + i;
+            if piece_pos >= bag_start && piece_pos < bag_start + 7 {
+                used_in_bag.push(piece_type);
+            }
+        }
+
+        // Return pieces NOT in used_in_bag
+        (0..7).filter(|&p| !used_in_bag.contains(&p)).collect()
+    }
+
+    /// Push a specific piece type to the end of the queue.
+    ///
+    /// This is used by MCTS to simulate chance outcomes. After selecting which
+    /// piece appears (from get_possible_next_pieces), call this to add it.
+    ///
+    /// WARNING: This bypasses normal 7-bag generation. Only use for MCTS simulation.
+    pub fn push_queue_piece(&mut self, piece_type: usize) {
+        if piece_type < 7 {
+            self.piece_queue.push(piece_type);
+        }
     }
 
     /// Hold the current piece (swap with hold slot)
@@ -791,14 +868,14 @@ impl TetrisEnv {
     /// Note: For proper T-spin detection including mini vs proper distinction,
     /// use execute_placement() with the full Placement object instead.
     pub fn place_piece(&mut self, x: i32, y: i32, rotation: usize) -> u32 {
-        // Delegate to internal method with no move info
-        self.place_piece_internal(x, y, rotation, None)
+        // Simple placement without T-spin detection
+        self.place_piece_internal_with_kick(x, y, rotation, false, 0)
     }
 
     /// Execute a placement from get_possible_placements() with full T-spin detection.
     ///
-    /// This uses the move sequence to properly detect T-spins including
-    /// the mini vs proper distinction based on which kick was used.
+    /// This uses the kick index stored in the Placement (computed during move generation)
+    /// for accurate T-spin detection including mini vs proper distinction.
     ///
     /// Args:
     ///     placement: A Placement object from get_possible_placements()
@@ -809,11 +886,22 @@ impl TetrisEnv {
         let x = placement.piece.x;
         let y = placement.piece.y;
         let rotation = placement.piece.rotation;
-        self.place_piece_internal(x, y, rotation, Some(&placement.moves))
+
+        // Use the actual kick index and rotation info from the Placement
+        self.place_piece_internal_with_kick(
+            x, y, rotation,
+            placement.last_move_was_rotation,
+            placement.last_kick_index,
+        )
     }
 
-    /// Internal placement logic with optional move sequence for T-spin detection
-    fn place_piece_internal(&mut self, x: i32, y: i32, rotation: usize, moves: Option<&[u8]>) -> u32 {
+    /// Internal placement logic with explicit T-spin detection info
+    fn place_piece_internal_with_kick(
+        &mut self,
+        x: i32, y: i32, rotation: usize,
+        was_rotation: bool,
+        kick_index: usize,
+    ) -> u32 {
         if self.game_over {
             return 0;
         }
@@ -834,37 +922,9 @@ impl TetrisEnv {
             new_piece.rotation = rotation % 4;
             self.current_piece = Some(new_piece);
 
-            // Determine T-spin flags from move sequence
-            if let Some(move_list) = moves {
-                // Check if last move before hard_drop was a rotation
-                // Move codes: 4=rotate_cw, 5=rotate_ccw, 6=hard_drop
-                let last_non_drop = move_list.iter().rev()
-                    .find(|&&m| m != 6);
-
-                self.last_move_was_rotation = matches!(last_non_drop, Some(&4) | Some(&5));
-
-                // Count consecutive rotations at the end to estimate kick index
-                // More rotations in sequence = likely used a kick
-                if self.last_move_was_rotation && piece_type == 5 {
-                    let rotation_count = move_list.iter().rev()
-                        .take_while(|&&m| m == 4 || m == 5 || m == 6)
-                        .filter(|&&m| m == 4 || m == 5)
-                        .count();
-                    // If multiple rotation attempts, likely used a kick (index > 0)
-                    self.last_kick_index = if rotation_count > 1 { 1 } else { 0 };
-                } else {
-                    self.last_kick_index = 0;
-                }
-            } else {
-                // No move info - use heuristic for T pieces
-                if piece_type == 5 {
-                    self.last_move_was_rotation = true;
-                    self.last_kick_index = 0;
-                } else {
-                    self.last_move_was_rotation = false;
-                    self.last_kick_index = 0;
-                }
-            }
+            // Use the actual kick info from move generation
+            self.last_move_was_rotation = was_rotation;
+            self.last_kick_index = kick_index;
 
             // Lock the piece
             let old_attack = self.attack;

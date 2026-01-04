@@ -50,6 +50,13 @@ pub struct Placement {
     /// The rotation state (0-3)
     #[pyo3(get)]
     pub rotation: usize,
+    /// The kick index used for the final rotation (0 = no kick, 1-4 = kick used)
+    /// This is needed for proper T-spin detection (kick 4 = always full T-spin)
+    #[pyo3(get)]
+    pub last_kick_index: usize,
+    /// Whether the last move before hard drop was a rotation
+    #[pyo3(get)]
+    pub last_move_was_rotation: bool,
 }
 
 #[pymethods]
@@ -146,12 +153,13 @@ fn get_i_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
 }
 
 /// Try to rotate a piece and return the new state if successful
+/// Returns (new_state, kick_index) where kick_index is 0-4 indicating which kick was used
 fn try_rotate(
     board: &Board,
     piece_type: usize,
     state: &PieceState,
     clockwise: bool,
-) -> Option<PieceState> {
+) -> Option<(PieceState, usize)> {
     let from_state = state.rotation;
     let to_state = if clockwise {
         (state.rotation + 1) % 4
@@ -170,18 +178,28 @@ fn try_rotate(
 
     let new_shape = &TETROMINOS[piece_type][to_state];
 
-    for (dx, dy) in kicks.iter() {
+    for (kick_index, (dx, dy)) in kicks.iter().enumerate() {
         let new_x = state.x + dx;
         let new_y = state.y + dy;
         if board.is_valid_position_for_shape(new_shape, new_x, new_y) {
-            return Some(PieceState {
+            return Some((PieceState {
                 x: new_x,
                 y: new_y,
                 rotation: to_state,
-            });
+            }, kick_index));
         }
     }
     None
+}
+
+/// Information tracked during BFS for each path
+#[derive(Clone)]
+struct PathInfo {
+    moves: Vec<u8>,
+    /// Kick index of the last rotation (if any)
+    last_kick_index: usize,
+    /// Whether the last move was a rotation
+    last_move_was_rotation: bool,
 }
 
 /// Find all possible placements for a piece on the given board
@@ -208,25 +226,31 @@ pub fn find_all_placements(
 
     // BFS to find all reachable states
     let mut visited: HashSet<PieceState> = HashSet::new();
-    let mut queue: VecDeque<(PieceState, Vec<u8>)> = VecDeque::new();
+    let mut queue: VecDeque<(PieceState, PathInfo)> = VecDeque::new();
 
-    // Track final positions (after hard drop) -> shortest path
+    // Track final positions (after hard drop) -> path info
     // Key: (final_x, final_y, rotation)
-    let mut final_positions: HashMap<(i32, i32, usize), Vec<u8>> = HashMap::new();
+    let mut final_positions: HashMap<(i32, i32, usize), PathInfo> = HashMap::new();
+
+    let start_info = PathInfo {
+        moves: Vec::new(),
+        last_kick_index: 0,
+        last_move_was_rotation: false,
+    };
 
     visited.insert(start_state);
-    queue.push_back((start_state, Vec::new()));
+    queue.push_back((start_state, start_info));
 
-    while let Some((state, moves)) = queue.pop_front() {
+    while let Some((state, path_info)) = queue.pop_front() {
         // Record this state's final position (after hard drop)
         let final_y = board.get_drop_y(piece_type, &state);
         let final_key = (state.x, final_y, state.rotation);
 
         // Only keep the shortest path to each final position
         if !final_positions.contains_key(&final_key)
-            || moves.len() < final_positions[&final_key].len()
+            || path_info.moves.len() < final_positions[&final_key].moves.len()
         {
-            final_positions.insert(final_key, moves.clone());
+            final_positions.insert(final_key, path_info.clone());
         }
 
         // Try all possible moves
@@ -239,29 +263,39 @@ pub fn find_all_placements(
         ];
 
         for (action, dx, dy, rotate) in transitions.iter() {
-            let new_state = if let Some(clockwise) = rotate {
-                // Rotation with wall kicks
-                try_rotate(board, piece_type, &state, *clockwise)
+            let (new_state, kick_index) = if let Some(clockwise) = rotate {
+                // Rotation with wall kicks - returns state and kick index
+                match try_rotate(board, piece_type, &state, *clockwise) {
+                    Some((state, kick)) => (Some(state), kick),
+                    None => (None, 0),
+                }
             } else {
-                // Simple translation
+                // Simple translation - no kick
                 let candidate = PieceState {
                     x: state.x + dx,
                     y: state.y + dy,
                     rotation: state.rotation,
                 };
                 if board.is_valid_position(piece_type, &candidate) {
-                    Some(candidate)
+                    (Some(candidate), 0)
                 } else {
-                    None
+                    (None, 0)
                 }
             };
 
             if let Some(new_state) = new_state {
                 if !visited.contains(&new_state) {
                     visited.insert(new_state);
-                    let mut new_moves = moves.clone();
+                    let mut new_moves = path_info.moves.clone();
                     new_moves.push(action.to_u8());
-                    queue.push_back((new_state, new_moves));
+
+                    let is_rotation = rotate.is_some();
+                    let new_info = PathInfo {
+                        moves: new_moves,
+                        last_kick_index: if is_rotation { kick_index } else { path_info.last_kick_index },
+                        last_move_was_rotation: is_rotation,
+                    };
+                    queue.push_back((new_state, new_info));
                 }
             }
         }
@@ -272,20 +306,22 @@ pub fn find_all_placements(
     let mut seen_cells: HashSet<Vec<(i32, i32)>> = HashSet::new();
     let mut placements: Vec<Placement> = Vec::new();
 
-    for ((x, y, rotation), mut moves) in final_positions {
+    for ((x, y, rotation), mut path_info) in final_positions {
         let shape = &TETROMINOS[piece_type][rotation];
         let mut cells: Vec<(i32, i32)> = get_cells_for_shape(shape, x, y);
         cells.sort(); // Normalize for comparison
 
         if seen_cells.insert(cells) {
             // Add hard drop to complete the move sequence
-            moves.push(Action::HardDrop.to_u8());
+            path_info.moves.push(Action::HardDrop.to_u8());
 
             placements.push(Placement {
                 piece: Piece::with_position(piece_type, x, y, rotation),
-                moves,
+                moves: path_info.moves,
                 column: x,
                 rotation,
+                last_kick_index: path_info.last_kick_index,
+                last_move_was_rotation: path_info.last_move_was_rotation,
             });
         }
     }

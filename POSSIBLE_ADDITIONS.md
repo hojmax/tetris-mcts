@@ -40,46 +40,34 @@ More accurate name - these are the possible placements, not all theoretical ones
 debug_assert_eq!(states.len(), attacks.len(), "States and attacks should have same length");
 ```
 
----
+### Chance nodes now properly track queue
 
-## REMAINING (Architectural Issues)
+**Previously**: `set_current_piece_type()` incorrectly changed the current piece.
 
-### 1. Chance nodes conceptually wrong
+**Fixed**: Now uses `push_queue_piece()` to add pieces to the END of the queue, which is the actual "chance" in Tetris - what piece appears next in the queue.
 
-**Current behavior**: `set_current_piece_type()` changes the current piece.
+Changes:
+- `expand_chance()` now calls `push_queue_piece(piece)` instead of `set_current_piece_type(piece)`
+- The chance node represents which piece appears at the end of the visible queue
 
-**Correct behavior**: The "chance" should be about pieces beyond the visible queue. After placing a piece:
+### Proper 7-bag tracking implemented
 
-- The queue shifts: position 0→current, 1→0, 2→1, etc.
-- The chance is what appears at the END of the visible queue (position 5)
-- This depends on 7-bag constraints
+**Previously**: Always returned all 7 pieces as possible.
 
-**Fix required**: Rethink the entire chance node model. Should track queue state and add pieces to end of queue.
+**Fixed**: Added proper 7-bag state tracking:
+- `TetrisEnv.pieces_spawned` tracks total pieces drawn
+- `get_possible_next_pieces()` computes which pieces could appear next based on 7-bag constraints
+- `expand_action()` now uses `get_possible_next_pieces()` for accurate bag tracking
 
-### 2. Bag tracking is wrong
+### T-spin kick detection now uses actual kick index
 
-```rust
-// Current: always returns all 7 pieces as possible
-let bag_remaining: Vec<usize> = (0..NUM_PIECE_TYPES).collect();
-```
+**Previously**: Used a heuristic based on counting rotations in the move sequence.
 
-**Correct behavior**: Track which pieces are left in the current bag based on the observed queue. If you've seen I, O, T in the current bag, only S, Z, J, L are possible for remaining positions.
-
-**Fix required**: Implement proper 7-bag state tracking based on observed queue.
-
-### 3. T-spin kick detection uses heuristic
-
-```rust
-let rotation_count = move_list.iter().rev()
-    .take_while(|&&m| m == 4 || m == 5 || m == 6)
-    .filter(|&&m| m == 4 || m == 5)
-    .count();
-self.last_kick_index = if rotation_count > 1 { 1 } else { 0 };
-```
-
-This is a heuristic, not the actual kick index.
-
-**Fix required**: Store the actual kick index in the `Placement` struct during move generation (the kick is determined during rotation in `find_all_placements`).
+**Fixed**:
+- `Placement` struct now has `last_kick_index` and `last_move_was_rotation` fields
+- `try_rotate()` returns the actual kick index (0-4) used during rotation
+- `find_all_placements()` tracks kick info through BFS and stores it in Placement
+- `execute_placement()` uses the actual kick index for accurate T-spin detection
 
 ---
 

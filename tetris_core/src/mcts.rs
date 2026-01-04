@@ -523,15 +523,15 @@ impl MCTSAgent {
                 break;
             }
 
-            // Get NN policy and value for root
-            let (policy, value) = nn.predict_masked(&env, move_idx as usize, &mask)
+            // Get NN policy for root
+            let (policy, _) = nn.predict_masked(&env, move_idx as usize, &mask)
                 .expect("Neural network prediction failed during self-play");
 
             // Store state before making move
             states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
 
             // Run MCTS search
-            let result = self.search_internal(&env, policy, value, add_noise, move_idx);
+            let result = self.search_internal(&env, policy, add_noise, move_idx);
 
             // Execute the selected action
             let (x, y, rot) = self.action_space.index_to_placement(result.action)
@@ -640,7 +640,6 @@ impl MCTSAgent {
         &self,
         env: &TetrisEnv,
         policy: Vec<f32>,
-        root_value: f32,
         add_noise: bool,
         move_number: u32,
     ) -> MCTSResult {
@@ -654,7 +653,7 @@ impl MCTSAgent {
 
         // Run simulations
         for _ in 0..self.config.num_simulations {
-            self.simulate(&mut root, root_value, move_number);
+            self.simulate(&mut root, move_number);
         }
 
         // Build result policy from visit counts
@@ -709,9 +708,8 @@ impl MCTSAgent {
     ///
     /// Args:
     ///     root: The root decision node
-    ///     root_value: NN value estimate for root (used if no deeper evaluation available)
     ///     root_move_number: Move number at the root
-    fn simulate(&self, root: &mut DecisionNode, root_value: f32, root_move_number: u32) {
+    fn simulate(&self, root: &mut DecisionNode, root_move_number: u32) {
         // Selection: traverse tree
         // Store (node_ptr, action_idx, attack_at_this_step)
         let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
@@ -809,21 +807,23 @@ impl MCTSAgent {
         }).expect("Action not found in valid placements during expansion");
         let attack = new_state.execute_placement(placement);
 
-        // Compute remaining bag (simplified - just use all pieces)
-        // In a real implementation, we'd track the 7-bag state
-        let bag_remaining: Vec<usize> = (0..NUM_PIECE_TYPES).collect();
+        // Get possible pieces for the next unseen queue position (proper 7-bag tracking)
+        let bag_remaining = new_state.get_possible_next_pieces();
 
         MCTSNode::Chance(ChanceNode::new(new_state, attack, bag_remaining))
     }
 
     /// Expand a chance node for a specific piece (creates decision node)
+    ///
+    /// The "piece" parameter represents the piece that appears at the END of the visible
+    /// queue (the next unseen piece). This is the actual "chance" in Tetris - we know
+    /// the current piece and visible queue, but not what comes after.
     fn expand_chance(&self, parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNode {
         let mut new_state = parent.state.clone();
 
-        // Set the current piece to the sampled piece type
-        // TODO: This is conceptually wrong - we should be adding pieces to end of queue,
-        // not changing the current piece. See POSSIBLE_ADDITIONS.md for details.
-        new_state.set_current_piece_type(piece);
+        // Add the selected piece to the end of the queue
+        // This represents the "chance" outcome - which piece appears next in the queue
+        new_state.push_queue_piece(piece);
 
         let mut node = DecisionNode::new(new_state.clone(), move_number);
 
