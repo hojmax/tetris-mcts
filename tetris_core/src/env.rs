@@ -774,6 +774,126 @@ impl TetrisEnv {
         self.attack
     }
 
+    /// Directly place the current piece at the specified position and lock it.
+    ///
+    /// This is more efficient than stepping through individual moves when you
+    /// already know the final placement from get_all_placements().
+    ///
+    /// Args:
+    ///     x: The x position (column) for the piece
+    ///     y: The y position (row) for the piece
+    ///     rotation: The rotation state (0-3)
+    ///
+    /// Returns:
+    ///     The attack gained from this placement (including line clears)
+    ///
+    /// Note: For proper T-spin detection including mini vs proper distinction,
+    /// use execute_placement() with the full Placement object instead.
+    pub fn place_piece(&mut self, x: i32, y: i32, rotation: usize) -> u32 {
+        // Delegate to internal method with no move info
+        self.place_piece_internal(x, y, rotation, None)
+    }
+
+    /// Execute a placement from get_all_placements() with full T-spin detection.
+    ///
+    /// This uses the move sequence to properly detect T-spins including
+    /// the mini vs proper distinction based on which kick was used.
+    ///
+    /// Args:
+    ///     placement: A Placement object from get_all_placements()
+    ///
+    /// Returns:
+    ///     The attack gained from this placement (including line clears)
+    pub fn execute_placement(&mut self, placement: &crate::moves::Placement) -> u32 {
+        let x = placement.piece.x;
+        let y = placement.piece.y;
+        let rotation = placement.piece.rotation;
+        self.place_piece_internal(x, y, rotation, Some(&placement.moves))
+    }
+
+    /// Internal placement logic with optional move sequence for T-spin detection
+    fn place_piece_internal(&mut self, x: i32, y: i32, rotation: usize, moves: Option<&[u8]>) -> u32 {
+        if self.game_over {
+            return 0;
+        }
+
+        if let Some(ref piece) = self.current_piece {
+            let piece_type = piece.piece_type;
+            let shape = &TETROMINOS[piece_type][rotation % 4];
+
+            // Verify the position is valid
+            if !self.is_valid_position_for_shape(shape, x, y) {
+                return 0;
+            }
+
+            // Set the piece to the target position
+            let mut new_piece = piece.clone();
+            new_piece.x = x;
+            new_piece.y = y;
+            new_piece.rotation = rotation % 4;
+            self.current_piece = Some(new_piece);
+
+            // Determine T-spin flags from move sequence
+            if let Some(move_list) = moves {
+                // Check if last move before hard_drop was a rotation
+                // Move codes: 4=rotate_cw, 5=rotate_ccw, 6=hard_drop
+                let last_non_drop = move_list.iter().rev()
+                    .find(|&&m| m != 6);
+
+                self.last_move_was_rotation = matches!(last_non_drop, Some(&4) | Some(&5));
+
+                // Count consecutive rotations at the end to estimate kick index
+                // More rotations in sequence = likely used a kick
+                if self.last_move_was_rotation && piece_type == 5 {
+                    let rotation_count = move_list.iter().rev()
+                        .take_while(|&&m| m == 4 || m == 5 || m == 6)
+                        .filter(|&&m| m == 4 || m == 5)
+                        .count();
+                    // If multiple rotation attempts, likely used a kick (index > 0)
+                    self.last_kick_index = if rotation_count > 1 { 1 } else { 0 };
+                } else {
+                    self.last_kick_index = 0;
+                }
+            } else {
+                // No move info - use heuristic for T pieces
+                if piece_type == 5 {
+                    self.last_move_was_rotation = true;
+                    self.last_kick_index = 0;
+                } else {
+                    self.last_move_was_rotation = false;
+                    self.last_kick_index = 0;
+                }
+            }
+
+            // Lock the piece
+            let old_attack = self.attack;
+            self.lock_piece_internal();
+            self.attack - old_attack
+        } else {
+            0
+        }
+    }
+
+    /// Set the current piece to a specific type.
+    ///
+    /// This is used by MCTS to explore different possible next pieces
+    /// at chance nodes. The piece spawns at the standard spawn position.
+    ///
+    /// Args:
+    ///     piece_type: The piece type (0-6: I, O, T, S, Z, J, L)
+    pub fn set_current_piece_type(&mut self, piece_type: usize) {
+        if piece_type < 7 && !self.game_over {
+            let spawn_x = (self.width as i32 - 4) / 2;
+            let spawn_y = 0;
+            self.current_piece = Some(Piece {
+                piece_type,
+                x: spawn_x,
+                y: spawn_y,
+                rotation: 0,
+            });
+        }
+    }
+
     /// Get all possible placements for the current piece
     ///
     /// Returns a list of Placement objects, each containing:

@@ -2,3 +2,4 @@ tetris_core/target/
 .venv/
 .env
 *.egg-info/
+__pycache__/
