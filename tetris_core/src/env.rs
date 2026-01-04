@@ -8,8 +8,8 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::VecDeque;
 
-use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES};
-use crate::kicks::{get_i_kicks, get_jlstz_kicks};
+use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES, T_PIECE};
+use crate::kicks::get_kicks_for_piece;
 use crate::piece::{get_cells_for_shape, Piece, COLORS, TETROMINOS};
 use crate::scoring::{
     calculate_attack, combo_attack, determine_clear_type, AttackResult,
@@ -22,9 +22,6 @@ pub fn generate_bag() -> Vec<usize> {
     bag.shuffle(&mut thread_rng());
     bag
 }
-
-/// T piece index
-const T_PIECE: usize = 2;
 
 #[pyclass]
 #[derive(Clone)]
@@ -266,7 +263,7 @@ impl TetrisEnv {
     }
 
     fn lock_piece_internal(&mut self) {
-        if let Some(piece) = self.current_piece.clone() {
+        if let Some(piece) = self.current_piece.take() {
             // Check for T-spin before locking
             let (is_tspin, is_mini) = self.check_tspin(&piece);
 
@@ -575,14 +572,15 @@ impl TetrisEnv {
         COLORS[piece_type]
     }
 
-    pub fn move_left(&mut self) -> bool {
+    /// Internal horizontal movement logic
+    fn move_horizontal(&mut self, dx: i32) -> bool {
         if self.game_over {
             return false;
         }
         let was_grounded = self.is_grounded();
         if let Some(ref piece) = self.current_piece {
             let mut test_piece = piece.clone();
-            test_piece.x -= 1;
+            test_piece.x += dx;
             if self.is_valid_position_for(&test_piece) {
                 self.current_piece = Some(test_piece);
                 // Reset lock delay if we were grounded and moved
@@ -597,26 +595,12 @@ impl TetrisEnv {
         false
     }
 
+    pub fn move_left(&mut self) -> bool {
+        self.move_horizontal(-1)
+    }
+
     pub fn move_right(&mut self) -> bool {
-        if self.game_over {
-            return false;
-        }
-        let was_grounded = self.is_grounded();
-        if let Some(ref piece) = self.current_piece {
-            let mut test_piece = piece.clone();
-            test_piece.x += 1;
-            if self.is_valid_position_for(&test_piece) {
-                self.current_piece = Some(test_piece);
-                // Reset lock delay if we were grounded and moved
-                if was_grounded && self.lock_delay_ms.is_some() {
-                    self.reset_lock_delay();
-                }
-                // Movement clears rotation flag
-                self.last_move_was_rotation = false;
-                return true;
-            }
-        }
-        false
+        self.move_horizontal(1)
     }
 
     pub fn move_down(&mut self) -> bool {
@@ -664,9 +648,8 @@ impl TetrisEnv {
                 drop_distance += 1;
             }
             test_piece.y -= 1; // Go back to last valid position
+            // Only clear rotation flag if piece actually moved (preserves T-spin detection for 0-distance drops)
             if drop_distance > 0 {
-                test_piece.y = piece.y + drop_distance as i32;
-                // Hard drop clears rotation flag (unless drop distance is 0)
                 self.last_move_was_rotation = false;
             }
             self.current_piece = Some(test_piece);
@@ -676,28 +659,21 @@ impl TetrisEnv {
         drop_distance
     }
 
-    /// Rotate clockwise using SRS wall kicks
-    pub fn rotate_cw(&mut self) -> bool {
+    /// Internal rotation logic using SRS wall kicks
+    fn rotate(&mut self, clockwise: bool) -> bool {
         if self.game_over {
             return false;
         }
         let was_grounded = self.is_grounded();
         if let Some(ref piece) = self.current_piece {
             let from_state = piece.rotation;
-            let to_state = (piece.rotation + 1) % 4;
-            let new_shape = &TETROMINOS[piece.piece_type][to_state];
-
-            // Get appropriate kicks based on piece type
-            let kicks = if piece.piece_type == 0 {
-                // I piece
-                get_i_kicks(from_state, to_state)
-            } else if piece.piece_type == 1 {
-                // O piece - no kicks needed, but also no real rotation
-                [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]
+            let to_state = if clockwise {
+                (piece.rotation + 1) % 4
             } else {
-                // J, L, S, T, Z pieces
-                get_jlstz_kicks(from_state, to_state)
+                (piece.rotation + 3) % 4 // +3 is same as -1 mod 4
             };
+            let new_shape = &TETROMINOS[piece.piece_type][to_state];
+            let kicks = get_kicks_for_piece(piece.piece_type, from_state, to_state);
 
             // Try each kick
             for (kick_idx, (dx, dy)) in kicks.iter().enumerate() {
@@ -723,51 +699,14 @@ impl TetrisEnv {
         false
     }
 
+    /// Rotate clockwise using SRS wall kicks
+    pub fn rotate_cw(&mut self) -> bool {
+        self.rotate(true)
+    }
+
     /// Rotate counter-clockwise using SRS wall kicks
     pub fn rotate_ccw(&mut self) -> bool {
-        if self.game_over {
-            return false;
-        }
-        let was_grounded = self.is_grounded();
-        if let Some(ref piece) = self.current_piece {
-            let from_state = piece.rotation;
-            let to_state = (piece.rotation + 3) % 4; // +3 is same as -1 mod 4
-            let new_shape = &TETROMINOS[piece.piece_type][to_state];
-
-            // Get appropriate kicks based on piece type
-            let kicks = if piece.piece_type == 0 {
-                // I piece
-                get_i_kicks(from_state, to_state)
-            } else if piece.piece_type == 1 {
-                // O piece - no kicks needed
-                [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]
-            } else {
-                // J, L, S, T, Z pieces
-                get_jlstz_kicks(from_state, to_state)
-            };
-
-            // Try each kick
-            for (kick_idx, (dx, dy)) in kicks.iter().enumerate() {
-                let new_x = piece.x + dx;
-                let new_y = piece.y + dy;
-                if self.is_valid_position_for_shape(new_shape, new_x, new_y) {
-                    let mut new_piece = piece.clone();
-                    new_piece.x = new_x;
-                    new_piece.y = new_y;
-                    new_piece.rotation = to_state;
-                    self.current_piece = Some(new_piece);
-                    // Reset lock delay if we were grounded and rotated
-                    if was_grounded && self.lock_delay_ms.is_some() {
-                        self.reset_lock_delay();
-                    }
-                    // Track that last move was a rotation
-                    self.last_move_was_rotation = true;
-                    self.last_kick_index = kick_idx;
-                    return true;
-                }
-            }
-        }
-        false
+        self.rotate(false)
     }
 
     pub fn step(&mut self, action: u8) -> (u32, bool) {
@@ -864,12 +803,6 @@ impl TetrisEnv {
 
     pub fn clone_state(&self) -> TetrisEnv {
         self.clone()
-    }
-
-    /// Deprecated: Use `attack` instead. Returns attack for backwards compatibility.
-    #[getter]
-    pub fn score(&self) -> u32 {
-        self.attack
     }
 
     /// Directly place the current piece at the specified position and lock it.
@@ -1530,13 +1463,6 @@ mod tests {
         // Lock a piece without clearing lines
         env.clear_lines_internal(false, false);
         assert_eq!(env.combo, 0);
-    }
-
-    #[test]
-    fn test_score_returns_attack() {
-        let mut env = TetrisEnv::new(10, 20);
-        env.attack = 42;
-        assert_eq!(env.score(), 42);
     }
 
     #[test]

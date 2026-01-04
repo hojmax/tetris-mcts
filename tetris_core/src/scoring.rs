@@ -61,24 +61,13 @@ impl ClearType {
     }
 }
 
+/// Combo attack lookup table (indices 0-11, 12+ returns 5)
+const COMBO_TABLE: [u32; 12] = [0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 4];
+
 /// Get combo attack bonus for the given combo count
 /// Combo count starts at 0 for the first consecutive clear
 pub fn combo_attack(combo: u32) -> u32 {
-    match combo {
-        0 => 0,
-        1 => 0,
-        2 => 1,
-        3 => 1,
-        4 => 1,
-        5 => 2,
-        6 => 2,
-        7 => 3,
-        8 => 3,
-        9 => 4,
-        10 => 4,
-        11 => 4,
-        _ => 5, // 12+
-    }
+    COMBO_TABLE.get(combo as usize).copied().unwrap_or(5)
 }
 
 /// Perfect clear attack value

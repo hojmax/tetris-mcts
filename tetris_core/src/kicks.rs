@@ -76,16 +76,6 @@ pub fn get_kicks_for_piece(piece_type: usize, from_state: usize, to_state: usize
     }
 }
 
-/// Calculate the next rotation state for clockwise rotation
-pub fn rotate_cw(current_state: usize) -> usize {
-    (current_state + 1) % 4
-}
-
-/// Calculate the next rotation state for counter-clockwise rotation
-pub fn rotate_ccw(current_state: usize) -> usize {
-    (current_state + 3) % 4
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,49 +141,6 @@ mod tests {
             let kicks = get_kicks_for_piece(piece_type, 0, 1);
             assert_eq!(kicks, get_jlstz_kicks(0, 1));
         }
-    }
-
-    #[test]
-    fn test_rotate_cw() {
-        assert_eq!(rotate_cw(0), 1);
-        assert_eq!(rotate_cw(1), 2);
-        assert_eq!(rotate_cw(2), 3);
-        assert_eq!(rotate_cw(3), 0);
-    }
-
-    #[test]
-    fn test_rotate_ccw() {
-        assert_eq!(rotate_ccw(0), 3);
-        assert_eq!(rotate_ccw(1), 0);
-        assert_eq!(rotate_ccw(2), 1);
-        assert_eq!(rotate_ccw(3), 2);
-    }
-
-    #[test]
-    fn test_cw_ccw_inverse() {
-        // Rotating CW then CCW should return to original state
-        for state in 0..4 {
-            let after_cw = rotate_cw(state);
-            let back = rotate_ccw(after_cw);
-            assert_eq!(back, state);
-        }
-    }
-
-    #[test]
-    fn test_four_rotations_returns_to_start() {
-        // Four CW rotations should return to original state
-        let mut state = 0;
-        for _ in 0..4 {
-            state = rotate_cw(state);
-        }
-        assert_eq!(state, 0);
-
-        // Same for CCW
-        state = 0;
-        for _ in 0..4 {
-            state = rotate_ccw(state);
-        }
-        assert_eq!(state, 0);
     }
 
     #[test]
