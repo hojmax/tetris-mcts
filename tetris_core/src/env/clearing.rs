@@ -115,7 +115,6 @@ impl TetrisEnv {
                 calculate_attack(clear_type, self.combo, self.back_to_back, is_pc);
 
             let mut result = AttackResult::new();
-            result.clear_type = clear_type.as_str().to_string();
             result.lines_cleared = num_lines;
             result.base_attack = clear_type.base_attack();
             result.combo_attack = combo_attack(self.combo);

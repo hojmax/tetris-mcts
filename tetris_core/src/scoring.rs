@@ -59,22 +59,6 @@ impl ClearType {
             ClearType::TSpinTriple => 6,
         }
     }
-
-    /// Get the name of this clear type as a static string (avoids allocation)
-    #[inline]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            ClearType::None => "None",
-            ClearType::Single => "Single",
-            ClearType::Double => "Double",
-            ClearType::Triple => "Triple",
-            ClearType::Tetris => "Tetris",
-            ClearType::TSpinMiniSingle => "TSpinMiniSingle",
-            ClearType::TSpinSingle => "TSpinSingle",
-            ClearType::TSpinDouble => "TSpinDouble",
-            ClearType::TSpinTriple => "TSpinTriple",
-        }
-    }
 }
 
 /// Combo attack lookup table (indices 0-11, 12+ returns 5)
@@ -96,9 +80,6 @@ pub const BACK_TO_BACK_BONUS: u32 = 1;
 #[pyclass]
 #[derive(Debug, Clone)]
 pub struct AttackResult {
-    /// Type of clear performed
-    #[pyo3(get)]
-    pub clear_type: String,
     /// Number of lines cleared
     #[pyo3(get)]
     pub lines_cleared: u32,
@@ -134,7 +115,6 @@ pub struct AttackResult {
 impl AttackResult {
     pub fn new() -> Self {
         AttackResult {
-            clear_type: "None".to_string(),
             lines_cleared: 0,
             base_attack: 0,
             combo_attack: 0,
@@ -159,8 +139,8 @@ impl Default for AttackResult {
 impl AttackResult {
     fn __repr__(&self) -> String {
         format!(
-            "AttackResult(type={}, lines={}, total_attack={}, combo={}, b2b={})",
-            self.clear_type, self.lines_cleared, self.total_attack, self.combo, self.back_to_back_active
+            "AttackResult(lines={}, attack={}, combo={}, b2b={}, tspin={})",
+            self.lines_cleared, self.total_attack, self.combo, self.back_to_back_active, self.is_tspin
         )
     }
 }
