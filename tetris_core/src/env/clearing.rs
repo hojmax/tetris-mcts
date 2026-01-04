@@ -83,25 +83,30 @@ impl TetrisEnv {
     }
 
     pub(crate) fn clear_lines_internal(&mut self, is_tspin: bool, is_mini: bool) {
-        let mut lines_to_clear = Vec::new();
+        // Count cleared lines and build new board in one pass (O(n) instead of O(n²))
+        let mut new_board = Vec::with_capacity(self.height);
+        let mut new_colors = Vec::with_capacity(self.height);
+        let mut num_lines = 0u32;
 
         for y in 0..self.height {
             if self.board[y].iter().all(|&cell| cell != 0) {
-                lines_to_clear.push(y);
+                // Line is full - count it but don't add to new board
+                num_lines += 1;
+            } else {
+                // Line not full - keep it
+                new_board.push(std::mem::take(&mut self.board[y]));
+                new_colors.push(std::mem::take(&mut self.board_colors[y]));
             }
         }
 
-        let num_lines = lines_to_clear.len() as u32;
-
-        for &y in lines_to_clear.iter().rev() {
-            self.board.remove(y);
-            self.board_colors.remove(y);
-        }
-
+        // Add empty rows at the top
         for _ in 0..num_lines {
-            self.board.insert(0, vec![0; self.width]);
-            self.board_colors.insert(0, vec![None; self.width]);
+            new_board.insert(0, vec![0; self.width]);
+            new_colors.insert(0, vec![None; self.width]);
         }
+
+        self.board = new_board;
+        self.board_colors = new_colors;
 
         if num_lines > 0 {
             let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);
@@ -110,7 +115,7 @@ impl TetrisEnv {
                 calculate_attack(clear_type, self.combo, self.back_to_back, is_pc);
 
             let mut result = AttackResult::new();
-            result.clear_type = format!("{:?}", clear_type);
+            result.clear_type = clear_type.as_str().to_string();
             result.lines_cleared = num_lines;
             result.base_attack = clear_type.base_attack();
             result.combo_attack = combo_attack(self.combo);

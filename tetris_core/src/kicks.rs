@@ -61,8 +61,10 @@ pub fn get_i_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
     }
 }
 
-/// Get wall kicks for O piece (no kicks needed, but returns identity for consistency)
-pub fn get_o_kicks(_from_state: usize, _to_state: usize) -> [(i32, i32); 5] {
+/// Get wall kicks for O piece (no kicks needed, returns identity for consistency)
+/// Note: This is intentionally private as O piece kicks are handled inline in moves.rs
+#[allow(dead_code)]
+fn get_o_kicks(_from_state: usize, _to_state: usize) -> [(i32, i32); 5] {
     [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]
 }
 
@@ -107,9 +109,10 @@ mod tests {
 
     #[test]
     fn test_o_kicks_all_identity() {
+        // O piece kicks are all identity (no kicks needed)
         for from in 0..4 {
             for to in 0..4 {
-                let kicks = get_o_kicks(from, to);
+                let kicks = get_kicks_for_piece(1, from, to); // 1 = O piece
                 for kick in kicks.iter() {
                     assert_eq!(*kick, (0, 0));
                 }

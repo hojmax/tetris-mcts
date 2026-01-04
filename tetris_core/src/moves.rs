@@ -218,10 +218,16 @@ pub fn find_all_placements(
         let final_key = (state.x, final_y, state.rotation);
 
         // Only keep the shortest path to each final position
-        if !final_positions.contains_key(&final_key)
-            || path_info.moves.len() < final_positions[&final_key].moves.len()
-        {
-            final_positions.insert(final_key, path_info.clone());
+        use std::collections::hash_map::Entry;
+        match final_positions.entry(final_key) {
+            Entry::Vacant(e) => {
+                e.insert(path_info.clone());
+            }
+            Entry::Occupied(mut e) => {
+                if path_info.moves.len() < e.get().moves.len() {
+                    e.insert(path_info.clone());
+                }
+            }
         }
 
         // Try all possible moves
@@ -274,12 +280,12 @@ pub fn find_all_placements(
 
     // Deduplicate by actual cells occupied (not just x, y, rotation)
     // This handles cases like O piece where different rotations look identical
-    let mut seen_cells: HashSet<Vec<(i32, i32)>> = HashSet::new();
+    let mut seen_cells: HashSet<[(i32, i32); 4]> = HashSet::new();
     let mut placements: Vec<Placement> = Vec::new();
 
     for ((x, y, rotation), mut path_info) in final_positions {
         let shape = &TETROMINOS[piece_type][rotation];
-        let mut cells: Vec<(i32, i32)> = get_cells_for_shape(shape, x, y);
+        let mut cells = get_cells_for_shape(shape, x, y);
         cells.sort(); // Normalize for comparison
 
         if seen_cells.insert(cells) {

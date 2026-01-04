@@ -112,15 +112,15 @@ def compute_loss(
     masked_logits = policy_logits.masked_fill(safe_masks == 0, float("-inf"))
     log_policy = F.log_softmax(masked_logits, dim=-1)
 
-    # Replace -inf with 0 for numerical stability (won't contribute to loss anyway)
+    # Replace -inf with 0 for numerical stability (won't contribute to loss anyway
+    # since policy_targets should be 0 for invalid actions)
     log_policy = torch.where(
         torch.isinf(log_policy), torch.zeros_like(log_policy), log_policy
     )
 
     # Policy loss: cross-entropy with MCTS policy
-    # -sum(target * log(pred + eps))
-    eps = 1e-8
-    policy_loss = -torch.sum(policy_targets * (log_policy + eps), dim=1).mean()
+    # -sum(target * log(pred))
+    policy_loss = -torch.sum(policy_targets * log_policy, dim=1).mean()
 
     # Value loss: MSE
     value_loss = F.mse_loss(value_pred.squeeze(-1), value_targets)
@@ -143,8 +143,13 @@ def compute_metrics(
     with torch.no_grad():
         policy_logits, value_pred = model(boards, aux_features)
 
+        # Ensure at least one valid action per sample (avoid all -inf)
+        valid_counts = action_masks.sum(dim=1, keepdim=True)
+        safe_masks = action_masks.clone()
+        safe_masks[valid_counts.squeeze() == 0, 0] = 1
+
         # Apply mask
-        masked_logits = policy_logits.masked_fill(action_masks == 0, float("-inf"))
+        masked_logits = policy_logits.masked_fill(safe_masks == 0, float("-inf"))
         policy_probs = F.softmax(masked_logits, dim=-1)
 
         # Policy entropy

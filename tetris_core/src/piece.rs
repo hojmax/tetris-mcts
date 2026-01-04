@@ -234,16 +234,24 @@ pub const COLORS: [(u8, u8, u8); 7] = [
 /// Number of piece types (tetromino variants)
 pub const NUM_PIECE_TYPES: usize = 7;
 
-/// Get the cells occupied by a shape at a given position
-pub fn get_cells_for_shape(shape: &[[u8; 4]; 4], x: i32, y: i32) -> Vec<(i32, i32)> {
-    let mut cells = Vec::new();
+/// Maximum number of cells in a tetromino (always 4)
+pub const MAX_PIECE_CELLS: usize = 4;
+
+/// Get the cells occupied by a shape at a given position.
+/// Returns a fixed-size array of exactly 4 cells (all tetrominos have 4 cells).
+#[inline]
+pub fn get_cells_for_shape(shape: &[[u8; 4]; 4], x: i32, y: i32) -> [(i32, i32); MAX_PIECE_CELLS] {
+    let mut cells = [(0, 0); MAX_PIECE_CELLS];
+    let mut idx = 0;
     for dy in 0..4 {
         for dx in 0..4 {
             if shape[dy][dx] == 1 {
-                cells.push((x + dx as i32, y + dy as i32));
+                cells[idx] = (x + dx as i32, y + dy as i32);
+                idx += 1;
             }
         }
     }
+    debug_assert_eq!(idx, MAX_PIECE_CELLS, "Tetromino should have exactly 4 cells");
     cells
 }
 
@@ -277,7 +285,7 @@ impl Piece {
     }
 
     pub fn get_cells(&self) -> Vec<(i32, i32)> {
-        get_cells_for_shape(&TETROMINOS[self.piece_type][self.rotation], self.x, self.y)
+        get_cells_for_shape(&TETROMINOS[self.piece_type][self.rotation], self.x, self.y).to_vec()
     }
 }
 
@@ -367,8 +375,8 @@ mod tests {
     fn test_o_piece_symmetry() {
         // O piece should be the same in all rotations
         for rotation in 0..4 {
-            let cells: Vec<(i32, i32)> = get_cells_for_shape(&TETROMINOS[1][rotation], 0, 0);
-            let base_cells: Vec<(i32, i32)> = get_cells_for_shape(&TETROMINOS[1][0], 0, 0);
+            let cells = get_cells_for_shape(&TETROMINOS[1][rotation], 0, 0);
+            let base_cells = get_cells_for_shape(&TETROMINOS[1][0], 0, 0);
             assert_eq!(cells, base_cells, "O piece rotation {} should match spawn state", rotation);
         }
     }
@@ -393,7 +401,7 @@ mod tests {
         // Test with I piece horizontal
         let shape = &TETROMINOS[0][0];
         let cells = get_cells_for_shape(shape, 0, 0);
-        assert_eq!(cells.len(), 4);
+        assert_eq!(cells.len(), MAX_PIECE_CELLS);
     }
 
     #[test]

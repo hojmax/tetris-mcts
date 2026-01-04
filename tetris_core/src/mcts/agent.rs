@@ -279,17 +279,31 @@ impl MCTSAgent {
 
     /// Run a single MCTS simulation
     ///
-    /// Args:
-    ///     root: The root decision node
-    ///     root_move_number: Move number at the root
+    /// Uses raw pointers for tree traversal to track the path from root to leaf.
+    /// This is a common pattern in tree structures where we need mutable access
+    /// to nodes at multiple levels simultaneously.
+    ///
+    /// # Safety
+    /// The unsafe pointer operations are sound because:
+    /// 1. All pointers are derived from valid mutable references to tree nodes
+    /// 2. The tree structure is not modified during traversal (no reallocation)
+    /// 3. Each node is accessed through exactly one pointer at a time
+    /// 4. Pointers remain valid for the entire duration of a single simulation
+    ///
+    /// # Args
+    /// * `root` - The root decision node
+    /// * `root_move_number` - Move number at the root
     fn simulate(&self, root: &mut DecisionNode, root_move_number: u32) {
-        // Selection: traverse tree
+        // Selection: traverse tree, tracking path for backpropagation
         // Store (node_ptr, action_idx, attack_at_this_step)
         let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
         let mut current = root as *mut DecisionNode;
         let mut depth: u32 = 0;
 
         loop {
+            // SAFETY: `current` is always derived from a valid &mut DecisionNode.
+            // The tree structure doesn't change during simulation, so the pointer
+            // remains valid. We only hold one mutable reference at a time.
             let node = unsafe { &mut *current };
 
             if node.is_terminal {
@@ -446,6 +460,9 @@ impl MCTSAgent {
 
         // Update each DecisionNode and its child ChanceNode (no double counting - see doc above)
         for &(node_ptr, action_idx, _) in path.iter() {
+            // SAFETY: node_ptr was stored during the simulation traversal from valid
+            // &mut DecisionNode references. The tree hasn't been modified, so pointers
+            // remain valid. Each pointer in the path refers to a distinct node.
             let node = unsafe { &mut *node_ptr };
 
             // Update child stats (the action we took from this node)

@@ -59,6 +59,22 @@ impl ClearType {
             ClearType::TSpinTriple => 6,
         }
     }
+
+    /// Get the name of this clear type as a static string (avoids allocation)
+    #[inline]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            ClearType::None => "None",
+            ClearType::Single => "Single",
+            ClearType::Double => "Double",
+            ClearType::Triple => "Triple",
+            ClearType::Tetris => "Tetris",
+            ClearType::TSpinMiniSingle => "TSpinMiniSingle",
+            ClearType::TSpinSingle => "TSpinSingle",
+            ClearType::TSpinDouble => "TSpinDouble",
+            ClearType::TSpinTriple => "TSpinTriple",
+        }
+    }
 }
 
 /// Combo attack lookup table (indices 0-11, 12+ returns 5)

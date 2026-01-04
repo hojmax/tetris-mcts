@@ -9,15 +9,15 @@ Handles:
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Optional
 import os
 import time
 from dataclasses import dataclass
 
-from .action_space import NUM_ACTIONS
 from .network import (
+    NUM_ACTIONS,
     BOARD_HEIGHT,
     BOARD_WIDTH,
     NUM_PIECE_TYPES,
@@ -246,7 +246,12 @@ class ReplayBuffer:
             policy_targets: (batch, 734)
             value_targets: (batch,)
             action_masks: (batch, 734)
+
+        Raises:
+            ValueError: If buffer is empty
         """
+        if self.size == 0:
+            raise ValueError("Cannot sample from empty buffer")
         indices = np.random.randint(0, self.size, size=batch_size)
 
         return (
@@ -409,6 +414,7 @@ class SharedReplayBuffer:
 
 if __name__ == "__main__":
     import tempfile
+    from torch.utils.data import DataLoader
 
     # Test save/load
     print("Testing save/load...")

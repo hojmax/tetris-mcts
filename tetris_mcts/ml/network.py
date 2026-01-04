@@ -27,7 +27,10 @@ BOARD_HEIGHT = 20
 BOARD_WIDTH = 10
 NUM_PIECE_TYPES = 7
 QUEUE_SIZE = 5
-NUM_ACTIONS = 734  # From action_space.py
+# Total number of valid placement actions
+# Covers x in [-3, 9], y in [-2, 19], rotation in [0, 3]
+# Action space logic implemented in Rust (tetris_core/src/mcts/action_space.rs)
+NUM_ACTIONS = 734
 
 # Input feature sizes
 BOARD_FEATURES = BOARD_HEIGHT * BOARD_WIDTH  # 200
