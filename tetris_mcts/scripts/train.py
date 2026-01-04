@@ -6,6 +6,8 @@ from simple_parsing import parse
 
 from tetris_mcts.ml.training import Trainer, TrainingConfig
 
+import wandb
+
 logger = structlog.get_logger()
 
 
@@ -91,6 +93,21 @@ def main(args: ScriptArgs) -> None:
             logger.info("No checkpoint found, starting fresh")
 
     log_to_wandb = not args.no_wandb
+
+    if log_to_wandb:
+        wandb.init(
+            project=args.project,
+            name=args.run_name,
+            config={
+                "iterations": args.iterations,
+                "games_per_iter": args.games_per_iter,
+                "train_steps_per_iter": args.train_steps_per_iter,
+                "simulations": args.simulations,
+                "batch_size": args.batch_size,
+                "lr": args.lr,
+                "buffer_size": args.buffer_size,
+            },
+        )
 
     if args.parallel:
         logger.info("Starting parallel training with Rust game generation")

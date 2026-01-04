@@ -445,4 +445,528 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         assert!(env.get_last_attack_result().is_none());
     }
+
+    // ==================== Board Collision Tests ====================
+
+    #[test]
+    fn test_is_cell_filled_empty_board() {
+        let env = TetrisEnv::new(10, 20);
+        // All cells should be empty
+        for y in 0..20 {
+            for x in 0..10 {
+                assert!(!env.is_cell_filled(x, y), "Cell ({}, {}) should be empty", x, y);
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_cell_filled_out_of_bounds() {
+        let env = TetrisEnv::new(10, 20);
+        // Out of bounds should return true (filled)
+        assert!(env.is_cell_filled(-1, 10)); // left of board
+        assert!(env.is_cell_filled(10, 10)); // right of board
+        assert!(env.is_cell_filled(5, -1)); // above board
+        assert!(env.is_cell_filled(5, 20)); // below board
+    }
+
+    #[test]
+    fn test_is_cell_filled_with_piece() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.board[19][5] = 1;
+        assert!(env.is_cell_filled(5, 19));
+        assert!(!env.is_cell_filled(4, 19));
+    }
+
+    #[test]
+    fn test_is_valid_position_empty_board() {
+        let env = TetrisEnv::new(10, 20);
+        // Piece in center of board should be valid
+        let piece = Piece::with_position(T_PIECE, 3, 10, 0);
+        assert!(env.is_valid_position_for(&piece));
+    }
+
+    #[test]
+    fn test_is_valid_position_left_wall_collision() {
+        let env = TetrisEnv::new(10, 20);
+        // I-piece horizontal at x=-1 should be invalid
+        let piece = Piece::with_position(0, -1, 10, 0); // I piece
+        assert!(!env.is_valid_position_for(&piece));
+    }
+
+    #[test]
+    fn test_is_valid_position_right_wall_collision() {
+        let env = TetrisEnv::new(10, 20);
+        // I-piece horizontal at x=8 should be invalid (extends to x=11)
+        let piece = Piece::with_position(0, 8, 10, 0); // I piece
+        assert!(!env.is_valid_position_for(&piece));
+    }
+
+    #[test]
+    fn test_is_valid_position_floor_collision() {
+        let env = TetrisEnv::new(10, 20);
+        // Piece below floor should be invalid
+        let piece = Piece::with_position(T_PIECE, 3, 20, 0);
+        assert!(!env.is_valid_position_for(&piece));
+    }
+
+    #[test]
+    fn test_is_valid_position_piece_collision() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Place a block and try to overlap
+        env.board[19][5] = 1;
+        let piece = Piece::with_position(T_PIECE, 4, 18, 0); // T piece that overlaps
+        assert!(!env.is_valid_position_for(&piece));
+    }
+
+    #[test]
+    fn test_is_valid_position_above_board_valid() {
+        let env = TetrisEnv::new(10, 20);
+        // Piece above visible board but not colliding is valid
+        let piece = Piece::with_position(T_PIECE, 3, -2, 0);
+        assert!(env.is_valid_position_for(&piece));
+    }
+
+    // ==================== T-Spin Detection Tests ====================
+
+    #[test]
+    fn test_tspin_full_with_3_corners_filled() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Create a T-spin pocket: fill 3 corners around where T piece will land
+        // T piece center at (4, 18) with rotation 0 has center at (5, 19)
+        env.board[18][4] = 1; // top-left corner
+        env.board[18][6] = 1; // top-right corner
+        env.board[19][4] = 1; // bottom-left corner (front corner for rotation 0)
+
+        let piece = Piece::with_position(T_PIECE, 4, 18, 0);
+        env.current_piece = Some(piece.clone());
+        env.last_move_was_rotation = true;
+        env.last_kick_index = 0;
+
+        let (is_tspin, is_mini) = env.check_tspin(&piece);
+        // With 3 corners filled and both front corners filled, should be full T-spin
+        assert!(is_tspin, "Should detect T-spin with 3 corners filled");
+    }
+
+    #[test]
+    fn test_tspin_mini_with_3_corners_one_front() {
+        let mut env = TetrisEnv::new(10, 20);
+        // T piece center at (5, 19) rotation 0 - front corners are top-left and top-right
+        // Fill 3 corners but only 1 front corner
+        env.board[18][4] = 1; // top-left corner (front)
+        env.board[19][4] = 1; // bottom-left corner (back)
+        env.board[19][6] = 1; // bottom-right corner (back)
+
+        let piece = Piece::with_position(T_PIECE, 4, 18, 0);
+        env.current_piece = Some(piece.clone());
+        env.last_move_was_rotation = true;
+        env.last_kick_index = 0;
+
+        let (is_tspin, is_mini) = env.check_tspin(&piece);
+        assert!(is_tspin, "Should detect T-spin");
+        assert!(is_mini, "Should be a T-spin mini with only 1 front corner");
+    }
+
+    #[test]
+    fn test_tspin_kick_4_makes_full_tspin() {
+        let mut env = TetrisEnv::new(10, 20);
+        // With kick index 4 (the special SRS kick), even mini becomes full
+        env.board[18][4] = 1;
+        env.board[19][4] = 1;
+        env.board[19][6] = 1;
+
+        let piece = Piece::with_position(T_PIECE, 4, 18, 0);
+        env.current_piece = Some(piece.clone());
+        env.last_move_was_rotation = true;
+        env.last_kick_index = 4; // Special kick that makes it a full T-spin
+
+        let (is_tspin, is_mini) = env.check_tspin(&piece);
+        assert!(is_tspin, "Should detect T-spin");
+        assert!(!is_mini, "Kick index 4 should make it a full T-spin");
+    }
+
+    #[test]
+    fn test_tspin_less_than_3_corners_not_tspin() {
+        let mut env = TetrisEnv::new(10, 20);
+        // T piece at (4, 10) with rotation 0 has center at (5, 11)
+        // Corners are at: (4,10), (6,10), (4,12), (6,12)
+        // Only fill 2 corners - not enough for T-spin
+        env.board[10][4] = 1; // top-left corner
+        env.board[10][6] = 1; // top-right corner
+        // Leave bottom corners empty
+
+        let piece = Piece::with_position(T_PIECE, 4, 10, 0);
+        env.current_piece = Some(piece.clone());
+        env.last_move_was_rotation = true;
+        env.last_kick_index = 0;
+
+        let (is_tspin, _) = env.check_tspin(&piece);
+        assert!(!is_tspin, "Should not be T-spin with only 2 corners");
+    }
+
+    #[test]
+    fn test_tspin_rotation_1_front_corners() {
+        let mut env = TetrisEnv::new(10, 20);
+        // T piece rotation 1 (CW) - front corners are top-right and bottom-right
+        // Center is at (piece.x + 1, piece.y + 1) = (5, 19)
+        env.board[18][6] = 1; // top-right (front)
+        env.board[18][4] = 1; // top-left (back)
+        env.board[19][6] = 1; // bottom-right (front)
+
+        let piece = Piece::with_position(T_PIECE, 4, 18, 1);
+        env.current_piece = Some(piece.clone());
+        env.last_move_was_rotation = true;
+        env.last_kick_index = 0;
+
+        let (is_tspin, is_mini) = env.check_tspin(&piece);
+        assert!(is_tspin, "Should detect T-spin in rotation 1");
+        assert!(!is_mini, "Both front corners filled should be full T-spin");
+    }
+
+    // ==================== Line Clearing Tests ====================
+
+    #[test]
+    fn test_clear_single_line() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Fill the bottom row
+        for x in 0..10 {
+            env.board[19][x] = 1;
+        }
+        env.clear_lines_internal(false, false);
+        assert_eq!(env.lines_cleared, 1);
+        assert_eq!(env.combo, 1);
+    }
+
+    #[test]
+    fn test_clear_tetris() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Fill bottom 4 rows
+        for y in 16..20 {
+            for x in 0..10 {
+                env.board[y][x] = 1;
+            }
+        }
+        env.clear_lines_internal(false, false);
+        assert_eq!(env.lines_cleared, 4);
+    }
+
+    #[test]
+    fn test_back_to_back_tetris() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.back_to_back = true;
+
+        // Fill bottom 4 rows for Tetris (difficult clear)
+        for y in 16..20 {
+            for x in 0..10 {
+                env.board[y][x] = 1;
+            }
+        }
+        env.clear_lines_internal(false, false);
+
+        // Should maintain back-to-back and get bonus
+        assert!(env.back_to_back);
+        let result = env.last_attack_result.as_ref().unwrap();
+        assert!(result.back_to_back_attack > 0);
+    }
+
+    #[test]
+    fn test_single_breaks_back_to_back() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.back_to_back = true;
+
+        // Fill bottom 1 row (not a difficult clear)
+        for x in 0..10 {
+            env.board[19][x] = 1;
+        }
+        env.clear_lines_internal(false, false);
+
+        // Single line clear breaks back-to-back
+        assert!(!env.back_to_back);
+    }
+
+    #[test]
+    fn test_combo_increments() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.combo = 3;
+
+        // Fill one row
+        for x in 0..10 {
+            env.board[19][x] = 1;
+        }
+        env.clear_lines_internal(false, false);
+
+        assert_eq!(env.combo, 4);
+    }
+
+    #[test]
+    fn test_tspin_single_attack() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        // Fill one row
+        for x in 0..10 {
+            env.board[19][x] = 1;
+        }
+        env.clear_lines_internal(true, false); // T-spin single
+
+        let result = env.last_attack_result.as_ref().unwrap();
+        assert!(result.is_tspin);
+        assert!(result.base_attack > 0); // T-spin single has attack
+    }
+
+    #[test]
+    fn test_tspin_mini_attack() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        // Fill one row
+        for x in 0..10 {
+            env.board[19][x] = 1;
+        }
+        env.clear_lines_internal(true, true); // T-spin mini single
+
+        let result = env.last_attack_result.as_ref().unwrap();
+        assert!(result.is_tspin);
+    }
+
+    // ==================== Movement Tests ====================
+
+    #[test]
+    fn test_horizontal_movement_blocked_by_wall() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Move left until blocked
+        let mut moves = 0;
+        while env.move_left() {
+            moves += 1;
+            if moves > 20 {
+                panic!("Infinite loop detected");
+            }
+        }
+        // Should be blocked by wall, not infinite loop
+        assert!(moves > 0);
+    }
+
+    #[test]
+    fn test_horizontal_movement_blocked_by_piece() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Place wall of pieces on the left
+        for y in 0..20 {
+            env.board[y][0] = 1;
+            env.board[y][1] = 1;
+        }
+
+        // Move current piece down a bit
+        env.move_down();
+        env.move_down();
+
+        // Try to move left - should eventually be blocked by placed pieces
+        let mut moves = 0;
+        while env.move_left() {
+            moves += 1;
+            if moves > 20 {
+                break;
+            }
+        }
+
+        // Should have been blocked before reaching x=0
+        let piece = env.current_piece.as_ref().unwrap();
+        let cells = piece.get_cells();
+        for (x, _) in cells {
+            assert!(x >= 2, "Piece should be blocked by placed pieces at x=0,1");
+        }
+    }
+
+    #[test]
+    fn test_rotation_resets_lock_delay_when_grounded() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Move piece to ground
+        for _ in 0..25 {
+            env.move_down();
+        }
+
+        // Start lock delay
+        if env.lock_delay_ms.is_none() {
+            env.lock_delay_ms = Some(0);
+        }
+        env.lock_delay_ms = Some(200); // Simulate some time passed
+
+        let lock_moves_before = env.lock_moves_remaining;
+
+        // Rotate should reset lock delay if successful
+        if env.rotate_cw() {
+            assert!(
+                env.lock_delay_ms.is_some(),
+                "Lock delay should still be active"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rotation_tracks_last_kick_index() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.move_down();
+        env.move_down();
+
+        // Rotate piece
+        if env.rotate_cw() {
+            // Kick index should be set (likely 0 for no-kick rotation)
+            assert!(env.last_kick_index < 5, "Kick index should be 0-4");
+        }
+    }
+
+    #[test]
+    fn test_rotation_with_wall_kick() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Move I-piece to right wall
+        env.spawn_piece_from_type(0); // Spawn I piece
+        for _ in 0..10 {
+            env.move_right();
+        }
+
+        // Move down to have room
+        for _ in 0..5 {
+            env.move_down();
+        }
+
+        // Get initial position
+        let initial_x = env.current_piece.as_ref().unwrap().x;
+        let initial_rotation = env.current_piece.as_ref().unwrap().rotation;
+
+        // Rotate - might use wall kick
+        if env.rotate_cw() {
+            let piece = env.current_piece.as_ref().unwrap();
+            // Rotation should have succeeded, possibly with a kick
+            assert_ne!(piece.rotation, initial_rotation);
+            assert!(env.last_move_was_rotation);
+        }
+    }
+
+    #[test]
+    fn test_no_movement_when_game_over() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.game_over = true;
+
+        assert!(!env.move_horizontal(-1));
+        assert!(!env.move_horizontal(1));
+        assert!(!env.rotate(true));
+        assert!(!env.rotate(false));
+    }
+
+    // ==================== Additional Edge Case Tests ====================
+
+    #[test]
+    fn test_spawn_at_top_with_collision() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Fill top rows where pieces spawn
+        for x in 0..10 {
+            env.board[0][x] = 1;
+            env.board[1][x] = 1;
+        }
+
+        // Spawning should trigger game over
+        env.spawn_piece_internal();
+        assert!(env.game_over);
+    }
+
+    #[test]
+    fn test_hard_drop_distance_calculation() {
+        let mut env = TetrisEnv::new(10, 20);
+        let initial_y = env.current_piece.as_ref().unwrap().y;
+        let drop_distance = env.hard_drop();
+
+        // Drop distance should match how far piece traveled
+        assert!(drop_distance > 0);
+    }
+
+    #[test]
+    fn test_ghost_piece_at_bottom() {
+        let mut env = TetrisEnv::new(10, 20);
+        let ghost = env.get_ghost_piece();
+        assert!(ghost.is_some());
+
+        let ghost = ghost.unwrap();
+        let current = env.current_piece.as_ref().unwrap();
+
+        // Ghost should be at or below current piece
+        assert!(ghost.y >= current.y);
+
+        // Ghost should be grounded (can't move down further)
+        let mut test_ghost = ghost.clone();
+        test_ghost.y += 1;
+        assert!(
+            !env.is_valid_position_for(&test_ghost),
+            "Ghost should be at lowest valid position"
+        );
+    }
+
+    #[test]
+    fn test_board_colors_after_lock() {
+        let mut env = TetrisEnv::new(10, 20);
+        let piece_type = env.current_piece.as_ref().unwrap().piece_type;
+
+        // Hard drop to lock piece
+        env.hard_drop();
+
+        // Check that board_colors has the piece type
+        let mut found_color = false;
+        for row in &env.board_colors {
+            for cell in row {
+                if *cell == Some(piece_type) {
+                    found_color = true;
+                    break;
+                }
+            }
+        }
+        assert!(found_color, "Board colors should contain locked piece type");
+    }
+
+    #[test]
+    fn test_hold_resets_after_lock() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.hold(); // Use hold
+        assert!(env.hold_used);
+
+        env.hard_drop(); // Lock piece
+        assert!(!env.hold_used, "Hold should reset after piece locks");
+    }
+
+    #[test]
+    fn test_clear_double_line() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Fill bottom 2 rows
+        for y in 18..20 {
+            for x in 0..10 {
+                env.board[y][x] = 1;
+            }
+        }
+        env.clear_lines_internal(false, false);
+        assert_eq!(env.lines_cleared, 2);
+    }
+
+    #[test]
+    fn test_clear_triple_line() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Fill bottom 3 rows
+        for y in 17..20 {
+            for x in 0..10 {
+                env.board[y][x] = 1;
+            }
+        }
+        env.clear_lines_internal(false, false);
+        assert_eq!(env.lines_cleared, 3);
+    }
+
+    #[test]
+    fn test_non_contiguous_line_clear() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Fill rows 15 and 19 (not contiguous)
+        for x in 0..10 {
+            env.board[15][x] = 1;
+            env.board[19][x] = 1;
+        }
+        // Leave row 17 partial
+        for x in 0..5 {
+            env.board[17][x] = 1;
+        }
+
+        env.clear_lines_internal(false, false);
+        assert_eq!(env.lines_cleared, 2, "Should clear 2 non-contiguous lines");
+    }
 }

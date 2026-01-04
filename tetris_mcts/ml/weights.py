@@ -75,7 +75,7 @@ def load_checkpoint(
 def export_onnx(
     model: TetrisNet,
     filepath: str | Path,
-    opset_version: int = 13,
+    opset_version: int = 17,
 ) -> bool:
     """
     Export model to ONNX format for Rust inference (tract-onnx).
@@ -83,7 +83,7 @@ def export_onnx(
     Args:
         model: The TetrisNet model
         filepath: Output path (should end in .onnx)
-        opset_version: ONNX opset version (13 works best with tract)
+        opset_version: ONNX opset version (17 needed for LayerNorm)
 
     Returns:
         True if export succeeded, False if ONNX dependencies are missing

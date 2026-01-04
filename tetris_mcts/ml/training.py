@@ -21,7 +21,12 @@ import time
 import wandb
 
 from tetris_mcts.ml.network import TetrisNet
-from tetris_mcts.ml.data import ReplayBuffer, SharedReplayBuffer, TetrisDataset, TrainingExample
+from tetris_mcts.ml.data import (
+    ReplayBuffer,
+    SharedReplayBuffer,
+    TetrisDataset,
+    TrainingExample,
+)
 from tetris_mcts.ml.weights import WeightManager
 
 from tetris_core import MCTSConfig, MCTSAgent, GameGenerator, evaluate_model, EvalResult
@@ -282,6 +287,7 @@ class Trainer:
         # Export current model to ONNX for Rust inference
         onnx_path = Path(self.config.checkpoint_dir) / "selfplay.onnx"
         from .weights import export_onnx
+
         export_onnx(self.model, onnx_path)
 
         # Configure MCTS
@@ -303,7 +309,6 @@ class Trainer:
             num_games=num_games,
             max_moves=MAX_MOVES,
             add_noise=True,
-            drop_last_n=10,
         )
 
         # Convert Rust examples to Python TrainingExample objects
@@ -318,10 +323,13 @@ class Trainer:
     def _rust_example_to_training_example(self, rust_ex) -> TrainingExample:
         """Convert Rust TrainingExample to Python TrainingExample."""
         import numpy as np
+
         BOARD_HEIGHT, BOARD_WIDTH = 20, 10
 
         # Reshape board from flat list to 2D array
-        board = np.array(rust_ex.board, dtype=np.uint8).reshape(BOARD_HEIGHT, BOARD_WIDTH)
+        board = np.array(rust_ex.board, dtype=np.uint8).reshape(
+            BOARD_HEIGHT, BOARD_WIDTH
+        )
 
         return TrainingExample(
             board=board.astype(bool),
@@ -342,6 +350,7 @@ class Trainer:
         # Export model to ONNX for Rust evaluation
         onnx_path = Path(self.config.checkpoint_dir) / "eval.onnx"
         from .weights import export_onnx
+
         export_onnx(self.model, onnx_path)
 
         # Create MCTS config for evaluation (temperature=0 enforced by evaluate_model)
@@ -411,12 +420,15 @@ class Trainer:
             iteration_metrics["eval_attack_per_piece"] = eval_result.attack_per_piece
 
             if log_to_wandb:
-                wandb.log({
-                    "eval/avg_attack": eval_result.avg_attack,
-                    "eval/max_attack": eval_result.max_attack,
-                    "eval/avg_moves": eval_result.avg_moves,
-                    "eval/attack_per_piece": eval_result.attack_per_piece,
-                }, step=self.step)
+                wandb.log(
+                    {
+                        "eval/avg_attack": eval_result.avg_attack,
+                        "eval/max_attack": eval_result.max_attack,
+                        "eval/avg_moves": eval_result.avg_moves,
+                        "eval/attack_per_piece": eval_result.attack_per_piece,
+                    },
+                    step=self.step,
+                )
 
         # Save checkpoint
         if self.iteration % self.config.checkpoint_interval == 0:
@@ -508,6 +520,7 @@ class Trainer:
 
         # Export initial model
         from .weights import export_onnx
+
         export_onnx(self.model, onnx_path)
 
         # Create MCTS config for generator
@@ -526,7 +539,7 @@ class Trainer:
             add_noise=True,
         )
         generator.start()
-        print(f"Started background game generator")
+        print("Started background game generator")
         print(f"  Model path: {onnx_path}")
         print(f"  Output dir: {games_dir}")
 
@@ -537,8 +550,10 @@ class Trainer:
         print(f"Waiting for {self.config.min_buffer_size} examples...")
         while shared_buffer.size() < self.config.min_buffer_size:
             time.sleep(1.0)
-            print(f"  Buffer: {shared_buffer.size()} examples, "
-                  f"Games: {generator.games_generated()}")
+            print(
+                f"  Buffer: {shared_buffer.size()} examples, "
+                f"Games: {generator.games_generated()}"
+            )
 
         print(f"\nStarting training for {num_steps} steps")
         print(f"Config: {self.config}")
@@ -562,9 +577,11 @@ class Trainer:
                     metrics["games_generated"] = generator.games_generated()
                     metrics["examples_generated"] = generator.examples_generated()
                     wandb.log(metrics, step=self.step)
-                    print(f"Step {self.step}: loss={metrics['loss']:.4f}, "
-                          f"buffer={shared_buffer.size()}, "
-                          f"games={generator.games_generated()}")
+                    print(
+                        f"Step {self.step}: loss={metrics['loss']:.4f}, "
+                        f"buffer={shared_buffer.size()}, "
+                        f"games={generator.games_generated()}"
+                    )
 
                 # Export updated model for generator
                 if self.step % model_sync_interval == 0:
@@ -574,23 +591,35 @@ class Trainer:
                 # Evaluate
                 if self.step % self.config.eval_interval == 0:
                     eval_result = self.evaluate()
-                    wandb.log({
-                        "eval/avg_attack": eval_result.avg_attack,
-                        "eval/max_attack": eval_result.max_attack,
-                        "eval/avg_moves": eval_result.avg_moves,
-                        "eval/attack_per_piece": eval_result.attack_per_piece,
-                    }, step=self.step)
+                    wandb.log(
+                        {
+                            "eval/avg_attack": eval_result.avg_attack,
+                            "eval/max_attack": eval_result.max_attack,
+                            "eval/avg_moves": eval_result.avg_moves,
+                            "eval/attack_per_piece": eval_result.attack_per_piece,
+                        },
+                        step=self.step,
+                    )
 
                 # Checkpoint
-                if self.step % (self.config.checkpoint_interval * self.config.training_steps_per_iter) == 0:
+                if (
+                    self.step
+                    % (
+                        self.config.checkpoint_interval
+                        * self.config.training_steps_per_iter
+                    )
+                    == 0
+                ):
                     self.save()
 
         finally:
             # Stop generator
             print("\nStopping game generator...")
             generator.stop()
-            print(f"Final stats: {generator.games_generated()} games, "
-                  f"{generator.examples_generated()} examples")
+            print(
+                f"Final stats: {generator.games_generated()} games, "
+                f"{generator.examples_generated()} examples"
+            )
 
         # Final save
         self.save()

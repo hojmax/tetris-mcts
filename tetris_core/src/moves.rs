@@ -283,7 +283,11 @@ pub fn find_all_placements(
     let mut seen_cells: HashSet<[(i32, i32); 4]> = HashSet::new();
     let mut placements: Vec<Placement> = Vec::new();
 
-    for ((x, y, rotation), mut path_info) in final_positions {
+    // Sort for deterministic deduplication order (HashMap iteration is non-deterministic)
+    let mut sorted_positions: Vec<_> = final_positions.into_iter().collect();
+    sorted_positions.sort_by_key(|((x, y, rot), _)| (*rot, *y, *x));
+
+    for ((x, y, rotation), mut path_info) in sorted_positions {
         let shape = &TETROMINOS[piece_type][rotation];
         let mut cells = get_cells_for_shape(shape, x, y);
         cells.sort(); // Normalize for comparison

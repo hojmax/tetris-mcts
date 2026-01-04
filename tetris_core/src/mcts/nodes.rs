@@ -215,3 +215,269 @@ pub fn get_valid_action_indices(env: &TetrisEnv) -> Vec<usize> {
 
     indices
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decision_node_creation() {
+        let env = TetrisEnv::new(10, 20);
+        let node = DecisionNode::new(env, 0);
+
+        assert_eq!(node.visit_count, 0);
+        assert_eq!(node.value_sum, 0.0);
+        assert_eq!(node.prior, 1.0);
+        assert!(node.children.is_empty());
+        assert!(!node.valid_actions.is_empty());
+        assert!(!node.is_terminal);
+        assert_eq!(node.move_number, 0);
+    }
+
+    #[test]
+    fn test_decision_node_terminal_state() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.game_over = true;
+        let node = DecisionNode::new(env, 5);
+
+        assert!(node.is_terminal);
+        assert!(node.valid_actions.is_empty());
+        assert_eq!(node.move_number, 5);
+    }
+
+    #[test]
+    fn test_decision_node_set_priors() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env, 0);
+
+        // Create mock policy with 734 actions
+        let policy = vec![1.0; 734];
+        node.set_priors(&policy);
+
+        // Priors should be normalized to sum to 1
+        let sum: f32 = node.action_priors.iter().sum();
+        assert!((sum - 1.0).abs() < 0.01, "Priors should sum to 1, got {}", sum);
+
+        // Each valid action should have a prior
+        assert_eq!(node.action_priors.len(), node.valid_actions.len());
+    }
+
+    #[test]
+    fn test_decision_node_add_dirichlet_noise() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env, 0);
+
+        // Set uniform priors
+        let policy = vec![1.0; 734];
+        node.set_priors(&policy);
+
+        let priors_before: Vec<f32> = node.action_priors.clone();
+
+        // Add Dirichlet noise
+        node.add_dirichlet_noise(0.3, 0.25);
+
+        // Priors should still sum to approximately 1
+        let sum: f32 = node.action_priors.iter().sum();
+        assert!((sum - 1.0).abs() < 0.01, "Priors should still sum to 1 after noise");
+
+        // At least some priors should have changed
+        let changed = node
+            .action_priors
+            .iter()
+            .zip(priors_before.iter())
+            .any(|(a, b)| (a - b).abs() > 0.001);
+        assert!(changed, "Dirichlet noise should modify priors");
+    }
+
+    #[test]
+    fn test_decision_node_select_action_unvisited() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env, 0);
+
+        let policy = vec![1.0; 734];
+        node.set_priors(&policy);
+
+        // With no visits, selection should return a valid action
+        let action = node.select_action(1.0);
+        assert!(node.valid_actions.contains(&action));
+    }
+
+    #[test]
+    fn test_decision_node_select_action_with_children() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env.clone(), 0);
+
+        let policy = vec![1.0; 734];
+        node.set_priors(&policy);
+        node.visit_count = 10;
+
+        // Add a child with high value
+        let action_idx = node.valid_actions[0];
+        let mut child = ChanceNode::new(env.clone(), 0, vec![]);
+        child.visit_count = 5;
+        child.value_sum = 10.0; // Mean value = 2.0
+        node.children.insert(action_idx, MCTSNode::Chance(child));
+
+        // Selection should consider the child's value
+        let selected = node.select_action(1.0);
+        assert!(node.valid_actions.contains(&selected));
+    }
+
+    #[test]
+    fn test_chance_node_creation() {
+        let env = TetrisEnv::new(10, 20);
+        let bag: Vec<usize> = vec![0, 1, 2];
+        let node = ChanceNode::new(env, 5, bag.clone());
+
+        assert_eq!(node.visit_count, 0);
+        assert_eq!(node.value_sum, 0.0);
+        assert_eq!(node.attack, 5);
+        assert!(node.children.is_empty());
+        assert_eq!(node.bag_remaining, bag);
+        assert_eq!(node.round_robin_idx, 0);
+    }
+
+    #[test]
+    fn test_chance_node_empty_bag() {
+        let env = TetrisEnv::new(10, 20);
+        let node = ChanceNode::new(env, 0, vec![]);
+
+        // Empty bag should use all 7 pieces
+        assert_eq!(node.piece_order.len(), NUM_PIECE_TYPES);
+    }
+
+    #[test]
+    fn test_chance_node_select_piece_round_robin() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = ChanceNode::new(env, 0, vec![]);
+
+        // Select pieces and verify round-robin behavior
+        let mut selected = Vec::new();
+        for _ in 0..7 {
+            selected.push(node.select_piece_round_robin());
+        }
+
+        // Should have selected 7 pieces
+        assert_eq!(selected.len(), 7);
+        assert_eq!(node.round_robin_idx, 7);
+
+        // After 7 selections, should wrap around
+        let next_piece = node.select_piece_round_robin();
+        assert_eq!(next_piece, selected[0], "Should wrap around to first piece");
+    }
+
+    #[test]
+    fn test_mcts_node_visit_count_decision() {
+        let env = TetrisEnv::new(10, 20);
+        let mut decision = DecisionNode::new(env, 0);
+        decision.visit_count = 42;
+
+        let node = MCTSNode::Decision(decision);
+        assert_eq!(node.visit_count(), 42);
+    }
+
+    #[test]
+    fn test_mcts_node_visit_count_chance() {
+        let env = TetrisEnv::new(10, 20);
+        let mut chance = ChanceNode::new(env, 0, vec![]);
+        chance.visit_count = 17;
+
+        let node = MCTSNode::Chance(chance);
+        assert_eq!(node.visit_count(), 17);
+    }
+
+    #[test]
+    fn test_mcts_node_mean_value_unvisited() {
+        let env = TetrisEnv::new(10, 20);
+        let decision = DecisionNode::new(env.clone(), 0);
+        let chance = ChanceNode::new(env, 0, vec![]);
+
+        assert_eq!(MCTSNode::Decision(decision).mean_value(), 0.0);
+        assert_eq!(MCTSNode::Chance(chance).mean_value(), 0.0);
+    }
+
+    #[test]
+    fn test_mcts_node_mean_value_visited() {
+        let env = TetrisEnv::new(10, 20);
+        let mut decision = DecisionNode::new(env.clone(), 0);
+        decision.visit_count = 10;
+        decision.value_sum = 25.0;
+
+        assert!((MCTSNode::Decision(decision).mean_value() - 2.5).abs() < 0.01);
+
+        let mut chance = ChanceNode::new(env, 0, vec![]);
+        chance.visit_count = 4;
+        chance.value_sum = 10.0;
+
+        assert!((MCTSNode::Chance(chance).mean_value() - 2.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_get_valid_action_indices() {
+        let env = TetrisEnv::new(10, 20);
+        let indices = get_valid_action_indices(&env);
+
+        // Should have at least some valid actions
+        assert!(!indices.is_empty());
+
+        // All indices should be within action space bounds
+        for idx in &indices {
+            assert!(*idx < 734, "Action index {} out of bounds", idx);
+        }
+
+        // No duplicate indices
+        let mut unique = indices.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), indices.len(), "Should have no duplicate action indices");
+    }
+
+    #[test]
+    fn test_get_valid_action_indices_game_over() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.game_over = true;
+        env.current_piece = None; // Clear the current piece as would happen in game over
+
+        let indices = get_valid_action_indices(&env);
+
+        // Game over state with no current piece should have no valid actions
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn test_decision_node_puct_exploration() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env.clone(), 0);
+
+        // Create non-uniform priors
+        let mut policy = vec![0.001; 734];
+        if let Some(&first_action) = node.valid_actions.first() {
+            policy[first_action] = 0.9; // High prior for first action
+        }
+        node.set_priors(&policy);
+        node.visit_count = 1;
+
+        // With high c_puct, should explore high-prior actions
+        let action = node.select_action(10.0);
+        assert!(node.valid_actions.contains(&action));
+    }
+
+    #[test]
+    fn test_chance_node_piece_order_randomization() {
+        let env = TetrisEnv::new(10, 20);
+
+        // Create multiple nodes and check that piece orders vary
+        let mut orders: Vec<Vec<usize>> = Vec::new();
+        for _ in 0..10 {
+            let node = ChanceNode::new(env.clone(), 0, vec![]);
+            orders.push(node.piece_order.clone());
+        }
+
+        // At least some orders should be different (probabilistic)
+        let first_order = &orders[0];
+        let different = orders.iter().any(|o| o != first_order);
+        // Note: This test could occasionally fail due to random chance,
+        // but with 10 samples it's extremely unlikely
+        assert!(different, "Piece orders should be randomized");
+    }
+}

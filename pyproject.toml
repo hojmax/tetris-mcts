@@ -16,6 +16,8 @@ dependencies = [
     "structlog",
     "simple-parsing",
     "pydantic",
+    "onnx>=1.20.0",
+    "onnxscript>=0.5.7",
 ]
 
 [tool.uv.sources]
