@@ -4,7 +4,7 @@ import structlog
 from pydantic.dataclasses import dataclass
 from simple_parsing import parse
 
-from ml.training import Trainer, TrainingConfig
+from tetris_mcts.ml.training import Trainer, TrainingConfig
 
 logger = structlog.get_logger()
 

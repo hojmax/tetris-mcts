@@ -5,8 +5,8 @@ SHELL := /bin/bash
 CARGO_ENV := source $$HOME/.cargo/env 2>/dev/null || true
 
 # Run the game (builds first if needed)
-run: .build_marker
-	uv run python tetris_game.py
+play: .build_marker
+	uv run python tetris_mcts/scripts/tetris_game.py
 
 # Build marker file to track if build is up to date
 RUST_SRC := $(wildcard tetris_core/src/*.rs)
@@ -21,7 +21,6 @@ build: .build_marker
 rebuild:
 	$(CARGO_ENV) && uv run maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@touch .build_marker
-	uv run python tetris_game.py
 
 # Run tests
 test:
@@ -30,9 +29,6 @@ test:
 # Clean build artifacts
 clean:
 	rm -rf tetris_core/target .build_marker
-
-play:
-	uv run python scripts/tetris_game.py
 
 check:
 	uv run ruff check

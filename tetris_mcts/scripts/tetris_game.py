@@ -1,19 +1,11 @@
-#!/usr/bin/env python3
 """
 Tetris game with Rust backend and Pygame visualization.
 Implements proper SRS rotation and DAS/ARR for responsive controls.
 """
 
 import pygame
-import sys
 
-try:
-    from tetris_core import TetrisEnv
-except ImportError:
-    print("Error: tetris_core module not found.")
-    print("Please build and install it first:")
-    print("  cd tetris_core && maturin develop")
-    sys.exit(1)
+from tetris_core import TetrisEnv
 
 # Constants
 CELL_SIZE = 30

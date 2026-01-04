@@ -14,7 +14,7 @@ from typing import Optional
 import struct
 import json
 
-from .network import TetrisNet, BOARD_HEIGHT, BOARD_WIDTH, AUX_FEATURES
+from tetris_mcts.ml.network import TetrisNet, BOARD_HEIGHT, BOARD_WIDTH, AUX_FEATURES
 
 
 def save_checkpoint(

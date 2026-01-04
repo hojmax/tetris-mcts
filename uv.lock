@@ -789,7 +789,7 @@ source = { directory = "tetris_core" }
 [[package]]
 name = "tetris-mcts"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "maturin" },
     { name = "numpy" },

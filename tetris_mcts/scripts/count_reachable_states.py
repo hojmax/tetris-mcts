@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Count how many of the 800 possible (x, y, rotation) positions are valid
 for at least one piece.

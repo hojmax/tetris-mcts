@@ -19,10 +19,10 @@ import time
 
 import wandb
 
-from .network import TetrisNet
-from .data import ReplayBuffer, TetrisDataset, TrainingExample
-from .weights import WeightManager
-from .selfplay import (
+from tetris_mcts.ml.network import TetrisNet
+from tetris_mcts.ml.data import ReplayBuffer, TetrisDataset, TrainingExample
+from tetris_mcts.ml.weights import WeightManager
+from tetris_mcts.ml.selfplay import (
     generate_random_games,
     generate_mcts_games,
     evaluate_policy,
@@ -30,10 +30,7 @@ from .selfplay import (
     EvalMetrics,
 )
 
-try:
-    from tetris_core import MCTSConfig
-except ImportError:
-    MCTSConfig = None
+from tetris_core import MCTSConfig
 
 
 @dataclass

@@ -11,20 +11,14 @@ from typing import Optional, Callable
 from dataclasses import dataclass, field
 import time
 
-try:
-    from tetris_core import TetrisEnv, Placement, MCTSConfig, MCTSAgent
-except ImportError:
-    raise ImportError(
-        "tetris_core module not found. Build it with: cd tetris_core && maturin develop"
-    )
-
-from .action_space import (
+from tetris_core import TetrisEnv, Placement, MCTSConfig, MCTSAgent
+from tetris_mcts.ml.action_space import (
     NUM_ACTIONS,
     PLACEMENT_TO_ACTION,
     ACTION_TO_PLACEMENT,
     get_action_mask,
 )
-from .data import TrainingExample
+from tetris_mcts.ml.data import TrainingExample
 
 
 # Game configuration
