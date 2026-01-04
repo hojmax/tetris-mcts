@@ -62,7 +62,7 @@ class TetrisNet(nn.Module):
     def __init__(
         self,
         conv_filters: list[int] = [4, 8],
-        fc_hidden: int = 256,
+        fc_hidden: int = 128,
         num_actions: int = NUM_ACTIONS,
     ):
         super().__init__()

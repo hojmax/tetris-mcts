@@ -43,7 +43,7 @@ class TrainingConfig:
     """Training hyperparameters."""
     # Network
     conv_filters: list = None
-    fc_hidden: int = 256
+    fc_hidden: int = 128
 
     # Training
     batch_size: int = 256

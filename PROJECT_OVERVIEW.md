@@ -35,25 +35,25 @@ Move number lets the value head learn that later positions have less remaining f
 ```
 Input Board (20x10x1)
     │
-    ├──► Conv2D(1, 32, kernel=3x3, padding=1) + BatchNorm2d + ReLU
+    ├──► Conv2D(1, 4, kernel=3x3, padding=1) + BatchNorm2d + ReLU
     │        │
     │        ▼
-    │    Conv2D(32, 64, kernel=3x3, padding=1) + BatchNorm2d + ReLU
+    │    Conv2D(4, 8, kernel=3x3, padding=1) + BatchNorm2d + ReLU
     │        │
     │        ▼
-    │    Flatten → 20*10*64 = 12,800
+    │    Flatten → 20*10*8 = 1,600
     │
 Auxiliary Input (52 features: current + hold + hold_avail + next_queue + move_num)
     │
     └──► Concat with flattened board features
               │
               ▼
-         FC(12852, 256) + LayerNorm + ReLU
+         FC(1652, 128) + LayerNorm + ReLU
               │
               ├──────────────────┐
               ▼                  ▼
          Policy Head        Value Head
-         FC(256, 734)       FC(256, 1)
+         FC(128, 734)       FC(128, 1)
          Softmax            (linear)
               │                  │
               ▼                  ▼
@@ -69,8 +69,8 @@ Auxiliary Input (52 features: current + hold + hold_avail + next_queue + move_nu
   - Each output corresponds to a unique (x, y, rotation) position
   - Invalid moves are masked before softmax
 - **Value head**: 1 output (linear, no activation)
-  - Predicts discounted cumulative attack from current state
-  - MSE loss against actual attack values
+  - Predicts cumulative attack from current state to end of game
+  - MSE loss against actual cumulative attack values
 
 ### Move Indexing
 
@@ -190,8 +190,8 @@ fn mcts_search(root: &mut MCTSNode, num_simulations: u32, network: &Network) {
 
 fn select(node: &MCTSNode) -> &MCTSNode {
     if node.is_chance_node {
-        // Sample according to piece probabilities (or use expectation)
-        sample_chance_child(node)
+        // Round-robin over pieces in randomized order (ensures balanced exploration)
+        select_next_piece_round_robin(node)
     } else {
         // Use PUCT formula for action selection
         let best_action = argmax(|a| ucb_score(node, a));
@@ -267,7 +267,7 @@ fn simulate_chance_node(state: &GameState) -> Vec<(Piece, f32, GameState)> {
 }
 ```
 
-For MCTS chance nodes, always use actual bag probabilities based on current bag state, not uniform 1/7.
+**Chance node piece selection**: Rather than sampling by probability each simulation, the implementation uses **round-robin selection** over pieces in a randomized order. Each chance node shuffles the possible pieces once, then cycles through them. This ensures balanced exploration of all piece outcomes while still respecting the 7-bag distribution on average.
 
 ---
 
@@ -304,9 +304,9 @@ fn self_play_game(network: &Network, config: &Config) -> Vec<TrainingExample> {
         game.apply_action(action);
     }
 
-    // Fill in values: discounted cumulative attack
+    // Fill in values: cumulative attack from each position to end
     for (i, example) in examples.iter_mut().enumerate() {
-        example.value = compute_value(&game.attack_history, i);
+        example.value = compute_cumulative_attack(&game.attack_history, i);
     }
 
     examples
@@ -378,27 +378,26 @@ Attack values per action:
 
 ```rust
 const MAX_MOVES: usize = 100;
-const DROP_LAST_N: usize = 10;  // Drop last 10 moves from training
 
 fn compute_training_examples(game: &Game) -> Vec<TrainingExample> {
     let mut examples = Vec::new();
-    let gamma = 0.99;
+    let num_states = game.states.len();
 
-    // Only use first (MAX_MOVES - DROP_LAST_N) moves for training
-    // Last moves have incomplete value targets since game was cut off
-    let usable_moves = game.moves.len().saturating_sub(DROP_LAST_N);
+    // Compute cumulative attack from each position to end of game
+    let mut cumulative_attack = vec![0.0f32; num_states];
+    let mut running_total = 0u32;
 
-    for move_idx in 0..usable_moves {
-        // Value = discounted sum of future attack
-        let mut value = 0.0;
-        for (k, state) in game.states[move_idx..].iter().enumerate() {
-            value += gamma.powi(k as i32) * state.attack as f32;
-        }
+    for i in (0..num_states).rev() {
+        running_total += game.attacks[i];
+        cumulative_attack[i] = running_total as f32;
+    }
 
+    // All moves are used for training
+    for move_idx in 0..num_states {
         examples.push(TrainingExample {
             state: game.states[move_idx].clone(),
             policy: game.mcts_policies[move_idx].clone(),
-            value,
+            value: cumulative_attack[move_idx],
         });
     }
 
@@ -406,7 +405,7 @@ fn compute_training_examples(game: &Game) -> Vec<TrainingExample> {
 }
 ```
 
-**Why drop the last N moves?** Since games are capped at 100 moves, the value target for move 99 only includes attack from that single move. The value target for move 90 includes 10 moves of future attack. By dropping the last 10 moves, all training examples have at least 10 moves of future context for their value targets.
+**Value targets use raw cumulative attack** (no discounting). The value for move N is the sum of all attack from move N to the end of the game. This provides a direct learning signal for "how much attack will I get from here?"
 
 ### Data Format (Save to Disk)
 
@@ -416,8 +415,9 @@ fn compute_training_examples(game: &Game) -> Vec<TrainingExample> {
     'boards': np.array of shape (N, 20, 10), dtype=bool,
     'current_pieces': np.array of shape (N, 7), dtype=float32,  # one-hot
     'hold_pieces': np.array of shape (N, 8), dtype=float32,     # one-hot + empty
-    'hold_available': np.array of shape (N, 1), dtype=bool,
+    'hold_available': np.array of shape (N,), dtype=bool,
     'next_queue': np.array of shape (N, 5, 7), dtype=float32,   # one-hot
+    'move_numbers': np.array of shape (N,), dtype=float32,      # normalized by 100
     'policy_targets': np.array of shape (N, 734), dtype=float32,
     'value_targets': np.array of shape (N,), dtype=float32,
     'action_masks': np.array of shape (N, 734), dtype=bool,
@@ -457,8 +457,8 @@ def compute_loss(model, batch):
 ```python
 config = {
     # Network
-    'conv_filters': [32, 64],
-    'fc_hidden': 256,
+    'conv_filters': [4, 8],
+    'fc_hidden': 128,
 
     # Training
     'batch_size': 256,
@@ -596,7 +596,7 @@ fn selfplay_loop(buffer_path: &str, weights_path: &str) {
 def export_model_for_rust(model, path):
     model.eval()
     dummy_board = torch.zeros(1, 1, 20, 10)
-    dummy_aux = torch.zeros(1, 51)
+    dummy_aux = torch.zeros(1, 52)  # 7 + 8 + 1 + 35 + 1 = 52
     torch.onnx.export(model, (dummy_board, dummy_aux), path)
 ```
 
@@ -651,7 +651,7 @@ impl TetrisNet {
         let x = relu(&x);
 
         // Flatten and concat
-        let x = x.into_shape(12800).unwrap();
+        let x = x.into_shape(1600).unwrap();  // 20*10*8 = 1600
         let x = concatenate![Axis(0), x, aux];
 
         // FC layer
@@ -800,19 +800,18 @@ fn evaluate(model: &Model) -> EvalMetrics {
 
 ## 10. Hyperparameter Recommendations
 
-| Parameter           | Initial Value | Notes                                          |
-| ------------------- | ------------- | ---------------------------------------------- |
-| MCTS simulations    | 100           | Increase for stronger play                     |
-| c_puct              | 1.5           | Exploration constant                           |
-| Temperature         | 0             | Argmax (stochastic queue provides exploration) |
-| Dirichlet alpha     | 0.15          | Lower than chess due to more actions           |
-| Dirichlet epsilon   | 0.25          | Standard AlphaZero value                       |
-| Batch size          | 256           |                                                |
-| Learning rate       | 0.001         | With Adam                                      |
-| Discount factor     | 0.99          | For value computation                          |
-| Replay buffer       | 100K          | Examples, not games                            |
-| Training steps/iter | 1000          |                                                |
-| Games per iteration | 100           |                                                |
+| Parameter           | Initial Value | Notes                                   |
+| ------------------- | ------------- | --------------------------------------- |
+| MCTS simulations    | 100           | Increase for stronger play              |
+| c_puct              | 1.5           | Exploration constant                    |
+| Temperature         | 1.0           | Sampling from visit counts (0 = argmax) |
+| Dirichlet alpha     | 0.15          | Lower than chess due to more actions    |
+| Dirichlet epsilon   | 0.25          | Standard AlphaZero value                |
+| Batch size          | 256           |                                         |
+| Learning rate       | 0.001         | With Adam                               |
+| Replay buffer       | 100K          | Examples, not games                     |
+| Training steps/iter | 1000          |                                         |
+| Games per iteration | 100           |                                         |
 
 ---
 
