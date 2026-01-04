@@ -75,7 +75,7 @@ def load_checkpoint(
 def export_onnx(
     model: TetrisNet,
     filepath: str | Path,
-    opset_version: int = 17,
+    opset_version: int = 18,
 ) -> bool:
     """
     Export model to ONNX format for Rust inference (tract-onnx).
@@ -89,17 +89,26 @@ def export_onnx(
         True if export succeeded, False if ONNX dependencies are missing
     """
     import warnings
+    import logging
 
     try:
-        model.eval()
+        # ONNX export must happen on CPU
+        original_device = next(model.parameters()).device
+        model_cpu = model.cpu()
+        model_cpu.eval()
 
         # Create dummy inputs (batch size 1, tract handles this)
         dummy_board = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
         dummy_aux = torch.zeros(1, AUX_FEATURES)
 
+        # Suppress ONNX export warnings
+        onnx_logger = logging.getLogger("torch.onnx")
+        old_level = onnx_logger.level
+        onnx_logger.setLevel(logging.ERROR)
+
         # Export without dynamic_axes for tract compatibility
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=UserWarning)
+            warnings.filterwarnings("ignore")
             torch.onnx.export(
                 model,
                 (dummy_board, dummy_aux),
@@ -111,6 +120,11 @@ def export_onnx(
                 output_names=["policy_logits", "value"],
                 verbose=False,
             )
+
+        onnx_logger.setLevel(old_level)
+
+        # Move model back to original device
+        model.to(original_device)
         return True
     except (ImportError, ModuleNotFoundError) as e:
         print(f"Warning: ONNX export skipped (missing dependencies): {e}")

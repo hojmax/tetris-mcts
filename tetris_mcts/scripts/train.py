@@ -129,9 +129,14 @@ def main(args: ScriptArgs) -> None:
             log_data = {"buffer_size": metrics["buffer_size"]}
             if "avg_loss" in metrics:
                 log_data.update(
-                    avg_loss=round(metrics["avg_loss"], 4),
-                    avg_policy_loss=round(metrics["avg_policy_loss"], 4),
-                    avg_value_loss=round(metrics["avg_value_loss"], 4),
+                    avg_loss=round(float(metrics["avg_loss"]), 4),
+                    avg_policy_loss=round(float(metrics["avg_policy_loss"]), 4),
+                    avg_value_loss=round(float(metrics["avg_value_loss"]), 4),
+                )
+            if "eval_avg_attack" in metrics:
+                log_data.update(
+                    eval_avg_attack=round(float(metrics["eval_avg_attack"]), 2),
+                    eval_avg_moves=round(float(metrics["eval_avg_moves"]), 1),
                 )
             logger.info("Iteration complete", **log_data)
 

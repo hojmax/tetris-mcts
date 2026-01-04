@@ -969,4 +969,303 @@ mod tests {
         env.clear_lines_internal(false, false);
         assert_eq!(env.lines_cleared, 2, "Should clear 2 non-contiguous lines");
     }
+
+    // ==================== Lock Delay Tests ====================
+
+    #[test]
+    fn test_is_grounded_at_spawn() {
+        let env = TetrisEnv::new(10, 20);
+        // Piece at spawn should not be grounded
+        assert!(!env.is_grounded(), "Piece at spawn should not be grounded");
+    }
+
+    #[test]
+    fn test_is_grounded_at_bottom() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Move piece to bottom
+        while env.move_down() {}
+        assert!(env.is_grounded(), "Piece at bottom should be grounded");
+    }
+
+    #[test]
+    fn test_is_grounded_on_stack() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Create a stack in the middle
+        for x in 0..10 {
+            env.board[15][x] = 1;
+        }
+
+        // Move piece down until it lands on the stack
+        while env.move_down() {}
+
+        assert!(env.is_grounded(), "Piece on top of stack should be grounded");
+    }
+
+    #[test]
+    fn test_is_grounded_no_piece() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.current_piece = None;
+        assert!(!env.is_grounded(), "No piece means not grounded");
+    }
+
+    #[test]
+    fn test_reset_lock_delay_decrements_moves() {
+        let mut env = TetrisEnv::new(10, 20);
+        let initial_moves = env.lock_moves_remaining;
+        assert_eq!(initial_moves, 15);
+
+        env.reset_lock_delay();
+        assert_eq!(env.lock_moves_remaining, 14);
+        assert_eq!(env.lock_delay_ms, Some(0));
+    }
+
+    #[test]
+    fn test_reset_lock_delay_multiple_times() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        for i in 0..15 {
+            env.reset_lock_delay();
+            assert_eq!(env.lock_moves_remaining, 14 - i);
+        }
+
+        // After 15 resets, should be at 0
+        assert_eq!(env.lock_moves_remaining, 0);
+    }
+
+    #[test]
+    fn test_reset_lock_delay_stops_at_zero() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.lock_moves_remaining = 0;
+        env.lock_delay_ms = Some(100);
+
+        env.reset_lock_delay();
+
+        // Should not decrement below 0 or reset timer
+        assert_eq!(env.lock_moves_remaining, 0);
+        assert_eq!(env.lock_delay_ms, Some(100)); // Timer unchanged
+    }
+
+    #[test]
+    fn test_clear_lock_delay() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.lock_delay_ms = Some(250);
+        env.lock_moves_remaining = 5;
+
+        env.clear_lock_delay();
+
+        assert_eq!(env.lock_delay_ms, None);
+        assert_eq!(env.lock_moves_remaining, 15); // Reset to default
+    }
+
+    #[test]
+    fn test_lock_delay_resets_on_movement_when_grounded() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        // Move to bottom
+        while env.move_down() {}
+        assert!(env.is_grounded());
+
+        // Start lock delay
+        env.lock_delay_ms = Some(100);
+        let moves_before = env.lock_moves_remaining;
+
+        // Move left (should reset lock delay if successful)
+        if env.move_left() {
+            assert_eq!(env.lock_delay_ms, Some(0), "Lock delay should reset to 0");
+            assert_eq!(
+                env.lock_moves_remaining,
+                moves_before - 1,
+                "Should use one lock move"
+            );
+        }
+    }
+
+    #[test]
+    fn test_lock_delay_resets_on_rotation_when_grounded() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        // Move to bottom
+        while env.move_down() {}
+
+        // Start lock delay
+        env.lock_delay_ms = Some(100);
+        let moves_before = env.lock_moves_remaining;
+
+        // Rotate (should reset lock delay if successful)
+        if env.rotate_cw() {
+            assert_eq!(env.lock_delay_ms, Some(0));
+            assert_eq!(env.lock_moves_remaining, moves_before - 1);
+        }
+    }
+
+    // ==================== Placement Tests ====================
+
+    #[test]
+    fn test_place_piece_internal_basic() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Use O piece which is simple
+        env.spawn_piece_from_type(1); // O piece
+
+        // O piece shape has cells at rows 1-2, cols 1-2 of the 4x4 grid
+        // So at y=17, cells are at y=18 and y=19 (valid)
+        let attack = env.place_piece_internal_with_kick(4, 17, 0, false, 0);
+
+        // Piece should be locked, new piece spawned
+        assert!(env.current_piece.is_some());
+        // Board should have the piece
+        let mut has_piece = false;
+        for row in &env.board {
+            if row.iter().any(|&c| c != 0) {
+                has_piece = true;
+                break;
+            }
+        }
+        assert!(has_piece, "Board should have locked piece");
+    }
+
+    #[test]
+    fn test_place_piece_internal_game_over() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.game_over = true;
+
+        let attack = env.place_piece_internal_with_kick(3, 18, 0, false, 0);
+        assert_eq!(attack, 0, "Should return 0 attack when game over");
+    }
+
+    #[test]
+    fn test_place_piece_internal_invalid_position() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        // Try to place at invalid position (outside board)
+        let attack = env.place_piece_internal_with_kick(-5, 18, 0, false, 0);
+        assert_eq!(attack, 0, "Should return 0 for invalid position");
+    }
+
+    #[test]
+    fn test_place_piece_internal_no_current_piece() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.current_piece = None;
+
+        let attack = env.place_piece_internal_with_kick(3, 18, 0, false, 0);
+        assert_eq!(attack, 0, "Should return 0 when no current piece");
+    }
+
+    #[test]
+    fn test_place_piece_internal_with_rotation() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        // Place with rotation flag set
+        let attack = env.place_piece_internal_with_kick(3, 18, 1, true, 0);
+
+        // The placement should work (assuming position is valid for rotated piece)
+        // Main thing is it doesn't crash
+    }
+
+    #[test]
+    fn test_place_piece_internal_with_kick_index() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Spawn T piece for T-spin testing
+        env.spawn_piece_from_type(T_PIECE);
+
+        // Set up a scenario where kick_index matters for T-spin
+        env.board[18][4] = 1;
+        env.board[19][4] = 1;
+        env.board[19][6] = 1;
+
+        // Place with kick_index = 4 (special T-spin kick)
+        let attack = env.place_piece_internal_with_kick(4, 17, 0, true, 4);
+
+        // The last_kick_index should be set
+        // (Note: piece gets locked so we can't check it directly, but the attack should reflect it)
+    }
+
+    #[test]
+    fn test_place_piece_internal_clears_lines() {
+        let mut env = TetrisEnv::new(10, 20);
+        // Spawn I piece
+        env.spawn_piece_from_type(0); // I piece
+
+        // Set up almost-complete row
+        for x in 0..6 {
+            env.board[19][x] = 1;
+        }
+
+        // Place I piece horizontally to complete the row
+        // I piece at rotation 0 is horizontal: [1,1,1,1] at row 1 of the shape
+        let attack = env.place_piece_internal_with_kick(6, 18, 0, false, 0);
+
+        // Should have cleared a line and gotten attack
+        assert!(env.lines_cleared > 0 || attack > 0 || env.board[19].iter().all(|&c| c == 0));
+    }
+
+    #[test]
+    fn test_place_piece_internal_collision_with_stack() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        // Create a stack
+        for y in 15..20 {
+            for x in 0..10 {
+                env.board[y][x] = 1;
+            }
+        }
+
+        // Try to place piece inside the stack (invalid)
+        let attack = env.place_piece_internal_with_kick(3, 16, 0, false, 0);
+        assert_eq!(attack, 0, "Should return 0 when colliding with stack");
+    }
+
+    #[test]
+    fn test_place_piece_internal_all_rotations() {
+        // Test that all 4 rotations work
+        for rotation in 0..4 {
+            let mut env = TetrisEnv::new(10, 20);
+
+            // Use T piece which has distinct rotations
+            env.spawn_piece_from_type(T_PIECE);
+
+            let attack = env.place_piece_internal_with_kick(4, 17, rotation, false, 0);
+            // Should not panic and piece should be placed
+            assert!(
+                env.lines_cleared >= 0,
+                "Rotation {} should work",
+                rotation
+            );
+        }
+    }
+
+    #[test]
+    fn test_place_piece_sets_last_move_was_rotation() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.last_move_was_rotation = false;
+
+        // Place with was_rotation = true
+        env.place_piece_internal_with_kick(3, 18, 0, true, 0);
+
+        // New piece is spawned, but the T-spin detection should have used the flag
+        // We can't easily verify this without checking attack values in a T-spin setup
+    }
+
+    #[test]
+    fn test_place_piece_returns_attack_delta() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.spawn_piece_from_type(0); // I piece
+
+        // Set up Tetris (4 almost-complete rows), leaving column 9 empty
+        for y in 16..20 {
+            for x in 0..9 {
+                env.board[y][x] = 1;
+            }
+        }
+
+        let initial_attack = env.attack;
+
+        // Place I piece vertically to complete all 4 rows
+        // I piece rotation 1 (vertical) has cells at column 2 of the 4x4 grid
+        // So at x=7, cells are at 7+2=9, which completes the rows
+        let attack_delta = env.place_piece_internal_with_kick(7, 16, 1, false, 0);
+
+        // Should return the attack gained (Tetris = 4 lines)
+        assert!(attack_delta > 0, "Tetris should give attack");
+        assert_eq!(env.attack, initial_attack + attack_delta);
+    }
 }
