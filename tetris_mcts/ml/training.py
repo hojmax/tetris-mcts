@@ -6,6 +6,7 @@ Implements:
 - Training loop with WandB logging
 - Learning rate scheduling
 - Evaluation during training
+- Parallel Rust game generation via GameGenerator
 """
 
 import torch
@@ -20,17 +21,14 @@ import time
 import wandb
 
 from tetris_mcts.ml.network import TetrisNet
-from tetris_mcts.ml.data import ReplayBuffer, TetrisDataset, TrainingExample
+from tetris_mcts.ml.data import ReplayBuffer, SharedReplayBuffer, TetrisDataset, TrainingExample
 from tetris_mcts.ml.weights import WeightManager
-from tetris_mcts.ml.selfplay import (
-    generate_random_games,
-    generate_mcts_games,
-    evaluate_policy,
-    MAX_MOVES,
-    EvalMetrics,
-)
 
-from tetris_core import MCTSConfig
+from tetris_core import MCTSConfig, MCTSAgent, GameGenerator, evaluate_model, EvalResult
+
+
+# Game configuration
+MAX_MOVES = 100
 
 
 @dataclass
@@ -272,66 +270,103 @@ class Trainer:
 
         return metrics
 
-    def generate_data(
-        self, num_games: int, use_mcts: bool = True
-    ) -> list[TrainingExample]:
-        """Generate self-play data using either MCTS or random policy."""
-        print(f"Generating {num_games} games (MCTS={use_mcts})...")
+    def generate_data(self, num_games: int) -> list[TrainingExample]:
+        """Generate self-play data using MCTS."""
+        print(f"Generating {num_games} games...")
 
-        if use_mcts and MCTSConfig is not None:
-            # Export current model to ONNX for Rust inference
-            onnx_path = Path(self.config.checkpoint_dir) / "selfplay.onnx"
-            from .weights import export_onnx
+        # Export current model to ONNX for Rust inference
+        onnx_path = Path(self.config.checkpoint_dir) / "selfplay.onnx"
+        from .weights import export_onnx
+        export_onnx(self.model, onnx_path)
 
-            export_onnx(self.model, onnx_path)
+        # Configure MCTS
+        mcts_config = MCTSConfig()
+        mcts_config.num_simulations = self.config.num_simulations
+        mcts_config.temperature = self.config.temperature
+        mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
+        mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
 
-            # Use MCTS with neural network (pure Rust)
-            mcts_config = MCTSConfig()
-            mcts_config.num_simulations = self.config.num_simulations
-            mcts_config.temperature = self.config.temperature
-            mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
-            mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
+        # Create agent and load model
+        agent = MCTSAgent(mcts_config)
+        if not agent.load_model(str(onnx_path)):
+            raise RuntimeError(f"Failed to load model from {onnx_path}")
 
-            examples = generate_mcts_games(
-                model_path=str(onnx_path),
-                num_games=num_games,
-                mcts_config=mcts_config,
-                max_moves=MAX_MOVES,
-                add_noise=True,
-                verbose=True,
-            )
-        else:
-            # Fallback to random policy
-            examples = generate_random_games(
-                num_games=num_games,
-                max_moves=MAX_MOVES,
-                verbose=True,
-            )
+        start_time = time.time()
+
+        # Generate games in Rust
+        rust_examples = agent.generate_games(
+            num_games=num_games,
+            max_moves=MAX_MOVES,
+            add_noise=True,
+            drop_last_n=10,
+        )
+
+        # Convert Rust examples to Python TrainingExample objects
+        examples = [self._rust_example_to_training_example(ex) for ex in rust_examples]
+
+        elapsed = time.time() - start_time
+        print(f"Generated {len(examples)} examples from {num_games} games")
+        print(f"Time: {elapsed:.1f}s ({num_games / max(0.1, elapsed):.2f} games/sec)")
+
         return examples
 
-    def evaluate(self) -> EvalMetrics:
-        """Evaluate current model."""
-        # For now, just evaluate random policy
-        # Once MCTS is implemented, this will use the model
-        self.model.eval()
-        metrics = evaluate_policy(
-            policy_fn=None,  # Random for now
-            seeds=self.config.eval_seeds,
-            max_moves=MAX_MOVES,
-            verbose=True,
-        )
-        return metrics
+    def _rust_example_to_training_example(self, rust_ex) -> TrainingExample:
+        """Convert Rust TrainingExample to Python TrainingExample."""
+        import numpy as np
+        BOARD_HEIGHT, BOARD_WIDTH = 20, 10
 
-    def train_iteration(self, log_to_wandb: bool = True, use_mcts: bool = True) -> dict:
+        # Reshape board from flat list to 2D array
+        board = np.array(rust_ex.board, dtype=np.uint8).reshape(BOARD_HEIGHT, BOARD_WIDTH)
+
+        return TrainingExample(
+            board=board.astype(bool),
+            current_piece=rust_ex.current_piece,
+            hold_piece=rust_ex.hold_piece if rust_ex.hold_piece < 7 else None,
+            hold_available=rust_ex.hold_available,
+            next_queue=list(rust_ex.next_queue),
+            move_number=rust_ex.move_number,
+            policy_target=np.array(rust_ex.policy, dtype=np.float32),
+            value_target=rust_ex.value,
+            action_mask=np.array(rust_ex.action_mask, dtype=bool),
+        )
+
+    def evaluate(self) -> EvalResult:
+        """Evaluate current model using MCTS on fixed seeds."""
+        self.model.eval()
+
+        # Export model to ONNX for Rust evaluation
+        onnx_path = Path(self.config.checkpoint_dir) / "eval.onnx"
+        from .weights import export_onnx
+        export_onnx(self.model, onnx_path)
+
+        # Create MCTS config for evaluation (temperature=0 enforced by evaluate_model)
+        mcts_config = MCTSConfig()
+        mcts_config.num_simulations = self.config.num_simulations
+
+        # Run evaluation in Rust with seeded environments
+        result = evaluate_model(
+            model_path=str(onnx_path),
+            seeds=[int(s) for s in self.config.eval_seeds],
+            config=mcts_config,
+            max_moves=MAX_MOVES,
+        )
+
+        print(f"Evaluation ({result.num_games} games):")
+        print(f"  Avg attack: {result.avg_attack:.1f}")
+        print(f"  Max attack: {result.max_attack}")
+        print(f"  Avg moves: {result.avg_moves:.1f}")
+        print(f"  Attack/piece: {result.attack_per_piece:.3f}")
+
+        return result
+
+    def train_iteration(self, log_to_wandb: bool = True) -> dict:
         """Run one training iteration."""
         self.iteration += 1
         iteration_metrics = {}
 
         # Generate self-play data
         start_time = time.time()
-        examples = self.generate_data(
-            self.config.num_games_per_iteration, use_mcts=use_mcts
-        )
+        examples = self.generate_data(self.config.num_games_per_iteration)
         self.buffer.add_batch(examples)
         data_time = time.time() - start_time
 
@@ -364,13 +399,19 @@ class Trainer:
 
         # Evaluate
         if self.iteration % self.config.eval_interval == 0:
-            eval_metrics = self.evaluate()
-            iteration_metrics["eval_avg_attack"] = eval_metrics.avg_attack
-            iteration_metrics["eval_max_attack"] = eval_metrics.max_attack
-            iteration_metrics["eval_avg_moves"] = eval_metrics.avg_moves
+            eval_result = self.evaluate()
+            iteration_metrics["eval_avg_attack"] = eval_result.avg_attack
+            iteration_metrics["eval_max_attack"] = eval_result.max_attack
+            iteration_metrics["eval_avg_moves"] = eval_result.avg_moves
+            iteration_metrics["eval_attack_per_piece"] = eval_result.attack_per_piece
 
             if log_to_wandb:
-                wandb.log(eval_metrics.to_dict(), step=self.step)
+                wandb.log({
+                    "eval/avg_attack": eval_result.avg_attack,
+                    "eval/max_attack": eval_result.max_attack,
+                    "eval/avg_moves": eval_result.avg_moves,
+                    "eval/attack_per_piece": eval_result.attack_per_piece,
+                }, step=self.step)
 
         # Save checkpoint
         if self.iteration % self.config.checkpoint_interval == 0:
@@ -429,6 +470,125 @@ class Trainer:
         # Final save
         self.save()
 
+        wandb.finish()
+
+    def train_parallel(
+        self,
+        num_steps: int = 100000,
+        model_sync_interval: int = 1000,
+    ):
+        """
+        Run parallel training with Rust game generation in background.
+
+        The Rust GameGenerator runs in a background thread, continuously
+        generating games and writing them to disk. Python reads from disk
+        via SharedReplayBuffer and trains the model. Every model_sync_interval
+        steps, a new ONNX model is exported for the generator to pick up.
+
+        Args:
+            num_steps: Total number of training steps
+            model_sync_interval: Steps between model exports
+        """
+        # Initialize wandb
+        wandb.init(
+            project=self.config.project_name,
+            name=self.config.run_name,
+            config=vars(self.config),
+        )
+
+        # Paths for parallel training
+        games_dir = Path(self.config.data_dir) / "games"
+        games_dir.mkdir(parents=True, exist_ok=True)
+        onnx_path = Path(self.config.checkpoint_dir) / "parallel.onnx"
+
+        # Export initial model
+        from .weights import export_onnx
+        export_onnx(self.model, onnx_path)
+
+        # Create MCTS config for generator
+        mcts_config = MCTSConfig()
+        mcts_config.num_simulations = self.config.num_simulations
+        mcts_config.temperature = self.config.temperature
+        mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
+        mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
+
+        # Start background game generator
+        generator = GameGenerator(
+            model_path=str(onnx_path),
+            output_dir=str(games_dir),
+            config=mcts_config,
+            max_moves=MAX_MOVES,
+            add_noise=True,
+        )
+        generator.start()
+        print(f"Started background game generator")
+        print(f"  Model path: {onnx_path}")
+        print(f"  Output dir: {games_dir}")
+
+        # Create shared replay buffer
+        shared_buffer = SharedReplayBuffer(games_dir, max_files=100)
+
+        # Wait for minimum buffer size
+        print(f"Waiting for {self.config.min_buffer_size} examples...")
+        while shared_buffer.size() < self.config.min_buffer_size:
+            time.sleep(1.0)
+            print(f"  Buffer: {shared_buffer.size()} examples, "
+                  f"Games: {generator.games_generated()}")
+
+        print(f"\nStarting training for {num_steps} steps")
+        print(f"Config: {self.config}")
+
+        try:
+            for step in range(num_steps):
+                self.step = step + 1
+
+                # Sample batch from shared buffer
+                batch = shared_buffer.sample(self.config.batch_size)
+                if batch is None:
+                    time.sleep(0.1)
+                    continue
+
+                # Train step
+                metrics = self.train_step(batch)
+
+                # Log to wandb
+                if self.step % self.config.log_interval == 0:
+                    metrics["buffer_size"] = shared_buffer.size()
+                    metrics["games_generated"] = generator.games_generated()
+                    metrics["examples_generated"] = generator.examples_generated()
+                    wandb.log(metrics, step=self.step)
+                    print(f"Step {self.step}: loss={metrics['loss']:.4f}, "
+                          f"buffer={shared_buffer.size()}, "
+                          f"games={generator.games_generated()}")
+
+                # Export updated model for generator
+                if self.step % model_sync_interval == 0:
+                    export_onnx(self.model, onnx_path)
+                    print(f"  Exported model at step {self.step}")
+
+                # Evaluate
+                if self.step % self.config.eval_interval == 0:
+                    eval_result = self.evaluate()
+                    wandb.log({
+                        "eval/avg_attack": eval_result.avg_attack,
+                        "eval/max_attack": eval_result.max_attack,
+                        "eval/avg_moves": eval_result.avg_moves,
+                        "eval/attack_per_piece": eval_result.attack_per_piece,
+                    }, step=self.step)
+
+                # Checkpoint
+                if self.step % (self.config.checkpoint_interval * self.config.training_steps_per_iter) == 0:
+                    self.save()
+
+        finally:
+            # Stop generator
+            print("\nStopping game generator...")
+            generator.stop()
+            print(f"Final stats: {generator.games_generated()} games, "
+                  f"{generator.examples_generated()} examples")
+
+        # Final save
+        self.save()
         wandb.finish()
 
 

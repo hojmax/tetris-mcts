@@ -11,11 +11,13 @@
 //! - `moves`: Move generation for finding all possible piece placements
 //! - `mcts`: Monte Carlo Tree Search for AlphaZero-style play
 //! - `nn`: Neural network inference using tract-onnx
+//! - `generator`: Background game generation and evaluation
 
 use pyo3::prelude::*;
 
 pub mod constants;
 pub mod env;
+pub mod generator;
 pub mod kicks;
 pub mod mcts;
 pub mod moves;
@@ -24,7 +26,8 @@ pub mod piece;
 pub mod scoring;
 
 // Re-export main types for convenience
-pub use env::{generate_bag, TetrisEnv};
+pub use env::TetrisEnv;
+pub use generator::{GameGenerator, EvalResult, evaluate_model};
 pub use kicks::{get_i_kicks, get_jlstz_kicks, get_kicks_for_piece};
 pub use mcts::{MCTSAgent, MCTSConfig, MCTSResult, TrainingExample, GameResult};
 pub use moves::{find_all_placements, Action, Board, Placement};
@@ -45,5 +48,8 @@ fn tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<MCTSResult>()?;
     m.add_class::<TrainingExample>()?;
     m.add_class::<GameResult>()?;
+    m.add_class::<GameGenerator>()?;
+    m.add_class::<EvalResult>()?;
+    m.add_function(wrap_pyfunction!(evaluate_model, m)?)?;
     Ok(())
 }

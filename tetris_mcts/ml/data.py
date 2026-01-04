@@ -37,7 +37,7 @@ class TrainingExample:
     hold_available: bool
     next_queue: list[int]  # List of piece types
     move_number: int
-    policy_target: np.ndarray  # (734,) float32 - MCTS visit counts
+    policy_target: np.ndarray  # (734,) float32 - normalized policy probabilities
     value_target: float  # Discounted cumulative attack
     action_mask: np.ndarray  # (734,) bool
 

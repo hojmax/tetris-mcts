@@ -12,3 +12,7 @@ pyo3 = { version = "0.20", features = ["extension-module"] }
 rand = "0.8"
 rand_distr = "0.4"
 tract-onnx = "0.21"
+# For background game generation
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+npyz = "0.8"
+ndarray = "0.15"

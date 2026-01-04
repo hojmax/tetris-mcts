@@ -5,7 +5,8 @@
 
 use pyo3::prelude::*;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::rngs::StdRng;
+use rand::{thread_rng, SeedableRng, RngCore};
 use std::collections::VecDeque;
 
 use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES, T_PIECE};
@@ -16,12 +17,6 @@ use crate::scoring::{
     BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,
 };
 
-/// Generate a new shuffled bag of 7 pieces (7-bag randomizer)
-pub fn generate_bag() -> Vec<usize> {
-    let mut bag: Vec<usize> = (0..7).collect();
-    bag.shuffle(&mut thread_rng());
-    bag
-}
 
 #[pyclass]
 #[derive(Clone)]
@@ -72,6 +67,8 @@ pub struct TetrisEnv {
     /// The bag position (0-indexed global position) of the current piece.
     /// For the first piece spawned, this is 0.
     current_piece_bag_position: u32,
+    /// Random number generator (seedable for deterministic games)
+    rng: StdRng,
 }
 
 // Internal helper methods (not exposed to Python)
@@ -121,7 +118,8 @@ impl TetrisEnv {
     /// Ensure the piece queue has at least `count` pieces
     fn fill_queue(&mut self, count: usize) {
         while self.piece_queue.len() < count {
-            let bag = generate_bag();
+            let mut bag: Vec<usize> = (0..7).collect();
+            bag.shuffle(&mut self.rng);
             self.piece_queue.extend(bag);
         }
     }
@@ -358,6 +356,14 @@ impl TetrisEnv {
     #[new]
     #[pyo3(signature = (width=10, height=20))]
     pub fn new(width: usize, height: usize) -> Self {
+        Self::with_seed(width, height, thread_rng().next_u64())
+    }
+
+    /// Create a new TetrisEnv with a specific random seed.
+    /// This allows for deterministic/reproducible games.
+    #[staticmethod]
+    #[pyo3(signature = (width, height, seed))]
+    pub fn with_seed(width: usize, height: usize, seed: u64) -> Self {
         let mut env = TetrisEnv {
             width,
             height,
@@ -381,12 +387,19 @@ impl TetrisEnv {
             last_attack_result: None,
             pieces_spawned: 0,
             current_piece_bag_position: 0,
+            rng: StdRng::seed_from_u64(seed),
         };
         env.spawn_piece_internal();
         env
     }
 
     pub fn reset(&mut self) {
+        self.reset_with_seed(thread_rng().next_u64());
+    }
+
+    /// Reset the game with a specific random seed for reproducibility.
+    #[pyo3(signature = (seed))]
+    pub fn reset_with_seed(&mut self, seed: u64) {
         self.board = vec![vec![0; self.width]; self.height];
         self.board_colors = vec![vec![None; self.width]; self.height];
         self.attack = 0;
@@ -406,6 +419,7 @@ impl TetrisEnv {
         self.last_attack_result = None;
         self.pieces_spawned = 0;
         self.current_piece_bag_position = 0;
+        self.rng = StdRng::seed_from_u64(seed);
         self.spawn_piece_internal();
     }
 
@@ -1150,15 +1164,6 @@ mod tests {
         for &pt in &env.piece_queue {
             assert!(pt < 7);
         }
-    }
-
-    #[test]
-    fn test_7bag_contains_all_pieces() {
-        let bag = generate_bag();
-        assert_eq!(bag.len(), 7);
-        let mut sorted = bag.clone();
-        sorted.sort();
-        assert_eq!(sorted, vec![0, 1, 2, 3, 4, 5, 6]);
     }
 
     #[test]

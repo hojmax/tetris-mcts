@@ -388,16 +388,6 @@ pub struct MCTSResult {
     pub num_simulations: u32,
 }
 
-#[pymethods]
-impl MCTSResult {
-    fn __repr__(&self) -> String {
-        format!(
-            "MCTSResult(action={}, value={:.3}, simulations={})",
-            self.action, self.value, self.num_simulations
-        )
-    }
-}
-
 /// MCTS Agent for Tetris
 #[pyclass]
 pub struct MCTSAgent {
@@ -532,7 +522,7 @@ impl MCTSAgent {
             states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
 
             // Run MCTS search
-            let result = self.search_internal(&env, policy, add_noise, move_idx);
+            let result = self.search(&env, policy, add_noise, move_idx);
 
             // Execute the selected action
             let (x, y, rot) = get_action_space().index_to_placement(result.action)
@@ -635,9 +625,14 @@ impl MCTSAgent {
 
 }
 
-// Internal implementation (not exposed to Python)
 impl MCTSAgent {
-    fn search_internal(
+    /// Get a reference to the neural network (if loaded).
+    pub fn get_nn(&self) -> Option<&crate::nn::TetrisNN> {
+        self.nn.as_ref()
+    }
+
+    /// Run MCTS search from a given state.
+    pub fn search(
         &self,
         env: &TetrisEnv,
         policy: Vec<f32>,

@@ -16,10 +16,14 @@ class ScriptArgs:
     games_per_iter: int = 50  # Games to play per iteration
     train_steps_per_iter: int = 500  # Training steps per iteration
 
+    # Parallel training
+    parallel: bool = False  # Use parallel Rust game generation
+    total_steps: int = 100000  # Total steps for parallel training
+    model_sync_interval: int = 1000  # Steps between model exports (parallel mode)
+
     # MCTS settings
     simulations: int = 100  # MCTS simulations per move
     temperature: float = 1.0  # Temperature for action selection
-    no_mcts: bool = False  # Use random policy instead of MCTS (for debugging)
 
     # Network settings
     batch_size: int = 256  # Training batch size
@@ -33,6 +37,7 @@ class ScriptArgs:
     checkpoint_dir: Path = (
         Path(__file__).parent.parent / "checkpoints"
     )  # Directory for checkpoints
+    data_dir: Path = Path(__file__).parent.parent / "data"  # Directory for game data
     checkpoint_interval: int = 10  # Save checkpoint every N iterations
     eval_interval: int = 10  # Evaluate every N iterations
     log_interval: int = 100  # Log every N training steps
@@ -51,6 +56,7 @@ class ScriptArgs:
 
 def main(args: ScriptArgs) -> None:
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    args.data_dir.mkdir(parents=True, exist_ok=True)
 
     config = TrainingConfig(
         batch_size=args.batch_size,
@@ -66,6 +72,7 @@ def main(args: ScriptArgs) -> None:
         eval_interval=args.eval_interval,
         log_interval=args.log_interval,
         checkpoint_dir=str(args.checkpoint_dir),
+        data_dir=str(args.data_dir),
         project_name=args.project,
         run_name=args.run_name,
     )
@@ -83,30 +90,36 @@ def main(args: ScriptArgs) -> None:
         else:
             logger.info("No checkpoint found, starting fresh")
 
-    use_mcts = not args.no_mcts
     log_to_wandb = not args.no_wandb
 
-    logger.info("Starting training")
-
-    for i in range(config.num_iterations):
-        logger.info(
-            "Starting iteration",
-            iteration=i + 1,
-            total=config.num_iterations,
+    if args.parallel:
+        logger.info("Starting parallel training with Rust game generation")
+        trainer.train_parallel(
+            num_steps=args.total_steps,
+            model_sync_interval=args.model_sync_interval,
         )
-
-        metrics = trainer.train_iteration(log_to_wandb=log_to_wandb, use_mcts=use_mcts)
-
-        log_data = {"buffer_size": metrics["buffer_size"]}
-        if "avg_loss" in metrics:
-            log_data.update(
-                avg_loss=round(metrics["avg_loss"], 4),
-                avg_policy_loss=round(metrics["avg_policy_loss"], 4),
-                avg_value_loss=round(metrics["avg_value_loss"], 4),
+    else:
+        logger.info("Starting training")
+        for i in range(config.num_iterations):
+            logger.info(
+                "Starting iteration",
+                iteration=i + 1,
+                total=config.num_iterations,
             )
-        logger.info("Iteration complete", **log_data)
 
-    trainer.save()
+            metrics = trainer.train_iteration(log_to_wandb=log_to_wandb)
+
+            log_data = {"buffer_size": metrics["buffer_size"]}
+            if "avg_loss" in metrics:
+                log_data.update(
+                    avg_loss=round(metrics["avg_loss"], 4),
+                    avg_policy_loss=round(metrics["avg_policy_loss"], 4),
+                    avg_value_loss=round(metrics["avg_value_loss"], 4),
+                )
+            logger.info("Iteration complete", **log_data)
+
+        trainer.save()
+
     logger.info("Training complete")
 
 

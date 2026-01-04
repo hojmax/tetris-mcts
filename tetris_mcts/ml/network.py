@@ -112,10 +112,10 @@ class TetrisNet(nn.Module):
 
         # Flatten conv output
         batch_size = x.size(0)
-        x = x.view(batch_size, -1)  # (batch, 12800)
+        x = x.view(batch_size, -1)  # (batch, 1600)
 
         # Concatenate with auxiliary features
-        x = torch.cat([x, aux_features], dim=1)  # (batch, 12852)
+        x = torch.cat([x, aux_features], dim=1)  # (batch, 1652)
 
         # Shared FC layer
         x = F.relu(self.ln1(self.fc1(x)))
