@@ -4,6 +4,8 @@
 
 use pyo3::prelude::*;
 
+use crate::env::TetrisEnv;
+
 /// MCTS search result
 #[pyclass]
 #[derive(Clone)]
@@ -78,6 +80,169 @@ pub struct GameResult {
     /// Number of moves played
     #[pyo3(get)]
     pub num_moves: u32,
+}
+
+// =============================================================================
+// Tree Export Types for Visualization
+// =============================================================================
+
+/// Exported tree node for visualization
+#[pyclass]
+#[derive(Clone)]
+pub struct TreeNodeExport {
+    /// Unique node ID
+    #[pyo3(get)]
+    pub id: usize,
+    /// Node type: "decision" or "chance"
+    #[pyo3(get)]
+    pub node_type: String,
+    /// Visit count
+    #[pyo3(get)]
+    pub visit_count: u32,
+    /// Value sum
+    #[pyo3(get)]
+    pub value_sum: f32,
+    /// Mean value (value_sum / visit_count)
+    #[pyo3(get)]
+    pub mean_value: f32,
+    /// Prior probability (for decision nodes)
+    #[pyo3(get)]
+    pub prior: f32,
+    /// Is terminal state (for decision nodes)
+    #[pyo3(get)]
+    pub is_terminal: bool,
+    /// Move number in game
+    #[pyo3(get)]
+    pub move_number: u32,
+    /// Attack gained at this node (for chance nodes)
+    #[pyo3(get)]
+    pub attack: u32,
+    /// Game state at this node
+    #[pyo3(get)]
+    pub state: TetrisEnv,
+    /// Parent node ID (None for root)
+    #[pyo3(get)]
+    pub parent_id: Option<usize>,
+    /// Edge label from parent (action index for decision->chance, piece type for chance->decision)
+    #[pyo3(get)]
+    pub edge_from_parent: Option<usize>,
+    /// Child node IDs
+    #[pyo3(get)]
+    pub children: Vec<usize>,
+    /// For decision nodes: valid action indices
+    #[pyo3(get)]
+    pub valid_actions: Vec<usize>,
+    /// For decision nodes: priors for each valid action
+    #[pyo3(get)]
+    pub action_priors: Vec<f32>,
+}
+
+#[pymethods]
+impl TreeNodeExport {
+    fn __repr__(&self) -> String {
+        format!(
+            "TreeNode(id={}, type={}, visits={}, value={:.3})",
+            self.id, self.node_type, self.visit_count, self.mean_value
+        )
+    }
+}
+
+/// Exported MCTS tree for visualization
+#[pyclass]
+#[derive(Clone)]
+pub struct MCTSTreeExport {
+    /// All nodes in the tree (indexed by ID)
+    #[pyo3(get)]
+    pub nodes: Vec<TreeNodeExport>,
+    /// Root node ID
+    #[pyo3(get)]
+    pub root_id: usize,
+    /// Total simulations run
+    #[pyo3(get)]
+    pub num_simulations: u32,
+    /// Selected action from root
+    #[pyo3(get)]
+    pub selected_action: usize,
+    /// Policy from search
+    #[pyo3(get)]
+    pub policy: Vec<f32>,
+}
+
+#[pymethods]
+impl MCTSTreeExport {
+    fn __repr__(&self) -> String {
+        format!(
+            "MCTSTree(nodes={}, simulations={}, action={})",
+            self.nodes.len(), self.num_simulations, self.selected_action
+        )
+    }
+
+    /// Get the root node
+    fn get_root(&self) -> TreeNodeExport {
+        self.nodes[self.root_id].clone()
+    }
+
+    /// Get a node by ID
+    fn get_node(&self, id: usize) -> Option<TreeNodeExport> {
+        self.nodes.get(id).cloned()
+    }
+
+    /// Get children of a node
+    fn get_children(&self, id: usize) -> Vec<TreeNodeExport> {
+        if let Some(node) = self.nodes.get(id) {
+            node.children.iter()
+                .filter_map(|&child_id| self.nodes.get(child_id).cloned())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get total number of nodes
+    fn num_nodes(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Get maximum depth of tree
+    fn max_depth(&self) -> usize {
+        self.compute_depth(self.root_id)
+    }
+
+    /// Get all nodes at a given depth
+    fn nodes_at_depth(&self, depth: usize) -> Vec<TreeNodeExport> {
+        let mut result = Vec::new();
+        self.collect_at_depth(self.root_id, 0, depth, &mut result);
+        result
+    }
+}
+
+impl MCTSTreeExport {
+    fn compute_depth(&self, node_id: usize) -> usize {
+        if let Some(node) = self.nodes.get(node_id) {
+            if node.children.is_empty() {
+                0
+            } else {
+                1 + node.children.iter()
+                    .map(|&child_id| self.compute_depth(child_id))
+                    .max()
+                    .unwrap_or(0)
+            }
+        } else {
+            0
+        }
+    }
+
+    fn collect_at_depth(&self, node_id: usize, current_depth: usize, target_depth: usize, result: &mut Vec<TreeNodeExport>) {
+        if let Some(node) = self.nodes.get(node_id) {
+            if current_depth == target_depth {
+                result.push(node.clone());
+            } else {
+                for &child_id in &node.children {
+                    self.collect_at_depth(child_id, current_depth + 1, target_depth, result);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use crate::env::TetrisEnv;
 use super::action_space::{get_action_space, NUM_ACTIONS};
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
-use super::results::{GameResult, MCTSResult, TrainingExample};
+use super::results::{GameResult, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport};
 use super::utils::sample_action;
 
 /// MCTS Agent for Tetris
@@ -200,6 +200,52 @@ impl MCTSAgent {
         all_examples
     }
 
+    /// Run MCTS search and return both the result and the tree structure.
+    ///
+    /// This is for visualization/debugging - it exports the entire MCTS tree.
+    ///
+    /// Args:
+    ///     env: The game state to search from
+    ///     add_noise: Whether to add Dirichlet noise to root priors
+    ///     move_number: The current move number in the game
+    ///
+    /// Returns:
+    ///     Tuple of (MCTSResult, MCTSTreeExport) or None if no model loaded
+    #[pyo3(signature = (env, add_noise=false, move_number=0))]
+    pub fn search_with_tree(
+        &self,
+        env: &TetrisEnv,
+        add_noise: bool,
+        move_number: u32,
+    ) -> Option<(MCTSResult, MCTSTreeExport)> {
+        let nn = self.nn.as_ref()?;
+
+        // Get action mask and initial policy
+        let mask = crate::nn::get_action_mask(env);
+        if !mask.iter().any(|&x| x) {
+            return None;
+        }
+
+        let (policy, _) = nn.predict_masked(env, move_number as usize, &mask)
+            .expect("Neural network prediction failed");
+
+        let (mcts_result, root) = self.search_internal(env, policy, add_noise, move_number);
+
+        // Export tree structure
+        let mut nodes: Vec<TreeNodeExport> = Vec::new();
+        self.export_decision_node(&root, None, None, &mut nodes);
+
+        let tree_export = MCTSTreeExport {
+            nodes,
+            root_id: 0,
+            num_simulations: self.config.num_simulations,
+            selected_action: mcts_result.action,
+            policy: mcts_result.policy.clone(),
+        };
+
+        Some((mcts_result, tree_export))
+    }
+
 }
 
 impl MCTSAgent {
@@ -216,65 +262,8 @@ impl MCTSAgent {
         add_noise: bool,
         move_number: u32,
     ) -> MCTSResult {
-        // Create root node
-        let mut root = DecisionNode::new(env.clone(), move_number);
-        root.set_priors(&policy);
-
-        if add_noise {
-            root.add_dirichlet_noise(self.config.dirichlet_alpha, self.config.dirichlet_epsilon);
-        }
-
-        // Run simulations
-        for _ in 0..self.config.num_simulations {
-            self.simulate(&mut root, move_number);
-        }
-
-        // Build result policy from visit counts
-        let mut result_policy = vec![0.0; NUM_ACTIONS];
-        let total_visits: u32 = root.children.values().map(|c| c.visit_count()).sum();
-
-        debug_assert!(total_visits > 0, "MCTS should have visits after simulations");
-
-        let action = if self.config.temperature == 0.0 {
-            // Argmax: find the action with most visits
-            let (best_action, _) = root.children.iter()
-                .max_by_key(|(_, child)| child.visit_count())
-                .map(|(&idx, child)| (idx, child.visit_count()))
-                .expect("MCTS root should have children after simulations");
-
-            // One-hot policy for argmax
-            result_policy[best_action] = 1.0;
-            best_action
-        } else {
-            // Proportional to visit_count ^ (1/temp)
-            for (&action_idx, child) in &root.children {
-                result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / self.config.temperature);
-            }
-
-            // Normalize
-            let sum: f32 = result_policy.iter().sum();
-            if sum > 0.0 {
-                for p in &mut result_policy {
-                    *p /= sum;
-                }
-            }
-
-            // Sample from policy
-            sample_action(&result_policy)
-        };
-
-        let root_value = if root.visit_count > 0 {
-            root.value_sum / root.visit_count as f32
-        } else {
-            0.0
-        };
-
-        MCTSResult {
-            policy: result_policy,
-            action,
-            value: root_value,
-            num_simulations: self.config.num_simulations,
-        }
+        let (result, _root) = self.search_internal(env, policy, add_noise, move_number);
+        result
     }
 
     /// Run a single MCTS simulation
@@ -483,5 +472,176 @@ impl MCTSAgent {
             node.visit_count += 1;
             node.value_sum += total_value;
         }
+    }
+
+    /// Internal search implementation that returns both result and root node.
+    fn search_internal(
+        &self,
+        env: &TetrisEnv,
+        policy: Vec<f32>,
+        add_noise: bool,
+        move_number: u32,
+    ) -> (MCTSResult, DecisionNode) {
+        // Create root node
+        let mut root = DecisionNode::new(env.clone(), move_number);
+        root.set_priors(&policy);
+
+        if add_noise {
+            root.add_dirichlet_noise(self.config.dirichlet_alpha, self.config.dirichlet_epsilon);
+        }
+
+        // Run simulations
+        for _ in 0..self.config.num_simulations {
+            self.simulate(&mut root, move_number);
+        }
+
+        // Build result policy from visit counts
+        let mut result_policy = vec![0.0; NUM_ACTIONS];
+        let total_visits: u32 = root.children.values().map(|c| c.visit_count()).sum();
+
+        debug_assert!(total_visits > 0, "MCTS should have visits after simulations");
+
+        let action = if self.config.temperature == 0.0 {
+            let (best_action, _) = root.children.iter()
+                .max_by_key(|(_, child)| child.visit_count())
+                .map(|(&idx, child)| (idx, child.visit_count()))
+                .expect("MCTS root should have children after simulations");
+            result_policy[best_action] = 1.0;
+            best_action
+        } else {
+            for (&action_idx, child) in &root.children {
+                result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / self.config.temperature);
+            }
+            let sum: f32 = result_policy.iter().sum();
+            if sum > 0.0 {
+                for p in &mut result_policy {
+                    *p /= sum;
+                }
+            }
+            sample_action(&result_policy)
+        };
+
+        let root_value = if root.visit_count > 0 {
+            root.value_sum / root.visit_count as f32
+        } else {
+            0.0
+        };
+
+        let mcts_result = MCTSResult {
+            policy: result_policy,
+            action,
+            value: root_value,
+            num_simulations: self.config.num_simulations,
+        };
+
+        (mcts_result, root)
+    }
+
+    /// Recursively export a decision node and its subtree
+    fn export_decision_node(
+        &self,
+        node: &DecisionNode,
+        parent_id: Option<usize>,
+        edge_from_parent: Option<usize>,
+        nodes: &mut Vec<TreeNodeExport>,
+    ) -> usize {
+
+        let id = nodes.len();
+        let mean_value = if node.visit_count > 0 {
+            node.value_sum / node.visit_count as f32
+        } else {
+            0.0
+        };
+
+        // Create the node (children will be filled in later)
+        let export = TreeNodeExport {
+            id,
+            node_type: "decision".to_string(),
+            visit_count: node.visit_count,
+            value_sum: node.value_sum,
+            mean_value,
+            prior: node.prior,
+            is_terminal: node.is_terminal,
+            move_number: node.move_number,
+            attack: 0,
+            state: node.state.clone(),
+            parent_id,
+            edge_from_parent,
+            children: Vec::new(),
+            valid_actions: node.valid_actions.clone(),
+            action_priors: node.action_priors.clone(),
+        };
+
+        nodes.push(export);
+
+        // Export children (sorted by action index for deterministic order)
+        let mut child_keys: Vec<usize> = node.children.keys().copied().collect();
+        child_keys.sort();
+
+        let mut child_ids = Vec::new();
+        for action_idx in child_keys {
+            if let Some(MCTSNode::Chance(chance_node)) = node.children.get(&action_idx) {
+                let child_id = self.export_chance_node(chance_node, Some(id), Some(action_idx), nodes);
+                child_ids.push(child_id);
+            }
+        }
+
+        // Update our children list
+        nodes[id].children = child_ids;
+
+        id
+    }
+
+    /// Recursively export a chance node and its subtree
+    fn export_chance_node(
+        &self,
+        node: &ChanceNode,
+        parent_id: Option<usize>,
+        edge_from_parent: Option<usize>,
+        nodes: &mut Vec<TreeNodeExport>,
+    ) -> usize {
+
+        let id = nodes.len();
+        let mean_value = if node.visit_count > 0 {
+            node.value_sum / node.visit_count as f32
+        } else {
+            0.0
+        };
+
+        let export = TreeNodeExport {
+            id,
+            node_type: "chance".to_string(),
+            visit_count: node.visit_count,
+            value_sum: node.value_sum,
+            mean_value,
+            prior: 0.0,
+            is_terminal: false,
+            move_number: 0,
+            attack: node.attack,
+            state: node.state.clone(),
+            parent_id,
+            edge_from_parent,
+            children: Vec::new(),
+            valid_actions: Vec::new(),
+            action_priors: Vec::new(),
+        };
+
+        nodes.push(export);
+
+        // Export children (sorted by piece type for deterministic order)
+        let mut child_keys: Vec<usize> = node.children.keys().copied().collect();
+        child_keys.sort();
+
+        let mut child_ids = Vec::new();
+        for piece_type in child_keys {
+            if let Some(MCTSNode::Decision(decision_node)) = node.children.get(&piece_type) {
+                let child_id = self.export_decision_node(decision_node, Some(id), Some(piece_type), nodes);
+                child_ids.push(child_id);
+            }
+        }
+
+        nodes[id].children = child_ids;
+
+        id
     }
 }

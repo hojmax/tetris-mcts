@@ -18,5 +18,5 @@ pub use action_space::{get_action_space, ActionSpace, NUM_ACTIONS};
 pub use agent::MCTSAgent;
 pub use config::MCTSConfig;
 pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode};
-pub use results::{GameResult, MCTSResult, TrainingExample};
+pub use results::{GameResult, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport};
 pub use utils::{sample_action, sample_dirichlet};

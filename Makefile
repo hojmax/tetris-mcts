@@ -1,25 +1,32 @@
-.PHONY: run build clean rebuild test
+.PHONY: run build clean rebuild test check play viz
 
 # Source cargo environment if available
 SHELL := /bin/bash
 CARGO_ENV := source $$HOME/.cargo/env 2>/dev/null || true
+PYTHON := .venv/bin/python
 
-# Run the game (builds first if needed)
-play: .build_marker
-	uv run python tetris_mcts/scripts/tetris_game.py
+# Find all Rust source files (including subdirectories)
+RUST_SRC := $(shell find tetris_core/src -name '*.rs')
 
 # Build marker file to track if build is up to date
-RUST_SRC := $(wildcard tetris_core/src/*.rs)
 .build_marker: $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && uv run maturin develop --release --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@touch .build_marker
 
 # Explicit build target
 build: .build_marker
 
-# Force rebuild and run
+# Run the game (builds first if needed)
+play: .build_marker
+	$(PYTHON) tetris_mcts/scripts/tetris_game.py
+
+# Run the MCTS visualizer (builds first if needed)
+viz: .build_marker
+	$(PYTHON) tetris_mcts/scripts/mcts_visualizer.py
+
+# Force rebuild
 rebuild:
-	$(CARGO_ENV) && uv run maturin develop --release --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@touch .build_marker
 
 # Run tests

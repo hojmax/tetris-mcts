@@ -29,7 +29,7 @@ pub mod scoring;
 pub use env::TetrisEnv;
 pub use generator::{GameGenerator, EvalResult, evaluate_model};
 pub use kicks::{get_i_kicks, get_jlstz_kicks, get_kicks_for_piece};
-pub use mcts::{MCTSAgent, MCTSConfig, MCTSResult, TrainingExample, GameResult};
+pub use mcts::{MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport, GameResult};
 pub use moves::{find_all_placements, Action, Board, Placement};
 pub use piece::{get_cells_for_shape, Piece, COLORS, NUM_PIECE_TYPES, TETROMINOS};
 pub use scoring::{
@@ -48,6 +48,8 @@ fn tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<MCTSResult>()?;
     m.add_class::<TrainingExample>()?;
     m.add_class::<GameResult>()?;
+    m.add_class::<TreeNodeExport>()?;
+    m.add_class::<MCTSTreeExport>()?;
     m.add_class::<GameGenerator>()?;
     m.add_class::<EvalResult>()?;
     m.add_function(wrap_pyfunction!(evaluate_model, m)?)?;
