@@ -253,7 +253,7 @@ app.layout = html.Div([
             cyto.Cytoscape(
                 id="cytoscape-tree",
                 elements=[],
-                style={"width": "100%", "height": "700px", "border": "1px solid #ccc"},
+                style={"width": "100%", "height": "calc(100vh - 180px)", "minHeight": "500px", "border": "1px solid #ccc"},
                 layout={
                     "name": "dagre",
                     "rankDir": "TB",
@@ -279,7 +279,8 @@ app.layout = html.Div([
             "backgroundColor": "#f8f8f8",
             "marginLeft": "10px",
             "overflowY": "auto",
-            "maxHeight": "700px",
+            "height": "calc(100vh - 180px)",
+            "minHeight": "500px",
         }),
     ], style={"display": "flex", "flexDirection": "row"}),
 
