@@ -43,6 +43,11 @@ pub struct TetrisEnv {
     pub(crate) pieces_spawned: u32,
     pub(crate) current_piece_bag_position: u32,
     pub(crate) rng: StdRng,
+    /// Column heights: Y coordinate of topmost filled cell per column, or `height` if empty.
+    /// Used for O(1) hard drop distance calculation.
+    pub(crate) column_heights: Vec<i32>,
+    /// Total number of filled cells on the board. Used for O(1) perfect clear detection.
+    pub(crate) total_blocks: u32,
 }
 
 impl TetrisEnv {
@@ -72,6 +77,8 @@ impl TetrisEnv {
             pieces_spawned: 0,
             current_piece_bag_position: 0,
             rng: StdRng::seed_from_u64(seed),
+            column_heights: vec![height as i32; width],
+            total_blocks: 0,
         };
         env.spawn_piece_internal();
         env
@@ -99,6 +106,8 @@ impl TetrisEnv {
         self.pieces_spawned = 0;
         self.current_piece_bag_position = 0;
         self.rng = StdRng::seed_from_u64(seed);
+        self.column_heights = vec![self.height as i32; self.width];
+        self.total_blocks = 0;
         self.spawn_piece_internal();
     }
 }

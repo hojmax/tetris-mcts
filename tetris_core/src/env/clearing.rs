@@ -72,8 +72,14 @@ impl TetrisEnv {
                 if y >= 0 && y < self.height as i32 && x >= 0 && x < self.width as i32 {
                     self.board[y as usize][x as usize] = 1;
                     self.board_colors[y as usize][x as usize] = Some(piece.piece_type);
+                    // Update column height if this cell is higher (lower y) than current
+                    if y < self.column_heights[x as usize] {
+                        self.column_heights[x as usize] = y;
+                    }
                 }
             }
+            // Tetrominos always have 4 cells
+            self.total_blocks += 4;
 
             self.clear_lines_internal(is_tspin, is_mini);
             self.hold_used = false;
@@ -110,6 +116,17 @@ impl TetrisEnv {
 
         self.board = new_board;
         self.board_colors = new_colors;
+
+        // Update optimization fields
+        if num_lines > 0 {
+            // Each cleared line removes width blocks
+            self.total_blocks -= self.width as u32 * num_lines;
+            // All remaining cells shift down by num_lines
+            let height = self.height as i32;
+            for h in &mut self.column_heights {
+                *h = (*h + num_lines as i32).min(height);
+            }
+        }
 
         if num_lines > 0 {
             let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);

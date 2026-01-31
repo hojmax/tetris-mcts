@@ -291,21 +291,18 @@ impl TetrisEnv {
         if self.game_over {
             return 0;
         }
-        let mut drop_distance = 0;
-        if let Some(ref piece) = self.current_piece {
-            let mut test_piece = piece.clone();
-            while {
-                test_piece.y += 1;
-                self.is_valid_position_for(&test_piece)
-            } {
-                drop_distance += 1;
-            }
-            test_piece.y -= 1;
-            if drop_distance > 0 {
+        let drop_distance = if let Some(ref piece) = self.current_piece {
+            let dist = self.compute_drop_distance(piece);
+            if dist > 0 {
+                let mut dropped = piece.clone();
+                dropped.y += dist;
+                self.current_piece = Some(dropped);
                 self.last_move_was_rotation = false;
             }
-            self.current_piece = Some(test_piece);
-        }
+            dist as u32
+        } else {
+            0
+        };
         self.lock_piece_internal();
         drop_distance
     }
@@ -342,10 +339,9 @@ impl TetrisEnv {
 
     pub fn get_ghost_piece(&self) -> Option<Piece> {
         if let Some(ref piece) = self.current_piece {
+            let drop = self.compute_drop_distance(piece);
             let mut ghost = piece.clone();
-            while self.is_valid_position(ghost.piece_type, ghost.rotation, ghost.x, ghost.y + 1) {
-                ghost.y += 1;
-            }
+            ghost.y += drop;
             Some(ghost)
         } else {
             None

@@ -406,6 +406,7 @@ mod tests {
     fn test_perfect_clear_with_cells() {
         let mut env = TetrisEnv::new(10, 20);
         env.board[19][0] = 1;
+        env.sync_board_stats();
         assert!(!env.is_perfect_clear());
     }
 
@@ -631,6 +632,7 @@ mod tests {
         for x in 0..10 {
             env.board[19][x] = 1;
         }
+        env.sync_board_stats();
         env.clear_lines_internal(false, false);
         assert_eq!(env.lines_cleared, 1);
         assert_eq!(env.combo, 1);
@@ -645,6 +647,7 @@ mod tests {
                 env.board[y][x] = 1;
             }
         }
+        env.sync_board_stats();
         env.clear_lines_internal(false, false);
         assert_eq!(env.lines_cleared, 4);
     }
@@ -660,6 +663,7 @@ mod tests {
                 env.board[y][x] = 1;
             }
         }
+        env.sync_board_stats();
         env.clear_lines_internal(false, false);
 
         // Should maintain back-to-back and get bonus
@@ -677,6 +681,7 @@ mod tests {
         for x in 0..10 {
             env.board[19][x] = 1;
         }
+        env.sync_board_stats();
         env.clear_lines_internal(false, false);
 
         // Single line clear breaks back-to-back
@@ -692,6 +697,7 @@ mod tests {
         for x in 0..10 {
             env.board[19][x] = 1;
         }
+        env.sync_board_stats();
         env.clear_lines_internal(false, false);
 
         assert_eq!(env.combo, 4);
@@ -705,6 +711,7 @@ mod tests {
         for x in 0..10 {
             env.board[19][x] = 1;
         }
+        env.sync_board_stats();
         env.clear_lines_internal(true, false); // T-spin single
 
         let result = env.last_attack_result.as_ref().unwrap();
@@ -720,6 +727,7 @@ mod tests {
         for x in 0..10 {
             env.board[19][x] = 1;
         }
+        env.sync_board_stats();
         env.clear_lines_internal(true, true); // T-spin mini single
 
         let result = env.last_attack_result.as_ref().unwrap();
@@ -936,6 +944,7 @@ mod tests {
                 env.board[y][x] = 1;
             }
         }
+        env.sync_board_stats();
         env.clear_lines_internal(false, false);
         assert_eq!(env.lines_cleared, 2);
     }
@@ -949,6 +958,7 @@ mod tests {
                 env.board[y][x] = 1;
             }
         }
+        env.sync_board_stats();
         env.clear_lines_internal(false, false);
         assert_eq!(env.lines_cleared, 3);
     }
@@ -965,6 +975,7 @@ mod tests {
         for x in 0..5 {
             env.board[17][x] = 1;
         }
+        env.sync_board_stats();
 
         env.clear_lines_internal(false, false);
         assert_eq!(env.lines_cleared, 2, "Should clear 2 non-contiguous lines");
@@ -994,6 +1005,7 @@ mod tests {
         for x in 0..10 {
             env.board[15][x] = 1;
         }
+        env.sync_board_stats();
 
         // Move piece down until it lands on the stack
         while env.move_down() {}
@@ -1171,6 +1183,7 @@ mod tests {
         env.board[18][4] = 1;
         env.board[19][4] = 1;
         env.board[19][6] = 1;
+        env.sync_board_stats();
 
         // Place with kick_index = 4 (special T-spin kick)
         let attack = env.place_piece_internal_with_kick(4, 17, 0, true, 4);
@@ -1189,6 +1202,7 @@ mod tests {
         for x in 0..6 {
             env.board[19][x] = 1;
         }
+        env.sync_board_stats();
 
         // Place I piece horizontally to complete the row
         // I piece at rotation 0 is horizontal: [1,1,1,1] at row 1 of the shape
@@ -1208,6 +1222,7 @@ mod tests {
                 env.board[y][x] = 1;
             }
         }
+        env.sync_board_stats();
 
         // Try to place piece inside the stack (invalid)
         let attack = env.place_piece_internal_with_kick(3, 16, 0, false, 0);
@@ -1256,6 +1271,7 @@ mod tests {
                 env.board[y][x] = 1;
             }
         }
+        env.sync_board_stats();
 
         let initial_attack = env.attack;
 
@@ -1267,5 +1283,56 @@ mod tests {
         // Should return the attack gained (Tetris = 4 lines)
         assert!(attack_delta > 0, "Tetris should give attack");
         assert_eq!(env.attack, initial_attack + attack_delta);
+    }
+
+    #[test]
+    fn test_execute_placement_changes_current_piece() {
+        // This test verifies that after execute_placement, the current piece changes
+        // (i.e., the old piece is locked and a new one spawns from the queue)
+        let env = TetrisEnv::with_seed(10, 20, 42);
+
+        let initial_piece_type = env.get_current_piece().unwrap().piece_type;
+        let initial_queue: Vec<usize> = env.get_queue(5);
+
+        // Clone and execute a placement
+        let mut env_clone = env.clone_state();
+        let placements = env_clone.get_possible_placements();
+        assert!(!placements.is_empty(), "Should have valid placements");
+
+        let placement = &placements[0];
+        env_clone.execute_placement(placement);
+
+        // Verify state changed
+        let new_piece = env_clone.get_current_piece();
+        assert!(new_piece.is_some(), "Should have a new piece after placement");
+
+        let new_piece_type = new_piece.unwrap().piece_type;
+        let new_queue: Vec<usize> = env_clone.get_queue(5);
+
+        // The new current piece should be what was first in the queue
+        assert_eq!(
+            new_piece_type, initial_queue[0],
+            "New piece should be first from old queue. Got {}, expected {}",
+            new_piece_type, initial_queue[0]
+        );
+
+        // The queue should have shifted (minus the piece that became current)
+        assert_eq!(
+            new_queue[0], initial_queue[1],
+            "Queue should shift after spawn. New queue[0]={}, expected old queue[1]={}",
+            new_queue[0], initial_queue[1]
+        );
+
+        // Board should have the old piece locked
+        let board = env_clone.get_board();
+        let has_locked_piece = board.iter().any(|row| row.iter().any(|&c| c != 0));
+        assert!(has_locked_piece, "Board should have locked piece");
+
+        // Verify original env is unchanged
+        let orig_piece_type = env.get_current_piece().unwrap().piece_type;
+        assert_eq!(
+            orig_piece_type, initial_piece_type,
+            "Original env should be unchanged"
+        );
     }
 }
