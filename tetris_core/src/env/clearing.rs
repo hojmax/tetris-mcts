@@ -82,9 +82,9 @@ impl TetrisEnv {
     }
 
     pub(crate) fn clear_lines_internal(&mut self, is_tspin: bool, is_mini: bool) {
-        // Count cleared lines and build new board in one pass (O(n) instead of O(n²))
-        let mut new_board = Vec::with_capacity(self.height);
-        let mut new_colors = Vec::with_capacity(self.height);
+        // Count cleared lines and build new board in one pass - O(n)
+        let mut kept_board = Vec::with_capacity(self.height);
+        let mut kept_colors = Vec::with_capacity(self.height);
         let mut num_lines = 0u32;
 
         for y in 0..self.height {
@@ -93,16 +93,20 @@ impl TetrisEnv {
                 num_lines += 1;
             } else {
                 // Line not full - keep it
-                new_board.push(std::mem::take(&mut self.board[y]));
-                new_colors.push(std::mem::take(&mut self.board_colors[y]));
+                kept_board.push(std::mem::take(&mut self.board[y]));
+                kept_colors.push(std::mem::take(&mut self.board_colors[y]));
             }
         }
 
-        // Add empty rows at the top
+        // Build empty rows, then append kept rows - O(n) total
+        let mut new_board = Vec::with_capacity(self.height);
+        let mut new_colors = Vec::with_capacity(self.height);
         for _ in 0..num_lines {
-            new_board.insert(0, vec![0; self.width]);
-            new_colors.insert(0, vec![None; self.width]);
+            new_board.push(vec![0; self.width]);
+            new_colors.push(vec![None; self.width]);
         }
+        new_board.append(&mut kept_board);
+        new_colors.append(&mut kept_colors);
 
         self.board = new_board;
         self.board_colors = new_colors;

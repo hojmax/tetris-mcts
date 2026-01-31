@@ -10,13 +10,13 @@ import numpy as np
 
 # Piece colors (RGB) - matching tetris_core
 PIECE_COLORS = [
-    (93, 173, 212),   # I - Cyan
-    (219, 174, 63),   # O - Yellow
-    (178, 74, 156),   # T - Magenta
-    (114, 184, 65),   # S - Green
-    (204, 65, 65),    # Z - Red
-    (59, 84, 165),    # J - Blue
-    (227, 127, 59),   # L - Orange
+    (93, 173, 212),  # I - Cyan
+    (219, 174, 63),  # O - Yellow
+    (178, 74, 156),  # T - Magenta
+    (114, 184, 65),  # S - Green
+    (204, 65, 65),  # Z - Red
+    (59, 84, 165),  # J - Blue
+    (227, 127, 59),  # L - Orange
 ]
 
 # Board rendering constants
@@ -58,7 +58,7 @@ def render_board(
     img_height = BOARD_HEIGHT * CELL_SIZE + 2 * PADDING + INFO_HEIGHT
 
     # Create image with dark background
-    img = Image.new('RGB', (img_width, img_height), color=(20, 20, 20))
+    img = Image.new("RGB", (img_width, img_height), color=(20, 20, 20))
     draw = ImageDraw.Draw(img)
 
     board_x = PADDING
@@ -68,22 +68,32 @@ def render_board(
     grid_color = (40, 40, 40)
     for x in range(BOARD_WIDTH + 1):
         x_pos = board_x + x * CELL_SIZE
-        draw.line([(x_pos, board_y), (x_pos, board_y + BOARD_HEIGHT * CELL_SIZE)], fill=grid_color)
+        draw.line(
+            [(x_pos, board_y), (x_pos, board_y + BOARD_HEIGHT * CELL_SIZE)],
+            fill=grid_color,
+        )
     for y in range(BOARD_HEIGHT + 1):
         y_pos = board_y + y * CELL_SIZE
-        draw.line([(board_x, y_pos), (board_x + BOARD_WIDTH * CELL_SIZE, y_pos)], fill=grid_color)
+        draw.line(
+            [(board_x, y_pos), (board_x + BOARD_WIDTH * CELL_SIZE, y_pos)],
+            fill=grid_color,
+        )
 
     # Draw locked pieces
     for y in range(BOARD_HEIGHT):
         for x in range(BOARD_WIDTH):
             if board[y][x] != 0:
                 color = (80, 80, 80)  # Default gray
-                if board_colors is not None and board_colors[y][x] is not None:
-                    color = PIECE_COLORS[board_colors[y][x]]
+                if board_colors is not None:
+                    color_idx = board_colors[y][x]
+                    if color_idx is not None:
+                        color = PIECE_COLORS[color_idx]
 
                 px = board_x + x * CELL_SIZE + 1
                 py = board_y + y * CELL_SIZE + 1
-                draw.rectangle([px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2], fill=color)
+                draw.rectangle(
+                    [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2], fill=color
+                )
 
     # Draw ghost piece (outline only)
     if ghost_cells and current_piece_type is not None:
@@ -92,7 +102,11 @@ def render_board(
             if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                 px = board_x + x * CELL_SIZE + 1
                 py = board_y + y * CELL_SIZE + 1
-                draw.rectangle([px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2], outline=ghost_color, width=2)
+                draw.rectangle(
+                    [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2],
+                    outline=ghost_color,
+                    width=2,
+                )
 
     # Draw current piece
     if current_piece_cells and current_piece_type is not None:
@@ -101,19 +115,35 @@ def render_board(
             if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                 px = board_x + x * CELL_SIZE + 1
                 py = board_y + y * CELL_SIZE + 1
-                draw.rectangle([px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2], fill=color)
+                draw.rectangle(
+                    [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2], fill=color
+                )
 
     # Draw border
     draw.rectangle(
-        [board_x, board_y, board_x + BOARD_WIDTH * CELL_SIZE, board_y + BOARD_HEIGHT * CELL_SIZE],
+        [
+            board_x,
+            board_y,
+            board_x + BOARD_WIDTH * CELL_SIZE,
+            board_y + BOARD_HEIGHT * CELL_SIZE,
+        ],
         outline=(80, 80, 80),
-        width=2
+        width=2,
     )
 
-    # Draw info text at top
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", 14)
-    except (OSError, IOError):
+    # Draw info text at top - try common monospace fonts
+    font = None
+    for font_path in [
+        "/System/Library/Fonts/Menlo.ttc",  # macOS
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",  # Linux
+        "C:/Windows/Fonts/consola.ttf",  # Windows
+    ]:
+        try:
+            font = ImageFont.truetype(font_path, 14)
+            break
+        except (OSError, IOError):
+            continue
+    if font is None:
         font = ImageFont.load_default()
 
     text = f"Move: {move_number}  Attack: {attack}"
@@ -140,8 +170,6 @@ def render_trajectory(
     Returns:
         List of PIL Images showing the game progression
     """
-    from tetris_core import TetrisEnv
-
     # Clone the environment to avoid mutation
     env_copy = env.clone_state()
 

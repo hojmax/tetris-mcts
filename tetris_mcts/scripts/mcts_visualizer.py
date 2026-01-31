@@ -20,18 +20,245 @@ from PIL import Image, ImageDraw
 
 from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
 
+# Global cache for TetrisEnv states (keyed by node ID)
+# This allows us to clone states and execute actions for visualization
+_env_cache: dict[int, TetrisEnv] = {}
+
+
+def display_virtual_node(node_data, tree_dict, c_puct):
+    """Display details for a virtual (unvisited) node."""
+    # Parse virtual node ID: v_parentid_actionidx
+    parts = node_data["id"].split("_")
+    if len(parts) != 3:
+        return "Invalid virtual node", "", ""
+
+    parent_id = int(parts[1])
+    action_idx = int(parts[2])
+
+    if parent_id >= len(tree_dict["nodes"]):
+        return "Parent not found", "", ""
+
+    parent = tree_dict["nodes"][parent_id]
+    prior = node_data.get("prior", 0.0)
+    u_value = node_data.get("u_value", 0.0)
+
+    # Try to compute the resulting board by executing the action
+    attack = None
+    env_copy = None
+    if parent_id in _env_cache:
+        env_copy = _env_cache[parent_id].clone_state()
+        attack = env_copy.execute_action_by_index(action_idx)
+
+    # Format details
+    details = [
+        html.H4(
+            "Unvisited Action",
+            style={"marginTop": 0, "marginBottom": "10px", "color": "#ff8844"},
+        ),
+        html.P(f"Action Index: {action_idx}"),
+        html.P(f"Parent Node: D{parent_id}"),
+        html.P(f"Attack: {attack if attack is not None else '?'}"),
+        html.Hr(),
+        html.H4("PUCT Components"),
+        html.P(f"Prior (P): {prior:.4f}", style={"fontWeight": "bold"}),
+        html.P("Q-Value: 0.0 (unvisited)"),
+        html.P(f"Exploration (U): {u_value:.3f}", style={"color": "#0066cc"}),
+        html.P(f"PUCT Total: {u_value:.3f}", style={"fontWeight": "bold"}),
+    ]
+
+    # Render the resulting board if we were able to compute it
+    if attack is not None and env_copy is not None:
+        board = env_copy.get_board()
+        board_colors = env_copy.get_board_colors()
+        details.append(html.Hr())
+        details.append(
+            html.P(
+                "Board after executing this action:",
+                style={"fontSize": "11px", "color": "#666", "fontStyle": "italic"},
+            )
+        )
+    else:
+        # Fall back to parent's board
+        board = parent["board"]
+        board_colors = parent["board_colors"]
+        details.append(html.Hr())
+        details.append(
+            html.P(
+                "(Could not compute resulting board - showing parent state)",
+                style={"fontSize": "11px", "color": "#666", "fontStyle": "italic"},
+            )
+        )
+
+    cell_size = 12
+    height = len(board)
+    width = len(board[0]) if board else 10
+
+    img = Image.new("RGB", (width * cell_size, height * cell_size), (20, 20, 20))
+    draw = ImageDraw.Draw(img)
+
+    for y in range(height):
+        for x in range(width):
+            if board[y][x] != 0:
+                color_idx = board_colors[y][x]
+                if color_idx is not None and color_idx < len(PIECE_COLORS):
+                    color = PIECE_COLORS[color_idx]
+                else:
+                    color = (80, 80, 80)
+
+                x1, y1 = x * cell_size, y * cell_size
+                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
+                draw.rectangle([x1, y1, x2, y2], fill=color)
+
+    # Grid
+    for x in range(width + 1):
+        draw.line(
+            [(x * cell_size, 0), (x * cell_size, height * cell_size)], fill=(40, 40, 40)
+        )
+    for y in range(height + 1):
+        draw.line(
+            [(0, y * cell_size), (width * cell_size, y * cell_size)], fill=(40, 40, 40)
+        )
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    img_b64 = base64.b64encode(buffer.getvalue()).decode()
+
+    # State info - from resulting state if computed, otherwise from parent
+    if attack is not None and env_copy is not None:
+        current = env_copy.get_current_piece()
+        hold = env_copy.get_hold_piece()
+        queue = env_copy.get_queue(5)
+        state_info = [
+            html.P(
+                f"Current Piece: {PIECE_NAMES[current.piece_type] if current else 'None'}"
+            ),
+            html.P(f"Hold Piece: {PIECE_NAMES[hold.piece_type] if hold else 'None'}"),
+            html.P(f"Queue: {[PIECE_NAMES[p] for p in queue]}"),
+            html.P(
+                "(State after action)",
+                style={"fontSize": "10px", "color": "#888"},
+            ),
+        ]
+    else:
+        state_info = [
+            html.P(
+                f"Current Piece: {PIECE_NAMES[parent['current_piece']] if parent['current_piece'] is not None else 'None'}"
+            ),
+            html.P(
+                f"Hold Piece: {PIECE_NAMES[parent['hold_piece']] if parent['hold_piece'] is not None else 'None'}"
+            ),
+            html.P(f"Queue: {[PIECE_NAMES[p] for p in parent['queue']]}"),
+            html.P(
+                "(Parent state - could not compute result)",
+                style={"fontSize": "10px", "color": "#888"},
+            ),
+        ]
+
+    return details, f"data:image/png;base64,{img_b64}", state_info
+
+
+def display_virtual_piece_node(node_data, tree_dict):
+    """Display details for a virtual (unvisited) decision node from a chance node."""
+    # Parse virtual node ID: vp_parentid_piecetype
+    parts = node_data["id"].split("_")
+    if len(parts) != 3:
+        return "Invalid virtual piece node", "", ""
+
+    parent_id = int(parts[1])
+    piece_type = int(parts[2])
+
+    if parent_id >= len(tree_dict["nodes"]):
+        return "Parent not found", "", ""
+
+    parent = tree_dict["nodes"][parent_id]  # This is the chance node
+    piece_name = (
+        PIECE_NAMES[piece_type] if piece_type < len(PIECE_NAMES) else f"P{piece_type}"
+    )
+
+    # Format details
+    details = [
+        html.H4(
+            f"Unvisited Piece: {piece_name}",
+            style={"marginTop": 0, "marginBottom": "10px", "color": "#4488ff"},
+        ),
+        html.P(f"Piece Type: {piece_name} ({piece_type})"),
+        html.P(f"Parent Chance Node: C{parent_id}"),
+        html.Hr(),
+        html.P(
+            "This piece outcome has not been explored yet. "
+            "The board shown is the state after the parent's action was executed, "
+            "before this piece would be added to the queue.",
+            style={"fontSize": "11px", "color": "#666", "fontStyle": "italic"},
+        ),
+    ]
+
+    # Render the chance node's board (state after action, before piece spawn)
+    board = parent["board"]
+    board_colors = parent["board_colors"]
+
+    cell_size = 12
+    height = len(board)
+    width = len(board[0]) if board else 10
+
+    img = Image.new("RGB", (width * cell_size, height * cell_size), (20, 20, 20))
+    draw = ImageDraw.Draw(img)
+
+    for y in range(height):
+        for x in range(width):
+            if board[y][x] != 0:
+                color_idx = board_colors[y][x]
+                if color_idx is not None and color_idx < len(PIECE_COLORS):
+                    color = PIECE_COLORS[color_idx]
+                else:
+                    color = (80, 80, 80)
+
+                x1, y1 = x * cell_size, y * cell_size
+                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
+                draw.rectangle([x1, y1, x2, y2], fill=color)
+
+    # Grid
+    for x in range(width + 1):
+        draw.line(
+            [(x * cell_size, 0), (x * cell_size, height * cell_size)], fill=(40, 40, 40)
+        )
+    for y in range(height + 1):
+        draw.line(
+            [(0, y * cell_size), (width * cell_size, y * cell_size)], fill=(40, 40, 40)
+        )
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    img_b64 = base64.b64encode(buffer.getvalue()).decode()
+
+    state_info = [
+        html.P(
+            f"Current Piece: {PIECE_NAMES[parent['current_piece']] if parent.get('current_piece') is not None else 'None'}"
+        ),
+        html.P(
+            f"Hold Piece: {PIECE_NAMES[parent['hold_piece']] if parent.get('hold_piece') is not None else 'None'}"
+        ),
+        html.P(f"Queue: {[PIECE_NAMES[p] for p in parent.get('queue', [])]}"),
+        html.P(
+            f"+ New piece: {piece_name}",
+            style={"color": "#4488ff", "fontWeight": "bold"},
+        ),
+    ]
+
+    return details, f"data:image/png;base64,{img_b64}", state_info
+
+
 # Number of Tetris piece types
 NUM_PIECE_TYPES = 7
 
-# Piece colors (matching tetris_game.py)
+# Piece colors (matching tetris_core and visualization.py)
 PIECE_COLORS = [
-    (0, 255, 255),  # I - Cyan
-    (255, 255, 0),  # O - Yellow
-    (128, 0, 128),  # T - Purple
-    (0, 255, 0),  # S - Green
-    (255, 0, 0),  # Z - Red
-    (0, 0, 255),  # J - Blue
-    (255, 165, 0),  # L - Orange
+    (93, 173, 212),  # I - Cyan
+    (219, 174, 63),  # O - Yellow
+    (178, 74, 156),  # T - Magenta
+    (114, 184, 65),  # S - Green
+    (204, 65, 65),  # Z - Red
+    (59, 84, 165),  # J - Blue
+    (227, 127, 59),  # L - Orange
 ]
 
 PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
@@ -75,7 +302,7 @@ def render_board_to_image(env: TetrisEnv, cell_size: int = 8) -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
-def build_cytoscape_elements(tree, max_nodes: int = 500):
+def build_cytoscape_elements(tree, max_nodes: int = 500, show_unvisited: bool = True):
     """Convert MCTSTreeExport to Cytoscape elements."""
     elements = []
 
@@ -83,7 +310,6 @@ def build_cytoscape_elements(tree, max_nodes: int = 500):
     nodes_to_show = min(len(tree.nodes), max_nodes)
 
     # Sort nodes by visit count to show most important ones
-    # Use enumerate for clarity and pair with node data
     indexed_nodes = [(i, node.visit_count) for i, node in enumerate(tree.nodes)]
     sorted_indices = [
         i for i, _ in sorted(indexed_nodes, key=lambda x: x[1], reverse=True)
@@ -92,6 +318,23 @@ def build_cytoscape_elements(tree, max_nodes: int = 500):
 
     # Always include root
     shown_ids.add(tree.root_id)
+
+    # Track which actions/pieces from nodes already have children
+    visited_actions = {}  # decision node_id -> set of action indices with children
+    visited_pieces = {}  # chance node_id -> set of piece types with children
+    for node in tree.nodes:
+        if node.node_type == "decision":
+            visited_actions[node.id] = set()
+            for child_id in node.children:
+                child = tree.nodes[child_id]
+                if child.edge_from_parent is not None:
+                    visited_actions[node.id].add(child.edge_from_parent)
+        elif node.node_type == "chance":
+            visited_pieces[node.id] = set()
+            for child_id in node.children:
+                child = tree.nodes[child_id]
+                if child.edge_from_parent is not None:
+                    visited_pieces[node.id].add(child.edge_from_parent)
 
     for node in tree.nodes:
         if node.id not in shown_ids:
@@ -150,12 +393,101 @@ def build_cytoscape_elements(tree, max_nodes: int = 500):
                     }
                 )
 
+        # Add virtual (unvisited) chance nodes for decision nodes
+        if show_unvisited and is_decision and node.valid_actions:
+            sqrt_parent = max(node.visit_count, 1) ** 0.5
+            action_to_prior = dict(zip(node.valid_actions, node.action_priors))
+
+            for action_idx in node.valid_actions:
+                # Skip if this action already has a child
+                if action_idx in visited_actions.get(node.id, set()):
+                    continue
+
+                prior = action_to_prior.get(action_idx, 0.0)
+                # U = c_puct * P * sqrt(N_parent) / (1 + 0) for unvisited
+                u_value = prior * sqrt_parent  # c_puct=1.0 assumed
+                virtual_id = f"v_{node.id}_{action_idx}"
+
+                elements.append(
+                    {
+                        "data": {
+                            "id": virtual_id,
+                            "label": f"a{action_idx}\nP:{prior:.2f}\nU:{u_value:.2f}",
+                            "node_type": "virtual",
+                            "visit_count": 0,
+                            "mean_value": 0.0,
+                            "value_sum": 0.0,
+                            "attack": "?",
+                            "is_terminal": False,
+                            "move_number": node.move_number,
+                            "edge_from_parent": action_idx,
+                            "parent_id": node.id,
+                            "prior": prior,
+                            "u_value": u_value,
+                        },
+                        "classes": "chance unvisited",
+                    }
+                )
+
+                elements.append(
+                    {
+                        "data": {
+                            "source": str(node.id),
+                            "target": virtual_id,
+                            "label": f"a{action_idx}",
+                        },
+                        "classes": "unvisited-edge",
+                    }
+                )
+
+        # Add virtual (unvisited) decision nodes for chance nodes
+        if show_unvisited and not is_decision:
+            # For chance nodes, show unvisited piece outcomes
+            # All 7 pieces are potentially possible (simplification - ignores bag constraints)
+            for piece_type in range(NUM_PIECE_TYPES):
+                # Skip if this piece already has a child
+                if piece_type in visited_pieces.get(node.id, set()):
+                    continue
+
+                virtual_id = f"vp_{node.id}_{piece_type}"
+                piece_name = PIECE_NAMES[piece_type]
+
+                elements.append(
+                    {
+                        "data": {
+                            "id": virtual_id,
+                            "label": f"{piece_name}\n(unvisited)",
+                            "node_type": "virtual_decision",
+                            "visit_count": 0,
+                            "mean_value": 0.0,
+                            "value_sum": 0.0,
+                            "attack": 0,
+                            "is_terminal": False,
+                            "move_number": node.move_number,
+                            "edge_from_parent": piece_type,
+                            "parent_id": node.id,
+                        },
+                        "classes": "decision unvisited",
+                    }
+                )
+
+                elements.append(
+                    {
+                        "data": {
+                            "source": str(node.id),
+                            "target": virtual_id,
+                            "label": piece_name,
+                        },
+                        "classes": "unvisited-edge",
+                    }
+                )
+
     return elements
 
 
 # Create Dash app
 app = dash.Dash(__name__)
-app.index_string = '''
+app.index_string = """
 <!DOCTYPE html>
 <html>
     <head>
@@ -176,7 +508,7 @@ app.index_string = '''
         </footer>
     </body>
 </html>
-'''
+"""
 
 # Cytoscape stylesheet
 stylesheet = [
@@ -234,6 +566,22 @@ stylesheet = [
             "border-color": "#ff0",
         },
     },
+    # Unvisited (virtual) chance nodes - semi-transparent
+    {
+        "selector": ".unvisited",
+        "style": {
+            "opacity": 0.4,
+            "background-color": "#ffaa44",
+        },
+    },
+    # Edges to unvisited nodes - dashed and semi-transparent
+    {
+        "selector": ".unvisited-edge",
+        "style": {
+            "opacity": 0.4,
+            "line-style": "dashed",
+        },
+    },
 ]
 
 app.layout = html.Div(
@@ -246,7 +594,7 @@ app.layout = html.Div(
                     id="model-path",
                     type="text",
                     placeholder="Path to ONNX model",
-                    value="outputs/checkpoints/parallel.onnx",
+                    value="outputs/checkpoints/selfplay.onnx",
                     style={"width": "250px", "marginRight": "15px"},
                 ),
                 html.Label("Sims:", style={"marginRight": "5px"}),
@@ -286,6 +634,12 @@ app.layout = html.Div(
                     id="sim-counter",
                     children="Sims: 0",
                     style={"marginLeft": "15px", "fontWeight": "bold"},
+                ),
+                dcc.Checklist(
+                    id="show-unvisited",
+                    options=[{"label": " Show unvisited", "value": "show"}],
+                    value=["show"],  # Default to checked
+                    style={"marginLeft": "20px"},
                 ),
             ],
             style={
@@ -376,7 +730,13 @@ app.layout = html.Div(
         dcc.Store(id="env-store"),
         dcc.Store(id="sims-done-store", data=0),
     ],
-    style={"fontFamily": "Arial, sans-serif", "padding": "0", "margin": "0", "overflow": "hidden", "height": "100vh"},
+    style={
+        "fontFamily": "Arial, sans-serif",
+        "padding": "0",
+        "margin": "0",
+        "overflow": "hidden",
+        "height": "100vh",
+    },
 )
 
 
@@ -388,6 +748,7 @@ app.layout = html.Div(
     Output("sim-counter", "children"),
     Input("run-button", "n_clicks"),
     Input("step-button", "n_clicks"),
+    Input("show-unvisited", "value"),
     State("model-path", "value"),
     State("num-simulations", "value"),
     State("seed", "value"),
@@ -400,6 +761,7 @@ app.layout = html.Div(
 def run_mcts(
     run_clicks,
     step_clicks,
+    show_unvisited_value,
     model_path,
     num_sims,
     seed,
@@ -483,7 +845,14 @@ def run_mcts(
     mcts_result, tree = result
 
     # Build elements
-    elements = build_cytoscape_elements(tree, max_nodes or 200)
+    show_unvisited = "show" in (show_unvisited_value or [])
+    elements = build_cytoscape_elements(tree, max_nodes or 200, show_unvisited)
+
+    # Cache TetrisEnv states for computing resulting boards of virtual nodes
+    global _env_cache
+    _env_cache.clear()
+    for n in tree.nodes:
+        _env_cache[n.id] = n.state.clone_state()
 
     # Store tree data for click handling (nn_value now comes from Rust)
     tree_dict = {
@@ -543,12 +912,22 @@ def display_node_details(node_data, tree_dict):
     if node_data is None or tree_dict is None:
         return "Click a node to see details", "", ""
 
-    node_id = int(node_data["id"])
+    c_puct = tree_dict.get("c_puct", 1.0)
+    node_id_str = str(node_data["id"])
+
+    # Handle virtual (unvisited) chance nodes (from decision node actions)
+    if node_id_str.startswith("v_") and not node_id_str.startswith("vp_"):
+        return display_virtual_node(node_data, tree_dict, c_puct)
+
+    # Handle virtual (unvisited) decision nodes (from chance node piece outcomes)
+    if node_id_str.startswith("vp_"):
+        return display_virtual_piece_node(node_data, tree_dict)
+
+    node_id = int(node_id_str)
     if node_id >= len(tree_dict["nodes"]):
         return "Node not found", "", ""
 
     node = tree_dict["nodes"][node_id]
-    c_puct = tree_dict.get("c_puct", 1.0)
 
     # Format details
     details = [
@@ -577,11 +956,13 @@ def display_node_details(node_data, tree_dict):
         if node["children"] and node["visit_count"] > 0:
             details.append(html.Hr())
             details.append(
-                html.H4("Child Actions (PUCT Breakdown)", style={"marginBottom": "10px"})
+                html.H4(
+                    "Child Actions (PUCT Breakdown)", style={"marginBottom": "10px"}
+                )
             )
             details.append(
                 html.P(
-                    f"PUCT = Q + U, where U = c_puct * P * sqrt(N_parent) / (1 + N_child)",
+                    "PUCT = Q + U, where U = c_puct * P * sqrt(N_parent) / (1 + N_child)",
                     style={"fontSize": "11px", "color": "#666", "marginBottom": "10px"},
                 )
             )
@@ -638,15 +1019,16 @@ def display_node_details(node_data, tree_dict):
             table_rows = [table_header]
             for i, info in enumerate(child_info[:15]):  # Show top 15
                 is_best = i == 0
-                row_style = (
-                    {"backgroundColor": "#e6ffe6"} if is_best else {}
-                )
+                row_style = {"backgroundColor": "#e6ffe6"} if is_best else {}
                 table_rows.append(
                     html.Tr(
                         [
                             html.Td(
                                 f"a{info['action']}",
-                                style={"padding": "4px", "fontWeight": "bold" if is_best else "normal"},
+                                style={
+                                    "padding": "4px",
+                                    "fontWeight": "bold" if is_best else "normal",
+                                },
                             ),
                             html.Td(
                                 str(info["visits"]),
@@ -662,7 +1044,11 @@ def display_node_details(node_data, tree_dict):
                             ),
                             html.Td(
                                 f"{info['u']:.2f}",
-                                style={"padding": "4px", "textAlign": "right", "color": "#0066cc"},
+                                style={
+                                    "padding": "4px",
+                                    "textAlign": "right",
+                                    "color": "#0066cc",
+                                },
                             ),
                             html.Td(
                                 f"{info['puct']:.2f}",

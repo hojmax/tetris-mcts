@@ -7,6 +7,7 @@ Supports:
 - Simple binary format for manual Rust loading
 """
 
+import math
 import torch
 import numpy as np
 from pathlib import Path
@@ -208,9 +209,7 @@ def load_binary(
             dims = tuple(struct.unpack("<I", f.read(4))[0] for _ in range(num_dims))
 
             # Data
-            num_elements = 1
-            for d in dims:
-                num_elements *= d
+            num_elements = math.prod(dims)
             data = np.frombuffer(f.read(num_elements * 4), dtype=np.float32)
             data = data.reshape(dims)
 

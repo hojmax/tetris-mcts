@@ -348,11 +348,6 @@ class SharedReplayBuffer:
             self._cached_data = None
             return
 
-        if self._cached_data:
-            self._cached_data = {k: np.concatenate(v) for k, v in all_data.items()}
-        else:
-            self._cached_data = None
-
         self._cache_time = time.time()
 
     def sample(

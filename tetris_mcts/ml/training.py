@@ -385,7 +385,9 @@ class Trainer:
             action_mask=np.array(rust_ex.action_mask, dtype=bool),
         )
 
-    def evaluate(self, render_trajectory: bool = False) -> tuple[EvalResult, Optional[list]]:
+    def evaluate(
+        self, render_trajectory: bool = False
+    ) -> tuple[EvalResult, Optional[list]]:
         """Evaluate current model using MCTS on fixed seeds.
 
         Args:
@@ -447,7 +449,7 @@ class Trainer:
         Returns:
             List of PIL Images showing the game progression
         """
-        from tetris_mcts.ml.visualization import render_board, PIECE_COLORS
+        from tetris_mcts.ml.visualization import render_board
         from tetris_core import TetrisEnv, MCTSAgent
 
         # Create agent and load model
@@ -571,7 +573,9 @@ class Trainer:
 
         # Evaluate
         if self.iteration % self.config.eval_interval == 0:
-            eval_result, trajectory_frames = self.evaluate(render_trajectory=log_to_wandb)
+            eval_result, trajectory_frames = self.evaluate(
+                render_trajectory=log_to_wandb
+            )
             iteration_metrics["eval_avg_attack"] = eval_result.avg_attack
             iteration_metrics["eval_max_attack"] = eval_result.max_attack
             iteration_metrics["eval_avg_moves"] = eval_result.avg_moves
@@ -587,7 +591,8 @@ class Trainer:
                 # Log trajectory as animated GIF
                 if trajectory_frames:
                     import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as f:
+
+                    with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as f:
                         gif_path = f.name
                     trajectory_frames[0].save(
                         gif_path,
@@ -596,7 +601,9 @@ class Trainer:
                         duration=300,  # ms per frame
                         loop=0,
                     )
-                    log_data["eval/trajectory"] = wandb.Video(gif_path, fps=3, format="gif")
+                    log_data["eval/trajectory"] = wandb.Video(
+                        gif_path, fps=3, format="gif"
+                    )
                 wandb.log(log_data, step=self.step)
 
         # Save checkpoint
@@ -766,7 +773,9 @@ class Trainer:
                 # Evaluate
                 if self.step % self.config.eval_interval == 0:
                     # Render trajectory every evaluation for visualization
-                    eval_result, trajectory_frames = self.evaluate(render_trajectory=log_to_wandb)
+                    eval_result, trajectory_frames = self.evaluate(
+                        render_trajectory=log_to_wandb
+                    )
                     if log_to_wandb:
                         log_data = {
                             "eval/avg_attack": eval_result.avg_attack,
@@ -777,7 +786,10 @@ class Trainer:
                         # Log trajectory as animated GIF
                         if trajectory_frames:
                             import tempfile
-                            with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as f:
+
+                            with tempfile.NamedTemporaryFile(
+                                suffix=".gif", delete=False
+                            ) as f:
                                 gif_path = f.name
                             trajectory_frames[0].save(
                                 gif_path,
@@ -786,7 +798,9 @@ class Trainer:
                                 duration=300,  # ms per frame
                                 loop=0,
                             )
-                            log_data["eval/trajectory"] = wandb.Video(gif_path, fps=3, format="gif")
+                            log_data["eval/trajectory"] = wandb.Video(
+                                gif_path, fps=3, format="gif"
+                            )
                         wandb.log(log_data, step=self.step)
 
                 # Checkpoint

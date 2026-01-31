@@ -36,9 +36,11 @@ def load_and_render_replay(replay_data: dict, output_path: Path):
         placements = env.get_possible_placements()
         placement = None
         for p in placements:
-            if (p.piece.x == move["x"] and
-                p.piece.y == move["y"] and
-                p.piece.rotation == move["rotation"]):
+            if (
+                p.piece.x == move["x"]
+                and p.piece.y == move["y"]
+                and p.piece.rotation == move["rotation"]
+            ):
                 placement = p
                 break
 

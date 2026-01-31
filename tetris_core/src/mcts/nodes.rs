@@ -115,17 +115,6 @@ impl DecisionNode {
         self.nn_value = value;
     }
 
-    /// Set priors from neural network output (legacy, prefer set_nn_output)
-    pub fn set_priors(&mut self, policy: &[f32]) {
-        self.action_priors = self.valid_actions.iter().map(|&idx| policy[idx]).collect();
-
-        // Normalize priors over valid actions
-        let sum: f32 = self.action_priors.iter().sum();
-        for p in &mut self.action_priors {
-            *p /= sum;
-        }
-    }
-
     /// Add Dirichlet noise to priors (for root exploration)
     pub fn add_dirichlet_noise(&mut self, alpha: f32, epsilon: f32) {
         let noise = sample_dirichlet(alpha, self.action_priors.len());
@@ -254,13 +243,13 @@ mod tests {
     }
 
     #[test]
-    fn test_decision_node_set_priors() {
+    fn test_decision_node_set_nn_output() {
         let env = TetrisEnv::new(10, 20);
         let mut node = DecisionNode::new(env, 0);
 
         // Create mock policy with 734 actions
         let policy = vec![1.0; 734];
-        node.set_priors(&policy);
+        node.set_nn_output(&policy, 0.5);
 
         // Priors should be normalized to sum to 1
         let sum: f32 = node.action_priors.iter().sum();
@@ -268,6 +257,9 @@ mod tests {
 
         // Each valid action should have a prior
         assert_eq!(node.action_priors.len(), node.valid_actions.len());
+
+        // NN value should be stored
+        assert!((node.nn_value - 0.5).abs() < 0.01);
     }
 
     #[test]
@@ -277,7 +269,7 @@ mod tests {
 
         // Set uniform priors
         let policy = vec![1.0; 734];
-        node.set_priors(&policy);
+        node.set_nn_output(&policy, 0.0);
 
         let priors_before: Vec<f32> = node.action_priors.clone();
 
@@ -303,7 +295,7 @@ mod tests {
         let mut node = DecisionNode::new(env, 0);
 
         let policy = vec![1.0; 734];
-        node.set_priors(&policy);
+        node.set_nn_output(&policy, 0.0);
 
         // With no visits, selection should return a valid action
         let action = node.select_action(1.0);
@@ -316,7 +308,7 @@ mod tests {
         let mut node = DecisionNode::new(env.clone(), 0);
 
         let policy = vec![1.0; 734];
-        node.set_priors(&policy);
+        node.set_nn_output(&policy, 0.0);
         node.visit_count = 10;
 
         // Add a child with high value
@@ -457,7 +449,7 @@ mod tests {
         if let Some(&first_action) = node.valid_actions.first() {
             policy[first_action] = 0.9; // High prior for first action
         }
-        node.set_priors(&policy);
+        node.set_nn_output(&policy, 0.0);
         node.visit_count = 1;
 
         // With high c_puct, should explore high-prior actions

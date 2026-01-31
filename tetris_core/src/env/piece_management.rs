@@ -9,6 +9,11 @@ use crate::piece::Piece;
 
 use super::TetrisEnv;
 
+/// Get spawn X position for a piece (centers the 4-wide bounding box).
+pub(super) fn spawn_x(width: usize) -> i32 {
+    (width as i32 - 4) / 2
+}
+
 /// Get spawn Y offset for a piece type.
 /// I and O pieces have cells at y=1 in their matrix, so they spawn at y=-1 to align with other pieces.
 pub(super) fn spawn_y_offset(piece_type: usize) -> i32 {
@@ -36,7 +41,7 @@ impl TetrisEnv {
         let piece_type = self.piece_queue.pop_front().expect("Queue should not be empty after fill_queue");
         let mut piece = Piece::new(piece_type);
 
-        piece.x = (self.width as i32 - 4) / 2;
+        piece.x = spawn_x(self.width);
         piece.y = spawn_y_offset(piece_type);
         piece.rotation = 0;
 
@@ -57,7 +62,7 @@ impl TetrisEnv {
     pub(crate) fn spawn_piece_from_type(&mut self, piece_type: usize) {
         let mut piece = Piece::new(piece_type);
 
-        piece.x = (self.width as i32 - 4) / 2;
+        piece.x = spawn_x(self.width);
         piece.y = spawn_y_offset(piece_type);
         piece.rotation = 0;
 

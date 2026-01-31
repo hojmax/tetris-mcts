@@ -3,13 +3,14 @@
 //! All #[pymethods] consolidated in one file due to PyO3 limitation.
 
 use pyo3::prelude::*;
+use std::collections::HashSet;
 
 use crate::mcts::get_action_space;
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
 use crate::piece::{Piece, COLORS};
 use crate::scoring::AttackResult;
 
-use super::piece_management::spawn_y_offset;
+use super::piece_management::{spawn_x, spawn_y_offset};
 use super::TetrisEnv;
 
 #[pymethods]
@@ -104,30 +105,30 @@ impl TetrisEnv {
 
         let bag_start = bag_number * 7;
         let bag_end = bag_start + 7;
-        let mut used_in_bag: Vec<usize> = Vec::new();
+        let mut used_in_bag: HashSet<usize> = HashSet::with_capacity(7);
 
         let current_bag_pos = self.current_piece_bag_position as usize;
         if current_bag_pos >= bag_start && current_bag_pos < bag_end {
             if let Some(ref piece) = self.current_piece {
-                used_in_bag.push(piece.piece_type);
+                used_in_bag.insert(piece.piece_type);
             }
         }
 
         if let (Some(hold_type), Some(hold_bag_pos)) = (self.hold_piece, self.hold_piece_bag_position) {
             let hold_pos = hold_bag_pos as usize;
             if hold_pos >= bag_start && hold_pos < bag_end {
-                used_in_bag.push(hold_type);
+                used_in_bag.insert(hold_type);
             }
         }
 
         for (i, &piece_type) in self.piece_queue.iter().enumerate() {
             let piece_pos = self.pieces_spawned as usize + i;
             if piece_pos >= bag_start && piece_pos < bag_end {
-                used_in_bag.push(piece_type);
+                used_in_bag.insert(piece_type);
             }
         }
 
-        (0..7).filter(|&p| !used_in_bag.contains(&p)).collect()
+        (0..7).filter(|p| !used_in_bag.contains(p)).collect()
     }
 
     pub fn push_queue_piece(&mut self, piece_type: usize) {
@@ -156,12 +157,12 @@ impl TetrisEnv {
         let bag_allowed = self.get_possible_next_pieces();
 
         // Get pieces not in visible window (current + queue)
-        let mut visible: Vec<usize> = Vec::new();
+        let mut visible: HashSet<usize> = HashSet::with_capacity(6);
         if let Some(ref piece) = self.current_piece {
-            visible.push(piece.piece_type);
+            visible.insert(piece.piece_type);
         }
         for &piece_type in self.piece_queue.iter() {
-            visible.push(piece_type);
+            visible.insert(piece_type);
         }
 
         // Return intersection: allowed by bag AND not in visible
@@ -205,10 +206,9 @@ impl TetrisEnv {
 
     pub fn set_current_piece_type(&mut self, piece_type: usize) {
         if piece_type < 7 && !self.game_over {
-            let spawn_x = (self.width as i32 - 4) / 2;
             self.current_piece = Some(Piece {
                 piece_type,
-                x: spawn_x,
+                x: spawn_x(self.width),
                 y: spawn_y_offset(piece_type),
                 rotation: 0,
             });
@@ -376,6 +376,23 @@ impl TetrisEnv {
         )
     }
 
+    /// Execute an action by its index in the action space.
+    /// Returns the attack gained, or None if the action is invalid.
+    ///
+    /// This is useful for visualization - to see what the board would look like
+    /// after a specific action without needing to know the (x, y, rotation) mapping.
+    pub fn execute_action_by_index(&mut self, action_idx: usize) -> Option<u32> {
+        let action_space = get_action_space();
+        let (x, y, rot) = action_space.index_to_placement(action_idx)?;
+
+        let placements = self.get_possible_placements();
+        let placement = placements.iter().find(|p| {
+            p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
+        })?;
+
+        Some(self.execute_placement(placement))
+    }
+
     pub fn get_possible_placements(&self) -> Vec<Placement> {
         if let Some(ref piece) = self.current_piece {
             let board = Board::new(self.width, self.height, self.board.clone());
@@ -391,8 +408,7 @@ impl TetrisEnv {
         }
 
         let board = Board::new(self.width, self.height, self.board.clone());
-        let spawn_x = (self.width as i32 - 4) / 2;
-        find_all_placements(&board, piece_type, spawn_x, spawn_y_offset(piece_type))
+        find_all_placements(&board, piece_type, spawn_x(self.width), spawn_y_offset(piece_type))
     }
 
     pub fn get_possible_placements_with_hold(&self) -> (Vec<Placement>, Vec<Placement>) {
