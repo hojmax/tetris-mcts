@@ -376,23 +376,6 @@ impl TetrisEnv {
         )
     }
 
-    /// Execute an action by its index in the action space.
-    /// Returns the attack gained, or None if the action is invalid.
-    ///
-    /// This is useful for visualization - to see what the board would look like
-    /// after a specific action without needing to know the (x, y, rotation) mapping.
-    pub fn execute_action_by_index(&mut self, action_idx: usize) -> Option<u32> {
-        let action_space = get_action_space();
-        let (x, y, rot) = action_space.index_to_placement(action_idx)?;
-
-        let placements = self.get_possible_placements();
-        let placement = placements.iter().find(|p| {
-            p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
-        })?;
-
-        Some(self.execute_placement(placement))
-    }
-
     pub fn get_possible_placements(&self) -> Vec<Placement> {
         if let Some(ref piece) = self.current_piece {
             let board = Board::new(self.width, self.height, self.board.clone());

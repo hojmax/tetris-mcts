@@ -14,7 +14,7 @@ import io
 from pathlib import Path
 
 import dash
-from dash import html, dcc, callback, Output, Input, State
+from dash import html, dcc, callback, Output, Input, State, clientside_callback
 import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
 
@@ -47,7 +47,7 @@ def display_virtual_node(node_data, tree_dict, c_puct):
     env_copy = None
     if parent_id in _env_cache:
         env_copy = _env_cache[parent_id].clone_state()
-        attack = env_copy.execute_action_by_index(action_idx)
+        attack = env_copy.execute_action_index(action_idx)
 
     # Format details
     details = [
@@ -729,6 +729,12 @@ app.layout = html.Div(
         dcc.Store(id="tree-store"),
         dcc.Store(id="env-store"),
         dcc.Store(id="sims-done-store", data=0),
+        # Store for current selection and navigation
+        dcc.Store(id="selected-node-store", data=None),
+        dcc.Store(id="siblings-store", data=[]),
+        # Hidden div to capture keyboard events
+        html.Div(id="keyboard-target", tabIndex="0", style={"outline": "none"}),
+        dcc.Store(id="keyboard-event", data={"key": "", "timestamp": 0}),
     ],
     style={
         "fontFamily": "Arial, sans-serif",
