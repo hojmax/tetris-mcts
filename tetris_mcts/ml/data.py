@@ -7,6 +7,8 @@ Handles:
 - Replay buffer management
 """
 
+import logging
+import threading
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -16,6 +18,8 @@ import os
 import time
 from dataclasses import dataclass
 
+logger = logging.getLogger(__name__)
+
 from .network import (
     NUM_ACTIONS,
     BOARD_HEIGHT,
@@ -24,6 +28,7 @@ from .network import (
     QUEUE_SIZE,
     AUX_FEATURES,
     encode_state,
+    MAX_MOVES,
 )
 
 
@@ -93,7 +98,7 @@ def save_training_data(
         for j, piece in enumerate(ex.next_queue[:QUEUE_SIZE]):
             next_queue[i, j, piece] = 1.0
 
-        move_numbers[i] = ex.move_number / 100.0  # Normalize
+        move_numbers[i] = ex.move_number / MAX_MOVES  # Normalize
         policy_targets[i] = ex.policy_target
         value_targets[i] = ex.value_target
         action_masks[i] = ex.action_mask
@@ -140,7 +145,7 @@ def load_training_data(filepath: str | Path) -> list[TrainingExample]:
                 hold_piece=hold_piece,
                 hold_available=bool(data["hold_available"][i]),
                 next_queue=next_queue,
-                move_number=int(data["move_numbers"][i] * 100),
+                move_number=int(data["move_numbers"][i] * MAX_MOVES),
                 policy_target=data["policy_targets"][i],
                 value_target=float(data["value_targets"][i]),
                 action_mask=data["action_masks"][i].astype(bool),
@@ -297,6 +302,8 @@ class SharedReplayBuffer:
 
     Self-play process writes to data_dir/games_*.npz
     Training process reads and samples from them.
+
+    Thread-safe: uses a lock to protect cache access during parallel training.
     """
 
     def __init__(self, data_dir: str | Path, max_files: int = 100):
@@ -305,6 +312,7 @@ class SharedReplayBuffer:
         self.max_files = max_files
         self._cached_data = None
         self._cache_time = 0.0
+        self._lock = threading.Lock()
 
     def add_game(self, examples: list[TrainingExample]) -> None:
         """Save a game's examples to a new file."""
@@ -323,7 +331,7 @@ class SharedReplayBuffer:
             oldest.unlink()
 
     def _refresh_cache(self) -> None:
-        """Reload data from all files."""
+        """Reload data from all files. Must be called with lock held."""
         files = list(self.data_dir.glob("game_*.npz"))
         if not files:
             self._cached_data = None
@@ -337,6 +345,7 @@ class SharedReplayBuffer:
             "action_masks": [],
         }
 
+        failed_files = []
         for f in files:
             try:
                 data = np.load(f)
@@ -359,8 +368,13 @@ class SharedReplayBuffer:
                 all_data["policy_targets"].append(data["policy_targets"])
                 all_data["value_targets"].append(data["value_targets"])
                 all_data["action_masks"].append(data["action_masks"].astype(np.float32))
-            except Exception as e:
-                print(f"Warning: Failed to load {f}: {e}")
+            except (OSError, ValueError, KeyError) as e:
+                # File may be corrupted or being written - log and skip
+                logger.warning("Failed to load %s: %s", f, e)
+                failed_files.append(f)
+
+        if failed_files:
+            logger.info("Skipped %d corrupted/incomplete files", len(failed_files))
 
         if all_data["boards"]:
             self._cached_data = {k: np.concatenate(v) for k, v in all_data.items()}
@@ -382,34 +396,36 @@ class SharedReplayBuffer:
         Returns:
             Tuple of tensors or None if buffer is empty
         """
-        # Refresh cache if stale
-        if self._cached_data is None or time.time() - self._cache_time > cache_ttl:
-            self._refresh_cache()
+        with self._lock:
+            # Refresh cache if stale
+            if self._cached_data is None or time.time() - self._cache_time > cache_ttl:
+                self._refresh_cache()
 
-        if self._cached_data is None:
-            return None
+            if self._cached_data is None:
+                return None
 
-        n = len(self._cached_data["boards"])
-        if n == 0:
-            return None
+            n = len(self._cached_data["boards"])
+            if n == 0:
+                return None
 
-        indices = np.random.randint(0, n, size=min(batch_size, n))
+            indices = np.random.randint(0, n, size=min(batch_size, n))
 
-        return (
-            torch.tensor(self._cached_data["boards"][indices]).unsqueeze(1),
-            torch.tensor(self._cached_data["aux_features"][indices]),
-            torch.tensor(self._cached_data["policy_targets"][indices]),
-            torch.tensor(self._cached_data["value_targets"][indices]),
-            torch.tensor(self._cached_data["action_masks"][indices]),
-        )
+            return (
+                torch.tensor(self._cached_data["boards"][indices]).unsqueeze(1),
+                torch.tensor(self._cached_data["aux_features"][indices]),
+                torch.tensor(self._cached_data["policy_targets"][indices]),
+                torch.tensor(self._cached_data["value_targets"][indices]),
+                torch.tensor(self._cached_data["action_masks"][indices]),
+            )
 
     def size(self) -> int:
         """Return approximate number of examples in buffer."""
-        if self._cached_data is None:
-            self._refresh_cache()
-        if self._cached_data is None:
-            return 0
-        return len(self._cached_data["boards"])
+        with self._lock:
+            if self._cached_data is None:
+                self._refresh_cache()
+            if self._cached_data is None:
+                return 0
+            return len(self._cached_data["boards"])
 
 
 if __name__ == "__main__":

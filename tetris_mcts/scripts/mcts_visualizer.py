@@ -18,7 +18,10 @@ from dash import html, dcc, callback, Output, Input, State
 import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
 
-from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig, Piece
+from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
+
+# Number of Tetris piece types
+NUM_PIECE_TYPES = 7
 
 # Piece colors (matching tetris_game.py)
 PIECE_COLORS = [
@@ -76,11 +79,11 @@ def build_cytoscape_elements(tree, max_nodes: int = 500):
     nodes_to_show = min(len(tree.nodes), max_nodes)
 
     # Sort nodes by visit count to show most important ones
-    sorted_indices = sorted(
-        range(len(tree.nodes)),
-        key=lambda i: tree.nodes[i].visit_count,
-        reverse=True
-    )[:nodes_to_show]
+    # Use enumerate for clarity and pair with node data
+    indexed_nodes = [(i, node.visit_count) for i, node in enumerate(tree.nodes)]
+    sorted_indices = [
+        i for i, _ in sorted(indexed_nodes, key=lambda x: x[1], reverse=True)
+    ][:nodes_to_show]
     shown_ids = set(sorted_indices)
 
     # Always include root
@@ -125,7 +128,7 @@ def build_cytoscape_elements(tree, max_nodes: int = 500):
                     if is_decision:
                         edge_label = f"a{child.edge_from_parent}"
                     else:
-                        edge_label = PIECE_NAMES[child.edge_from_parent] if child.edge_from_parent < 7 else str(child.edge_from_parent)
+                        edge_label = PIECE_NAMES[child.edge_from_parent] if child.edge_from_parent < NUM_PIECE_TYPES else str(child.edge_from_parent)
 
                 elements.append({
                     "data": {

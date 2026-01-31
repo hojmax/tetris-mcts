@@ -27,6 +27,8 @@ BOARD_HEIGHT = 20
 BOARD_WIDTH = 10
 NUM_PIECE_TYPES = 7
 QUEUE_SIZE = 5
+MAX_MOVES = 100  # Maximum moves for move number normalization
+
 # Total number of valid placement actions
 # Covers x in [-3, 9], y in [-2, 19], rotation in [0, 3]
 # Action space logic implemented in Rust (tetris_core/src/mcts/action_space.rs)
@@ -106,7 +108,8 @@ class TetrisNet(nn.Module):
             aux_features: Shape (batch, 52) - auxiliary features
 
         Returns:
-            policy_logits: Shape (batch, 734) - raw logits (apply mask before softmax)
+            policy_logits: Shape (batch, 734) - raw logits (caller should apply
+                action mask before softmax to mask invalid actions)
             value: Shape (batch, 1) - predicted cumulative attack
         """
         # Conv layers
@@ -164,7 +167,7 @@ def encode_state(
     hold_available: bool,
     next_queue: list[int],
     move_number: int,
-    max_moves: int = 100,
+    max_moves: int = MAX_MOVES,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Encode game state into neural network input format.
@@ -181,7 +184,16 @@ def encode_state(
     Returns:
         board_tensor: Shape (1, 20, 10) for CNN
         aux_tensor: Shape (52,) auxiliary features
+
+    Raises:
+        ValueError: If board dimensions are incorrect
     """
+    # Validate board dimensions
+    if board.shape != (BOARD_HEIGHT, BOARD_WIDTH):
+        raise ValueError(
+            f"Board shape must be ({BOARD_HEIGHT}, {BOARD_WIDTH}), got {board.shape}"
+        )
+
     # Board: (1, 20, 10)
     board_tensor = board.astype(np.float32).reshape(1, BOARD_HEIGHT, BOARD_WIDTH)
 

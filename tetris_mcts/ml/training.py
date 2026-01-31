@@ -20,20 +20,47 @@ import time
 
 import wandb
 
-from tetris_mcts.ml.network import TetrisNet
+from tetris_mcts.ml.network import (
+    TetrisNet,
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_PIECE_TYPES,
+    MAX_MOVES,
+)
 from tetris_mcts.ml.data import (
     ReplayBuffer,
     SharedReplayBuffer,
     TetrisDataset,
     TrainingExample,
 )
-from tetris_mcts.ml.weights import WeightManager
+from tetris_mcts.ml.weights import WeightManager, export_onnx
 
 from tetris_core import MCTSConfig, MCTSAgent, GameGenerator, evaluate_model, EvalResult
 
 
-# Game configuration
-MAX_MOVES = 100
+def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch.Tensor:
+    """
+    Apply action masks to logits.
+
+    Args:
+        logits: Shape (batch, num_actions) - raw policy logits
+        action_masks: Shape (batch, num_actions) - 1 for valid actions, 0 for invalid
+
+    Returns:
+        masked_logits: Shape (batch, num_actions) - logits with invalid actions set to -inf
+
+    Raises:
+        ValueError: If any sample has no valid actions (indicates terminal state in training data)
+    """
+    valid_counts = action_masks.sum(dim=1)
+    if (valid_counts == 0).any():
+        invalid_indices = (valid_counts == 0).nonzero(as_tuple=True)[0].tolist()
+        raise ValueError(
+            f"Samples at indices {invalid_indices} have no valid actions. "
+            "Terminal states should not be in training data."
+        )
+
+    return logits.masked_fill(action_masks == 0, float("-inf"))
 
 
 @dataclass
@@ -107,14 +134,8 @@ def compute_loss(
     # Forward pass
     policy_logits, value_pred = model(boards, aux_features)
 
-    # Ensure at least one valid action per sample (avoid all -inf)
-    # This handles edge cases where mask might be all zeros
-    valid_counts = action_masks.sum(dim=1, keepdim=True)
-    safe_masks = action_masks.clone()
-    safe_masks[valid_counts.squeeze() == 0, 0] = 1  # Set first action as valid if none
-
-    # Apply mask before softmax
-    masked_logits = policy_logits.masked_fill(safe_masks == 0, float("-inf"))
+    # Apply action mask and compute log softmax
+    masked_logits = apply_action_mask(policy_logits, action_masks)
     log_policy = F.log_softmax(masked_logits, dim=-1)
 
     # Replace -inf with 0 for numerical stability (won't contribute to loss anyway
@@ -148,13 +169,8 @@ def compute_metrics(
     with torch.no_grad():
         policy_logits, value_pred = model(boards, aux_features)
 
-        # Ensure at least one valid action per sample (avoid all -inf)
-        valid_counts = action_masks.sum(dim=1, keepdim=True)
-        safe_masks = action_masks.clone()
-        safe_masks[valid_counts.squeeze() == 0, 0] = 1
-
-        # Apply mask
-        masked_logits = policy_logits.masked_fill(safe_masks == 0, float("-inf"))
+        # Apply action mask and compute softmax
+        masked_logits = apply_action_mask(policy_logits, action_masks)
         policy_probs = F.softmax(masked_logits, dim=-1)
 
         # Policy entropy
@@ -286,9 +302,10 @@ class Trainer:
 
         # Export current model to ONNX for Rust inference
         onnx_path = Path(self.config.checkpoint_dir) / "selfplay.onnx"
-        from .weights import export_onnx
-
         export_onnx(self.model, onnx_path)
+
+        if not onnx_path.exists():
+            raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
 
         # Configure MCTS
         mcts_config = MCTSConfig()
@@ -322,10 +339,6 @@ class Trainer:
 
     def _rust_example_to_training_example(self, rust_ex) -> TrainingExample:
         """Convert Rust TrainingExample to Python TrainingExample."""
-        import numpy as np
-
-        BOARD_HEIGHT, BOARD_WIDTH = 20, 10
-
         # Reshape board from flat list to 2D array
         board = np.array(rust_ex.board, dtype=np.uint8).reshape(
             BOARD_HEIGHT, BOARD_WIDTH
@@ -334,7 +347,7 @@ class Trainer:
         return TrainingExample(
             board=board.astype(bool),
             current_piece=rust_ex.current_piece,
-            hold_piece=rust_ex.hold_piece if rust_ex.hold_piece < 7 else None,
+            hold_piece=rust_ex.hold_piece if rust_ex.hold_piece < NUM_PIECE_TYPES else None,
             hold_available=rust_ex.hold_available,
             next_queue=list(rust_ex.next_queue),
             move_number=rust_ex.move_number,
@@ -349,9 +362,10 @@ class Trainer:
 
         # Export model to ONNX for Rust evaluation
         onnx_path = Path(self.config.checkpoint_dir) / "eval.onnx"
-        from .weights import export_onnx
-
         export_onnx(self.model, onnx_path)
+
+        if not onnx_path.exists():
+            raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
 
         # Create MCTS config for evaluation (temperature=0 enforced by evaluate_model)
         mcts_config = MCTSConfig()
@@ -519,9 +533,10 @@ class Trainer:
         onnx_path = Path(self.config.checkpoint_dir) / "parallel.onnx"
 
         # Export initial model
-        from .weights import export_onnx
-
         export_onnx(self.model, onnx_path)
+
+        if not onnx_path.exists():
+            raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
 
         # Create MCTS config for generator
         mcts_config = MCTSConfig()
