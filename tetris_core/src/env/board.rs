@@ -55,15 +55,17 @@ impl TetrisEnv {
         self.total_blocks == 0
     }
 
-    /// Recalculate column_heights and total_blocks from the board state.
+    /// Recalculate column_heights, total_blocks, and row_fill_counts from the board state.
     /// Call this after directly modifying the board (e.g., in tests or set_board).
     pub(crate) fn sync_board_stats(&mut self) {
         self.total_blocks = 0;
+        self.row_fill_counts = vec![0; self.height];
         for x in 0..self.width {
             self.column_heights[x] = self.height as i32; // Assume empty
             for y in 0..self.height {
                 if self.board[y][x] != 0 {
                     self.total_blocks += 1;
+                    self.row_fill_counts[y] += 1;
                     if (y as i32) < self.column_heights[x] {
                         self.column_heights[x] = y as i32;
                     }

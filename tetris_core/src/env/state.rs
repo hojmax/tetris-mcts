@@ -48,6 +48,9 @@ pub struct TetrisEnv {
     pub(crate) column_heights: Vec<i32>,
     /// Total number of filled cells on the board. Used for O(1) perfect clear detection.
     pub(crate) total_blocks: u32,
+    /// Number of filled cells per row. Used for O(1) line clear detection.
+    /// A row is full when `row_fill_counts[y] == width`.
+    pub(crate) row_fill_counts: Vec<u8>,
 }
 
 impl TetrisEnv {
@@ -79,6 +82,7 @@ impl TetrisEnv {
             rng: StdRng::seed_from_u64(seed),
             column_heights: vec![height as i32; width],
             total_blocks: 0,
+            row_fill_counts: vec![0; height],
         };
         env.spawn_piece_internal();
         env
@@ -108,6 +112,7 @@ impl TetrisEnv {
         self.rng = StdRng::seed_from_u64(seed);
         self.column_heights = vec![self.height as i32; self.width];
         self.total_blocks = 0;
+        self.row_fill_counts = vec![0; self.height];
         self.spawn_piece_internal();
     }
 }

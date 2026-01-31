@@ -145,32 +145,6 @@ impl TetrisEnv {
         }
     }
 
-    /// Get pieces that could appear at the next queue position for MCTS.
-    ///
-    /// Combines two constraints:
-    /// 1. 7-bag rule: pieces not already used in the current bag
-    /// 2. Visual rule: pieces not in visible window (to avoid confusing duplicates)
-    ///
-    /// Returns the intersection of both constraints.
-    pub fn get_possible_next_pieces_for_mcts(&self) -> Vec<usize> {
-        // Get pieces allowed by 7-bag tracking
-        let bag_allowed = self.get_possible_next_pieces();
-
-        // Get pieces not in visible window (current + queue)
-        let mut visible: HashSet<usize> = HashSet::with_capacity(6);
-        if let Some(ref piece) = self.current_piece {
-            visible.insert(piece.piece_type);
-        }
-        for &piece_type in self.piece_queue.iter() {
-            visible.insert(piece_type);
-        }
-
-        // Return intersection: allowed by bag AND not in visible
-        bag_allowed.into_iter()
-            .filter(|p| !visible.contains(p))
-            .collect()
-    }
-
     pub fn hold(&mut self) -> bool {
         if self.game_over || self.hold_used {
             return false;
@@ -374,7 +348,7 @@ impl TetrisEnv {
 
     pub fn get_possible_placements(&self) -> Vec<Placement> {
         if let Some(ref piece) = self.current_piece {
-            let board = Board::new(self.width, self.height, self.board.clone());
+            let board = Board::new(self.width, self.height, &self.board);
             find_all_placements(&board, piece.piece_type, piece.x, piece.y)
         } else {
             Vec::new()
@@ -386,7 +360,7 @@ impl TetrisEnv {
             return Vec::new();
         }
 
-        let board = Board::new(self.width, self.height, self.board.clone());
+        let board = Board::new(self.width, self.height, &self.board);
         find_all_placements(&board, piece_type, spawn_x(self.width), spawn_y_offset(piece_type))
     }
 
@@ -396,7 +370,7 @@ impl TetrisEnv {
         }
 
         if let Some(ref piece) = self.current_piece {
-            let board = Board::new(self.width, self.height, self.board.clone());
+            let board = Board::new(self.width, self.height, &self.board);
             let next_piece = self.piece_queue.front().copied().unwrap_or(0);
             find_all_placements_with_hold(
                 &board,

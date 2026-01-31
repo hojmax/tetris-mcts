@@ -70,15 +70,15 @@ impl Placement {
     }
 }
 
-/// Board representation for collision checking
-pub struct Board {
+/// Board representation for collision checking (borrows cells to avoid cloning)
+pub struct Board<'a> {
     width: usize,
     height: usize,
-    cells: Vec<Vec<u8>>,
+    cells: &'a [Vec<u8>],
 }
 
-impl Board {
-    pub fn new(width: usize, height: usize, cells: Vec<Vec<u8>>) -> Self {
+impl<'a> Board<'a> {
+    pub fn new(width: usize, height: usize, cells: &'a [Vec<u8>]) -> Self {
         Board {
             width,
             height,
@@ -116,7 +116,7 @@ impl Board {
 /// Try to rotate a piece and return the new state if successful
 /// Returns (new_state, kick_index) where kick_index is 0-4 indicating which kick was used
 fn try_rotate(
-    board: &Board,
+    board: &Board<'_>,
     piece_type: usize,
     state: &PieceState,
     clockwise: bool,
@@ -167,7 +167,7 @@ struct PathInfo {
 /// then returns all unique final positions (after hard drop) with
 /// the shortest move sequence to reach each.
 pub fn find_all_placements(
-    board: &Board,
+    board: &Board<'_>,
     piece_type: usize,
     spawn_x: i32,
     spawn_y: i32,
@@ -307,7 +307,7 @@ pub fn find_all_placements(
 /// Find all placements including hold piece option
 /// Returns (current_piece_placements, hold_piece_placements)
 pub fn find_all_placements_with_hold(
-    board: &Board,
+    board: &Board<'_>,
     current_piece_type: usize,
     hold_piece_type: Option<usize>,
     next_piece_type: usize,
@@ -331,13 +331,14 @@ pub fn find_all_placements_with_hold(
 mod tests {
     use super::*;
 
-    fn empty_board(width: usize, height: usize) -> Board {
-        Board::new(width, height, vec![vec![0; width]; height])
+    fn empty_cells(width: usize, height: usize) -> Vec<Vec<u8>> {
+        vec![vec![0; width]; height]
     }
 
     #[test]
     fn test_find_placements_empty_board() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         // I piece (type 0)
         let placements = find_all_placements(&board, 0, 3, 0);
         assert!(!placements.is_empty());
@@ -349,7 +350,8 @@ mod tests {
 
     #[test]
     fn test_find_placements_all_pieces() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         for piece_type in 0..7 {
             let placements = find_all_placements(&board, piece_type, 3, 0);
             assert!(
@@ -362,7 +364,8 @@ mod tests {
 
     #[test]
     fn test_placements_have_moves() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 2, 3, 0); // T piece
 
         for placement in &placements {
@@ -381,7 +384,8 @@ mod tests {
 
     #[test]
     fn test_placements_reach_bottom() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 0, 3, 0); // I piece
 
         for placement in &placements {
@@ -397,7 +401,8 @@ mod tests {
 
     #[test]
     fn test_placements_unique() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 2, 3, 0); // T piece
 
         let mut positions: HashSet<(i32, i32, usize)> = HashSet::new();
@@ -417,7 +422,8 @@ mod tests {
 
     #[test]
     fn test_i_piece_horizontal_positions() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 0, 3, 0); // I piece
 
         // I piece horizontal (rotation 0 and 2) can be at columns -1 to 6 (piece x position)
@@ -432,7 +438,8 @@ mod tests {
 
     #[test]
     fn test_o_piece_no_rotation_change() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 1, 3, 0); // O piece
 
         // O piece looks the same in all rotations, so we should have
@@ -451,7 +458,7 @@ mod tests {
                 cells[y][x] = 1;
             }
         }
-        let board = Board::new(10, 20, cells);
+        let board = Board::new(10, 20, &cells);
 
         // I piece can only fit in column 0 when vertical
         let placements = find_all_placements(&board, 0, 3, 0);
@@ -469,7 +476,7 @@ mod tests {
             cells[0][x] = 1;
             cells[1][x] = 1;
         }
-        let board = Board::new(10, 20, cells);
+        let board = Board::new(10, 20, &cells);
 
         let placements = find_all_placements(&board, 0, 3, 0);
         assert!(placements.is_empty(), "Should have no placements when spawn is blocked");
@@ -477,7 +484,8 @@ mod tests {
 
     #[test]
     fn test_move_sequence_valid() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 2, 3, 0); // T piece
 
         for placement in &placements {
@@ -503,7 +511,8 @@ mod tests {
 
     #[test]
     fn test_placements_sorted() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 2, 3, 0); // T piece
 
         // Check that placements are sorted by rotation first, then column
@@ -522,7 +531,8 @@ mod tests {
 
     #[test]
     fn test_t_piece_rotations() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
         let placements = find_all_placements(&board, 2, 3, 0); // T piece
 
         // T piece should have placements in all 4 rotations
@@ -532,7 +542,8 @@ mod tests {
 
     #[test]
     fn test_find_placements_with_hold() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
 
         // With no hold piece, hold gives next piece
         let (current, hold) = find_all_placements_with_hold(&board, 0, None, 2, 3, 0);
@@ -547,7 +558,8 @@ mod tests {
 
     #[test]
     fn test_find_placements_with_existing_hold() {
-        let board = empty_board(10, 20);
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
 
         // With existing hold piece, hold gives that piece
         let (current, hold) = find_all_placements_with_hold(&board, 0, Some(5), 2, 3, 0);

@@ -421,9 +421,9 @@ impl MCTSAgent {
         // This ensures expand_chance pushes to position 5 (the first "unseen" position).
         new_state.truncate_queue(QUEUE_SIZE);
 
-        // Compute possible pieces: intersection of 7-bag constraints and visual constraints.
-        // This ensures no duplicates in the visible window while respecting bag rules.
-        let bag_remaining = new_state.get_possible_next_pieces_for_mcts();
+        // Get possible pieces from the 7-bag rule.
+        // At bag boundaries, multiple pieces are possible, creating stochastic branching.
+        let bag_remaining = new_state.get_possible_next_pieces();
 
         // Evaluate the NN on this state to get the value estimate
         let nn_value = self.evaluate_leaf(&new_state, move_number);
