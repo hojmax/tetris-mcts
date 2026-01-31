@@ -1,4 +1,4 @@
-.PHONY: run build clean rebuild test check play viz
+.PHONY: run build clean rebuild test check play viz train evaluate replay
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -41,3 +41,21 @@ check:
 	uv run ruff check
 	uv run ruff format
 	uv run pyright
+
+# Train a model (builds first if needed)
+# Usage: make train ARGS="--iterations 10 --games-per-iter 50"
+train: .build_marker
+	$(PYTHON) tetris_mcts/scripts/train.py $(ARGS)
+
+# Evaluate a model and save replays (builds first if needed)
+# Usage: make evaluate MODEL=checkpoints/latest.onnx OUTPUT=replays.jsonl
+MODEL ?= checkpoints/latest.onnx
+OUTPUT ?= replays.jsonl
+evaluate: .build_marker
+	$(PYTHON) tetris_mcts/scripts/evaluate.py --model-path $(MODEL) --output-path $(OUTPUT)
+
+# View replay file
+# Usage: make replay FILE=replays.jsonl
+FILE ?= replays.jsonl
+replay: .build_marker
+	$(PYTHON) tetris_mcts/scripts/replay_viewer.py $(FILE)

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import structlog
+import torch
 from pydantic.dataclasses import dataclass
 from simple_parsing import parse
 
@@ -9,6 +10,15 @@ from tetris_mcts.ml.training import Trainer, TrainingConfig
 import wandb
 
 logger = structlog.get_logger()
+
+
+def get_best_device() -> str:
+    """Auto-detect the best available device."""
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 @dataclass
@@ -50,7 +60,7 @@ class ScriptArgs:
     no_wandb: bool = False  # Disable WandB logging
 
     # Device
-    device: str = "cpu"  # Device to use (cpu/cuda/mps)
+    device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
 
     # Resume
     resume: bool = False  # Resume from latest checkpoint
@@ -59,6 +69,10 @@ class ScriptArgs:
 def main(args: ScriptArgs) -> None:
     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     args.data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Auto-detect device if set to "auto"
+    device = get_best_device() if args.device == "auto" else args.device
+    logger.info("Using device", device=device)
 
     config = TrainingConfig(
         batch_size=args.batch_size,
@@ -79,7 +93,7 @@ def main(args: ScriptArgs) -> None:
         run_name=args.run_name,
     )
 
-    trainer = Trainer(config, device=args.device)
+    trainer = Trainer(config, device=device)
 
     logger.info(
         "Model created",

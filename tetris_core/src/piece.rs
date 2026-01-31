@@ -220,6 +220,60 @@ pub const TETROMINOS: [[[[u8; 4]; 4]; 4]; 7] = [
     ],
 ];
 
+/// Precomputed cell offsets for each tetromino [piece_type][rotation] -> [(dx, dy); 4]
+/// This avoids iterating over the 4x4 shape array at runtime.
+pub const TETROMINO_CELLS: [[[(i8, i8); 4]; 4]; 7] = [
+    // I piece - index 0
+    [
+        [(0, 1), (1, 1), (2, 1), (3, 1)], // State 0
+        [(2, 0), (2, 1), (2, 2), (2, 3)], // State R
+        [(0, 2), (1, 2), (2, 2), (3, 2)], // State 2
+        [(1, 0), (1, 1), (1, 2), (1, 3)], // State L
+    ],
+    // O piece - index 1
+    [
+        [(1, 1), (2, 1), (1, 2), (2, 2)], // All states same
+        [(1, 1), (2, 1), (1, 2), (2, 2)],
+        [(1, 1), (2, 1), (1, 2), (2, 2)],
+        [(1, 1), (2, 1), (1, 2), (2, 2)],
+    ],
+    // T piece - index 2
+    [
+        [(1, 0), (0, 1), (1, 1), (2, 1)], // State 0
+        [(1, 0), (1, 1), (2, 1), (1, 2)], // State R
+        [(0, 1), (1, 1), (2, 1), (1, 2)], // State 2
+        [(1, 0), (0, 1), (1, 1), (1, 2)], // State L
+    ],
+    // S piece - index 3
+    [
+        [(1, 0), (2, 0), (0, 1), (1, 1)], // State 0
+        [(1, 0), (1, 1), (2, 1), (2, 2)], // State R
+        [(1, 1), (2, 1), (0, 2), (1, 2)], // State 2
+        [(0, 0), (0, 1), (1, 1), (1, 2)], // State L
+    ],
+    // Z piece - index 4
+    [
+        [(0, 0), (1, 0), (1, 1), (2, 1)], // State 0
+        [(2, 0), (1, 1), (2, 1), (1, 2)], // State R
+        [(0, 1), (1, 1), (1, 2), (2, 2)], // State 2
+        [(1, 0), (0, 1), (1, 1), (0, 2)], // State L
+    ],
+    // J piece - index 5
+    [
+        [(0, 0), (0, 1), (1, 1), (2, 1)], // State 0
+        [(1, 0), (2, 0), (1, 1), (1, 2)], // State R
+        [(0, 1), (1, 1), (2, 1), (2, 2)], // State 2
+        [(1, 0), (1, 1), (0, 2), (1, 2)], // State L
+    ],
+    // L piece - index 6
+    [
+        [(2, 0), (0, 1), (1, 1), (2, 1)], // State 0
+        [(1, 0), (1, 1), (1, 2), (2, 2)], // State R
+        [(0, 1), (1, 1), (2, 1), (0, 2)], // State 2
+        [(0, 0), (1, 0), (1, 1), (1, 2)], // State L
+    ],
+];
+
 /// Colors for each tetromino (RGB) - matching Jstris style
 pub const COLORS: [(u8, u8, u8); 7] = [
     (93, 173, 212),   // I - Light blue/Cyan
@@ -237,22 +291,17 @@ pub const NUM_PIECE_TYPES: usize = 7;
 /// Maximum number of cells in a tetromino (always 4)
 pub const MAX_PIECE_CELLS: usize = 4;
 
-/// Get the cells occupied by a shape at a given position.
+/// Get the cells occupied by a piece at a given position using precomputed offsets.
 /// Returns a fixed-size array of exactly 4 cells (all tetrominos have 4 cells).
 #[inline]
-pub fn get_cells_for_shape(shape: &[[u8; 4]; 4], x: i32, y: i32) -> [(i32, i32); MAX_PIECE_CELLS] {
-    let mut cells = [(0, 0); MAX_PIECE_CELLS];
-    let mut idx = 0;
-    for dy in 0..4 {
-        for dx in 0..4 {
-            if shape[dy][dx] == 1 {
-                cells[idx] = (x + dx as i32, y + dy as i32);
-                idx += 1;
-            }
-        }
-    }
-    debug_assert_eq!(idx, MAX_PIECE_CELLS, "Tetromino should have exactly 4 cells");
-    cells
+pub fn get_cells(piece_type: usize, rotation: usize, x: i32, y: i32) -> [(i32, i32); MAX_PIECE_CELLS] {
+    let offsets = &TETROMINO_CELLS[piece_type][rotation];
+    [
+        (x + offsets[0].0 as i32, y + offsets[0].1 as i32),
+        (x + offsets[1].0 as i32, y + offsets[1].1 as i32),
+        (x + offsets[2].0 as i32, y + offsets[2].1 as i32),
+        (x + offsets[3].0 as i32, y + offsets[3].1 as i32),
+    ]
 }
 
 #[pyclass]
@@ -285,7 +334,7 @@ impl Piece {
     }
 
     pub fn get_cells(&self) -> Vec<(i32, i32)> {
-        get_cells_for_shape(&TETROMINOS[self.piece_type][self.rotation], self.x, self.y).to_vec()
+        get_cells(self.piece_type, self.rotation, self.x, self.y).to_vec()
     }
 }
 
@@ -375,8 +424,8 @@ mod tests {
     fn test_o_piece_symmetry() {
         // O piece should be the same in all rotations
         for rotation in 0..4 {
-            let cells = get_cells_for_shape(&TETROMINOS[1][rotation], 0, 0);
-            let base_cells = get_cells_for_shape(&TETROMINOS[1][0], 0, 0);
+            let cells = get_cells(1, rotation, 0, 0);
+            let base_cells = get_cells(1, 0, 0, 0);
             assert_eq!(cells, base_cells, "O piece rotation {} should match spawn state", rotation);
         }
     }
@@ -397,10 +446,9 @@ mod tests {
     }
 
     #[test]
-    fn test_get_cells_for_shape() {
+    fn test_get_cells() {
         // Test with I piece horizontal
-        let shape = &TETROMINOS[0][0];
-        let cells = get_cells_for_shape(shape, 0, 0);
+        let cells = get_cells(0, 0, 0, 0);
         assert_eq!(cells.len(), MAX_PIECE_CELLS);
     }
 
@@ -457,5 +505,35 @@ mod tests {
         assert_eq!(NUM_PIECE_TYPES, 7);
         assert_eq!(TETROMINOS.len(), NUM_PIECE_TYPES);
         assert_eq!(COLORS.len(), NUM_PIECE_TYPES);
+    }
+
+    #[test]
+    fn test_tetromino_cells_matches_tetrominos() {
+        // Verify that TETROMINO_CELLS matches what we'd compute from TETROMINOS
+        for piece_type in 0..NUM_PIECE_TYPES {
+            for rotation in 0..4 {
+                // Compute cells the slow way from TETROMINOS
+                let shape = &TETROMINOS[piece_type][rotation];
+                let mut expected: Vec<(i8, i8)> = Vec::new();
+                for dy in 0..4 {
+                    for dx in 0..4 {
+                        if shape[dy][dx] == 1 {
+                            expected.push((dx as i8, dy as i8));
+                        }
+                    }
+                }
+                expected.sort();
+
+                // Get cells from precomputed table
+                let mut precomputed: Vec<(i8, i8)> = TETROMINO_CELLS[piece_type][rotation].to_vec();
+                precomputed.sort();
+
+                assert_eq!(
+                    expected, precomputed,
+                    "TETROMINO_CELLS mismatch for piece {} rotation {}: expected {:?}, got {:?}",
+                    piece_type, rotation, expected, precomputed
+                );
+            }
+        }
     }
 }

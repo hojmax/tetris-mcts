@@ -1,0 +1,40 @@
+2026-01-31 18:41:24 [info     ] Starting training
+2026-01-31 18:41:24 [info     ] Starting iteration             iteration=1 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1040 examples from 50 games
+Time: 78.4s (0.64 games/sec)
+2026-01-31 18:42:51 [info     ] Iteration complete             avg_loss=2.7488 avg_policy_loss=2.7226 avg_value_loss=0.0262 buffer_size=1040
+2026-01-31 18:42:51 [info     ] Starting iteration             iteration=2 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1049 examples from 50 games
+Time: 54.2s (0.92 games/sec)
+2026-01-31 18:43:50 [info     ] Iteration complete             avg_loss=2.6177 avg_policy_loss=2.6167 avg_value_loss=0.001 buffer_size=2089
+2026-01-31 18:43:50 [info     ] Starting iteration             iteration=3 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1028 examples from 50 games
+Time: 46.2s (1.08 games/sec)
+2026-01-31 18:44:42 [info     ] Iteration complete             avg_loss=2.6164 avg_policy_loss=2.6158 avg_value_loss=0.0005 buffer_size=3117
+2026-01-31 18:44:42 [info     ] Starting iteration             iteration=4 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1057 examples from 50 games
+Time: 45.9s (1.09 games/sec)
+2026-01-31 18:45:34 [info     ] Iteration complete             avg_loss=2.6388 avg_policy_loss=2.6386 avg_value_loss=0.0003 buffer_size=4174
+2026-01-31 18:45:34 [info     ] Starting iteration             iteration=5 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1054 examples from 50 games
+Time: 47.5s (1.05 games/sec)
+Applied 2 of general pattern rewrite rules.
+Evaluation (20 games):
+  Avg attack: 0.0
+  Max attack: 0
+  Avg moves: 18.0
+  Attack/piece: 0.000
+2026-01-31 18:46:43 [info     ] Iteration complete             avg_loss=2.6541 avg_policy_loss=2.6538 avg_value_loss=0.0004 buffer_size=5228 eval_avg_attack=0.0 eval_avg_moves=18.0
+2026-01-31 18:46:43 [info     ] Starting iteration             iteration=6 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.

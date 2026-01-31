@@ -3,7 +3,6 @@
 //! Horizontal movement and rotation (internal implementations).
 
 use crate::kicks::get_kicks_for_piece;
-use crate::piece::TETROMINOS;
 
 use super::TetrisEnv;
 
@@ -42,13 +41,12 @@ impl TetrisEnv {
             } else {
                 (piece.rotation + 3) % 4
             };
-            let new_shape = &TETROMINOS[piece.piece_type][to_state];
             let kicks = get_kicks_for_piece(piece.piece_type, from_state, to_state);
 
             for (kick_idx, (dx, dy)) in kicks.iter().enumerate() {
                 let new_x = piece.x + dx;
                 let new_y = piece.y + dy;
-                if self.is_valid_position_for_shape(new_shape, new_x, new_y) {
+                if self.is_valid_position(piece.piece_type, to_state, new_x, new_y) {
                     let mut new_piece = piece.clone();
                     new_piece.x = new_x;
                     new_piece.y = new_y;

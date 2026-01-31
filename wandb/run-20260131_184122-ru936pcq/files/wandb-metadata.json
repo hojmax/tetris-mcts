@@ -1,0 +1,47 @@
+{
+  "os": "macOS-15.7.3-arm64-arm-64bit",
+  "python": "CPython 3.12.9",
+  "startedAt": "2026-01-31T17:41:22.343882Z",
+  "args": [
+    "--iterations",
+    "10",
+    "--games_per_iter",
+    "50",
+    "--simulations",
+    "100",
+    "--eval_interval",
+    "5"
+  ],
+  "program": "/Users/axelhojmark/Desktop/tetris-mcts/tetris_mcts/scripts/train.py",
+  "codePath": "tetris_mcts/scripts/train.py",
+  "codePathLocal": "tetris_mcts/scripts/train.py",
+  "git": {
+    "remote": "https://github.com/hojmax/tetris-mcts.git",
+    "commit": "59b5f2dfed6a817e17628de41a650c4fc7c31942"
+  },
+  "email": "rusheb@apolloresearch.ai",
+  "root": "/Users/axelhojmark/Desktop/tetris-mcts",
+  "host": "Axels-MacBook-Air.local",
+  "executable": "/Users/axelhojmark/Desktop/tetris-mcts/.venv/bin/python",
+  "cpu_count": 8,
+  "cpu_count_logical": 8,
+  "disk": {
+    "/": {
+      "total": "245107195904",
+      "used": "214652280832"
+    }
+  },
+  "memory": {
+    "total": "25769803776"
+  },
+  "apple": {
+    "name": "Apple M3",
+    "ecpuCores": 4,
+    "pcpuCores": 4,
+    "gpuCores": 10,
+    "memoryGb": 24,
+    "swapTotalBytes": "4294967296",
+    "ramTotalBytes": "25769803776"
+  },
+  "writerId": "9h0ov49jbkbjjbs695u65drhiaru1il6"
+}

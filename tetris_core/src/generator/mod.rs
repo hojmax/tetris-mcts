@@ -9,6 +9,6 @@ mod evaluation;
 mod game_generator;
 pub mod npz;
 
-pub use evaluation::{evaluate_model, EvalResult};
+pub use evaluation::{evaluate_and_save, evaluate_model, EvalResult, GameReplay, ReplayMove};
 pub use game_generator::GameGenerator;
 pub use npz::write_examples_to_npz;

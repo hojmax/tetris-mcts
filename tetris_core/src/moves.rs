@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
-use crate::piece::{get_cells_for_shape, Piece, TETROMINOS};
+use crate::piece::{get_cells, Piece};
 
 /// Actions that can be taken during piece movement
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -88,30 +88,20 @@ impl Board {
 
     /// Check if a piece at the given state is in a valid position
     fn is_valid_position(&self, piece_type: usize, state: &PieceState) -> bool {
-        let shape = &TETROMINOS[piece_type][state.rotation];
-        for (x, y) in get_cells_for_shape(shape, state.x, state.y) {
-            if x < 0 || x >= self.width as i32 || y >= self.height as i32 {
-                return false;
-            }
-            if y >= 0 && self.cells[y as usize][x as usize] != 0 {
-                return false;
-            }
-        }
-        true
+        self.is_valid_position_at(piece_type, state.rotation, state.x, state.y)
     }
 
     /// Get the final y position after hard dropping from a state
     fn get_drop_y(&self, piece_type: usize, state: &PieceState) -> i32 {
         let mut y = state.y;
-        let shape = &TETROMINOS[piece_type][state.rotation];
-        while self.is_valid_position_for_shape(shape, state.x, y + 1) {
+        while self.is_valid_position_at(piece_type, state.rotation, state.x, y + 1) {
             y += 1;
         }
         y
     }
 
-    fn is_valid_position_for_shape(&self, shape: &[[u8; 4]; 4], x: i32, y: i32) -> bool {
-        for (cx, cy) in get_cells_for_shape(shape, x, y) {
+    fn is_valid_position_at(&self, piece_type: usize, rotation: usize, x: i32, y: i32) -> bool {
+        for (cx, cy) in get_cells(piece_type, rotation, x, y) {
             if cx < 0 || cx >= self.width as i32 || cy >= self.height as i32 {
                 return false;
             }
@@ -147,12 +137,10 @@ fn try_rotate(
         get_jlstz_kicks(from_state, to_state)
     };
 
-    let new_shape = &TETROMINOS[piece_type][to_state];
-
     for (kick_index, (dx, dy)) in kicks.iter().enumerate() {
         let new_x = state.x + dx;
         let new_y = state.y + dy;
-        if board.is_valid_position_for_shape(new_shape, new_x, new_y) {
+        if board.is_valid_position_at(piece_type, to_state, new_x, new_y) {
             return Some((PieceState {
                 x: new_x,
                 y: new_y,
@@ -288,8 +276,7 @@ pub fn find_all_placements(
     sorted_positions.sort_by_key(|((x, y, rot), _)| (*rot, *y, *x));
 
     for ((x, y, rotation), mut path_info) in sorted_positions {
-        let shape = &TETROMINOS[piece_type][rotation];
-        let mut cells = get_cells_for_shape(shape, x, y);
+        let mut cells = get_cells(piece_type, rotation, x, y);
         cells.sort(); // Normalize for comparison
 
         if seen_cells.insert(cells) {

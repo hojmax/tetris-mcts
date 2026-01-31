@@ -5,7 +5,7 @@
 use pyo3::prelude::*;
 
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
-use crate::piece::{Piece, COLORS, TETROMINOS};
+use crate::piece::{Piece, COLORS};
 use crate::scoring::AttackResult;
 
 use super::TetrisEnv;
@@ -304,8 +304,7 @@ impl TetrisEnv {
     pub fn get_ghost_piece(&self) -> Option<Piece> {
         if let Some(ref piece) = self.current_piece {
             let mut ghost = piece.clone();
-            let shape = &TETROMINOS[ghost.piece_type][ghost.rotation];
-            while self.is_valid_position_for_shape(shape, ghost.x, ghost.y + 1) {
+            while self.is_valid_position(ghost.piece_type, ghost.rotation, ghost.x, ghost.y + 1) {
                 ghost.y += 1;
             }
             Some(ghost)

@@ -2,8 +2,6 @@
 //!
 //! Internal placement logic.
 
-use crate::piece::TETROMINOS;
-
 use super::TetrisEnv;
 
 impl TetrisEnv {
@@ -22,9 +20,8 @@ impl TetrisEnv {
             debug_assert!(rotation < 4, "Invalid rotation: {}", rotation);
 
             let piece_type = piece.piece_type;
-            let shape = &TETROMINOS[piece_type][rotation];
 
-            if !self.is_valid_position_for_shape(shape, x, y) {
+            if !self.is_valid_position(piece_type, rotation, x, y) {
                 return 0;
             }
 

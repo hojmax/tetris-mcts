@@ -3,7 +3,7 @@
 //! Locking pieces, clearing lines, and T-spin mechanics.
 
 use crate::constants::T_PIECE;
-use crate::piece::{get_cells_for_shape, Piece, TETROMINOS};
+use crate::piece::{get_cells, Piece};
 use crate::scoring::{
     calculate_attack, combo_attack, determine_clear_type, AttackResult,
     BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,
@@ -68,8 +68,7 @@ impl TetrisEnv {
         if let Some(piece) = self.current_piece.take() {
             let (is_tspin, is_mini) = self.check_tspin(&piece);
 
-            let shape = &TETROMINOS[piece.piece_type][piece.rotation];
-            for (x, y) in get_cells_for_shape(shape, piece.x, piece.y) {
+            for (x, y) in get_cells(piece.piece_type, piece.rotation, piece.x, piece.y) {
                 if y >= 0 && y < self.height as i32 && x >= 0 && x < self.width as i32 {
                     self.board[y as usize][x as usize] = 1;
                     self.board_colors[y as usize][x as usize] = Some(piece.piece_type);

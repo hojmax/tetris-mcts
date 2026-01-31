@@ -2,19 +2,18 @@
 //!
 //! Board state queries and validation.
 
-use crate::piece::{get_cells_for_shape, Piece, TETROMINOS};
+use crate::piece::{get_cells, Piece};
 
 use super::TetrisEnv;
 
 impl TetrisEnv {
     /// Check if a position is valid for a piece
     pub(crate) fn is_valid_position_for(&self, piece: &Piece) -> bool {
-        let shape = &TETROMINOS[piece.piece_type][piece.rotation];
-        self.is_valid_position_for_shape(shape, piece.x, piece.y)
+        self.is_valid_position(piece.piece_type, piece.rotation, piece.x, piece.y)
     }
 
-    pub(crate) fn is_valid_position_for_shape(&self, shape: &[[u8; 4]; 4], x: i32, y: i32) -> bool {
-        for (cx, cy) in get_cells_for_shape(shape, x, y) {
+    pub(crate) fn is_valid_position(&self, piece_type: usize, rotation: usize, x: i32, y: i32) -> bool {
+        for (cx, cy) in get_cells(piece_type, rotation, x, y) {
             if cx < 0 || cx >= self.width as i32 || cy >= self.height as i32 {
                 return false;
             }
