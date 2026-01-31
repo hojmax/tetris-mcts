@@ -113,13 +113,29 @@ def main(args: ScriptArgs) -> None:
             project=args.project,
             name=args.run_name,
             config={
+                # Training
                 "iterations": args.iterations,
                 "games_per_iter": args.games_per_iter,
                 "train_steps_per_iter": args.train_steps_per_iter,
-                "simulations": args.simulations,
                 "batch_size": args.batch_size,
                 "lr": args.lr,
+                "weight_decay": config.weight_decay,
+                # MCTS
+                "simulations": args.simulations,
+                "temperature": args.temperature,
+                "temperature_drop_move": config.temperature_drop_move,
+                "temperature_final": config.temperature_final,
+                "dirichlet_alpha": config.dirichlet_alpha,
+                "dirichlet_epsilon": config.dirichlet_epsilon,
+                # Buffer
                 "buffer_size": args.buffer_size,
+                "min_buffer": args.min_buffer,
+                # Intervals
+                "eval_interval": args.eval_interval,
+                "checkpoint_interval": args.checkpoint_interval,
+                "log_interval": args.log_interval,
+                # Device
+                "device": device,
             },
         )
 
@@ -141,6 +157,13 @@ def main(args: ScriptArgs) -> None:
             metrics = trainer.train_iteration(log_to_wandb=log_to_wandb)
 
             log_data = {"buffer_size": metrics["buffer_size"]}
+            if "selfplay/attack_per_move" in metrics:
+                log_data.update(
+                    selfplay_attack=round(float(metrics["selfplay/avg_attack"]), 2),
+                    selfplay_attack_per_move=round(
+                        float(metrics["selfplay/attack_per_move"]), 4
+                    ),
+                )
             if "avg_loss" in metrics:
                 log_data.update(
                     avg_loss=round(float(metrics["avg_loss"]), 4),

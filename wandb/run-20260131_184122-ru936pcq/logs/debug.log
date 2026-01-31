@@ -19,3 +19,5 @@ config: {'iterations': 10, 'games_per_iter': 50, 'train_steps_per_iter': 500, 's
 2026-01-31 18:41:24,221 INFO    MainThread:70825 [wandb_run.py:_redirect():2438] Wrapping output streams.
 2026-01-31 18:41:24,222 INFO    MainThread:70825 [wandb_run.py:_redirect():2461] Redirects installed.
 2026-01-31 18:41:24,231 INFO    MainThread:70825 [wandb_init.py:init():1081] run started, returning control to user process
+2026-01-31 18:51:28,540 INFO    wandb-AsyncioManager-main:70825 [service_client.py:_forward_responses():80] Reached EOF.
+2026-01-31 18:51:28,540 INFO    wandb-AsyncioManager-main:70825 [mailbox.py:close():137] Closing mailbox, abandoning 1 handles.

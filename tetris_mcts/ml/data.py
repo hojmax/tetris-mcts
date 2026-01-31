@@ -17,10 +17,7 @@ from typing import Optional
 import os
 import time
 from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
-
-from .network import (
+from tetris_mcts.ml.network import (
     NUM_ACTIONS,
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -30,6 +27,9 @@ from .network import (
     encode_state,
     MAX_MOVES,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

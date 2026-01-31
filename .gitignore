@@ -4,3 +4,4 @@ tetris_core/target/
 *.egg-info/
 __pycache__/
 checkpoints
+wandb/

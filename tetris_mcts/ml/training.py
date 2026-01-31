@@ -173,9 +173,13 @@ def compute_metrics(
         masked_logits = apply_action_mask(policy_logits, action_masks)
         policy_probs = F.softmax(masked_logits, dim=-1)
 
-        # Policy entropy
+        # Policy entropy (only over valid actions to avoid 0 * -inf = NaN)
         log_probs = F.log_softmax(masked_logits, dim=-1)
-        entropy = -torch.sum(policy_probs * log_probs, dim=-1).mean()
+        # Replace -inf with 0 so that 0 * 0 = 0 instead of 0 * -inf = NaN
+        log_probs_safe = torch.where(
+            action_masks == 1, log_probs, torch.zeros_like(log_probs)
+        )
+        entropy = -torch.sum(policy_probs * log_probs_safe, dim=-1).mean()
 
         # Value prediction error
         value_error = torch.abs(value_pred.squeeze(-1) - value_targets).mean()
@@ -296,8 +300,12 @@ class Trainer:
 
         return metrics
 
-    def generate_data(self, num_games: int) -> list[TrainingExample]:
-        """Generate self-play data using MCTS."""
+    def generate_data(self, num_games: int) -> tuple[list[TrainingExample], dict]:
+        """Generate self-play data using MCTS.
+
+        Returns:
+            Tuple of (examples, stats) where stats contains game statistics.
+        """
         print(f"Generating {num_games} games...")
 
         # Export current model to ONNX for Rust inference
@@ -321,21 +329,40 @@ class Trainer:
 
         start_time = time.time()
 
-        # Generate games in Rust
-        rust_examples = agent.generate_games(
-            num_games=num_games,
-            max_moves=MAX_MOVES,
-            add_noise=True,
-        )
+        # Generate games individually to collect stats
+        examples = []
+        total_attack = 0
+        total_moves = 0
 
-        # Convert Rust examples to Python TrainingExample objects
-        examples = [self._rust_example_to_training_example(ex) for ex in rust_examples]
+        for _ in range(num_games):
+            result = agent.play_game(max_moves=MAX_MOVES, add_noise=True)
+            if result is not None:
+                for ex in result.examples:
+                    examples.append(self._rust_example_to_training_example(ex))
+                total_attack += result.total_attack
+                total_moves += result.num_moves
 
         elapsed = time.time() - start_time
-        print(f"Generated {len(examples)} examples from {num_games} games")
-        print(f"Time: {elapsed:.1f}s ({num_games / max(0.1, elapsed):.2f} games/sec)")
 
-        return examples
+        # Compute statistics
+        avg_attack = total_attack / num_games if num_games > 0 else 0
+        avg_moves = total_moves / num_games if num_games > 0 else 0
+        attack_per_move = total_attack / total_moves if total_moves > 0 else 0
+
+        stats = {
+            "selfplay/total_attack": total_attack,
+            "selfplay/total_moves": total_moves,
+            "selfplay/avg_attack": avg_attack,
+            "selfplay/avg_moves": avg_moves,
+            "selfplay/attack_per_move": attack_per_move,
+            "selfplay/games_per_sec": num_games / max(0.1, elapsed),
+        }
+
+        print(f"Generated {len(examples)} examples from {num_games} games")
+        print(f"Time: {elapsed:.1f}s ({stats['selfplay/games_per_sec']:.2f} games/sec)")
+        print(f"Avg attack: {avg_attack:.2f}, Attack/move: {attack_per_move:.4f}")
+
+        return examples, stats
 
     def _rust_example_to_training_example(self, rust_ex) -> TrainingExample:
         """Convert Rust TrainingExample to Python TrainingExample."""
@@ -347,7 +374,9 @@ class Trainer:
         return TrainingExample(
             board=board.astype(bool),
             current_piece=rust_ex.current_piece,
-            hold_piece=rust_ex.hold_piece if rust_ex.hold_piece < NUM_PIECE_TYPES else None,
+            hold_piece=rust_ex.hold_piece
+            if rust_ex.hold_piece < NUM_PIECE_TYPES
+            else None,
             hold_available=rust_ex.hold_available,
             next_queue=list(rust_ex.next_queue),
             move_number=rust_ex.move_number,
@@ -394,13 +423,21 @@ class Trainer:
 
         # Generate self-play data
         start_time = time.time()
-        examples = self.generate_data(self.config.num_games_per_iteration)
+        examples, selfplay_stats = self.generate_data(
+            self.config.num_games_per_iteration
+        )
         self.buffer.add_batch(examples)
         data_time = time.time() - start_time
 
         iteration_metrics["data_generation_time"] = data_time
         iteration_metrics["buffer_size"] = len(self.buffer)
         iteration_metrics["new_examples"] = len(examples)
+        iteration_metrics.update(selfplay_stats)
+
+        # Log selfplay stats to wandb
+        if log_to_wandb:
+            selfplay_stats["buffer_size"] = len(self.buffer)
+            wandb.log(selfplay_stats, step=self.step)
 
         # Training steps
         if len(self.buffer) >= self.config.min_buffer_size:

@@ -38,3 +38,41 @@ Evaluation (20 games):
 2026-01-31 18:46:43 [info     ] Starting iteration             iteration=6 total=10
 Generating 50 games...
 Applied 2 of general pattern rewrite rules.
+Generated 1080 examples from 50 games
+Time: 47.4s (1.05 games/sec)
+2026-01-31 18:47:36 [info     ] Iteration complete             avg_loss=2.6625 avg_policy_loss=2.6623 avg_value_loss=0.0002 buffer_size=6308
+2026-01-31 18:47:36 [info     ] Starting iteration             iteration=7 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1095 examples from 50 games
+Time: 48.0s (1.04 games/sec)
+2026-01-31 18:48:30 [info     ] Iteration complete             avg_loss=2.669 avg_policy_loss=2.6687 avg_value_loss=0.0003 buffer_size=7403
+2026-01-31 18:48:30 [info     ] Starting iteration             iteration=8 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1071 examples from 50 games
+Time: 46.7s (1.07 games/sec)
+2026-01-31 18:49:22 [info     ] Iteration complete             avg_loss=2.6824 avg_policy_loss=2.6821 avg_value_loss=0.0002 buffer_size=8474
+2026-01-31 18:49:22 [info     ] Starting iteration             iteration=9 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1106 examples from 50 games
+Time: 48.5s (1.03 games/sec)
+2026-01-31 18:50:16 [info     ] Iteration complete             avg_loss=2.6853 avg_policy_loss=2.6851 avg_value_loss=0.0002 buffer_size=9580
+2026-01-31 18:50:16 [info     ] Starting iteration             iteration=10 total=10
+Generating 50 games...
+Applied 2 of general pattern rewrite rules.
+Generated 1047 examples from 50 games
+Time: 46.3s (1.08 games/sec)
+Applied 2 of general pattern rewrite rules.
+Evaluation (20 games):
+  Avg attack: 0.0
+  Max attack: 0
+  Avg moves: 21.7
+  Attack/piece: 0.000
+Applied 2 of general pattern rewrite rules.
+Saved checkpoint at step 5000
+2026-01-31 18:51:28 [info     ] Iteration complete             avg_loss=2.6927 avg_policy_loss=2.6925 avg_value_loss=0.0001 buffer_size=10627 eval_avg_attack=0.0 eval_avg_moves=21.7
+Applied 2 of general pattern rewrite rules.
+Saved checkpoint at step 5000
+2026-01-31 18:51:28 [info     ] Training complete

@@ -6,3 +6,8 @@
 {"time":"2026-01-31T18:41:23.624073+01:00","level":"INFO","msg":"sender: started","stream_id":"ru936pcq"}
 {"time":"2026-01-31T18:42:54.240269+01:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/apolloevals/tetris-alphazero/ru936pcq/file_stream\": dial tcp 35.186.228.49:443: connect: operation timed out"}
 {"time":"2026-01-31T18:44:11.760247+01:00","level":"INFO","msg":"api: retrying error","error":"Post \"https://api.wandb.ai/files/apolloevals/tetris-alphazero/ru936pcq/file_stream\": dial tcp 35.186.228.49:443: connect: operation timed out"}
+{"time":"2026-01-31T18:51:28.540046+01:00","level":"INFO","msg":"stream: closing","id":"ru936pcq"}
+{"time":"2026-01-31T18:52:46.227333+01:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2026-01-31T18:53:16.994939+01:00","level":"INFO","msg":"handler: closed","stream_id":"ru936pcq"}
+{"time":"2026-01-31T18:53:16.995192+01:00","level":"INFO","msg":"sender: closed","stream_id":"ru936pcq"}
+{"time":"2026-01-31T18:53:16.995224+01:00","level":"INFO","msg":"stream: closed","id":"ru936pcq"}

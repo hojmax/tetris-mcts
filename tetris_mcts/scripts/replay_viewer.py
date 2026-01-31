@@ -127,7 +127,11 @@ class ReplayViewer:
             placements = env.get_all_placements()
             placement = None
             for p in placements:
-                if p.piece.x == move.x and p.piece.y == move.y and p.piece.rotation == move.rotation:
+                if (
+                    p.piece.x == move.x
+                    and p.piece.y == move.y
+                    and p.piece.rotation == move.rotation
+                ):
                     placement = p
                     break
 
@@ -324,7 +328,9 @@ class ReplayViewer:
         replay = self.current_replay
 
         # Game info
-        game_text = f"Game {self.game_index + 1}/{len(self.replays)} (seed: {replay.seed})"
+        game_text = (
+            f"Game {self.game_index + 1}/{len(self.replays)} (seed: {replay.seed})"
+        )
         game_surface = self.font.render(game_text, True, WHITE)
         self.screen.blit(game_surface, (10, 10))
 
