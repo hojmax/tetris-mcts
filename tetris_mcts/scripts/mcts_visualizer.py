@@ -363,6 +363,7 @@ def build_cytoscape_elements(tree, max_nodes: int = 500, show_unvisited: bool = 
                     "is_terminal": node.is_terminal,
                     "move_number": node.move_number,
                     "edge_from_parent": node.edge_from_parent,
+                    "parent_id": node.parent_id,
                 },
                 "classes": node_class,
             }
@@ -580,6 +581,14 @@ stylesheet = [
         "style": {
             "opacity": 0.4,
             "line-style": "dashed",
+        },
+    },
+    # Highlighted node (keyboard navigation) - just adds border, keeps other styles
+    {
+        "selector": ".highlighted",
+        "style": {
+            "border-width": 3,
+            "border-color": "#ffff00",
         },
     },
 ]
@@ -911,11 +920,32 @@ def run_mcts(
     Output("board-image", "src"),
     Output("state-info", "children"),
     Input("cytoscape-tree", "tapNodeData"),
+    Input("selected-node-store", "data"),
     State("tree-store", "data"),
+    State("cytoscape-tree", "elements"),
 )
-def display_node_details(node_data, tree_dict):
-    """Display details for clicked node."""
-    if node_data is None or tree_dict is None:
+def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
+    """Display details for clicked node or keyboard-navigated node."""
+    if tree_dict is None:
+        return "Click a node to see details", "", ""
+
+    # Determine which input triggered the callback
+    ctx = dash.callback_context
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+
+    # Get node data based on trigger source
+    if triggered_id == "selected-node-store" and selected_node_id:
+        # Keyboard navigation - find node data from elements
+        node_data = None
+        for elem in elements:
+            if "data" in elem and str(elem["data"].get("id", "")) == selected_node_id:
+                node_data = elem["data"]
+                break
+        if node_data is None:
+            return "Node not found", "", ""
+    elif tap_node_data is not None:
+        node_data = tap_node_data
+    else:
         return "Click a node to see details", "", ""
 
     c_puct = tree_dict.get("c_puct", 1.0)
@@ -1187,6 +1217,184 @@ def display_node_details(node_data, tree_dict):
     ]
 
     return details, f"data:image/png;base64,{img_b64}", state_info
+
+
+# Clientside callback to capture keyboard events
+clientside_callback(
+    """
+    function(n) {
+        // Set up keyboard listener on first call
+        if (!window._keyboardListenerSet) {
+            window._keyboardListenerSet = true;
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    window._lastKeyEvent = {key: e.key, timestamp: Date.now()};
+                    // Trigger a dummy update by dispatching a custom event
+                    document.getElementById('keyboard-target').click();
+                }
+            });
+        }
+        return window._lastKeyEvent || {key: '', timestamp: 0};
+    }
+    """,
+    Output("keyboard-event", "data"),
+    Input("keyboard-target", "n_clicks"),
+)
+
+
+@callback(
+    Output("selected-node-store", "data"),
+    Output("siblings-store", "data"),
+    Input("cytoscape-tree", "tapNodeData"),
+    State("tree-store", "data"),
+    State("cytoscape-tree", "elements"),
+)
+def update_selection_info(node_data, tree_dict, elements):
+    """Track selected node and its siblings for keyboard navigation."""
+    if node_data is None or tree_dict is None:
+        return None, []
+
+    node_id = str(node_data["id"])
+
+    # Find parent_id from node_data or tree_dict
+    parent_id = node_data.get("parent_id")
+    if parent_id is None and node_id.isdigit():
+        nid = int(node_id)
+        if nid < len(tree_dict["nodes"]):
+            parent_id = tree_dict["nodes"][nid].get("parent_id")
+
+    siblings = []
+
+    if parent_id is not None:
+        # Find all siblings from elements (includes both visited and virtual nodes)
+        for elem in elements:
+            if "data" not in elem:
+                continue
+            elem_id = str(elem["data"].get("id", ""))
+            elem_parent = elem["data"].get("parent_id")
+            # Check if this is a sibling (same parent, is a node not an edge)
+            if elem_parent == parent_id and "source" not in elem["data"]:
+                siblings.append(elem_id)
+
+    # Sort siblings by edge_from_parent for consistent ordering
+    def get_edge(sid):
+        # Check elements for edge info
+        for elem in elements:
+            if "data" in elem and str(elem["data"].get("id", "")) == sid:
+                edge = elem["data"].get("edge_from_parent")
+                if edge is not None:
+                    return edge
+        if sid.startswith("v_"):
+            return int(sid.split("_")[2])
+        elif sid.startswith("vp_"):
+            return int(sid.split("_")[2])
+        return 0
+
+    siblings.sort(key=get_edge)
+
+    return node_id, siblings
+
+
+@callback(
+    Output("selected-node-store", "data", allow_duplicate=True),
+    Input("keyboard-event", "data"),
+    State("selected-node-store", "data"),
+    State("siblings-store", "data"),
+    State("cytoscape-tree", "elements"),
+    State("tree-store", "data"),
+    prevent_initial_call=True,
+)
+def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_dict):
+    """Navigate to sibling node on left/right arrow key."""
+    if not keyboard_event or not keyboard_event.get("key"):
+        return dash.no_update
+
+    if selected_node is None:
+        return dash.no_update
+
+    key = keyboard_event["key"]
+    if key not in ("ArrowLeft", "ArrowRight"):
+        return dash.no_update
+
+    # Build full siblings list including virtual nodes from elements
+    all_siblings = list(siblings) if siblings else []
+
+    # Extract parent_id from current selection
+    parent_id = None
+    if selected_node.startswith("v_"):
+        parent_id = int(selected_node.split("_")[1])
+    elif selected_node.startswith("vp_"):
+        parent_id = int(selected_node.split("_")[1])
+    elif tree_dict and selected_node.isdigit():
+        nid = int(selected_node)
+        if nid < len(tree_dict["nodes"]):
+            parent_id = tree_dict["nodes"][nid].get("parent_id")
+
+    # Add virtual siblings from elements
+    if parent_id is not None:
+        for elem in elements:
+            if "data" not in elem:
+                continue
+            elem_id = str(elem["data"].get("id", ""))
+            elem_parent = elem["data"].get("parent_id")
+            if elem_parent == parent_id and elem_id not in all_siblings:
+                all_siblings.append(elem_id)
+
+    if not all_siblings:
+        return dash.no_update
+
+    # Sort by edge_from_parent
+    def get_edge(sid):
+        # Check elements for edge info
+        for elem in elements:
+            if "data" in elem and str(elem["data"].get("id", "")) == sid:
+                edge = elem["data"].get("edge_from_parent")
+                if edge is not None:
+                    return edge
+        if sid.startswith("v_"):
+            return int(sid.split("_")[2])
+        elif sid.startswith("vp_"):
+            return int(sid.split("_")[2])
+        return 0
+
+    all_siblings.sort(key=get_edge)
+
+    if selected_node not in all_siblings:
+        return dash.no_update
+
+    current_idx = all_siblings.index(selected_node)
+
+    if key == "ArrowLeft":
+        new_idx = (current_idx - 1) % len(all_siblings)
+    else:  # ArrowRight
+        new_idx = (current_idx + 1) % len(all_siblings)
+
+    return all_siblings[new_idx]
+
+
+@callback(
+    Output("cytoscape-tree", "stylesheet"),
+    Input("selected-node-store", "data"),
+    Input("cytoscape-tree", "tapNodeData"),
+)
+def update_highlight_stylesheet(selected_node_id, tap_node_data):
+    """Update stylesheet to highlight the selected node."""
+    # Start with base stylesheet
+    styles = list(stylesheet)  # Copy the base stylesheet
+
+    # Add highlight rule for selected node
+    if selected_node_id:
+        styles.append(
+            {
+                "selector": f'node[id = "{selected_node_id}"]',
+                "style": {
+                    "border-width": 3,
+                    "border-color": "#ffff00",
+                },
+            }
+        )
+
+    return styles
 
 
 # Load dagre layout extension
