@@ -710,6 +710,7 @@ class Trainer:
             config=mcts_config,
             max_moves=MAX_MOVES,
             add_noise=True,
+            max_examples=self.config.buffer_size,
         )
         generator.start()
         print("Started background game generator")
@@ -717,7 +718,7 @@ class Trainer:
         print(f"  Output dir: {games_dir}")
 
         # Create shared replay buffer
-        shared_buffer = SharedReplayBuffer(games_dir, max_files=100)
+        shared_buffer = SharedReplayBuffer(games_dir)
 
         # Wait for minimum buffer size
         print(f"Waiting for {self.config.min_buffer_size} examples...")

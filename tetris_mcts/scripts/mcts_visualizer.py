@@ -155,6 +155,28 @@ def build_cytoscape_elements(tree, max_nodes: int = 500):
 
 # Create Dash app
 app = dash.Dash(__name__)
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
 
 # Cytoscape stylesheet
 stylesheet = [
@@ -216,71 +238,68 @@ stylesheet = [
 
 app.layout = html.Div(
     [
-        html.H1("MCTS Tree Visualizer", style={"textAlign": "center"}),
+        # Compact controls bar
         html.Div(
             [
-                # Controls
-                html.Div(
-                    [
-                        html.Label("Model Path:"),
-                        dcc.Input(
-                            id="model-path",
-                            type="text",
-                            placeholder="Path to ONNX model",
-                            value="tetris_mcts/checkpoints/selfplay.onnx",
-                            style={"width": "300px", "marginRight": "10px"},
-                        ),
-                        html.Label("Simulations:"),
-                        dcc.Input(
-                            id="num-simulations",
-                            type="number",
-                            value=100,
-                            min=1,
-                            max=1000,
-                            style={"width": "80px", "marginRight": "10px"},
-                        ),
-                        html.Label("Seed:"),
-                        dcc.Input(
-                            id="seed",
-                            type="number",
-                            value=42,
-                            style={"width": "80px", "marginRight": "10px"},
-                        ),
-                        html.Button("Run MCTS", id="run-button", n_clicks=0),
-                        html.Button(
-                            "Step (+1 sim)",
-                            id="step-button",
-                            n_clicks=0,
-                            style={"marginLeft": "10px"},
-                        ),
-                        html.Span(
-                            id="sim-counter",
-                            children="Simulations: 0",
-                            style={"marginLeft": "20px", "fontWeight": "bold"},
-                        ),
-                    ],
-                    style={"marginBottom": "10px"},
+                html.Label("Model:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="model-path",
+                    type="text",
+                    placeholder="Path to ONNX model",
+                    value="outputs/checkpoints/parallel.onnx",
+                    style={"width": "250px", "marginRight": "15px"},
                 ),
-                html.Div(
-                    [
-                        html.Label("Max Nodes to Display:"),
-                        dcc.Slider(
-                            id="max-nodes-slider",
-                            min=50,
-                            max=1000,
-                            step=50,
-                            value=200,
-                            marks={i: str(i) for i in range(50, 1001, 200)},
-                        ),
-                    ],
-                    style={"width": "400px", "marginBottom": "10px"},
+                html.Label("Sims:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="num-simulations",
+                    type="number",
+                    value=100,
+                    min=1,
+                    max=1000,
+                    style={"width": "60px", "marginRight": "15px"},
+                ),
+                html.Label("Seed:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="seed",
+                    type="number",
+                    value=42,
+                    style={"width": "60px", "marginRight": "15px"},
+                ),
+                html.Label("Max Nodes:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="max-nodes-slider",
+                    type="number",
+                    value=200,
+                    min=50,
+                    max=1000,
+                    step=50,
+                    style={"width": "60px", "marginRight": "15px"},
+                ),
+                html.Button("Run MCTS", id="run-button", n_clicks=0),
+                html.Button(
+                    "Step (+1)",
+                    id="step-button",
+                    n_clicks=0,
+                    style={"marginLeft": "10px"},
+                ),
+                html.Span(
+                    id="sim-counter",
+                    children="Sims: 0",
+                    style={"marginLeft": "15px", "fontWeight": "bold"},
                 ),
             ],
-            style={"padding": "10px", "backgroundColor": "#f0f0f0"},
+            style={
+                "padding": "5px 10px",
+                "backgroundColor": "#f0f0f0",
+                "display": "flex",
+                "alignItems": "center",
+                "flexWrap": "wrap",
+                "gap": "5px",
+            },
         ),
         html.Div(
             [
-                # Tree visualization (left 2/3)
+                # Tree visualization (left)
                 html.Div(
                     [
                         cyto.Cytoscape(
@@ -288,9 +307,7 @@ app.layout = html.Div(
                             elements=[],
                             style={
                                 "width": "100%",
-                                "height": "calc(100vh - 180px)",
-                                "minHeight": "500px",
-                                "border": "1px solid #ccc",
+                                "height": "calc(100vh - 36px)",
                             },
                             layout={
                                 "name": "dagre",
@@ -302,28 +319,53 @@ app.layout = html.Div(
                             pan={"x": 0, "y": 0},
                         ),
                     ],
-                    style={"flex": "2", "minWidth": "0"},
+                    style={"flex": "1", "minWidth": "0"},
                 ),
-                # Node details panel (right 1/3)
+                # Right panel: Board + State info (top) and Node details (bottom)
                 html.Div(
                     [
-                        html.H3("Board State", style={"marginTop": 0}),
-                        html.Img(id="board-image", style={"border": "1px solid #ccc"}),
-                        html.Div(id="state-info"),
-                        html.Hr(),
-                        html.H3("Node Details"),
+                        # Top row: Board image + State info side by side
                         html.Div(
-                            id="node-details", children="Click a node to see details"
+                            [
+                                html.Div(
+                                    [
+                                        html.Img(
+                                            id="board-image",
+                                            style={"border": "1px solid #ccc"},
+                                        ),
+                                    ],
+                                    style={"marginRight": "15px"},
+                                ),
+                                html.Div(
+                                    id="state-info",
+                                    style={"fontSize": "13px"},
+                                ),
+                            ],
+                            style={
+                                "display": "flex",
+                                "flexDirection": "row",
+                                "alignItems": "flex-start",
+                                "marginBottom": "10px",
+                                "paddingBottom": "10px",
+                                "borderBottom": "1px solid #ddd",
+                            },
+                        ),
+                        # Node details below
+                        html.Div(
+                            id="node-details",
+                            children="Click a node to see details",
+                            style={"overflowY": "auto", "flex": "1", "minHeight": "0"},
                         ),
                     ],
                     style={
-                        "flex": "1",
+                        "width": "480px",
                         "padding": "10px",
                         "backgroundColor": "#f8f8f8",
-                        "marginLeft": "10px",
-                        "overflowY": "auto",
-                        "height": "calc(100vh - 180px)",
-                        "minHeight": "500px",
+                        "marginLeft": "5px",
+                        "height": "calc(100vh - 36px)",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "overflow": "hidden",
                     },
                 ),
             ],
@@ -332,9 +374,9 @@ app.layout = html.Div(
         # Hidden storage for tree data
         dcc.Store(id="tree-store"),
         dcc.Store(id="env-store"),
-        dcc.Store(id="sims-done-store", data=0),  # Track simulations done for stepping
+        dcc.Store(id="sims-done-store", data=0),
     ],
-    style={"fontFamily": "Arial, sans-serif", "padding": "20px"},
+    style={"fontFamily": "Arial, sans-serif", "padding": "0", "margin": "0", "overflow": "hidden", "height": "100vh"},
 )
 
 
@@ -453,12 +495,15 @@ def run_mcts(
                 "mean_value": n.mean_value,
                 "value_sum": n.value_sum,
                 "nn_value": n.nn_value,  # Now stored in Rust tree export
+                "prior": n.prior,
                 "attack": n.attack,
                 "is_terminal": n.is_terminal,
                 "move_number": n.move_number,
                 "valid_actions": list(n.valid_actions),
                 "action_priors": list(n.action_priors),
                 "children": list(n.children),
+                "parent_id": n.parent_id,
+                "edge_from_parent": n.edge_from_parent,
                 "board": list(n.state.get_board()),
                 "board_colors": list(n.state.get_board_colors()),
                 "current_piece": n.state.get_current_piece().piece_type
@@ -474,6 +519,7 @@ def run_mcts(
         "root_id": tree.root_id,
         "selected_action": tree.selected_action,
         "num_simulations": tree.num_simulations,
+        "c_puct": config.c_puct,
     }
 
     return (
@@ -481,7 +527,7 @@ def run_mcts(
         {"seed": seed},
         sims_to_run,
         elements,
-        f"Simulations: {sims_to_run}/{max_sims}",
+        f"Sims: {sims_to_run}/{max_sims}",
     )
 
 
@@ -502,12 +548,14 @@ def display_node_details(node_data, tree_dict):
         return "Node not found", "", ""
 
     node = tree_dict["nodes"][node_id]
+    c_puct = tree_dict.get("c_puct", 1.0)
 
     # Format details
     details = [
+        html.H4("Node Info", style={"marginTop": 0, "marginBottom": "10px"}),
         html.P(f"Node ID: {node['id']}"),
         html.P(f"Type: {node['node_type']}"),
-        html.P(f"Visit Count: {node['visit_count']}"),
+        html.P(f"Visit Count (N): {node['visit_count']}"),
         html.P(
             f"NN Value: {node['nn_value']:.3f}",
             style={"fontWeight": "bold", "color": "#0066cc"},
@@ -524,15 +572,178 @@ def display_node_details(node_data, tree_dict):
                 html.P(f"Valid Actions: {len(node['valid_actions'])}"),
             ]
         )
-        if node["action_priors"]:
+
+        # Compute PUCT breakdown for each child action
+        if node["children"] and node["visit_count"] > 0:
+            details.append(html.Hr())
+            details.append(
+                html.H4("Child Actions (PUCT Breakdown)", style={"marginBottom": "10px"})
+            )
+            details.append(
+                html.P(
+                    f"PUCT = Q + U, where U = c_puct * P * sqrt(N_parent) / (1 + N_child)",
+                    style={"fontSize": "11px", "color": "#666", "marginBottom": "10px"},
+                )
+            )
+
+            # Build action->prior mapping
+            action_to_prior = dict(zip(node["valid_actions"], node["action_priors"]))
+
+            # Gather child info with PUCT terms
+            child_info = []
+            sqrt_parent = node["visit_count"] ** 0.5
+
+            for child_id in node["children"]:
+                child = tree_dict["nodes"][child_id]
+                action_idx = child.get("edge_from_parent")
+                if action_idx is None:
+                    continue
+
+                prior = action_to_prior.get(action_idx, 0.0)
+                n_child = child["visit_count"]
+                q_value = child["mean_value"]
+
+                # Exploration term: U = c_puct * P * sqrt(N_parent) / (1 + N_child)
+                u_value = c_puct * prior * sqrt_parent / (1 + n_child)
+                puct_total = q_value + u_value
+
+                child_info.append(
+                    {
+                        "action": action_idx,
+                        "prior": prior,
+                        "visits": n_child,
+                        "q": q_value,
+                        "u": u_value,
+                        "puct": puct_total,
+                        "attack": child.get("attack", 0),
+                    }
+                )
+
+            # Sort by PUCT score descending
+            child_info.sort(key=lambda x: x["puct"], reverse=True)
+
+            # Display as a table
+            table_header = html.Tr(
+                [
+                    html.Th("Action", style={"padding": "4px", "textAlign": "left"}),
+                    html.Th("N", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("P", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("Q", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("U", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("PUCT", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("Atk", style={"padding": "4px", "textAlign": "right"}),
+                ]
+            )
+
+            table_rows = [table_header]
+            for i, info in enumerate(child_info[:15]):  # Show top 15
+                is_best = i == 0
+                row_style = (
+                    {"backgroundColor": "#e6ffe6"} if is_best else {}
+                )
+                table_rows.append(
+                    html.Tr(
+                        [
+                            html.Td(
+                                f"a{info['action']}",
+                                style={"padding": "4px", "fontWeight": "bold" if is_best else "normal"},
+                            ),
+                            html.Td(
+                                str(info["visits"]),
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                            html.Td(
+                                f"{info['prior']:.3f}",
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                            html.Td(
+                                f"{info['q']:.2f}",
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                            html.Td(
+                                f"{info['u']:.2f}",
+                                style={"padding": "4px", "textAlign": "right", "color": "#0066cc"},
+                            ),
+                            html.Td(
+                                f"{info['puct']:.2f}",
+                                style={
+                                    "padding": "4px",
+                                    "textAlign": "right",
+                                    "fontWeight": "bold",
+                                },
+                            ),
+                            html.Td(
+                                str(info["attack"]),
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                        ],
+                        style=row_style,
+                    )
+                )
+
+            details.append(
+                html.Table(
+                    table_rows,
+                    style={
+                        "width": "100%",
+                        "borderCollapse": "collapse",
+                        "fontSize": "12px",
+                    },
+                )
+            )
+
+            if len(child_info) > 15:
+                details.append(
+                    html.P(
+                        f"... and {len(child_info) - 15} more children",
+                        style={"fontSize": "11px", "color": "#666"},
+                    )
+                )
+
+        elif node["action_priors"]:
+            # No children yet, show top priors
+            details.append(html.Hr())
+            details.append(html.H4("Top Priors (no children yet)"))
             top_priors = sorted(
                 zip(node["valid_actions"], node["action_priors"]),
                 key=lambda x: x[1],
                 reverse=True,
             )[:5]
-            details.append(html.P(f"Top priors: {top_priors}"))
+            for action, prior in top_priors:
+                details.append(html.P(f"  a{action}: P={prior:.4f}"))
     else:
+        # Chance node
         details.append(html.P(f"Attack: {node['attack']}"))
+
+        # Show parent info if available
+        parent_id = node.get("parent_id")
+        if parent_id is not None:
+            parent = tree_dict["nodes"][parent_id]
+            edge = node.get("edge_from_parent")
+            if edge is not None and parent["action_priors"]:
+                action_to_prior = dict(
+                    zip(parent["valid_actions"], parent["action_priors"])
+                )
+                prior = action_to_prior.get(edge, 0.0)
+                details.append(html.Hr())
+                details.append(html.H4("Selection Info"))
+                details.append(html.P(f"Prior (P): {prior:.4f}"))
+                details.append(html.P(f"Parent visits: {parent['visit_count']}"))
+                if parent["visit_count"] > 0:
+                    sqrt_parent = parent["visit_count"] ** 0.5
+                    u_value = c_puct * prior * sqrt_parent / (1 + node["visit_count"])
+                    details.append(
+                        html.P(
+                            f"Exploration (U): {u_value:.3f}",
+                            style={"color": "#0066cc"},
+                        )
+                    )
+                    details.append(
+                        html.P(
+                            f"PUCT Total: {node['mean_value'] + u_value:.3f}",
+                            style={"fontWeight": "bold"},
+                        )
+                    )
 
     # Render board
     board = node["board"]

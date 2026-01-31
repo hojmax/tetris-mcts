@@ -20,6 +20,9 @@ use super::npz::write_examples_to_npz;
 ///
 /// Spawns a worker thread that continuously generates games using MCTS
 /// and writes training data to disk in NPZ format.
+/// Number of games to batch before writing to disk
+const GAMES_PER_FLUSH: usize = 50;
+
 #[pyclass]
 pub struct GameGenerator {
     /// Path to ONNX model file (watched for updates)
@@ -32,6 +35,8 @@ pub struct GameGenerator {
     max_moves: u32,
     /// Whether to add Dirichlet noise
     add_noise: bool,
+    /// Maximum training examples to keep (FIFO eviction)
+    max_examples: usize,
     /// Whether the generator is running
     running: Arc<AtomicBool>,
     /// Number of games generated since start
@@ -45,13 +50,14 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, output_dir, config=None, max_moves=100, add_noise=true))]
+    #[pyo3(signature = (model_path, output_dir, config=None, max_moves=100, add_noise=true, max_examples=100_000))]
     pub fn new(
         model_path: String,
         output_dir: String,
         config: Option<MCTSConfig>,
         max_moves: u32,
         add_noise: bool,
+        max_examples: usize,
     ) -> Self {
         GameGenerator {
             model_path: PathBuf::from(model_path),
@@ -59,6 +65,7 @@ impl GameGenerator {
             config: config.unwrap_or_default(),
             max_moves,
             add_noise,
+            max_examples,
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
             examples_generated: Arc::new(AtomicU64::new(0)),
@@ -95,6 +102,7 @@ impl GameGenerator {
         let config = self.config.clone();
         let max_moves = self.max_moves;
         let add_noise = self.add_noise;
+        let max_examples = self.max_examples;
         let running = Arc::clone(&self.running);
         let games_generated = Arc::clone(&self.games_generated);
         let examples_generated = Arc::clone(&self.examples_generated);
@@ -107,6 +115,7 @@ impl GameGenerator {
                 config,
                 max_moves,
                 add_noise,
+                max_examples,
                 running,
                 games_generated,
                 examples_generated,
@@ -171,6 +180,7 @@ impl GameGenerator {
         config: MCTSConfig,
         max_moves: u32,
         add_noise: bool,
+        max_examples: usize,
         running: Arc<AtomicBool>,
         games_generated: Arc<AtomicU64>,
         examples_generated: Arc<AtomicU64>,
@@ -190,6 +200,11 @@ impl GameGenerator {
             thread::sleep(Duration::from_millis(500));
         }
 
+        // All examples accumulate here, written to single file periodically
+        let mut all_examples: Vec<crate::mcts::TrainingExample> = Vec::new();
+        let mut games_since_flush = 0;
+        let data_file = output_dir.join("training_data.npz");
+
         // Main generation loop
         while running.load(Ordering::SeqCst) {
             // Check for model updates
@@ -206,22 +221,34 @@ impl GameGenerator {
             if let Some(result) = agent.play_game(max_moves, add_noise) {
                 let num_examples = result.examples.len() as u64;
 
-                // Write to disk
-                let timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
-                let filepath = output_dir.join(format!("game_{}.npz", timestamp));
+                // Add to buffer
+                all_examples.extend(result.examples);
 
-                if let Err(e) = write_examples_to_npz(&filepath, &result.examples) {
-                    eprintln!("[GameGenerator] Failed to write NPZ: {}", e);
-                    continue;
+                // FIFO eviction: drop oldest examples if over limit
+                if all_examples.len() > max_examples {
+                    let excess = all_examples.len() - max_examples;
+                    all_examples.drain(..excess);
                 }
+
+                games_since_flush += 1;
 
                 // Update counters
                 games_generated.fetch_add(1, Ordering::SeqCst);
                 examples_generated.fetch_add(num_examples, Ordering::SeqCst);
+
+                // Flush to single file periodically
+                if games_since_flush >= GAMES_PER_FLUSH {
+                    if let Err(e) = write_examples_to_npz(&data_file, &all_examples) {
+                        eprintln!("[GameGenerator] Failed to write NPZ: {}", e);
+                    }
+                    games_since_flush = 0;
+                }
             }
+        }
+
+        // Final flush
+        if !all_examples.is_empty() {
+            let _ = write_examples_to_npz(&data_file, &all_examples);
         }
 
         eprintln!("[GameGenerator] Worker thread exiting");

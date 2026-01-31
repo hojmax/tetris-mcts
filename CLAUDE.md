@@ -197,5 +197,12 @@ Tests are in:
 ### Training a model
 
 1. `python tetris_mcts/scripts/train.py --iterations N`
-2. Checkpoints saved to `checkpoints/`
-3. ONNX exported as `latest.onnx` for Rust inference
+2. Checkpoints saved to `outputs/checkpoints/`
+3. ONNX exported as `parallel.onnx` for Rust inference
+
+## Coding Rules
+
+- **No fallbacks or backwards compatibility**: When changing file formats, APIs, or data structures, update all code to use the new approach. Don't add fallback code to support old formats.
+- **Clean up old code**: When replacing functionality, delete the old implementation entirely. No legacy code paths, deprecated functions, or "just in case" fallbacks.
+- **Delete unused code**: If something is no longer used, remove it completely. Don't comment it out, don't add `# removed` markers, don't keep it around.
+- **Single approach**: Pick one way to do something and use it consistently. Don't support multiple approaches simultaneously.

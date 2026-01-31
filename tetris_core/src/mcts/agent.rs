@@ -345,17 +345,17 @@ impl MCTSAgent {
 
             // Check if child exists
             if !node.children.contains_key(&action_idx) {
-                // Expansion: create new child
-                let child = self.expand_action(node, action_idx);
+                // Expansion: create new child (NN evaluation happens inside expand_action)
+                let child = self.expand_action(node, action_idx, root_move_number + depth + 1);
                 node.children.insert(action_idx, child);
 
-                // Get attack and leaf state from the new node
+                // Get attack and nn_value from the new node
                 let chance_node = match node.children.get(&action_idx) {
                     Some(MCTSNode::Chance(cn)) => cn,
                     _ => panic!("BUG: expand_action should create ChanceNode"),
                 };
                 let leaf_attack = chance_node.attack as f32;
-                let leaf_value = self.evaluate_leaf(&chance_node.state, root_move_number + depth + 1);
+                let leaf_value = chance_node.nn_value;  // Use stored NN value
 
                 // Add this step to path with its attack
                 path.push((current, action_idx, leaf_attack));
@@ -403,7 +403,7 @@ impl MCTSAgent {
     }
 
     /// Expand an action from a decision node (creates chance node)
-    fn expand_action(&self, parent: &DecisionNode, action_idx: usize) -> MCTSNode {
+    fn expand_action(&self, parent: &DecisionNode, action_idx: usize, move_number: u32) -> MCTSNode {
         let mut new_state = parent.state.clone();
 
         // Get placement coordinates from action index
@@ -425,7 +425,10 @@ impl MCTSAgent {
         // This ensures no duplicates in the visible window while respecting bag rules.
         let bag_remaining = new_state.get_possible_next_pieces_for_mcts();
 
-        MCTSNode::Chance(ChanceNode::new(new_state, attack, bag_remaining))
+        // Evaluate the NN on this state to get the value estimate
+        let nn_value = self.evaluate_leaf(&new_state, move_number);
+
+        MCTSNode::Chance(ChanceNode::new(new_state, attack, bag_remaining, nn_value))
     }
 
     /// Expand a chance node for a specific piece (creates decision node)
@@ -655,7 +658,7 @@ impl MCTSAgent {
             visit_count: node.visit_count,
             value_sum: node.value_sum,
             mean_value,
-            nn_value: 0.0,  // Chance nodes don't have NN evaluation
+            nn_value: node.nn_value,
             prior: 0.0,
             is_terminal: false,
             move_number: 0,

@@ -306,77 +306,49 @@ class SharedReplayBuffer:
     Thread-safe: uses a lock to protect cache access during parallel training.
     """
 
-    def __init__(self, data_dir: str | Path, max_files: int = 100):
+    def __init__(self, data_dir: str | Path):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.max_files = max_files
         self._cached_data = None
         self._cache_time = 0.0
         self._lock = threading.Lock()
 
-    def add_game(self, examples: list[TrainingExample]) -> None:
-        """Save a game's examples to a new file."""
-        timestamp = int(time.time() * 1000)
-        filepath = self.data_dir / f"game_{timestamp}.npz"
-        save_training_data(examples, filepath)
-
-        # Clean up old files if needed
-        self._cleanup_old_files()
-
-    def _cleanup_old_files(self) -> None:
-        """Remove oldest files if over limit."""
-        files = sorted(self.data_dir.glob("game_*.npz"))
-        while len(files) > self.max_files:
-            oldest = files.pop(0)
-            oldest.unlink()
-
     def _refresh_cache(self) -> None:
-        """Reload data from all files. Must be called with lock held."""
-        files = list(self.data_dir.glob("game_*.npz"))
-        if not files:
+        """Reload data from training_data.npz. Must be called with lock held."""
+        data_file = self.data_dir / "training_data.npz"
+        if not data_file.exists():
             self._cached_data = None
             return
 
-        all_data = {
-            "boards": [],
-            "aux_features": [],
-            "policy_targets": [],
-            "value_targets": [],
-            "action_masks": [],
-        }
+        try:
+            data = np.load(data_file)
 
-        failed_files = []
-        for f in files:
-            try:
-                data = np.load(f)
+            # Build aux features from components
+            n = len(data["boards"])
+            aux = np.concatenate(
+                [
+                    data["current_pieces"],
+                    data["hold_pieces"],
+                    data["hold_available"].reshape(-1, 1).astype(np.float32),
+                    data["next_queue"].reshape(n, -1),
+                    data["move_numbers"].reshape(-1, 1),
+                ],
+                axis=1,
+            )
 
-                # Build aux features from components
-                n = len(data["boards"])
-                aux = np.concatenate(
-                    [
-                        data["current_pieces"],
-                        data["hold_pieces"],
-                        data["hold_available"].reshape(-1, 1).astype(np.float32),
-                        data["next_queue"].reshape(n, -1),
-                        data["move_numbers"].reshape(-1, 1),
-                    ],
-                    axis=1,
-                )
+            self._cached_data = {
+                "boards": data["boards"].astype(np.float32),
+                "aux_features": aux.astype(np.float32),
+                "policy_targets": data["policy_targets"],
+                "value_targets": data["value_targets"],
+                "action_masks": data["action_masks"].astype(np.float32),
+            }
+        except (OSError, ValueError, KeyError) as e:
+            logger.warning("Failed to load %s: %s", data_file, e)
+            self._cached_data = None
+            return
 
-                all_data["boards"].append(data["boards"].astype(np.float32))
-                all_data["aux_features"].append(aux.astype(np.float32))
-                all_data["policy_targets"].append(data["policy_targets"])
-                all_data["value_targets"].append(data["value_targets"])
-                all_data["action_masks"].append(data["action_masks"].astype(np.float32))
-            except (OSError, ValueError, KeyError) as e:
-                # File may be corrupted or being written - log and skip
-                logger.warning("Failed to load %s: %s", f, e)
-                failed_files.append(f)
-
-        if failed_files:
-            logger.info("Skipped %d corrupted/incomplete files", len(failed_files))
-
-        if all_data["boards"]:
+        if self._cached_data:
             self._cached_data = {k: np.concatenate(v) for k, v in all_data.items()}
         else:
             self._cached_data = None
