@@ -456,26 +456,15 @@ impl MCTSAgent {
         MCTSNode::Decision(node)
     }
 
-    /// Backpropagate total game value through the path
+    /// Backpropagate total episode value through the path
     ///
-    /// All nodes in the path receive the SAME value:
-    ///   total = cumulative_attack_along_path + leaf_value
+    /// All nodes in the path receive the SAME total value:
+    ///   total_value = cumulative_attack_along_path + leaf_value
     ///
-    /// This ensures consistent value estimates regardless of depth - a node at depth 5
-    /// and depth 50 will have comparable Q values if the positions are equally good.
-    ///
-    /// ## No double counting
-    /// The path contains only DecisionNode pointers. For each entry (node, action, _):
-    /// - We update `node.children[action]` (a ChanceNode)
-    /// - We update `node` itself (a DecisionNode)
-    ///
-    /// These are DIFFERENT objects. The next entry's "node" is a child of the previous
-    /// ChanceNode, not the ChanceNode itself:
-    /// ```text
-    /// root (DecisionNode) ──action_A──> ChanceNode_A ──piece_X──> node_B (DecisionNode)
-    /// path[0] = (root, action_A)                                  path[1] = (node_B, action_B)
-    /// ```
-    /// Each node is updated exactly once.
+    /// The NN predicts future reward from each state. By adding the cumulative
+    /// attack collected along the path to the leaf's NN value, we get the total
+    /// expected episode return. This same total is backed up to all nodes so that
+    /// Q values represent "expected total return when passing through this node".
     ///
     /// Args:
     ///     path: List of (node_ptr, action_idx, attack_at_step)
@@ -485,18 +474,18 @@ impl MCTSAgent {
             return;
         }
 
-        // Compute total value = attack along path + leaf value estimate
-        let total_attack: f32 = path.iter().map(|(_, _, reward)| reward).sum();
+        // Compute total value = all attacks along path + leaf's future value estimate
+        let total_attack: f32 = path.iter().map(|(_, _, attack)| attack).sum();
         let total_value = total_attack + leaf_value;
 
-        // Update each DecisionNode and its child ChanceNode (no double counting - see doc above)
+        // All nodes on the path get the same total value
         for &(node_ptr, action_idx, _) in path.iter() {
             // SAFETY: node_ptr was stored during the simulation traversal from valid
             // &mut DecisionNode references. The tree hasn't been modified, so pointers
             // remain valid. Each pointer in the path refers to a distinct node.
             let node = unsafe { &mut *node_ptr };
 
-            // Update child stats (the action we took from this node)
+            // Update child stats (the ChanceNode we traversed through)
             if let Some(child) = node.children.get_mut(&action_idx) {
                 match child {
                     MCTSNode::Decision(d) => {
@@ -510,7 +499,7 @@ impl MCTSAgent {
                 }
             }
 
-            // Update parent (decision node) stats
+            // Update the DecisionNode itself
             node.visit_count += 1;
             node.value_sum += total_value;
         }
@@ -688,5 +677,79 @@ impl MCTSAgent {
         nodes[id].children = child_ids;
 
         id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_expand_action_updates_state() {
+        // Create an agent with a model
+        let config = MCTSConfig::default();
+        let mut agent = MCTSAgent::new(config);
+
+        // We need a model for expand_action to work
+        // Skip test if no model is available
+        if !agent.load_model("outputs/checkpoints/selfplay.onnx") {
+            eprintln!("Skipping test - no model available");
+            return;
+        }
+
+        // Create initial env with a known seed
+        let env = TetrisEnv::with_seed(10, 20, 42);
+        let initial_piece = env.get_current_piece().unwrap().piece_type;
+        let initial_queue: Vec<usize> = env.get_queue(5);
+
+        println!("Initial state:");
+        println!("  Current piece type: {}", initial_piece);
+        println!("  Queue: {:?}", initial_queue);
+
+        // Create a decision node
+        let policy = vec![1.0 / 734.0; 734];
+        let mut root = DecisionNode::new(env.clone(), 0);
+        root.set_nn_output(&policy, 0.0);
+
+        // Get a valid action
+        let action_idx = root.valid_actions[0];
+        println!("  Taking action: {}", action_idx);
+
+        // Expand the action - this should create a ChanceNode with updated state
+        let child = agent.expand_action(&root, action_idx, 0);
+
+        // Check the child's state
+        match child {
+            MCTSNode::Chance(chance_node) => {
+                let new_piece = chance_node.state.get_current_piece();
+                let new_queue: Vec<usize> = chance_node.state.get_queue(5);
+
+                println!("After expand_action (ChanceNode state):");
+                println!("  Current piece type: {:?}", new_piece.as_ref().map(|p| p.piece_type));
+                println!("  Queue: {:?}", new_queue);
+
+                // The current piece should have changed (old piece was placed, new one spawned)
+                if let Some(ref new_p) = new_piece {
+                    assert_ne!(
+                        new_p.piece_type, initial_piece,
+                        "Current piece should have changed after placing! \
+                        Initial: {}, After: {}",
+                        initial_piece, new_p.piece_type
+                    );
+                }
+
+                // The first piece from the old queue should now be current
+                // (unless fill_queue added something unexpected)
+                if let Some(ref new_p) = new_piece {
+                    assert_eq!(
+                        new_p.piece_type, initial_queue[0],
+                        "New current piece should be the first from old queue! \
+                        Expected: {}, Got: {}",
+                        initial_queue[0], new_p.piece_type
+                    );
+                }
+            }
+            _ => panic!("expand_action should return a ChanceNode"),
+        }
     }
 }
