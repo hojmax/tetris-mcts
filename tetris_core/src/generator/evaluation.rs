@@ -140,9 +140,9 @@ pub fn evaluate_model(
                 break;
             }
 
-            // Get NN policy
+            // Get NN policy and value
             let nn = agent.get_nn().expect("Model should be loaded");
-            let (policy, _) = nn
+            let (policy, nn_value) = nn
                 .predict_masked(&env, move_idx as usize, &mask)
                 .map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -152,7 +152,7 @@ pub fn evaluate_model(
                 })?;
 
             // Run MCTS search (no noise, argmax via config.temperature=0)
-            let result = agent.search(&env, policy, false, move_idx as u32);
+            let result = agent.search(&env, policy, nn_value, false, move_idx as u32);
 
             // Execute action
             let (x, y, rot) = get_action_space()
@@ -270,7 +270,7 @@ pub fn evaluate_and_save(
             }
 
             let nn = agent.get_nn().expect("Model should be loaded");
-            let (policy, _) = nn
+            let (policy, nn_value) = nn
                 .predict_masked(&env, move_idx as usize, &mask)
                 .map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -279,7 +279,7 @@ pub fn evaluate_and_save(
                     ))
                 })?;
 
-            let result = agent.search(&env, policy, false, move_idx as u32);
+            let result = agent.search(&env, policy, nn_value, false, move_idx as u32);
 
             let (x, y, rot) = get_action_space()
                 .index_to_placement(result.action)

@@ -4,6 +4,7 @@
 
 use pyo3::prelude::*;
 
+use crate::mcts::get_action_space;
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
 use crate::piece::{Piece, COLORS};
 use crate::scoring::AttackResult;
@@ -75,6 +76,10 @@ impl TetrisEnv {
         self.piece_queue.iter().take(count).cloned().collect()
     }
 
+    pub fn get_queue_len(&self) -> usize {
+        self.piece_queue.len()
+    }
+
     pub fn get_hold_piece(&self) -> Option<Piece> {
         self.hold_piece.map(|pt| Piece::new(pt))
     }
@@ -130,6 +135,40 @@ impl TetrisEnv {
         }
     }
 
+    /// Truncate the queue to at most `max_len` pieces.
+    /// Used by MCTS to limit queue to visible pieces before creating chance nodes.
+    pub fn truncate_queue(&mut self, max_len: usize) {
+        while self.piece_queue.len() > max_len {
+            self.piece_queue.pop_back();
+        }
+    }
+
+    /// Get pieces that could appear at the next queue position for MCTS.
+    ///
+    /// Combines two constraints:
+    /// 1. 7-bag rule: pieces not already used in the current bag
+    /// 2. Visual rule: pieces not in visible window (to avoid confusing duplicates)
+    ///
+    /// Returns the intersection of both constraints.
+    pub fn get_possible_next_pieces_for_mcts(&self) -> Vec<usize> {
+        // Get pieces allowed by 7-bag tracking
+        let bag_allowed = self.get_possible_next_pieces();
+
+        // Get pieces not in visible window (current + queue)
+        let mut visible: Vec<usize> = Vec::new();
+        if let Some(ref piece) = self.current_piece {
+            visible.push(piece.piece_type);
+        }
+        for &piece_type in self.piece_queue.iter() {
+            visible.push(piece_type);
+        }
+
+        // Return intersection: allowed by bag AND not in visible
+        bag_allowed.into_iter()
+            .filter(|p| !visible.contains(p))
+            .collect()
+    }
+
     pub fn hold(&mut self) -> bool {
         if self.game_over || self.hold_used {
             return false;
@@ -166,7 +205,8 @@ impl TetrisEnv {
     pub fn set_current_piece_type(&mut self, piece_type: usize) {
         if piece_type < 7 && !self.game_over {
             let spawn_x = (self.width as i32 - 4) / 2;
-            let spawn_y = 0;
+            // O piece is centered in matrix, spawn at y=-1 to align with other pieces
+            let spawn_y = if piece_type == 1 { -1 } else { 0 };
             self.current_piece = Some(Piece {
                 piece_type,
                 x: spawn_x,
@@ -353,7 +393,8 @@ impl TetrisEnv {
 
         let board = Board::new(self.width, self.height, self.board.clone());
         let spawn_x = (self.width as i32 - 4) / 2;
-        let spawn_y = 0;
+        // O piece is centered in matrix, spawn at y=-1 to align with other pieces
+        let spawn_y = if piece_type == 1 { -1 } else { 0 };
         find_all_placements(&board, piece_type, spawn_x, spawn_y)
     }
 
@@ -376,5 +417,27 @@ impl TetrisEnv {
         } else {
             (Vec::new(), Vec::new())
         }
+    }
+
+    /// Execute an action by its index (0-733) in the action space.
+    ///
+    /// Converts the action index to (x, y, rotation), finds the matching
+    /// placement from valid placements, and executes it.
+    ///
+    /// Args:
+    ///     action_idx: Action index from MCTS (0-733)
+    ///
+    /// Returns:
+    ///     Attack sent if successful, or None if action is invalid
+    pub fn execute_action_index(&mut self, action_idx: usize) -> Option<u32> {
+        let action_space = get_action_space();
+        let (x, y, rot) = action_space.index_to_placement(action_idx)?;
+
+        let placements = self.get_possible_placements();
+        let placement = placements.iter().find(|p| {
+            p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
+        })?;
+
+        Some(self.execute_placement(placement))
     }
 }

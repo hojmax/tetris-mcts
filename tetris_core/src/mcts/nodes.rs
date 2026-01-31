@@ -71,6 +71,8 @@ pub struct DecisionNode {
     pub is_terminal: bool,
     /// Move number in the game
     pub move_number: u32,
+    /// Raw neural network value estimate (stored when node is expanded)
+    pub nn_value: f32,
 }
 
 impl DecisionNode {
@@ -94,10 +96,26 @@ impl DecisionNode {
             action_priors: Vec::new(),
             is_terminal,
             move_number,
+            nn_value: 0.0,
         }
     }
 
-    /// Set priors from neural network output
+    /// Set priors and value from neural network output
+    pub fn set_nn_output(&mut self, policy: &[f32], value: f32) {
+        self.action_priors = self.valid_actions.iter().map(|&idx| policy[idx]).collect();
+
+        // Normalize priors over valid actions
+        let sum: f32 = self.action_priors.iter().sum();
+        if sum > 0.0 {
+            for p in &mut self.action_priors {
+                *p /= sum;
+            }
+        }
+
+        self.nn_value = value;
+    }
+
+    /// Set priors from neural network output (legacy, prefer set_nn_output)
     pub fn set_priors(&mut self, policy: &[f32]) {
         self.action_priors = self.valid_actions.iter().map(|&idx| policy[idx]).collect();
 
@@ -158,27 +176,12 @@ pub struct ChanceNode {
     pub children: HashMap<usize, MCTSNode>,
     /// Attack gained from the action that led to this node
     pub attack: u32,
-    /// Pieces remaining in current bag (for probability computation)
+    /// Pieces remaining in current bag (possible next pieces)
     pub bag_remaining: Vec<usize>,
-    /// Randomized order for round-robin piece selection
-    pub piece_order: Vec<usize>,
-    /// Current index in round-robin sequence
-    pub round_robin_idx: usize,
 }
 
 impl ChanceNode {
     pub fn new(state: TetrisEnv, attack: u32, bag_remaining: Vec<usize>) -> Self {
-        let mut rng = thread_rng();
-
-        // Create randomized piece order for round-robin
-        let mut piece_order: Vec<usize> = if bag_remaining.is_empty() {
-            // New bag - all pieces
-            (0..NUM_PIECE_TYPES).collect()
-        } else {
-            bag_remaining.clone()
-        };
-        piece_order.shuffle(&mut rng);
-
         ChanceNode {
             state,
             visit_count: 0,
@@ -186,17 +189,19 @@ impl ChanceNode {
             children: HashMap::new(),
             attack,
             bag_remaining,
-            piece_order,
-            round_robin_idx: 0,
         }
     }
 
-    /// Select next piece using round-robin on randomized order
-    /// Returns the piece type and advances the index
-    pub fn select_piece_round_robin(&mut self) -> usize {
-        let piece = self.piece_order[self.round_robin_idx % self.piece_order.len()];
-        self.round_robin_idx += 1;
-        piece
+    /// Randomly select a piece from the possible outcomes
+    pub fn select_piece_random(&self) -> usize {
+        let mut rng = thread_rng();
+        if self.bag_remaining.is_empty() {
+            // New bag - any piece is equally likely
+            rng.gen_range(0..NUM_PIECE_TYPES)
+        } else {
+            // Select from remaining pieces in current bag
+            *self.bag_remaining.choose(&mut rng).unwrap()
+        }
     }
 }
 
@@ -334,7 +339,6 @@ mod tests {
         assert_eq!(node.attack, 5);
         assert!(node.children.is_empty());
         assert_eq!(node.bag_remaining, bag);
-        assert_eq!(node.round_robin_idx, 0);
     }
 
     #[test]
@@ -342,28 +346,24 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         let node = ChanceNode::new(env, 0, vec![]);
 
-        // Empty bag should use all 7 pieces
-        assert_eq!(node.piece_order.len(), NUM_PIECE_TYPES);
+        // Empty bag - any piece should be selectable
+        let piece = node.select_piece_random();
+        assert!(piece < NUM_PIECE_TYPES);
     }
 
     #[test]
-    fn test_chance_node_select_piece_round_robin() {
+    fn test_chance_node_select_piece_random() {
         let env = TetrisEnv::new(10, 20);
-        let mut node = ChanceNode::new(env, 0, vec![]);
+        let node = ChanceNode::new(env, 0, vec![1, 3, 5]); // O, S, J remaining
 
-        // Select pieces and verify round-robin behavior
-        let mut selected = Vec::new();
-        for _ in 0..7 {
-            selected.push(node.select_piece_round_robin());
+        // Select many pieces and verify they're from the bag
+        for _ in 0..20 {
+            let piece = node.select_piece_random();
+            assert!(
+                piece == 1 || piece == 3 || piece == 5,
+                "Piece {} should be from bag [1, 3, 5]", piece
+            );
         }
-
-        // Should have selected 7 pieces
-        assert_eq!(selected.len(), 7);
-        assert_eq!(node.round_robin_idx, 7);
-
-        // After 7 selections, should wrap around
-        let next_piece = node.select_piece_round_robin();
-        assert_eq!(next_piece, selected[0], "Should wrap around to first piece");
     }
 
     #[test]
@@ -463,21 +463,17 @@ mod tests {
     }
 
     #[test]
-    fn test_chance_node_piece_order_randomization() {
+    fn test_chance_node_random_selection_variety() {
         let env = TetrisEnv::new(10, 20);
+        let node = ChanceNode::new(env, 0, vec![]); // Empty bag = all 7 pieces possible
 
-        // Create multiple nodes and check that piece orders vary
-        let mut orders: Vec<Vec<usize>> = Vec::new();
-        for _ in 0..10 {
-            let node = ChanceNode::new(env.clone(), 0, vec![]);
-            orders.push(node.piece_order.clone());
+        // Select many pieces and verify we get variety
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..100 {
+            seen.insert(node.select_piece_random());
         }
 
-        // At least some orders should be different (probabilistic)
-        let first_order = &orders[0];
-        let different = orders.iter().any(|o| o != first_order);
-        // Note: This test could occasionally fail due to random chance,
-        // but with 10 samples it's extremely unlikely
-        assert!(different, "Piece orders should be randomized");
+        // With 100 selections from 7 pieces, we should see most of them
+        assert!(seen.len() >= 5, "Random selection should produce variety, got {} unique pieces", seen.len());
     }
 }

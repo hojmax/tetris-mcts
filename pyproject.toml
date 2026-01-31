@@ -21,6 +21,7 @@ dependencies = [
     "dash",
     "dash-cytoscape",
     "pillow",
+    "onnxruntime>=1.23.2",
 ]
 
 [tool.uv.sources]

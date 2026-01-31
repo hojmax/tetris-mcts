@@ -5,3 +5,4 @@ tetris_core/target/
 __pycache__/
 checkpoints
 wandb/
+tetris_mcts/data/

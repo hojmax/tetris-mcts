@@ -4,7 +4,7 @@
 
 use pyo3::prelude::*;
 
-use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
+use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, QUEUE_SIZE};
 use crate::env::TetrisEnv;
 
 use super::action_space::{get_action_space, NUM_ACTIONS};
@@ -91,15 +91,15 @@ impl MCTSAgent {
                 break;
             }
 
-            // Get NN policy for root
-            let (policy, _) = nn.predict_masked(&env, move_idx as usize, &mask)
+            // Get NN policy and value for root
+            let (policy, nn_value) = nn.predict_masked(&env, move_idx as usize, &mask)
                 .expect("Neural network prediction failed during self-play");
 
             // Store state before making move
             states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
 
             // Run MCTS search
-            let result = self.search(&env, policy, add_noise, move_idx);
+            let result = self.search(&env, policy, nn_value, add_noise, move_idx);
 
             // Execute the selected action
             let (x, y, rot) = get_action_space().index_to_placement(result.action)
@@ -226,10 +226,10 @@ impl MCTSAgent {
             return None;
         }
 
-        let (policy, _) = nn.predict_masked(env, move_number as usize, &mask)
+        let (policy, nn_value) = nn.predict_masked(env, move_number as usize, &mask)
             .expect("Neural network prediction failed");
 
-        let (mcts_result, root) = self.search_internal(env, policy, add_noise, move_number);
+        let (mcts_result, root) = self.search_internal(env, policy, nn_value, add_noise, move_number);
 
         // Export tree structure
         let mut nodes: Vec<TreeNodeExport> = Vec::new();
@@ -246,6 +246,39 @@ impl MCTSAgent {
         Some((mcts_result, tree_export))
     }
 
+    /// Run MCTS search and return the result (simpler than search_with_tree).
+    ///
+    /// This is the main method for selecting actions during play/evaluation.
+    /// Handles NN inference internally.
+    ///
+    /// Args:
+    ///     env: The game state to search from
+    ///     add_noise: Whether to add Dirichlet noise to root priors
+    ///     move_number: The current move number in the game
+    ///
+    /// Returns:
+    ///     MCTSResult with selected action and policy, or None if no model loaded
+    #[pyo3(signature = (env, add_noise=false, move_number=0))]
+    pub fn select_action(
+        &self,
+        env: &TetrisEnv,
+        add_noise: bool,
+        move_number: u32,
+    ) -> Option<MCTSResult> {
+        let nn = self.nn.as_ref()?;
+
+        // Get action mask and initial policy
+        let mask = crate::nn::get_action_mask(env);
+        if !mask.iter().any(|&x| x) {
+            return None;
+        }
+
+        let (policy, nn_value) = nn.predict_masked(env, move_number as usize, &mask)
+            .expect("Neural network prediction failed");
+
+        let (mcts_result, _root) = self.search_internal(env, policy, nn_value, add_noise, move_number);
+        Some(mcts_result)
+    }
 }
 
 impl MCTSAgent {
@@ -259,10 +292,11 @@ impl MCTSAgent {
         &self,
         env: &TetrisEnv,
         policy: Vec<f32>,
+        nn_value: f32,
         add_noise: bool,
         move_number: u32,
     ) -> MCTSResult {
-        let (result, _root) = self.search_internal(env, policy, add_noise, move_number);
+        let (result, _root) = self.search_internal(env, policy, nn_value, add_noise, move_number);
         result
     }
 
@@ -340,8 +374,8 @@ impl MCTSAgent {
             path.push((current, action_idx, step_attack));
             depth += 1;
 
-            // Round-robin piece selection (randomized order, balanced exploration)
-            let piece = chance_node.select_piece_round_robin();
+            // Randomly select which piece outcome to explore
+            let piece = chance_node.select_piece_random();
 
             // Get or create decision node for this piece
             if !chance_node.children.contains_key(&piece) {
@@ -383,8 +417,13 @@ impl MCTSAgent {
         }).expect("Action not found in valid placements during expansion");
         let attack = new_state.execute_placement(placement);
 
-        // Get possible pieces for the next unseen queue position (proper 7-bag tracking)
-        let bag_remaining = new_state.get_possible_next_pieces();
+        // Truncate to visible queue length FIRST.
+        // This ensures expand_chance pushes to position 5 (the first "unseen" position).
+        new_state.truncate_queue(QUEUE_SIZE);
+
+        // Compute possible pieces: intersection of 7-bag constraints and visual constraints.
+        // This ensures no duplicates in the visible window while respecting bag rules.
+        let bag_remaining = new_state.get_possible_next_pieces_for_mcts();
 
         MCTSNode::Chance(ChanceNode::new(new_state, attack, bag_remaining))
     }
@@ -403,13 +442,13 @@ impl MCTSAgent {
 
         let mut node = DecisionNode::new(new_state.clone(), move_number);
 
-        // Set priors from neural network
+        // Set priors and value from neural network
         let nn = self.nn.as_ref()
             .expect("Neural network required for MCTS chance node expansion");
         let mask = crate::nn::get_action_mask(&new_state);
-        let (policy, _) = nn.predict_masked(&new_state, move_number as usize, &mask)
+        let (policy, value) = nn.predict_masked(&new_state, move_number as usize, &mask)
             .expect("Neural network prediction failed during chance node expansion");
-        node.set_priors(&policy);
+        node.set_nn_output(&policy, value);
 
         MCTSNode::Decision(node)
     }
@@ -479,12 +518,13 @@ impl MCTSAgent {
         &self,
         env: &TetrisEnv,
         policy: Vec<f32>,
+        nn_value: f32,
         add_noise: bool,
         move_number: u32,
     ) -> (MCTSResult, DecisionNode) {
-        // Create root node
+        // Create root node (keep full queue - truncation breaks 7-bag tracking)
         let mut root = DecisionNode::new(env.clone(), move_number);
-        root.set_priors(&policy);
+        root.set_nn_output(&policy, nn_value);
 
         if add_noise {
             root.add_dirichlet_noise(self.config.dirichlet_alpha, self.config.dirichlet_epsilon);
@@ -560,6 +600,7 @@ impl MCTSAgent {
             visit_count: node.visit_count,
             value_sum: node.value_sum,
             mean_value,
+            nn_value: node.nn_value,
             prior: node.prior,
             is_terminal: node.is_terminal,
             move_number: node.move_number,
@@ -614,6 +655,7 @@ impl MCTSAgent {
             visit_count: node.visit_count,
             value_sum: node.value_sum,
             mean_value,
+            nn_value: 0.0,  // Chance nodes don't have NN evaluation
             prior: 0.0,
             is_terminal: false,
             move_number: 0,

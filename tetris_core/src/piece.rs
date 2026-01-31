@@ -37,7 +37,7 @@ pub const TETROMINOS: [[[[u8; 4]; 4]; 4]; 7] = [
     ],
     // O piece - index 1
     [
-        // All states are the same for O
+        // All states are the same for O (centered in matrix for rotation stability)
         [
             [0, 0, 0, 0],
             [0, 1, 1, 0],

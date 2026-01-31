@@ -105,6 +105,9 @@ pub struct TreeNodeExport {
     /// Mean value (value_sum / visit_count)
     #[pyo3(get)]
     pub mean_value: f32,
+    /// Raw neural network value estimate (for decision nodes)
+    #[pyo3(get)]
+    pub nn_value: f32,
     /// Prior probability (for decision nodes)
     #[pyo3(get)]
     pub prior: f32,

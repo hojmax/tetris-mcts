@@ -385,8 +385,16 @@ class Trainer:
             action_mask=np.array(rust_ex.action_mask, dtype=bool),
         )
 
-    def evaluate(self) -> EvalResult:
-        """Evaluate current model using MCTS on fixed seeds."""
+    def evaluate(self, render_trajectory: bool = False) -> tuple[EvalResult, Optional[list]]:
+        """Evaluate current model using MCTS on fixed seeds.
+
+        Args:
+            render_trajectory: If True, render one game as images for visualization
+
+        Returns:
+            Tuple of (EvalResult, trajectory_frames) where trajectory_frames is
+            a list of PIL Images if render_trajectory=True, else None
+        """
         self.model.eval()
 
         # Export model to ONNX for Rust evaluation
@@ -414,7 +422,106 @@ class Trainer:
         print(f"  Avg moves: {result.avg_moves:.1f}")
         print(f"  Attack/piece: {result.attack_per_piece:.3f}")
 
-        return result
+        # Optionally render one trajectory for visualization (always first seed)
+        trajectory_frames = None
+        if render_trajectory and self.config.eval_seeds:
+            first_seed = self.config.eval_seeds[0]
+            try:
+                trajectory_frames = self._render_eval_trajectory(
+                    str(onnx_path), mcts_config, seed=first_seed
+                )
+            except Exception as e:
+                print(f"  Warning: Failed to render trajectory: {e}")
+
+        return result, trajectory_frames
+
+    def _render_eval_trajectory(
+        self,
+        model_path: str,
+        mcts_config: MCTSConfig,
+        seed: int = 0,
+        max_frames: int = 30,
+    ) -> list:
+        """Render a single evaluation game as images.
+
+        Returns:
+            List of PIL Images showing the game progression
+        """
+        from tetris_mcts.ml.visualization import render_board, PIECE_COLORS
+        from tetris_core import TetrisEnv, MCTSAgent
+
+        # Create agent and load model
+        agent = MCTSAgent(mcts_config)
+        if not agent.load_model(model_path):
+            raise RuntimeError(f"Failed to load model from {model_path}")
+
+        # Play one game with the seed
+        env = TetrisEnv.with_seed(10, 20, seed)
+        frames = []
+        total_attack = 0
+
+        for move_idx in range(MAX_MOVES):
+            if env.game_over or len(frames) >= max_frames:
+                break
+
+            # Get current state for rendering
+            board = np.array(env.get_board())
+            board_colors = env.get_board_colors()
+
+            piece = env.get_current_piece()
+            piece_cells = None
+            piece_type = None
+            ghost_cells = None
+
+            if piece:
+                piece_cells = piece.get_cells()
+                piece_type = piece.piece_type
+                ghost = env.get_ghost_piece()
+                if ghost:
+                    ghost_cells = ghost.get_cells()
+
+            # Render frame
+            frame = render_board(
+                board=board,
+                board_colors=board_colors,
+                current_piece_cells=piece_cells,
+                current_piece_type=piece_type,
+                ghost_cells=ghost_cells,
+                move_number=move_idx,
+                attack=total_attack,
+            )
+            frames.append(frame)
+
+            # Get action from MCTS
+            placements = env.get_possible_placements()
+            if not placements:
+                break
+
+            # Use MCTS to select action
+            result = agent.select_action(env, add_noise=False, move_number=move_idx)
+            if result is None:
+                break
+
+            # Execute action
+            attack = env.execute_action_index(result.action)
+            if attack is None:
+                break
+            total_attack += attack
+
+        # Add final frame
+        if not env.game_over and len(frames) < max_frames:
+            board = np.array(env.get_board())
+            board_colors = env.get_board_colors()
+            frame = render_board(
+                board=board,
+                board_colors=board_colors,
+                move_number=len(frames),
+                attack=total_attack,
+                info_text="Final" if env.game_over else "",
+            )
+            frames.append(frame)
+
+        return frames
 
     def train_iteration(self, log_to_wandb: bool = True) -> dict:
         """Run one training iteration."""
@@ -464,22 +571,33 @@ class Trainer:
 
         # Evaluate
         if self.iteration % self.config.eval_interval == 0:
-            eval_result = self.evaluate()
+            eval_result, trajectory_frames = self.evaluate(render_trajectory=log_to_wandb)
             iteration_metrics["eval_avg_attack"] = eval_result.avg_attack
             iteration_metrics["eval_max_attack"] = eval_result.max_attack
             iteration_metrics["eval_avg_moves"] = eval_result.avg_moves
             iteration_metrics["eval_attack_per_piece"] = eval_result.attack_per_piece
 
             if log_to_wandb:
-                wandb.log(
-                    {
-                        "eval/avg_attack": eval_result.avg_attack,
-                        "eval/max_attack": eval_result.max_attack,
-                        "eval/avg_moves": eval_result.avg_moves,
-                        "eval/attack_per_piece": eval_result.attack_per_piece,
-                    },
-                    step=self.step,
-                )
+                log_data = {
+                    "eval/avg_attack": eval_result.avg_attack,
+                    "eval/max_attack": eval_result.max_attack,
+                    "eval/avg_moves": eval_result.avg_moves,
+                    "eval/attack_per_piece": eval_result.attack_per_piece,
+                }
+                # Log trajectory as animated GIF
+                if trajectory_frames:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as f:
+                        gif_path = f.name
+                    trajectory_frames[0].save(
+                        gif_path,
+                        save_all=True,
+                        append_images=trajectory_frames[1:],
+                        duration=300,  # ms per frame
+                        loop=0,
+                    )
+                    log_data["eval/trajectory"] = wandb.Video(gif_path, fps=3, format="gif")
+                wandb.log(log_data, step=self.step)
 
         # Save checkpoint
         if self.iteration % self.config.checkpoint_interval == 0:
@@ -544,6 +662,7 @@ class Trainer:
         self,
         num_steps: int = 100000,
         model_sync_interval: int = 1000,
+        log_to_wandb: bool = True,
     ):
         """
         Run parallel training with Rust game generation in background.
@@ -556,13 +675,15 @@ class Trainer:
         Args:
             num_steps: Total number of training steps
             model_sync_interval: Steps between model exports
+            log_to_wandb: Whether to log metrics to Weights & Biases
         """
         # Initialize wandb
-        wandb.init(
-            project=self.config.project_name,
-            name=self.config.run_name,
-            config=vars(self.config),
-        )
+        if log_to_wandb:
+            wandb.init(
+                project=self.config.project_name,
+                name=self.config.run_name,
+                config=vars(self.config),
+            )
 
         # Paths for parallel training
         games_dir = Path(self.config.data_dir) / "games"
@@ -623,12 +744,13 @@ class Trainer:
                 # Train step
                 metrics = self.train_step(batch)
 
-                # Log to wandb
+                # Log metrics
                 if self.step % self.config.log_interval == 0:
                     metrics["buffer_size"] = shared_buffer.size()
                     metrics["games_generated"] = generator.games_generated()
                     metrics["examples_generated"] = generator.examples_generated()
-                    wandb.log(metrics, step=self.step)
+                    if log_to_wandb:
+                        wandb.log(metrics, step=self.step)
                     print(
                         f"Step {self.step}: loss={metrics['loss']:.4f}, "
                         f"buffer={shared_buffer.size()}, "
@@ -642,16 +764,29 @@ class Trainer:
 
                 # Evaluate
                 if self.step % self.config.eval_interval == 0:
-                    eval_result = self.evaluate()
-                    wandb.log(
-                        {
+                    # Render trajectory every evaluation for visualization
+                    eval_result, trajectory_frames = self.evaluate(render_trajectory=log_to_wandb)
+                    if log_to_wandb:
+                        log_data = {
                             "eval/avg_attack": eval_result.avg_attack,
                             "eval/max_attack": eval_result.max_attack,
                             "eval/avg_moves": eval_result.avg_moves,
                             "eval/attack_per_piece": eval_result.attack_per_piece,
-                        },
-                        step=self.step,
-                    )
+                        }
+                        # Log trajectory as animated GIF
+                        if trajectory_frames:
+                            import tempfile
+                            with tempfile.NamedTemporaryFile(suffix='.gif', delete=False) as f:
+                                gif_path = f.name
+                            trajectory_frames[0].save(
+                                gif_path,
+                                save_all=True,
+                                append_images=trajectory_frames[1:],
+                                duration=300,  # ms per frame
+                                loop=0,
+                            )
+                            log_data["eval/trajectory"] = wandb.Video(gif_path, fps=3, format="gif")
+                        wandb.log(log_data, step=self.step)
 
                 # Checkpoint
                 if (
@@ -675,7 +810,8 @@ class Trainer:
 
         # Final save
         self.save()
-        wandb.finish()
+        if log_to_wandb:
+            wandb.finish()
 
 
 def train_from_data(

@@ -26,7 +26,8 @@ impl TetrisEnv {
         let mut piece = Piece::new(piece_type);
 
         piece.x = (self.width as i32 - 4) / 2;
-        piece.y = 0;
+        // O piece is centered in matrix (cells at y=1,2), spawn at y=-1 to align with other pieces
+        piece.y = if piece_type == 1 { -1 } else { 0 };
         piece.rotation = 0;
 
         self.current_piece_bag_position = self.pieces_spawned;
@@ -47,7 +48,8 @@ impl TetrisEnv {
         let mut piece = Piece::new(piece_type);
 
         piece.x = (self.width as i32 - 4) / 2;
-        piece.y = 0;
+        // O piece is centered in matrix (cells at y=1,2), spawn at y=-1 to align with other pieces
+        piece.y = if piece_type == 1 { -1 } else { 0 };
         piece.rotation = 0;
 
         self.last_move_was_rotation = false;

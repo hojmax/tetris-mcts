@@ -227,7 +227,7 @@ app.layout = html.Div(
                             id="model-path",
                             type="text",
                             placeholder="Path to ONNX model",
-                            value="checkpoints/selfplay.onnx",
+                            value="tetris_mcts/checkpoints/selfplay.onnx",
                             style={"width": "300px", "marginRight": "10px"},
                         ),
                         html.Label("Simulations:"),
@@ -443,7 +443,7 @@ def run_mcts(
     # Build elements
     elements = build_cytoscape_elements(tree, max_nodes or 200)
 
-    # Store tree data for click handling
+    # Store tree data for click handling (nn_value now comes from Rust)
     tree_dict = {
         "nodes": [
             {
@@ -452,6 +452,7 @@ def run_mcts(
                 "visit_count": n.visit_count,
                 "mean_value": n.mean_value,
                 "value_sum": n.value_sum,
+                "nn_value": n.nn_value,  # Now stored in Rust tree export
                 "attack": n.attack,
                 "is_terminal": n.is_terminal,
                 "move_number": n.move_number,
@@ -507,7 +508,11 @@ def display_node_details(node_data, tree_dict):
         html.P(f"Node ID: {node['id']}"),
         html.P(f"Type: {node['node_type']}"),
         html.P(f"Visit Count: {node['visit_count']}"),
-        html.P(f"Mean Value: {node['mean_value']:.3f}"),
+        html.P(
+            f"NN Value: {node['nn_value']:.3f}",
+            style={"fontWeight": "bold", "color": "#0066cc"},
+        ),
+        html.P(f"MCTS Q-Value: {node['mean_value']:.3f}"),
         html.P(f"Value Sum: {node['value_sum']:.3f}"),
     ]
 

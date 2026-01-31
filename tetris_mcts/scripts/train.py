@@ -29,7 +29,7 @@ class ScriptArgs:
     train_steps_per_iter: int = 500  # Training steps per iteration
 
     # Parallel training
-    parallel: bool = False  # Use parallel Rust game generation
+    parallel: bool = True  # Use parallel Rust game generation
     total_steps: int = 100000  # Total steps for parallel training
     model_sync_interval: int = 1000  # Steps between model exports (parallel mode)
 
@@ -144,6 +144,7 @@ def main(args: ScriptArgs) -> None:
         trainer.train_parallel(
             num_steps=args.total_steps,
             model_sync_interval=args.model_sync_interval,
+            log_to_wandb=log_to_wandb,
         )
     else:
         logger.info("Starting training")
