@@ -45,11 +45,11 @@ class ScriptArgs:
     buffer_size: int = 100000  # Replay buffer size
     min_buffer: int = 1000  # Minimum buffer size before training
 
-    # Logging/checkpoints
+    # Logging/checkpoints (outputs/ is at project root, next to tetris_mcts/)
     checkpoint_dir: Path = (
-        Path(__file__).parent.parent / "checkpoints"
+        Path(__file__).parent.parent.parent / "outputs" / "checkpoints"
     )  # Directory for checkpoints
-    data_dir: Path = Path(__file__).parent.parent / "data"  # Directory for game data
+    data_dir: Path = Path(__file__).parent.parent.parent / "outputs" / "data"  # Directory for game data
     checkpoint_interval: int = 10  # Save checkpoint every N iterations
     eval_interval: int = 10  # Evaluate every N iterations
     log_interval: int = 100  # Log every N training steps

@@ -99,9 +99,9 @@ class TrainingConfig:
     eval_interval: int = 100
     eval_seeds: list[int] = field(default_factory=lambda: list(range(20)))
 
-    # Paths
-    checkpoint_dir: str = "checkpoints"
-    data_dir: str = "data"
+    # Paths (relative to project root)
+    checkpoint_dir: str = "outputs/checkpoints"
+    data_dir: str = "outputs/data"
 
     # WandB
     project_name: str = "tetris-alphazero"

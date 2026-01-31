@@ -18,7 +18,7 @@ logger = structlog.get_logger()
 @dataclass
 class EvalArgs:
     model_path: Path  # Path to ONNX model
-    output_path: Path = Path(__file__).parent.parent / "replays" / "replays.jsonl"
+    output_path: Path = Path(__file__).parent.parent.parent / "outputs" / "replays" / "replays.jsonl"
     num_games: int = 10  # Number of games to play
     max_moves: int = 100  # Maximum moves per game
     simulations: int = 100  # MCTS simulations per move

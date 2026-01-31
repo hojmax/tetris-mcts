@@ -9,6 +9,7 @@ use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Pl
 use crate::piece::{Piece, COLORS};
 use crate::scoring::AttackResult;
 
+use super::piece_management::spawn_y_offset;
 use super::TetrisEnv;
 
 #[pymethods]
@@ -205,12 +206,10 @@ impl TetrisEnv {
     pub fn set_current_piece_type(&mut self, piece_type: usize) {
         if piece_type < 7 && !self.game_over {
             let spawn_x = (self.width as i32 - 4) / 2;
-            // O piece is centered in matrix, spawn at y=-1 to align with other pieces
-            let spawn_y = if piece_type == 1 { -1 } else { 0 };
             self.current_piece = Some(Piece {
                 piece_type,
                 x: spawn_x,
-                y: spawn_y,
+                y: spawn_y_offset(piece_type),
                 rotation: 0,
             });
         }
@@ -393,9 +392,7 @@ impl TetrisEnv {
 
         let board = Board::new(self.width, self.height, self.board.clone());
         let spawn_x = (self.width as i32 - 4) / 2;
-        // O piece is centered in matrix, spawn at y=-1 to align with other pieces
-        let spawn_y = if piece_type == 1 { -1 } else { 0 };
-        find_all_placements(&board, piece_type, spawn_x, spawn_y)
+        find_all_placements(&board, piece_type, spawn_x, spawn_y_offset(piece_type))
     }
 
     pub fn get_possible_placements_with_hold(&self) -> (Vec<Placement>, Vec<Placement>) {

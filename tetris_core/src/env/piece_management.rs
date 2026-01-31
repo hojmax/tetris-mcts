@@ -4,9 +4,20 @@
 
 use rand::seq::SliceRandom;
 
+use crate::constants::{I_PIECE, O_PIECE};
 use crate::piece::Piece;
 
 use super::TetrisEnv;
+
+/// Get spawn Y offset for a piece type.
+/// I and O pieces have cells at y=1 in their matrix, so they spawn at y=-1 to align with other pieces.
+pub(super) fn spawn_y_offset(piece_type: usize) -> i32 {
+    if piece_type == I_PIECE || piece_type == O_PIECE {
+        -1
+    } else {
+        0
+    }
+}
 
 impl TetrisEnv {
     /// Ensure the piece queue has at least `count` pieces
@@ -26,8 +37,7 @@ impl TetrisEnv {
         let mut piece = Piece::new(piece_type);
 
         piece.x = (self.width as i32 - 4) / 2;
-        // O piece is centered in matrix (cells at y=1,2), spawn at y=-1 to align with other pieces
-        piece.y = if piece_type == 1 { -1 } else { 0 };
+        piece.y = spawn_y_offset(piece_type);
         piece.rotation = 0;
 
         self.current_piece_bag_position = self.pieces_spawned;
@@ -48,8 +58,7 @@ impl TetrisEnv {
         let mut piece = Piece::new(piece_type);
 
         piece.x = (self.width as i32 - 4) / 2;
-        // O piece is centered in matrix (cells at y=1,2), spawn at y=-1 to align with other pieces
-        piece.y = if piece_type == 1 { -1 } else { 0 };
+        piece.y = spawn_y_offset(piece_type);
         piece.rotation = 0;
 
         self.last_move_was_rotation = false;
