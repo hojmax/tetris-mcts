@@ -4,6 +4,7 @@
 - [ ] Looking at evaluation data on wandb
 - [ ] Code for visualizing trajectories
 - [ ] Looking at training data
+- [ ] Save a full rollout tree from during training and inspect it with `make viz` tool
 - [ ] Speeding up masking of moves
 - [ ] Reading through and validating all code
 - [ ] Stress test next possible pieces with unit tests, like that it can do wild twists and stuff and that it correctly decides those possible locations

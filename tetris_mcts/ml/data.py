@@ -14,7 +14,6 @@ import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Optional
-import os
 import time
 from dataclasses import dataclass
 from tetris_mcts.ml.network import (
@@ -393,68 +392,3 @@ class SharedReplayBuffer:
             if self._cached_data is None:
                 return 0
             return len(self._cached_data["boards"])
-
-
-if __name__ == "__main__":
-    import tempfile
-    from torch.utils.data import DataLoader
-
-    # Test save/load
-    print("Testing save/load...")
-    examples = []
-    for i in range(10):
-        board = np.random.randint(0, 2, (BOARD_HEIGHT, BOARD_WIDTH), dtype=np.uint8)
-        examples.append(
-            TrainingExample(
-                board=board.astype(bool),
-                current_piece=i % 7,
-                hold_piece=(i + 1) % 7 if i % 2 == 0 else None,
-                hold_available=i % 3 != 0,
-                next_queue=[j % 7 for j in range(5)],
-                move_number=i * 10,
-                policy_target=np.random.dirichlet(np.ones(NUM_ACTIONS)).astype(
-                    np.float32
-                ),
-                value_target=float(i),
-                action_mask=np.random.randint(0, 2, NUM_ACTIONS).astype(bool),
-            )
-        )
-
-    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
-        filepath = f.name
-
-    save_training_data(examples, filepath)
-    loaded = load_training_data(filepath)
-
-    assert len(loaded) == len(examples)
-    print(f"Saved and loaded {len(loaded)} examples")
-
-    # Test Dataset
-    print("\nTesting Dataset...")
-    dataset = TetrisDataset(filepath)
-    print(f"Dataset size: {len(dataset)}")
-
-    board, aux, policy, value, mask = dataset[0]
-    print(f"Board shape: {board.shape}")
-    print(f"Aux shape: {aux.shape}")
-    print(f"Policy shape: {policy.shape}")
-    print(f"Value: {value}")
-    print(f"Mask shape: {mask.shape}")
-
-    # Test DataLoader
-    loader = DataLoader(dataset, batch_size=4, shuffle=True)
-    batch = next(iter(loader))
-    print(f"\nBatch shapes: {[x.shape for x in batch]}")
-
-    # Test ReplayBuffer
-    print("\nTesting ReplayBuffer...")
-    buffer = ReplayBuffer(max_size=100)
-    buffer.add_batch(examples)
-    print(f"Buffer size: {len(buffer)}")
-
-    sample = buffer.sample(4)
-    print(f"Sample shapes: {[x.shape for x in sample]}")
-
-    # Clean up
-    os.unlink(filepath)
-    print("\nAll tests passed!")
