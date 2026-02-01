@@ -67,6 +67,50 @@ pub struct TrainingExample {
     pub action_mask: Vec<bool>,
 }
 
+/// Detailed game statistics for training logging
+#[pyclass]
+#[derive(Clone, Default)]
+pub struct GameStats {
+    /// Number of line clears by type
+    #[pyo3(get)]
+    pub singles: u32,
+    #[pyo3(get)]
+    pub doubles: u32,
+    #[pyo3(get)]
+    pub triples: u32,
+    #[pyo3(get)]
+    pub tetrises: u32,
+    /// T-spin statistics
+    #[pyo3(get)]
+    pub tspin_minis: u32,
+    #[pyo3(get)]
+    pub tspin_singles: u32,
+    #[pyo3(get)]
+    pub tspin_doubles: u32,
+    #[pyo3(get)]
+    pub tspin_triples: u32,
+    /// Perfect clears
+    #[pyo3(get)]
+    pub perfect_clears: u32,
+    /// Back-to-back count (number of consecutive difficult clears)
+    #[pyo3(get)]
+    pub back_to_backs: u32,
+    /// Maximum combo reached
+    #[pyo3(get)]
+    pub max_combo: u32,
+    /// Total lines cleared
+    #[pyo3(get)]
+    pub total_lines: u32,
+}
+
+#[pymethods]
+impl GameStats {
+    #[new]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Result from playing a full game
 #[pyclass]
 #[derive(Clone)]
@@ -80,6 +124,9 @@ pub struct GameResult {
     /// Number of moves played
     #[pyo3(get)]
     pub num_moves: u32,
+    /// Detailed game statistics
+    #[pyo3(get)]
+    pub stats: GameStats,
 }
 
 // =============================================================================
@@ -405,6 +452,7 @@ mod tests {
             examples: vec![],
             total_attack: 150,
             num_moves: 75,
+            stats: GameStats::default(),
         };
 
         assert!(result.examples.is_empty());
@@ -442,6 +490,7 @@ mod tests {
             examples: vec![example1, example2],
             total_attack: 100,
             num_moves: 2,
+            stats: GameStats::default(),
         };
 
         assert_eq!(result.examples.len(), 2);
@@ -457,6 +506,7 @@ mod tests {
             examples: vec![],
             total_attack: 200,
             num_moves: 100,
+            stats: GameStats::default(),
         };
 
         let cloned = result.clone();

@@ -2,16 +2,12 @@
 Training Loop for Tetris AlphaZero
 
 Implements:
-- Loss computation (policy CE + value MSE)
 - Training loop with WandB logging
 - Learning rate scheduling
-- Evaluation during training
 - Parallel Rust game generation via GameGenerator
 """
 
 import torch
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -20,47 +16,14 @@ import time
 
 import wandb
 
-from tetris_mcts.ml.network import (
-    TetrisNet,
-    BOARD_HEIGHT,
-    BOARD_WIDTH,
-    NUM_PIECE_TYPES,
-    MAX_MOVES,
-)
-from tetris_mcts.ml.data import (
-    ReplayBuffer,
-    SharedReplayBuffer,
-    TetrisDataset,
-    TrainingExample,
-)
+from tetris_mcts.ml.network import TetrisNet, MAX_MOVES
+from tetris_mcts.ml.data import ReplayBuffer, SharedReplayBuffer
 from tetris_mcts.ml.weights import WeightManager, export_onnx
+from tetris_mcts.ml.loss import compute_loss, compute_metrics
+from tetris_mcts.ml.evaluation import Evaluator
+from tetris_mcts.ml.selfplay import SelfPlayGenerator
 
-from tetris_core import MCTSConfig, MCTSAgent, GameGenerator, evaluate_model, EvalResult
-
-
-def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch.Tensor:
-    """
-    Apply action masks to logits.
-
-    Args:
-        logits: Shape (batch, num_actions) - raw policy logits
-        action_masks: Shape (batch, num_actions) - 1 for valid actions, 0 for invalid
-
-    Returns:
-        masked_logits: Shape (batch, num_actions) - logits with invalid actions set to -inf
-
-    Raises:
-        ValueError: If any sample has no valid actions (indicates terminal state in training data)
-    """
-    valid_counts = action_masks.sum(dim=1)
-    if (valid_counts == 0).any():
-        invalid_indices = (valid_counts == 0).nonzero(as_tuple=True)[0].tolist()
-        raise ValueError(
-            f"Samples at indices {invalid_indices} have no valid actions. "
-            "Terminal states should not be in training data."
-        )
-
-    return logits.masked_fill(action_masks == 0, float("-inf"))
+from tetris_core import MCTSConfig, GameGenerator
 
 
 @dataclass
@@ -109,93 +72,6 @@ class TrainingConfig:
     log_interval: int = 100
 
 
-def compute_loss(
-    model: TetrisNet,
-    boards: torch.Tensor,
-    aux_features: torch.Tensor,
-    policy_targets: torch.Tensor,
-    value_targets: torch.Tensor,
-    action_masks: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Compute combined policy and value loss.
-
-    Args:
-        model: TetrisNet model
-        boards: (batch, 1, 20, 10)
-        aux_features: (batch, 52)
-        policy_targets: (batch, 734) - MCTS policy targets
-        value_targets: (batch,) - discounted attack targets
-        action_masks: (batch, 734) - valid action masks
-
-    Returns:
-        total_loss, policy_loss, value_loss
-    """
-    # Forward pass
-    policy_logits, value_pred = model(boards, aux_features)
-
-    # Apply action mask and compute log softmax
-    masked_logits = apply_action_mask(policy_logits, action_masks)
-    log_policy = F.log_softmax(masked_logits, dim=-1)
-
-    # Replace -inf with 0 for numerical stability (won't contribute to loss anyway
-    # since policy_targets should be 0 for invalid actions)
-    log_policy = torch.where(
-        torch.isinf(log_policy), torch.zeros_like(log_policy), log_policy
-    )
-
-    # Policy loss: cross-entropy with MCTS policy
-    # -sum(target * log(pred))
-    policy_loss = -torch.sum(policy_targets * log_policy, dim=1).mean()
-
-    # Value loss: MSE
-    value_loss = F.mse_loss(value_pred.squeeze(-1), value_targets)
-
-    # Total loss (AlphaZero uses equal weighting)
-    total_loss = policy_loss + value_loss
-
-    return total_loss, policy_loss, value_loss
-
-
-def compute_metrics(
-    model: TetrisNet,
-    boards: torch.Tensor,
-    aux_features: torch.Tensor,
-    policy_targets: torch.Tensor,
-    value_targets: torch.Tensor,
-    action_masks: torch.Tensor,
-) -> dict:
-    """Compute additional metrics for logging."""
-    with torch.no_grad():
-        policy_logits, value_pred = model(boards, aux_features)
-
-        # Apply action mask and compute softmax
-        masked_logits = apply_action_mask(policy_logits, action_masks)
-        policy_probs = F.softmax(masked_logits, dim=-1)
-
-        # Policy entropy (only over valid actions to avoid 0 * -inf = NaN)
-        log_probs = F.log_softmax(masked_logits, dim=-1)
-        # Replace -inf with 0 so that 0 * 0 = 0 instead of 0 * -inf = NaN
-        log_probs_safe = torch.where(
-            action_masks == 1, log_probs, torch.zeros_like(log_probs)
-        )
-        entropy = -torch.sum(policy_probs * log_probs_safe, dim=-1).mean()
-
-        # Value prediction error
-        value_error = torch.abs(value_pred.squeeze(-1) - value_targets).mean()
-
-        # Top-1 accuracy (if target is argmax of MCTS policy)
-        pred_actions = policy_probs.argmax(dim=-1)
-        target_actions = policy_targets.argmax(dim=-1)
-        top1_acc = (pred_actions == target_actions).float().mean()
-
-    return {
-        "policy_entropy": entropy.item(),
-        "value_error": value_error.item(),
-        "top1_accuracy": top1_acc.item(),
-    }
-
-
 class Trainer:
     """Main training class."""
 
@@ -231,6 +107,22 @@ class Trainer:
 
         # Create weight manager
         self.weight_manager = WeightManager(config.checkpoint_dir)
+
+        # Create evaluator and self-play generator
+        self.evaluator = Evaluator(
+            model=self.model,
+            checkpoint_dir=config.checkpoint_dir,
+            num_simulations=config.num_simulations,
+            eval_seeds=config.eval_seeds,
+        )
+        self.selfplay_generator = SelfPlayGenerator(
+            model=self.model,
+            checkpoint_dir=config.checkpoint_dir,
+            num_simulations=config.num_simulations,
+            temperature=config.temperature,
+            dirichlet_alpha=config.dirichlet_alpha,
+            dirichlet_epsilon=config.dirichlet_epsilon,
+        )
 
         # Training state
         self.step = 0
@@ -300,230 +192,13 @@ class Trainer:
 
         return metrics
 
-    def generate_data(self, num_games: int) -> tuple[list[TrainingExample], dict]:
-        """Generate self-play data using MCTS.
+    def generate_data(self, num_games: int):
+        """Generate self-play data using MCTS."""
+        return self.selfplay_generator.generate(num_games)
 
-        Returns:
-            Tuple of (examples, stats) where stats contains game statistics.
-        """
-        print(f"Generating {num_games} games...")
-
-        # Export current model to ONNX for Rust inference
-        onnx_path = Path(self.config.checkpoint_dir) / "selfplay.onnx"
-        export_onnx(self.model, onnx_path)
-
-        if not onnx_path.exists():
-            raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
-
-        # Configure MCTS
-        mcts_config = MCTSConfig()
-        mcts_config.num_simulations = self.config.num_simulations
-        mcts_config.temperature = self.config.temperature
-        mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
-        mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
-
-        # Create agent and load model
-        agent = MCTSAgent(mcts_config)
-        if not agent.load_model(str(onnx_path)):
-            raise RuntimeError(f"Failed to load model from {onnx_path}")
-
-        start_time = time.time()
-
-        # Generate games individually to collect stats
-        examples = []
-        total_attack = 0
-        total_moves = 0
-
-        for _ in range(num_games):
-            result = agent.play_game(max_moves=MAX_MOVES, add_noise=True)
-            if result is not None:
-                for ex in result.examples:
-                    examples.append(self._rust_example_to_training_example(ex))
-                total_attack += result.total_attack
-                total_moves += result.num_moves
-
-        elapsed = time.time() - start_time
-
-        # Compute statistics
-        avg_attack = total_attack / num_games if num_games > 0 else 0
-        avg_moves = total_moves / num_games if num_games > 0 else 0
-        attack_per_move = total_attack / total_moves if total_moves > 0 else 0
-
-        stats = {
-            "selfplay/total_attack": total_attack,
-            "selfplay/total_moves": total_moves,
-            "selfplay/avg_attack": avg_attack,
-            "selfplay/avg_moves": avg_moves,
-            "selfplay/attack_per_move": attack_per_move,
-            "selfplay/games_per_sec": num_games / max(0.1, elapsed),
-        }
-
-        print(f"Generated {len(examples)} examples from {num_games} games")
-        print(f"Time: {elapsed:.1f}s ({stats['selfplay/games_per_sec']:.2f} games/sec)")
-        print(f"Avg attack: {avg_attack:.2f}, Attack/move: {attack_per_move:.4f}")
-
-        return examples, stats
-
-    def _rust_example_to_training_example(self, rust_ex) -> TrainingExample:
-        """Convert Rust TrainingExample to Python TrainingExample."""
-        # Reshape board from flat list to 2D array
-        board = np.array(rust_ex.board, dtype=np.uint8).reshape(
-            BOARD_HEIGHT, BOARD_WIDTH
-        )
-
-        return TrainingExample(
-            board=board.astype(bool),
-            current_piece=rust_ex.current_piece,
-            hold_piece=rust_ex.hold_piece
-            if rust_ex.hold_piece < NUM_PIECE_TYPES
-            else None,
-            hold_available=rust_ex.hold_available,
-            next_queue=list(rust_ex.next_queue),
-            move_number=rust_ex.move_number,
-            policy_target=np.array(rust_ex.policy, dtype=np.float32),
-            value_target=rust_ex.value,
-            action_mask=np.array(rust_ex.action_mask, dtype=bool),
-        )
-
-    def evaluate(
-        self, render_trajectory: bool = False
-    ) -> tuple[EvalResult, Optional[list]]:
-        """Evaluate current model using MCTS on fixed seeds.
-
-        Args:
-            render_trajectory: If True, render one game as images for visualization
-
-        Returns:
-            Tuple of (EvalResult, trajectory_frames) where trajectory_frames is
-            a list of PIL Images if render_trajectory=True, else None
-        """
-        self.model.eval()
-
-        # Export model to ONNX for Rust evaluation
-        onnx_path = Path(self.config.checkpoint_dir) / "eval.onnx"
-        export_onnx(self.model, onnx_path)
-
-        if not onnx_path.exists():
-            raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
-
-        # Create MCTS config for evaluation (temperature=0 enforced by evaluate_model)
-        mcts_config = MCTSConfig()
-        mcts_config.num_simulations = self.config.num_simulations
-
-        # Run evaluation in Rust with seeded environments
-        result = evaluate_model(
-            model_path=str(onnx_path),
-            seeds=[int(s) for s in self.config.eval_seeds],
-            config=mcts_config,
-            max_moves=MAX_MOVES,
-        )
-
-        print(f"Evaluation ({result.num_games} games):")
-        print(f"  Avg attack: {result.avg_attack:.1f}")
-        print(f"  Max attack: {result.max_attack}")
-        print(f"  Avg moves: {result.avg_moves:.1f}")
-        print(f"  Attack/piece: {result.attack_per_piece:.3f}")
-
-        # Optionally render one trajectory for visualization (always first seed)
-        trajectory_frames = None
-        if render_trajectory and self.config.eval_seeds:
-            first_seed = self.config.eval_seeds[0]
-            try:
-                trajectory_frames = self._render_eval_trajectory(
-                    str(onnx_path), mcts_config, seed=first_seed
-                )
-            except Exception as e:
-                print(f"  Warning: Failed to render trajectory: {e}")
-
-        return result, trajectory_frames
-
-    def _render_eval_trajectory(
-        self,
-        model_path: str,
-        mcts_config: MCTSConfig,
-        seed: int = 0,
-        max_frames: int = 30,
-    ) -> list:
-        """Render a single evaluation game as images.
-
-        Returns:
-            List of PIL Images showing the game progression
-        """
-        from tetris_mcts.ml.visualization import render_board
-        from tetris_core import TetrisEnv, MCTSAgent
-
-        # Create agent and load model
-        agent = MCTSAgent(mcts_config)
-        if not agent.load_model(model_path):
-            raise RuntimeError(f"Failed to load model from {model_path}")
-
-        # Play one game with the seed
-        env = TetrisEnv.with_seed(10, 20, seed)
-        frames = []
-        total_attack = 0
-
-        for move_idx in range(MAX_MOVES):
-            if env.game_over or len(frames) >= max_frames:
-                break
-
-            # Get current state for rendering
-            board = np.array(env.get_board())
-            board_colors = env.get_board_colors()
-
-            piece = env.get_current_piece()
-            piece_cells = None
-            piece_type = None
-            ghost_cells = None
-
-            if piece:
-                piece_cells = piece.get_cells()
-                piece_type = piece.piece_type
-                ghost = env.get_ghost_piece()
-                if ghost:
-                    ghost_cells = ghost.get_cells()
-
-            # Render frame
-            frame = render_board(
-                board=board,
-                board_colors=board_colors,
-                current_piece_cells=piece_cells,
-                current_piece_type=piece_type,
-                ghost_cells=ghost_cells,
-                move_number=move_idx,
-                attack=total_attack,
-            )
-            frames.append(frame)
-
-            # Get action from MCTS
-            placements = env.get_possible_placements()
-            if not placements:
-                break
-
-            # Use MCTS to select action
-            result = agent.select_action(env, add_noise=False, move_number=move_idx)
-            if result is None:
-                break
-
-            # Execute action
-            attack = env.execute_action_index(result.action)
-            if attack is None:
-                break
-            total_attack += attack
-
-        # Add final frame
-        if not env.game_over and len(frames) < max_frames:
-            board = np.array(env.get_board())
-            board_colors = env.get_board_colors()
-            frame = render_board(
-                board=board,
-                board_colors=board_colors,
-                move_number=len(frames),
-                attack=total_attack,
-                info_text="Final" if env.game_over else "",
-            )
-            frames.append(frame)
-
-        return frames
+    def evaluate(self, render_trajectory: bool = False):
+        """Evaluate current model using MCTS on fixed seeds."""
+        return self.evaluator.evaluate(render_trajectory)
 
     def train_iteration(self, log_to_wandb: bool = True) -> dict:
         """Run one training iteration."""
@@ -827,74 +502,6 @@ class Trainer:
         self.save()
         if log_to_wandb:
             wandb.finish()
-
-
-def train_from_data(
-    data_path: str | Path,
-    config: Optional[TrainingConfig] = None,
-    num_epochs: int = 10,
-    device: str = "cpu",
-):
-    """Train from pre-generated data file."""
-    if config is None:
-        config = TrainingConfig()
-
-    # Load data
-    dataset = TetrisDataset(data_path)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        drop_last=True,
-    )
-
-    # Create model and trainer
-    model = TetrisNet(
-        conv_filters=config.conv_filters,
-        fc_hidden=config.fc_hidden,
-    ).to(device)
-
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=config.weight_decay,
-    )
-
-    # Training loop
-    print(f"Training on {len(dataset)} examples for {num_epochs} epochs")
-
-    for epoch in range(num_epochs):
-        epoch_losses = []
-        epoch_policy_losses = []
-        epoch_value_losses = []
-
-        for batch in dataloader:
-            boards, aux, policy_targets, value_targets, masks = batch
-            boards = boards.to(device)
-            aux = aux.to(device)
-            policy_targets = policy_targets.to(device)
-            value_targets = value_targets.to(device)
-            masks = masks.to(device)
-
-            optimizer.zero_grad()
-            total_loss, policy_loss, value_loss = compute_loss(
-                model, boards, aux, policy_targets, value_targets, masks
-            )
-            total_loss.backward()
-            optimizer.step()
-
-            epoch_losses.append(total_loss.item())
-            epoch_policy_losses.append(policy_loss.item())
-            epoch_value_losses.append(value_loss.item())
-
-        print(
-            f"Epoch {epoch + 1}/{num_epochs}: "
-            f"loss={np.mean(epoch_losses):.4f}, "
-            f"policy={np.mean(epoch_policy_losses):.4f}, "
-            f"value={np.mean(epoch_value_losses):.4f}"
-        )
-
-    return model
 
 
 if __name__ == "__main__":

@@ -11,6 +11,20 @@ use crate::piece::NUM_PIECE_TYPES;
 use super::action_space::get_action_space;
 use super::utils::sample_dirichlet;
 
+/// Trait for common node statistics (visit count, value sum, mean value)
+pub trait NodeStats {
+    fn visit_count(&self) -> u32;
+    fn value_sum(&self) -> f32;
+
+    fn mean_value(&self) -> f32 {
+        if self.visit_count() > 0 {
+            self.value_sum() / self.visit_count() as f32
+        } else {
+            0.0
+        }
+    }
+}
+
 /// MCTS Node types
 #[derive(Clone)]
 pub enum MCTSNode {
@@ -21,31 +35,19 @@ pub enum MCTSNode {
 }
 
 impl MCTSNode {
-    /// Get visit count
+    /// Get visit count (delegates to inner node via NodeStats trait)
     pub fn visit_count(&self) -> u32 {
         match self {
-            MCTSNode::Decision(n) => n.visit_count,
-            MCTSNode::Chance(n) => n.visit_count,
+            MCTSNode::Decision(n) => n.visit_count(),
+            MCTSNode::Chance(n) => n.visit_count(),
         }
     }
 
-    /// Get mean value
+    /// Get mean value (delegates to inner node via NodeStats trait)
     pub fn mean_value(&self) -> f32 {
         match self {
-            MCTSNode::Decision(n) => {
-                if n.visit_count > 0 {
-                    n.value_sum / n.visit_count as f32
-                } else {
-                    0.0
-                }
-            }
-            MCTSNode::Chance(n) => {
-                if n.visit_count > 0 {
-                    n.value_sum / n.visit_count as f32
-                } else {
-                    0.0
-                }
-            }
+            MCTSNode::Decision(n) => n.mean_value(),
+            MCTSNode::Chance(n) => n.mean_value(),
         }
     }
 }
@@ -152,6 +154,16 @@ impl DecisionNode {
     }
 }
 
+impl NodeStats for DecisionNode {
+    fn visit_count(&self) -> u32 {
+        self.visit_count
+    }
+
+    fn value_sum(&self) -> f32 {
+        self.value_sum
+    }
+}
+
 /// Chance node for stochastic piece spawns
 #[derive(Clone)]
 pub struct ChanceNode {
@@ -203,6 +215,16 @@ impl ChanceNode {
             // Select from remaining pieces in current bag
             *self.bag_remaining.choose(&mut rng).unwrap()
         }
+    }
+}
+
+impl NodeStats for ChanceNode {
+    fn visit_count(&self) -> u32 {
+        self.visit_count
+    }
+
+    fn value_sum(&self) -> f32 {
+        self.value_sum
     }
 }
 

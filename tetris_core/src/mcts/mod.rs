@@ -9,14 +9,16 @@
 mod action_space;
 mod agent;
 mod config;
+mod export;
 mod nodes;
 mod results;
+mod search;
 mod utils;
 
 // Re-export public API
 pub use action_space::{get_action_space, ActionSpace, NUM_ACTIONS};
 pub use agent::MCTSAgent;
 pub use config::MCTSConfig;
-pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode};
+pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode, NodeStats};
 pub use results::{GameResult, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport};
 pub use utils::{sample_action, sample_dirichlet};

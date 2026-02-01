@@ -61,19 +61,12 @@ pub fn get_i_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
     }
 }
 
-/// Get wall kicks for O piece (no kicks needed, returns identity for consistency)
-/// Note: This is intentionally private as O piece kicks are handled inline in moves.rs
-#[allow(dead_code)]
-fn get_o_kicks(_from_state: usize, _to_state: usize) -> [(i32, i32); 5] {
-    [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]
-}
-
 /// Get the appropriate wall kicks for a piece type
 /// piece_type: 0=I, 1=O, 2=T, 3=S, 4=Z, 5=J, 6=L
 pub fn get_kicks_for_piece(piece_type: usize, from_state: usize, to_state: usize) -> [(i32, i32); 5] {
     match piece_type {
         0 => get_i_kicks(from_state, to_state),
-        1 => get_o_kicks(from_state, to_state),
+        1 => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)], // O piece: no kicks needed
         _ => get_jlstz_kicks(from_state, to_state),
     }
 }
@@ -135,9 +128,9 @@ mod tests {
         let i_kicks = get_kicks_for_piece(0, 0, 1);
         assert_eq!(i_kicks, get_i_kicks(0, 1));
 
-        // O piece should use O kicks
+        // O piece should return all identity kicks (no kicks needed)
         let o_kicks = get_kicks_for_piece(1, 0, 1);
-        assert_eq!(o_kicks, get_o_kicks(0, 1));
+        assert_eq!(o_kicks, [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)]);
 
         // T, S, Z, J, L should use JLSTZ kicks
         for piece_type in 2..7 {

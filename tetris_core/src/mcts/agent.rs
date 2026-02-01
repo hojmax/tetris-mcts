@@ -4,14 +4,14 @@
 
 use pyo3::prelude::*;
 
-use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, QUEUE_SIZE};
+use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
 
-use super::action_space::{get_action_space, NUM_ACTIONS};
+use super::action_space::get_action_space;
 use super::config::MCTSConfig;
-use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
-use super::results::{GameResult, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport};
-use super::utils::sample_action;
+use super::export::export_decision_node;
+use super::results::{GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport};
+use super::search::search_internal;
 
 /// MCTS Agent for Tetris
 #[pyclass]
@@ -25,10 +25,7 @@ pub struct MCTSAgent {
 impl MCTSAgent {
     #[new]
     pub fn new(config: MCTSConfig) -> Self {
-        MCTSAgent {
-            config,
-            nn: None,
-        }
+        MCTSAgent { config, nn: None }
     }
 
     /// Load a neural network model
@@ -67,16 +64,13 @@ impl MCTSAgent {
     /// Returns:
     ///     GameResult with training examples, or None if no model loaded
     #[pyo3(signature = (max_moves=100, add_noise=true))]
-    pub fn play_game(
-        &self,
-        max_moves: u32,
-        add_noise: bool,
-    ) -> Option<GameResult> {
+    pub fn play_game(&self, max_moves: u32, add_noise: bool) -> Option<GameResult> {
         let nn = self.nn.as_ref()?;
 
         let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
         let mut states: Vec<(TetrisEnv, u32, Vec<f32>, Vec<bool>)> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
+        let mut stats = GameStats::default();
 
         for move_idx in 0..max_moves {
             if env.game_over {
@@ -87,12 +81,16 @@ impl MCTSAgent {
             let mask = crate::nn::get_action_mask(&env);
             if !mask.iter().any(|&x| x) {
                 // This should only happen if game is over - if not, it's a bug
-                debug_assert!(env.game_over, "No valid actions but game not over - this is a bug");
+                debug_assert!(
+                    env.game_over,
+                    "No valid actions but game not over - this is a bug"
+                );
                 break;
             }
 
             // Get NN policy and value for root
-            let (policy, nn_value) = nn.predict_masked(&env, move_idx as usize, &mask)
+            let (policy, nn_value) = nn
+                .predict_masked(&env, move_idx as usize, &mask)
                 .expect("Neural network prediction failed during self-play");
 
             // Store state before making move
@@ -102,14 +100,62 @@ impl MCTSAgent {
             let result = self.search(&env, policy, nn_value, add_noise, move_idx);
 
             // Execute the selected action
-            let (x, y, rot) = get_action_space().index_to_placement(result.action)
+            let (x, y, rot) = get_action_space()
+                .index_to_placement(result.action)
                 .expect("MCTS returned invalid action index");
             let placements = env.get_possible_placements();
-            let placement = placements.iter().find(|p| {
-                p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
-            }).expect("MCTS selected action not found in valid placements");
+            let placement = placements
+                .iter()
+                .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)
+                .expect("MCTS selected action not found in valid placements");
             let attack = env.execute_placement(placement);
             attacks.push(attack);
+
+            // Collect stats from the attack result
+            if let Some(ref attack_result) = env.get_last_attack_result() {
+                let lines = attack_result.lines_cleared;
+                stats.total_lines += lines;
+
+                // Track combo
+                if attack_result.combo > stats.max_combo {
+                    stats.max_combo = attack_result.combo;
+                }
+
+                // Track back-to-backs
+                if attack_result.back_to_back_attack > 0 {
+                    stats.back_to_backs += 1;
+                }
+
+                // Track perfect clears
+                if attack_result.is_perfect_clear {
+                    stats.perfect_clears += 1;
+                }
+
+                // Categorize clear type
+                if attack_result.is_tspin {
+                    match lines {
+                        1 => {
+                            // Check if mini (mini has 0 base attack for single)
+                            if attack_result.base_attack == 0 {
+                                stats.tspin_minis += 1;
+                            } else {
+                                stats.tspin_singles += 1;
+                            }
+                        }
+                        2 => stats.tspin_doubles += 1,
+                        3 => stats.tspin_triples += 1,
+                        _ => {}
+                    }
+                } else {
+                    match lines {
+                        1 => stats.singles += 1,
+                        2 => stats.doubles += 1,
+                        3 => stats.triples += 1,
+                        4 => stats.tetrises += 1,
+                        _ => {}
+                    }
+                }
+            }
 
             // Update stored policy with MCTS policy
             if let Some(last) = states.last_mut() {
@@ -119,7 +165,11 @@ impl MCTSAgent {
 
         // Compute value targets (cumulative attack from each position)
         let num_states = states.len();
-        debug_assert_eq!(states.len(), attacks.len(), "States and attacks should have same length");
+        debug_assert_eq!(
+            states.len(),
+            attacks.len(),
+            "States and attacks should have same length"
+        );
 
         let mut values = vec![0.0f32; num_states];
         let mut cumulative = 0u32;
@@ -134,18 +184,15 @@ impl MCTSAgent {
         for i in 0..num_states {
             let (ref state, move_num, ref policy, ref mask) = states[i];
 
-            let board: Vec<u8> = state.get_board()
+            let board: Vec<u8> = state
+                .get_board()
                 .iter()
                 .flat_map(|row| row.iter().copied())
                 .collect();
 
-            let current_piece = state.get_current_piece()
-                .map(|p| p.piece_type)
-                .unwrap_or(0);
+            let current_piece = state.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
 
-            let hold_piece = state.get_hold_piece()
-                .map(|p| p.piece_type)
-                .unwrap_or(7); // 7 = empty
+            let hold_piece = state.get_hold_piece().map(|p| p.piece_type).unwrap_or(7); // 7 = empty
 
             let hold_available = !state.is_hold_used();
             let next_queue = state.get_queue(5);
@@ -170,6 +217,7 @@ impl MCTSAgent {
             examples,
             total_attack,
             num_moves,
+            stats,
         })
     }
 
@@ -226,14 +274,16 @@ impl MCTSAgent {
             return None;
         }
 
-        let (policy, nn_value) = nn.predict_masked(env, move_number as usize, &mask)
+        let (policy, nn_value) = nn
+            .predict_masked(env, move_number as usize, &mask)
             .expect("Neural network prediction failed");
 
-        let (mcts_result, root) = self.search_internal(env, policy, nn_value, add_noise, move_number);
+        let (mcts_result, root) =
+            search_internal(&self.config, nn, env, policy, nn_value, add_noise, move_number);
 
         // Export tree structure
         let mut nodes: Vec<TreeNodeExport> = Vec::new();
-        self.export_decision_node(&root, None, None, &mut nodes);
+        export_decision_node(&root, None, None, &mut nodes);
 
         let tree_export = MCTSTreeExport {
             nodes,
@@ -273,10 +323,12 @@ impl MCTSAgent {
             return None;
         }
 
-        let (policy, nn_value) = nn.predict_masked(env, move_number as usize, &mask)
+        let (policy, nn_value) = nn
+            .predict_masked(env, move_number as usize, &mask)
             .expect("Neural network prediction failed");
 
-        let (mcts_result, _root) = self.search_internal(env, policy, nn_value, add_noise, move_number);
+        let (mcts_result, _root) =
+            search_internal(&self.config, nn, env, policy, nn_value, add_noise, move_number);
         Some(mcts_result)
     }
 }
@@ -296,387 +348,17 @@ impl MCTSAgent {
         add_noise: bool,
         move_number: u32,
     ) -> MCTSResult {
-        let (result, _root) = self.search_internal(env, policy, nn_value, add_noise, move_number);
+        let nn = self.nn.as_ref().expect("Neural network required for search");
+        let (result, _root) =
+            search_internal(&self.config, nn, env, policy, nn_value, add_noise, move_number);
         result
-    }
-
-    /// Run a single MCTS simulation
-    ///
-    /// Uses raw pointers for tree traversal to track the path from root to leaf.
-    /// This is a common pattern in tree structures where we need mutable access
-    /// to nodes at multiple levels simultaneously.
-    ///
-    /// # Safety
-    /// The unsafe pointer operations are sound because:
-    /// 1. All pointers are derived from valid mutable references to tree nodes
-    /// 2. The tree structure is not modified during traversal (no reallocation)
-    /// 3. Each node is accessed through exactly one pointer at a time
-    /// 4. Pointers remain valid for the entire duration of a single simulation
-    ///
-    /// # Args
-    /// * `root` - The root decision node
-    /// * `root_move_number` - Move number at the root
-    fn simulate(&self, root: &mut DecisionNode, root_move_number: u32) {
-        // Selection: traverse tree, tracking path for backpropagation
-        // Store (node_ptr, action_idx, attack_at_this_step)
-        let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
-        let mut current = root as *mut DecisionNode;
-        let mut depth: u32 = 0;
-
-        loop {
-            // SAFETY: `current` is always derived from a valid &mut DecisionNode.
-            // The tree structure doesn't change during simulation, so the pointer
-            // remains valid. We only hold one mutable reference at a time.
-            let node = unsafe { &mut *current };
-
-            if node.is_terminal {
-                // Terminal - backpropagate with 0 future value (game over)
-                self.backup_with_value(&path, 0.0);
-                return;
-            }
-
-            if node.valid_actions.is_empty() {
-                self.backup_with_value(&path, 0.0);
-                return;
-            }
-
-            // Select action
-            let action_idx = node.select_action(self.config.c_puct);
-
-            // Check if child exists
-            if !node.children.contains_key(&action_idx) {
-                // Expansion: create new child (NN evaluation happens inside expand_action)
-                let child = self.expand_action(node, action_idx, root_move_number + depth + 1);
-                node.children.insert(action_idx, child);
-
-                // Get attack and nn_value from the new node
-                let chance_node = match node.children.get(&action_idx) {
-                    Some(MCTSNode::Chance(cn)) => cn,
-                    _ => panic!("BUG: expand_action should create ChanceNode"),
-                };
-                let leaf_attack = chance_node.attack as f32;
-                let leaf_value = chance_node.nn_value;  // Use stored NN value
-
-                // Add this step to path with its attack
-                path.push((current, action_idx, leaf_attack));
-
-                // Backpropagate: total = attack_along_path + leaf_value
-                self.backup_with_value(&path, leaf_value);
-                return;
-            }
-
-            // Traverse to child - get attack at this step
-            let chance_node = match node.children.get_mut(&action_idx) {
-                Some(MCTSNode::Chance(cn)) => cn,
-                _ => panic!("BUG: Decision node child should be ChanceNode"),
-            };
-            let step_attack = chance_node.attack as f32;
-            path.push((current, action_idx, step_attack));
-            depth += 1;
-
-            // Randomly select which piece outcome to explore
-            let piece = chance_node.select_piece_random();
-
-            // Get or create decision node for this piece
-            if !chance_node.children.contains_key(&piece) {
-                let decision_child = self.expand_chance(chance_node, piece, root_move_number + depth);
-                chance_node.children.insert(piece, decision_child);
-            }
-
-            match chance_node.children.get_mut(&piece) {
-                Some(MCTSNode::Decision(decision_node)) => {
-                    current = decision_node as *mut DecisionNode;
-                }
-                _ => panic!("BUG: ChanceNode child should be DecisionNode"),
-            }
-        }
-    }
-
-    /// Expand an action from a decision node (creates chance node)
-    fn expand_action(&self, parent: &DecisionNode, action_idx: usize, move_number: u32) -> MCTSNode {
-        let mut new_state = parent.state.clone();
-
-        // Get placement coordinates from action index
-        let (x, y, rot) = get_action_space().index_to_placement(action_idx)
-            .expect("Invalid action index in expand_action");
-
-        // Find the matching placement to get move sequence for T-spin detection
-        let placements = new_state.get_possible_placements();
-        let placement = placements.iter().find(|p| {
-            p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
-        }).expect("Action not found in valid placements during expansion");
-        let attack = new_state.execute_placement(placement);
-
-        // Truncate to visible queue length FIRST.
-        // This ensures expand_chance pushes to position 5 (the first "unseen" position).
-        new_state.truncate_queue(QUEUE_SIZE);
-
-        // Get possible pieces from the 7-bag rule.
-        // At bag boundaries, multiple pieces are possible, creating stochastic branching.
-        let bag_remaining = new_state.get_possible_next_pieces();
-
-        // Get NN policy and value - cached for all DecisionNode children
-        // (They all see the same visible state, only differing in the hidden 6th queue piece)
-        let nn = self.nn.as_ref()
-            .expect("Neural network required for MCTS expansion");
-        let mask = crate::nn::get_action_mask(&new_state);
-        let (policy, nn_value) = nn.predict_masked(&new_state, move_number as usize, &mask)
-            .expect("Neural network prediction failed during expansion");
-
-        MCTSNode::Chance(ChanceNode::new(new_state, attack, bag_remaining, nn_value, policy))
-    }
-
-    /// Expand a chance node for a specific piece (creates decision node)
-    ///
-    /// The "piece" parameter represents the piece that appears at the END of the visible
-    /// queue (the next unseen piece). This is the actual "chance" in Tetris - we know
-    /// the current piece and visible queue, but not what comes after.
-    ///
-    /// Uses cached policy/value from parent ChanceNode since the NN only sees the visible
-    /// queue (5 pieces) - the hidden 6th piece doesn't affect the NN output.
-    fn expand_chance(&self, parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNode {
-        let mut new_state = parent.state.clone();
-
-        // Add the selected piece to the end of the queue
-        // This represents the "chance" outcome - which piece appears next in the queue
-        new_state.push_queue_piece(piece);
-
-        let mut node = DecisionNode::new(new_state, move_number);
-
-        // Use cached policy and value from parent ChanceNode
-        // (All children see the same visible state - only the hidden 6th queue piece differs)
-        node.set_nn_output(&parent.cached_policy, parent.nn_value);
-
-        MCTSNode::Decision(node)
-    }
-
-    /// Backpropagate total episode value through the path
-    ///
-    /// All nodes in the path receive the SAME total value:
-    ///   total_value = cumulative_attack_along_path + leaf_value
-    ///
-    /// The NN predicts future reward from each state. By adding the cumulative
-    /// attack collected along the path to the leaf's NN value, we get the total
-    /// expected episode return. This same total is backed up to all nodes so that
-    /// Q values represent "expected total return when passing through this node".
-    ///
-    /// Args:
-    ///     path: List of (node_ptr, action_idx, attack_at_step)
-    ///     leaf_value: NN value estimate of remaining game from the leaf state
-    fn backup_with_value(&self, path: &[(*mut DecisionNode, usize, f32)], leaf_value: f32) {
-        if path.is_empty() {
-            return;
-        }
-
-        // Compute total value = all attacks along path + leaf's future value estimate
-        let total_attack: f32 = path.iter().map(|(_, _, attack)| attack).sum();
-        let total_value = total_attack + leaf_value;
-
-        // All nodes on the path get the same total value
-        for &(node_ptr, action_idx, _) in path.iter() {
-            // SAFETY: node_ptr was stored during the simulation traversal from valid
-            // &mut DecisionNode references. The tree hasn't been modified, so pointers
-            // remain valid. Each pointer in the path refers to a distinct node.
-            let node = unsafe { &mut *node_ptr };
-
-            // Update child stats (the ChanceNode we traversed through)
-            if let Some(child) = node.children.get_mut(&action_idx) {
-                match child {
-                    MCTSNode::Decision(d) => {
-                        d.visit_count += 1;
-                        d.value_sum += total_value;
-                    }
-                    MCTSNode::Chance(c) => {
-                        c.visit_count += 1;
-                        c.value_sum += total_value;
-                    }
-                }
-            }
-
-            // Update the DecisionNode itself
-            node.visit_count += 1;
-            node.value_sum += total_value;
-        }
-    }
-
-    /// Internal search implementation that returns both result and root node.
-    fn search_internal(
-        &self,
-        env: &TetrisEnv,
-        policy: Vec<f32>,
-        nn_value: f32,
-        add_noise: bool,
-        move_number: u32,
-    ) -> (MCTSResult, DecisionNode) {
-        // Create root node (keep full queue - truncation breaks 7-bag tracking)
-        let mut root = DecisionNode::new(env.clone(), move_number);
-        root.set_nn_output(&policy, nn_value);
-
-        if add_noise {
-            root.add_dirichlet_noise(self.config.dirichlet_alpha, self.config.dirichlet_epsilon);
-        }
-
-        // Run simulations
-        for _ in 0..self.config.num_simulations {
-            self.simulate(&mut root, move_number);
-        }
-
-        // Build result policy from visit counts
-        let mut result_policy = vec![0.0; NUM_ACTIONS];
-        let total_visits: u32 = root.children.values().map(|c| c.visit_count()).sum();
-
-        debug_assert!(total_visits > 0, "MCTS should have visits after simulations");
-
-        let action = if self.config.temperature == 0.0 {
-            let (best_action, _) = root.children.iter()
-                .max_by_key(|(_, child)| child.visit_count())
-                .map(|(&idx, child)| (idx, child.visit_count()))
-                .expect("MCTS root should have children after simulations");
-            result_policy[best_action] = 1.0;
-            best_action
-        } else {
-            for (&action_idx, child) in &root.children {
-                result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / self.config.temperature);
-            }
-            let sum: f32 = result_policy.iter().sum();
-            if sum > 0.0 {
-                for p in &mut result_policy {
-                    *p /= sum;
-                }
-            }
-            sample_action(&result_policy)
-        };
-
-        let root_value = if root.visit_count > 0 {
-            root.value_sum / root.visit_count as f32
-        } else {
-            0.0
-        };
-
-        let mcts_result = MCTSResult {
-            policy: result_policy,
-            action,
-            value: root_value,
-            num_simulations: self.config.num_simulations,
-        };
-
-        (mcts_result, root)
-    }
-
-    /// Recursively export a decision node and its subtree
-    fn export_decision_node(
-        &self,
-        node: &DecisionNode,
-        parent_id: Option<usize>,
-        edge_from_parent: Option<usize>,
-        nodes: &mut Vec<TreeNodeExport>,
-    ) -> usize {
-
-        let id = nodes.len();
-        let mean_value = if node.visit_count > 0 {
-            node.value_sum / node.visit_count as f32
-        } else {
-            0.0
-        };
-
-        // Create the node (children will be filled in later)
-        let export = TreeNodeExport {
-            id,
-            node_type: "decision".to_string(),
-            visit_count: node.visit_count,
-            value_sum: node.value_sum,
-            mean_value,
-            nn_value: node.nn_value,
-            prior: node.prior,
-            is_terminal: node.is_terminal,
-            move_number: node.move_number,
-            attack: 0,
-            state: node.state.clone(),
-            parent_id,
-            edge_from_parent,
-            children: Vec::new(),
-            valid_actions: node.valid_actions.clone(),
-            action_priors: node.action_priors.clone(),
-        };
-
-        nodes.push(export);
-
-        // Export children (sorted by action index for deterministic order)
-        let mut child_keys: Vec<usize> = node.children.keys().copied().collect();
-        child_keys.sort();
-
-        let mut child_ids = Vec::new();
-        for action_idx in child_keys {
-            if let Some(MCTSNode::Chance(chance_node)) = node.children.get(&action_idx) {
-                let child_id = self.export_chance_node(chance_node, Some(id), Some(action_idx), nodes);
-                child_ids.push(child_id);
-            }
-        }
-
-        // Update our children list
-        nodes[id].children = child_ids;
-
-        id
-    }
-
-    /// Recursively export a chance node and its subtree
-    fn export_chance_node(
-        &self,
-        node: &ChanceNode,
-        parent_id: Option<usize>,
-        edge_from_parent: Option<usize>,
-        nodes: &mut Vec<TreeNodeExport>,
-    ) -> usize {
-
-        let id = nodes.len();
-        let mean_value = if node.visit_count > 0 {
-            node.value_sum / node.visit_count as f32
-        } else {
-            0.0
-        };
-
-        let export = TreeNodeExport {
-            id,
-            node_type: "chance".to_string(),
-            visit_count: node.visit_count,
-            value_sum: node.value_sum,
-            mean_value,
-            nn_value: node.nn_value,
-            prior: 0.0,
-            is_terminal: false,
-            move_number: 0,
-            attack: node.attack,
-            state: node.state.clone(),
-            parent_id,
-            edge_from_parent,
-            children: Vec::new(),
-            valid_actions: Vec::new(),
-            action_priors: Vec::new(),
-        };
-
-        nodes.push(export);
-
-        // Export children (sorted by piece type for deterministic order)
-        let mut child_keys: Vec<usize> = node.children.keys().copied().collect();
-        child_keys.sort();
-
-        let mut child_ids = Vec::new();
-        for piece_type in child_keys {
-            if let Some(MCTSNode::Decision(decision_node)) = node.children.get(&piece_type) {
-                let child_id = self.export_decision_node(decision_node, Some(id), Some(piece_type), nodes);
-                child_ids.push(child_id);
-            }
-        }
-
-        nodes[id].children = child_ids;
-
-        id
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::nodes::{DecisionNode, MCTSNode};
 
     #[test]
     fn test_expand_action_updates_state() {
@@ -696,10 +378,6 @@ mod tests {
         let initial_piece = env.get_current_piece().unwrap().piece_type;
         let initial_queue: Vec<usize> = env.get_queue(5);
 
-        println!("Initial state:");
-        println!("  Current piece type: {}", initial_piece);
-        println!("  Queue: {:?}", initial_queue);
-
         // Create a decision node
         let policy = vec![1.0 / 734.0; 734];
         let mut root = DecisionNode::new(env.clone(), 0);
@@ -707,43 +385,46 @@ mod tests {
 
         // Get a valid action
         let action_idx = root.valid_actions[0];
-        println!("  Taking action: {}", action_idx);
 
-        // Expand the action - this should create a ChanceNode with updated state
-        let child = agent.expand_action(&root, action_idx, 0);
+        // Run MCTS search to expand the action
+        let mask = crate::nn::get_action_mask(&env);
+        let nn = agent.nn.as_ref().unwrap();
+        let (nn_policy, nn_value) = nn.predict_masked(&env, 0, &mask).unwrap();
 
-        // Check the child's state
-        match child {
-            MCTSNode::Chance(chance_node) => {
-                let new_piece = chance_node.state.get_current_piece();
-                let new_queue: Vec<usize> = chance_node.state.get_queue(5);
+        let (_result, root_after) =
+            search_internal(&agent.config, nn, &env, nn_policy, nn_value, false, 0);
 
-                println!("After expand_action (ChanceNode state):");
-                println!("  Current piece type: {:?}", new_piece.as_ref().map(|p| p.piece_type));
-                println!("  Queue: {:?}", new_queue);
+        // The root should have children after search
+        assert!(
+            !root_after.children.is_empty(),
+            "Root should have children after search"
+        );
 
-                // The current piece should have changed (old piece was placed, new one spawned)
-                if let Some(ref new_p) = new_piece {
-                    assert_ne!(
-                        new_p.piece_type, initial_piece,
-                        "Current piece should have changed after placing! \
-                        Initial: {}, After: {}",
-                        initial_piece, new_p.piece_type
-                    );
+        // Check that actions were expanded
+        if let Some(child) = root_after.children.values().next() {
+            match child {
+                MCTSNode::Chance(chance_node) => {
+                    let new_piece = chance_node.state.get_current_piece();
+                    let new_queue: Vec<usize> = chance_node.state.get_queue(5);
+
+                    // The current piece should have changed (old piece was placed, new one spawned)
+                    if let Some(ref new_p) = new_piece {
+                        assert_ne!(
+                            new_p.piece_type, initial_piece,
+                            "Current piece should have changed after placing"
+                        );
+                    }
+
+                    // The first piece from the old queue should now be current
+                    if let Some(ref new_p) = new_piece {
+                        assert_eq!(
+                            new_p.piece_type, initial_queue[0],
+                            "New current piece should be the first from old queue"
+                        );
+                    }
                 }
-
-                // The first piece from the old queue should now be current
-                // (unless fill_queue added something unexpected)
-                if let Some(ref new_p) = new_piece {
-                    assert_eq!(
-                        new_p.piece_type, initial_queue[0],
-                        "New current piece should be the first from old queue! \
-                        Expected: {}, Got: {}",
-                        initial_queue[0], new_p.piece_type
-                    );
-                }
+                _ => panic!("First child should be a ChanceNode"),
             }
-            _ => panic!("expand_action should return a ChanceNode"),
         }
     }
 }
