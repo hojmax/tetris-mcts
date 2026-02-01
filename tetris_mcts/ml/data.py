@@ -22,8 +22,6 @@ from tetris_mcts.ml.network import (
     BOARD_WIDTH,
     NUM_PIECE_TYPES,
     QUEUE_SIZE,
-    AUX_FEATURES,
-    encode_state,
     MAX_MOVES,
 )
 
@@ -194,105 +192,6 @@ class TetrisDataset(Dataset):
             self.value_targets[idx],
             self.action_masks[idx],
         )
-
-
-class ReplayBuffer:
-    """
-    Circular replay buffer for training data.
-
-    Stores raw arrays for efficient sampling.
-    """
-
-    def __init__(self, max_size: int = 100_000):
-        self.max_size = max_size
-        self.size = 0
-        self.pos = 0
-
-        # Pre-allocate arrays
-        self.boards = np.zeros((max_size, BOARD_HEIGHT, BOARD_WIDTH), dtype=np.float32)
-        self.aux_features = np.zeros((max_size, AUX_FEATURES), dtype=np.float32)
-        self.policy_targets = np.zeros((max_size, NUM_ACTIONS), dtype=np.float32)
-        self.value_targets = np.zeros(max_size, dtype=np.float32)
-        self.action_masks = np.zeros((max_size, NUM_ACTIONS), dtype=np.float32)
-
-    def add(self, example: TrainingExample) -> None:
-        """Add a single example to the buffer."""
-        board_t, aux_t = encode_state(
-            board=example.board,
-            current_piece=example.current_piece,
-            hold_piece=example.hold_piece,
-            hold_available=example.hold_available,
-            next_queue=example.next_queue,
-            move_number=example.move_number,
-        )
-
-        self.boards[self.pos] = board_t.squeeze(0)
-        self.aux_features[self.pos] = aux_t
-        self.policy_targets[self.pos] = example.policy_target
-        self.value_targets[self.pos] = example.value_target
-        self.action_masks[self.pos] = example.action_mask.astype(np.float32)
-
-        self.pos = (self.pos + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
-
-    def add_batch(self, examples: list[TrainingExample]) -> None:
-        """Add multiple examples to the buffer."""
-        for ex in examples:
-            self.add(ex)
-
-    def sample(self, batch_size: int) -> tuple[torch.Tensor, ...]:
-        """
-        Sample a random batch from the buffer.
-
-        Returns:
-            boards: (batch, 1, 20, 10)
-            aux_features: (batch, 52)
-            policy_targets: (batch, 734)
-            value_targets: (batch,)
-            action_masks: (batch, 734)
-
-        Raises:
-            ValueError: If buffer is empty
-        """
-        if self.size == 0:
-            raise ValueError("Cannot sample from empty buffer")
-        indices = np.random.randint(0, self.size, size=batch_size)
-
-        return (
-            torch.tensor(self.boards[indices]).unsqueeze(1),
-            torch.tensor(self.aux_features[indices]),
-            torch.tensor(self.policy_targets[indices]),
-            torch.tensor(self.value_targets[indices]),
-            torch.tensor(self.action_masks[indices]),
-        )
-
-    def __len__(self):
-        return self.size
-
-    def save(self, filepath: str | Path) -> None:
-        """Save buffer contents to file."""
-        np.savez_compressed(
-            filepath,
-            boards=self.boards[: self.size],
-            aux_features=self.aux_features[: self.size],
-            policy_targets=self.policy_targets[: self.size],
-            value_targets=self.value_targets[: self.size],
-            action_masks=self.action_masks[: self.size],
-            pos=np.array([self.pos]),
-        )
-
-    def load(self, filepath: str | Path) -> None:
-        """Load buffer contents from file."""
-        data = np.load(filepath)
-        n = len(data["boards"])
-
-        self.boards[:n] = data["boards"]
-        self.aux_features[:n] = data["aux_features"]
-        self.policy_targets[:n] = data["policy_targets"]
-        self.value_targets[:n] = data["value_targets"]
-        self.action_masks[:n] = data["action_masks"]
-        self.size = n
-        self.pos = int(data["pos"][0]) if n == self.max_size else n
 
 
 class SharedReplayBuffer:

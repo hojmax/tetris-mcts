@@ -24,14 +24,8 @@ def get_best_device() -> str:
 @dataclass
 class ScriptArgs:
     # Training settings
-    iterations: int = 100  # Number of training iterations
-    games_per_iter: int = 50  # Games to play per iteration
-    train_steps_per_iter: int = 500  # Training steps per iteration
-
-    # Parallel training
-    parallel: bool = True  # Use parallel Rust game generation
-    total_steps: int = 100000  # Total steps for parallel training
-    model_sync_interval: int = 1000  # Steps between model exports (parallel mode)
+    total_steps: int = 100000  # Total training steps
+    model_sync_interval: int = 1000  # Steps between model exports
 
     # MCTS settings
     simulations: int = 100  # MCTS simulations per move
@@ -52,8 +46,8 @@ class ScriptArgs:
     data_dir: Path = (
         Path(__file__).parent.parent.parent / "outputs" / "data"
     )  # Directory for game data
-    checkpoint_interval: int = 10  # Save checkpoint every N iterations
-    eval_interval: int = 10  # Evaluate every N iterations
+    checkpoint_interval: int = 100  # Save checkpoint every N iterations
+    eval_interval: int = 100  # Evaluate every N iterations
     log_interval: int = 100  # Log every N training steps
 
     # WandB
@@ -81,11 +75,8 @@ def main(args: ScriptArgs) -> None:
         learning_rate=args.lr,
         num_simulations=args.simulations,
         temperature=args.temperature,
-        num_games_per_iteration=args.games_per_iter,
         buffer_size=args.buffer_size,
         min_buffer_size=args.min_buffer,
-        num_iterations=args.iterations,
-        training_steps_per_iter=args.train_steps_per_iter,
         checkpoint_interval=args.checkpoint_interval,
         eval_interval=args.eval_interval,
         log_interval=args.log_interval,
@@ -116,9 +107,8 @@ def main(args: ScriptArgs) -> None:
             name=args.run_name,
             config={
                 # Training
-                "iterations": args.iterations,
-                "games_per_iter": args.games_per_iter,
-                "train_steps_per_iter": args.train_steps_per_iter,
+                "total_steps": args.total_steps,
+                "model_sync_interval": args.model_sync_interval,
                 "batch_size": args.batch_size,
                 "lr": args.lr,
                 "weight_decay": config.weight_decay,
@@ -141,46 +131,12 @@ def main(args: ScriptArgs) -> None:
             },
         )
 
-    if args.parallel:
-        logger.info("Starting parallel training with Rust game generation")
-        trainer.train_parallel(
-            num_steps=args.total_steps,
-            model_sync_interval=args.model_sync_interval,
-            log_to_wandb=log_to_wandb,
-        )
-    else:
-        logger.info("Starting training")
-        for i in range(config.num_iterations):
-            logger.info(
-                "Starting iteration",
-                iteration=i + 1,
-                total=config.num_iterations,
-            )
-
-            metrics = trainer.train_iteration(log_to_wandb=log_to_wandb)
-
-            log_data = {"buffer_size": metrics["buffer_size"]}
-            if "selfplay/attack_per_move" in metrics:
-                log_data.update(
-                    selfplay_attack=round(float(metrics["selfplay/avg_attack"]), 2),
-                    selfplay_attack_per_move=round(
-                        float(metrics["selfplay/attack_per_move"]), 4
-                    ),
-                )
-            if "avg_loss" in metrics:
-                log_data.update(
-                    avg_loss=round(float(metrics["avg_loss"]), 4),
-                    avg_policy_loss=round(float(metrics["avg_policy_loss"]), 4),
-                    avg_value_loss=round(float(metrics["avg_value_loss"]), 4),
-                )
-            if "eval_avg_attack" in metrics:
-                log_data.update(
-                    eval_avg_attack=round(float(metrics["eval_avg_attack"]), 2),
-                    eval_avg_moves=round(float(metrics["eval_avg_moves"]), 1),
-                )
-            logger.info("Iteration complete", **log_data)
-
-        trainer.save()
+    logger.info("Starting training with Rust game generation")
+    trainer.train(
+        num_steps=args.total_steps,
+        model_sync_interval=args.model_sync_interval,
+        log_to_wandb=log_to_wandb,
+    )
 
     logger.info("Training complete")
 

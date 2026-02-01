@@ -8,7 +8,6 @@ Implements:
 """
 
 import torch
-import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -17,11 +16,10 @@ import time
 import wandb
 
 from tetris_mcts.ml.network import TetrisNet, MAX_MOVES
-from tetris_mcts.ml.data import ReplayBuffer, SharedReplayBuffer
+from tetris_mcts.ml.data import SharedReplayBuffer
 from tetris_mcts.ml.weights import WeightManager, export_onnx
 from tetris_mcts.ml.loss import compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
-from tetris_mcts.ml.selfplay import SelfPlayGenerator
 
 from tetris_core import MCTSConfig, GameGenerator
 
@@ -102,26 +100,15 @@ class Trainer:
         # Create scheduler
         self.scheduler = self._create_scheduler()
 
-        # Create replay buffer
-        self.buffer = ReplayBuffer(max_size=config.buffer_size)
-
         # Create weight manager
         self.weight_manager = WeightManager(config.checkpoint_dir)
 
-        # Create evaluator and self-play generator
+        # Create evaluator
         self.evaluator = Evaluator(
             model=self.model,
             checkpoint_dir=config.checkpoint_dir,
             num_simulations=config.num_simulations,
             eval_seeds=config.eval_seeds,
-        )
-        self.selfplay_generator = SelfPlayGenerator(
-            model=self.model,
-            checkpoint_dir=config.checkpoint_dir,
-            num_simulations=config.num_simulations,
-            temperature=config.temperature,
-            dirichlet_alpha=config.dirichlet_alpha,
-            dirichlet_epsilon=config.dirichlet_epsilon,
         )
 
         # Training state
@@ -192,100 +179,9 @@ class Trainer:
 
         return metrics
 
-    def generate_data(self, num_games: int):
-        """Generate self-play data using MCTS."""
-        return self.selfplay_generator.generate(num_games)
-
     def evaluate(self, render_trajectory: bool = False):
         """Evaluate current model using MCTS on fixed seeds."""
         return self.evaluator.evaluate(render_trajectory)
-
-    def train_iteration(self, log_to_wandb: bool = True) -> dict:
-        """Run one training iteration."""
-        self.iteration += 1
-        iteration_metrics = {}
-
-        # Generate self-play data
-        start_time = time.time()
-        examples, selfplay_stats = self.generate_data(
-            self.config.num_games_per_iteration
-        )
-        self.buffer.add_batch(examples)
-        data_time = time.time() - start_time
-
-        iteration_metrics["data_generation_time"] = data_time
-        iteration_metrics["buffer_size"] = len(self.buffer)
-        iteration_metrics["new_examples"] = len(examples)
-        iteration_metrics.update(selfplay_stats)
-
-        # Log selfplay stats to wandb
-        if log_to_wandb:
-            selfplay_stats["buffer_size"] = len(self.buffer)
-            wandb.log(selfplay_stats, step=self.step)
-
-        # Training steps
-        if len(self.buffer) >= self.config.min_buffer_size:
-            train_start = time.time()
-            step_metrics = []
-
-            for _ in range(self.config.training_steps_per_iter):
-                batch = self.buffer.sample(self.config.batch_size)
-                metrics = self.train_step(batch)
-                step_metrics.append(metrics)
-
-                # Log to wandb
-                if log_to_wandb and self.step % self.config.log_interval == 0:
-                    wandb.log(metrics, step=self.step)
-
-            train_time = time.time() - train_start
-
-            # Average metrics
-            avg_metrics = {}
-            for key in step_metrics[0]:
-                avg_metrics[f"avg_{key}"] = np.mean([m[key] for m in step_metrics])
-            iteration_metrics.update(avg_metrics)
-            iteration_metrics["training_time"] = train_time
-
-        # Evaluate
-        if self.iteration % self.config.eval_interval == 0:
-            eval_result, trajectory_frames = self.evaluate(
-                render_trajectory=log_to_wandb
-            )
-            iteration_metrics["eval_avg_attack"] = eval_result.avg_attack
-            iteration_metrics["eval_max_attack"] = eval_result.max_attack
-            iteration_metrics["eval_avg_moves"] = eval_result.avg_moves
-            iteration_metrics["eval_attack_per_piece"] = eval_result.attack_per_piece
-
-            if log_to_wandb:
-                log_data = {
-                    "eval/avg_attack": eval_result.avg_attack,
-                    "eval/max_attack": eval_result.max_attack,
-                    "eval/avg_moves": eval_result.avg_moves,
-                    "eval/attack_per_piece": eval_result.attack_per_piece,
-                }
-                # Log trajectory as animated GIF
-                if trajectory_frames:
-                    import tempfile
-
-                    with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as f:
-                        gif_path = f.name
-                    trajectory_frames[0].save(
-                        gif_path,
-                        save_all=True,
-                        append_images=trajectory_frames[1:],
-                        duration=300,  # ms per frame
-                        loop=0,
-                    )
-                    log_data["eval/trajectory"] = wandb.Video(
-                        gif_path, fps=3, format="gif"
-                    )
-                wandb.log(log_data, step=self.step)
-
-        # Save checkpoint
-        if self.iteration % self.config.checkpoint_interval == 0:
-            self.save()
-
-        return iteration_metrics
 
     def save(self):
         """Save model checkpoint."""
@@ -306,41 +202,7 @@ class Trainer:
             return True
         return False
 
-    def train(self, num_iterations: Optional[int] = None):
-        """Run full training loop."""
-        if num_iterations is None:
-            num_iterations = self.config.num_iterations
-
-        # Initialize wandb
-        wandb.init(
-            project=self.config.project_name,
-            name=self.config.run_name,
-            config=vars(self.config),
-        )
-
-        print(f"Starting training for {num_iterations} iterations")
-        print(f"Config: {self.config}")
-        print()
-
-        for i in range(num_iterations):
-            print(f"\n{'=' * 60}")
-            print(f"Iteration {i + 1}/{num_iterations}")
-            print(f"{'=' * 60}")
-
-            metrics = self.train_iteration()
-
-            print(f"Buffer size: {metrics['buffer_size']}")
-            if "avg_loss" in metrics:
-                print(f"Avg loss: {metrics['avg_loss']:.4f}")
-                print(f"Avg policy loss: {metrics['avg_policy_loss']:.4f}")
-                print(f"Avg value loss: {metrics['avg_value_loss']:.4f}")
-
-        # Final save
-        self.save()
-
-        wandb.finish()
-
-    def train_parallel(
+    def train(
         self,
         num_steps: int = 100000,
         model_sync_interval: int = 1000,
