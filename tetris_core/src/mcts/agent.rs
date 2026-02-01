@@ -392,16 +392,6 @@ impl MCTSAgent {
         }
     }
 
-    /// Evaluate a leaf state with the neural network
-    fn evaluate_leaf(&self, env: &TetrisEnv, move_number: u32) -> f32 {
-        let nn = self.nn.as_ref()
-            .expect("Neural network required for MCTS leaf evaluation");
-        let mask = crate::nn::get_action_mask(env);
-        let (_, value) = nn.predict_masked(env, move_number as usize, &mask)
-            .expect("Neural network prediction failed during leaf evaluation");
-        value
-    }
-
     /// Expand an action from a decision node (creates chance node)
     fn expand_action(&self, parent: &DecisionNode, action_idx: usize, move_number: u32) -> MCTSNode {
         let mut new_state = parent.state.clone();
@@ -425,10 +415,15 @@ impl MCTSAgent {
         // At bag boundaries, multiple pieces are possible, creating stochastic branching.
         let bag_remaining = new_state.get_possible_next_pieces();
 
-        // Evaluate the NN on this state to get the value estimate
-        let nn_value = self.evaluate_leaf(&new_state, move_number);
+        // Get NN policy and value - cached for all DecisionNode children
+        // (They all see the same visible state, only differing in the hidden 6th queue piece)
+        let nn = self.nn.as_ref()
+            .expect("Neural network required for MCTS expansion");
+        let mask = crate::nn::get_action_mask(&new_state);
+        let (policy, nn_value) = nn.predict_masked(&new_state, move_number as usize, &mask)
+            .expect("Neural network prediction failed during expansion");
 
-        MCTSNode::Chance(ChanceNode::new(new_state, attack, bag_remaining, nn_value))
+        MCTSNode::Chance(ChanceNode::new(new_state, attack, bag_remaining, nn_value, policy))
     }
 
     /// Expand a chance node for a specific piece (creates decision node)
@@ -436,6 +431,9 @@ impl MCTSAgent {
     /// The "piece" parameter represents the piece that appears at the END of the visible
     /// queue (the next unseen piece). This is the actual "chance" in Tetris - we know
     /// the current piece and visible queue, but not what comes after.
+    ///
+    /// Uses cached policy/value from parent ChanceNode since the NN only sees the visible
+    /// queue (5 pieces) - the hidden 6th piece doesn't affect the NN output.
     fn expand_chance(&self, parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNode {
         let mut new_state = parent.state.clone();
 
@@ -443,15 +441,11 @@ impl MCTSAgent {
         // This represents the "chance" outcome - which piece appears next in the queue
         new_state.push_queue_piece(piece);
 
-        let mut node = DecisionNode::new(new_state.clone(), move_number);
+        let mut node = DecisionNode::new(new_state, move_number);
 
-        // Set priors and value from neural network
-        let nn = self.nn.as_ref()
-            .expect("Neural network required for MCTS chance node expansion");
-        let mask = crate::nn::get_action_mask(&new_state);
-        let (policy, value) = nn.predict_masked(&new_state, move_number as usize, &mask)
-            .expect("Neural network prediction failed during chance node expansion");
-        node.set_nn_output(&policy, value);
+        // Use cached policy and value from parent ChanceNode
+        // (All children see the same visible state - only the hidden 6th queue piece differs)
+        node.set_nn_output(&parent.cached_policy, parent.nn_value);
 
         MCTSNode::Decision(node)
     }
