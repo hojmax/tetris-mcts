@@ -226,7 +226,7 @@ class Trainer:
                 # Convert numpy arrays to torch tensors
                 boards, aux, policy_targets, value_targets, masks = result
                 batch = (
-                    torch.from_numpy(boards).unsqueeze(1),  # Add channel dim
+                    torch.from_numpy(boards).reshape(-1, 1, 20, 10),  # [batch, 1, H, W]
                     torch.from_numpy(aux),
                     torch.from_numpy(policy_targets),
                     torch.from_numpy(value_targets),

@@ -33,11 +33,11 @@ class TrainingConfig:
     # Replay buffer
     buffer_size: int = 100_000
     min_buffer_size: int = 100
-    games_per_save: int = 100  # Games between disk saves (0 to disable)
+    games_per_save: int = 2000  # Games between disk saves (0 to disable)
 
     # Intervals
     checkpoint_interval: int = 1000  # Steps between checkpoints
-    eval_interval: int = 1000  # Steps between evaluations
+    eval_interval: int = 20000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
 
     # Evaluation
