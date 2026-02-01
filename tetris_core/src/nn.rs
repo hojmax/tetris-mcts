@@ -63,7 +63,7 @@ impl TetrisNN {
             .iter()
             .next()
             .copied()
-            .unwrap_or(0.0);
+            .expect("NN value output tensor is empty - model is malformed");
 
         // Apply mask and softmax
         let policy = masked_softmax(&policy_logits, action_mask);

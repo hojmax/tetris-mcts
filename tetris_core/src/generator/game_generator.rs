@@ -191,7 +191,10 @@ impl GameGenerator {
         // Wait for initial model
         while running.load(Ordering::SeqCst) {
             if let Some(mtime) = Self::get_model_mtime(&model_path) {
-                if agent.load_model(model_path.to_str().unwrap()) {
+                let path_str = model_path
+                    .to_str()
+                    .expect("Model path contains invalid UTF-8");
+                if agent.load_model(path_str) {
                     current_mtime = mtime;
                     eprintln!("[GameGenerator] Loaded initial model");
                     break;
@@ -210,7 +213,10 @@ impl GameGenerator {
             // Check for model updates
             if let Some(mtime) = Self::get_model_mtime(&model_path) {
                 if mtime > current_mtime {
-                    if agent.load_model(model_path.to_str().unwrap()) {
+                    let path_str = model_path
+                        .to_str()
+                        .expect("Model path contains invalid UTF-8");
+                    if agent.load_model(path_str) {
                         current_mtime = mtime;
                         eprintln!("[GameGenerator] Reloaded updated model");
                     }
@@ -256,10 +262,25 @@ impl GameGenerator {
 
     /// Get the modification time of a file as seconds since UNIX epoch.
     fn get_model_mtime(path: &PathBuf) -> Option<u64> {
-        fs::metadata(path)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .map(|t| t.duration_since(UNIX_EPOCH).unwrap().as_secs())
+        match fs::metadata(path) {
+            Ok(meta) => match meta.modified() {
+                Ok(time) => Some(time.duration_since(UNIX_EPOCH).unwrap().as_secs()),
+                Err(e) => {
+                    eprintln!(
+                        "[GameGenerator] Failed to get modification time for {:?}: {}",
+                        path, e
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                // Only log if it's not a "file not found" error (which is expected during startup)
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("[GameGenerator] Failed to access model file {:?}: {}", path, e);
+                }
+                None
+            }
+        }
     }
 }
 

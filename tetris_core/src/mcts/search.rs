@@ -158,13 +158,37 @@ fn expand_action(
     let mut new_state = parent.state.clone();
 
     // Get placement coordinates from action index
-    let (x, y, rot) = get_action_space().index_to_placement(action_idx)?;
+    let (x, y, rot) = match get_action_space().index_to_placement(action_idx) {
+        Some(coords) => coords,
+        None => {
+            debug_assert!(
+                false,
+                "BUG: action index {} is not in valid action space",
+                action_idx
+            );
+            return None;
+        }
+    };
 
     // Find the matching placement to get move sequence for T-spin detection
     let placements = new_state.get_possible_placements();
-    let placement = placements
+    let placement = match placements
         .iter()
-        .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)?;
+        .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)
+    {
+        Some(p) => p,
+        None => {
+            debug_assert!(
+                false,
+                "BUG: placement ({}, {}, rot={}) not found in possible placements for action {}",
+                x,
+                y,
+                rot,
+                action_idx
+            );
+            return None;
+        }
+    };
     let attack = new_state.execute_placement(placement);
 
     // Truncate to visible queue length FIRST.
@@ -178,9 +202,16 @@ fn expand_action(
     // Get NN policy and value - cached for all DecisionNode children
     // (They all see the same visible state, only differing in the hidden 6th queue piece)
     let mask = crate::nn::get_action_mask(&new_state);
-    let (policy, nn_value) = nn
-        .predict_masked(&new_state, move_number as usize, &mask)
-        .ok()?;
+    let (policy, nn_value) = match nn.predict_masked(&new_state, move_number as usize, &mask) {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!(
+                "[MCTS] NN prediction failed during expansion at move {}: {}",
+                move_number, e
+            );
+            return None;
+        }
+    };
 
     Some(MCTSNode::Chance(ChanceNode::new(
         new_state,

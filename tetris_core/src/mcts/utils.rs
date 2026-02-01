@@ -25,6 +25,12 @@ pub fn sample_dirichlet(alpha: f32, n: usize) -> Vec<f32> {
 
     if sum == 0.0 {
         // Fallback to uniform if all samples are zero (shouldn't happen with valid alpha)
+        debug_assert!(
+            false,
+            "Dirichlet sampling produced all zeros with alpha={} n={} - falling back to uniform",
+            alpha,
+            n
+        );
         return vec![1.0 / n as f32; n];
     }
 

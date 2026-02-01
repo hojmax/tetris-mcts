@@ -89,9 +89,16 @@ impl MCTSAgent {
             }
 
             // Get NN policy and value for root
-            let (policy, nn_value) = nn
-                .predict_masked(&env, move_idx as usize, &mask)
-                .expect("Neural network prediction failed during self-play");
+            let (policy, nn_value) = match nn.predict_masked(&env, move_idx as usize, &mask) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!(
+                        "[MCTSAgent] NN prediction failed at move {}: {}. Ending game early.",
+                        move_idx, e
+                    );
+                    break;
+                }
+            };
 
             // Store state before making move
             states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
