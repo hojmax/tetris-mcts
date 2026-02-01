@@ -241,10 +241,15 @@ class Trainer:
                     metrics["buffer_size"] = generator.buffer_size()
                     metrics["games_generated"] = generator.games_generated()
                     metrics["examples_generated"] = generator.examples_generated()
+                    # Add game stats (line clears, T-spins, etc.)
+                    game_stats = generator.get_game_stats()
+                    for key, value in game_stats.items():
+                        metrics[f"game/{key}"] = value
                     if log_to_wandb:
                         wandb.log(metrics, step=self.step)
                     print(
                         f"Step {self.step}: loss={metrics['loss']:.4f}, "
+                        f"lr={metrics['learning_rate']:.2e}, "
                         f"buffer={generator.buffer_size()}, "
                         f"games={generator.games_generated()}"
                     )

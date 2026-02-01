@@ -10,14 +10,90 @@ use rand::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::mcts::{MCTSAgent, MCTSConfig, TrainingExample};
+use crate::mcts::GameStats;
 
 use super::npz::write_examples_to_npz;
+
+/// Aggregate game statistics (thread-safe counters).
+#[derive(Default)]
+struct SharedStats {
+    // Line clears
+    singles: AtomicU32,
+    doubles: AtomicU32,
+    triples: AtomicU32,
+    tetrises: AtomicU32,
+    // T-spins
+    tspin_minis: AtomicU32,
+    tspin_singles: AtomicU32,
+    tspin_doubles: AtomicU32,
+    tspin_triples: AtomicU32,
+    // Other
+    perfect_clears: AtomicU32,
+    back_to_backs: AtomicU32,
+    max_combo: AtomicU32,
+    total_lines: AtomicU32,
+    total_attack: AtomicU32,
+}
+
+impl SharedStats {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add stats from a completed game.
+    fn add(&self, stats: &GameStats, attack: u32) {
+        self.singles.fetch_add(stats.singles, Ordering::Relaxed);
+        self.doubles.fetch_add(stats.doubles, Ordering::Relaxed);
+        self.triples.fetch_add(stats.triples, Ordering::Relaxed);
+        self.tetrises.fetch_add(stats.tetrises, Ordering::Relaxed);
+        self.tspin_minis.fetch_add(stats.tspin_minis, Ordering::Relaxed);
+        self.tspin_singles.fetch_add(stats.tspin_singles, Ordering::Relaxed);
+        self.tspin_doubles.fetch_add(stats.tspin_doubles, Ordering::Relaxed);
+        self.tspin_triples.fetch_add(stats.tspin_triples, Ordering::Relaxed);
+        self.perfect_clears.fetch_add(stats.perfect_clears, Ordering::Relaxed);
+        self.back_to_backs.fetch_add(stats.back_to_backs, Ordering::Relaxed);
+        self.total_lines.fetch_add(stats.total_lines, Ordering::Relaxed);
+        self.total_attack.fetch_add(attack, Ordering::Relaxed);
+        // Update max combo (atomic max)
+        let mut current = self.max_combo.load(Ordering::Relaxed);
+        while stats.max_combo > current {
+            match self.max_combo.compare_exchange_weak(
+                current,
+                stats.max_combo,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(c) => current = c,
+            }
+        }
+    }
+
+    /// Get all stats as a HashMap for Python.
+    fn to_dict(&self) -> HashMap<String, u32> {
+        let mut d = HashMap::new();
+        d.insert("singles".to_string(), self.singles.load(Ordering::Relaxed));
+        d.insert("doubles".to_string(), self.doubles.load(Ordering::Relaxed));
+        d.insert("triples".to_string(), self.triples.load(Ordering::Relaxed));
+        d.insert("tetrises".to_string(), self.tetrises.load(Ordering::Relaxed));
+        d.insert("tspin_minis".to_string(), self.tspin_minis.load(Ordering::Relaxed));
+        d.insert("tspin_singles".to_string(), self.tspin_singles.load(Ordering::Relaxed));
+        d.insert("tspin_doubles".to_string(), self.tspin_doubles.load(Ordering::Relaxed));
+        d.insert("tspin_triples".to_string(), self.tspin_triples.load(Ordering::Relaxed));
+        d.insert("perfect_clears".to_string(), self.perfect_clears.load(Ordering::Relaxed));
+        d.insert("back_to_backs".to_string(), self.back_to_backs.load(Ordering::Relaxed));
+        d.insert("max_combo".to_string(), self.max_combo.load(Ordering::Relaxed));
+        d.insert("total_lines".to_string(), self.total_lines.load(Ordering::Relaxed));
+        d.insert("total_attack".to_string(), self.total_attack.load(Ordering::Relaxed));
+        d
+    }
+}
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
 struct SharedBuffer {
@@ -80,6 +156,8 @@ pub struct GameGenerator {
     games_generated: Arc<AtomicU64>,
     /// Number of examples generated since start
     examples_generated: Arc<AtomicU64>,
+    /// Aggregate game statistics
+    game_stats: Arc<SharedStats>,
     /// Thread handle (for joining on stop)
     thread_handle: Option<JoinHandle<()>>,
 }
@@ -108,6 +186,7 @@ impl GameGenerator {
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
             examples_generated: Arc::new(AtomicU64::new(0)),
+            game_stats: Arc::new(SharedStats::new()),
             thread_handle: None,
         }
     }
@@ -146,6 +225,7 @@ impl GameGenerator {
         let running = Arc::clone(&self.running);
         let games_generated = Arc::clone(&self.games_generated);
         let examples_generated = Arc::clone(&self.examples_generated);
+        let game_stats = Arc::clone(&self.game_stats);
 
         // Spawn worker thread
         let handle = thread::spawn(move || {
@@ -160,6 +240,7 @@ impl GameGenerator {
                 running,
                 games_generated,
                 examples_generated,
+                game_stats,
             );
         });
 
@@ -211,6 +292,11 @@ impl GameGenerator {
         stats.insert("is_running".to_string(), self.is_running() as u64);
         stats.insert("buffer_size".to_string(), self.buffer_size() as u64);
         stats
+    }
+
+    /// Get aggregate game statistics (line clears, T-spins, etc.)
+    pub fn get_game_stats(&self) -> HashMap<String, u32> {
+        self.game_stats.to_dict()
     }
 
     /// Get the current number of examples in the replay buffer.
@@ -335,6 +421,7 @@ impl GameGenerator {
         running: Arc<AtomicBool>,
         games_generated: Arc<AtomicU64>,
         examples_generated: Arc<AtomicU64>,
+        game_stats: Arc<SharedStats>,
     ) {
         let mut agent = MCTSAgent::new(config);
         let mut current_mtime: u64 = 0;
@@ -384,6 +471,9 @@ impl GameGenerator {
                 // Update counters
                 games_generated.fetch_add(1, Ordering::SeqCst);
                 examples_generated.fetch_add(num_examples, Ordering::SeqCst);
+
+                // Accumulate game stats
+                game_stats.add(&result.stats, result.total_attack);
 
                 // Periodically save to disk for resume capability
                 if games_per_save > 0 && games_since_save >= games_per_save {
