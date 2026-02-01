@@ -24,8 +24,9 @@ play: .build_marker
 viz: .build_marker
 	$(PYTHON) tetris_mcts/scripts/mcts_visualizer.py
 
-# Force rebuild
+# Force rebuild (clean first to avoid caching issues)
 rebuild:
+	cd tetris_core && $(CARGO_ENV) && cargo clean
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@touch .build_marker
 

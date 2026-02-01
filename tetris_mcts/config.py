@@ -32,7 +32,7 @@ class TrainingConfig:
 
     # Replay buffer
     buffer_size: int = 100_000
-    min_buffer_size: int = 10_000
+    min_buffer_size: int = 100
     games_per_save: int = 100  # Games between disk saves (0 to disable)
 
     # Intervals

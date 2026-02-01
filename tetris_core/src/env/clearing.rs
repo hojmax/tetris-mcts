@@ -131,10 +131,18 @@ impl TetrisEnv {
         if num_lines > 0 {
             // Each cleared line removes width blocks
             self.total_blocks -= self.width as u32 * num_lines;
-            // All remaining cells shift down by num_lines
-            let height = self.height as i32;
-            for h in &mut self.column_heights {
-                *h = (*h + num_lines as i32).min(height);
+
+            // Recompute column heights from scratch.
+            // The simple `+= num_lines` adjustment is wrong when a column's
+            // topmost cell was in a cleared row (the cell is removed, not shifted).
+            for x in 0..self.width {
+                self.column_heights[x] = self.height as i32; // Default: empty column
+                for y in 0..self.height {
+                    if self.board[y][x] != 0 {
+                        self.column_heights[x] = y as i32;
+                        break;
+                    }
+                }
             }
         }
 
