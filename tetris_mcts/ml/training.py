@@ -8,61 +8,18 @@ Implements:
 """
 
 import torch
-from pathlib import Path
-from dataclasses import dataclass, field
 from typing import Optional
 import time
 
 import wandb
 
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import TetrisNet, MAX_MOVES
 from tetris_mcts.ml.weights import WeightManager, export_onnx
 from tetris_mcts.ml.loss import compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
 
 from tetris_core import MCTSConfig, GameGenerator
-
-
-@dataclass
-class TrainingConfig:
-    """Training hyperparameters."""
-
-    # Network
-    conv_filters: list[int] = field(default_factory=lambda: [4, 8])
-    fc_hidden: int = 128
-
-    # Training
-    batch_size: int = 256
-    learning_rate: float = 0.001
-    weight_decay: float = 1e-4
-    lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
-    lr_decay_steps: int = 100000
-
-    # Self-play
-    num_simulations: int = 100  # MCTS simulations per move
-    temperature: float = 1.0
-    dirichlet_alpha: float = 0.15
-    dirichlet_epsilon: float = 0.25
-
-    # Replay buffer
-    buffer_size: int = 100_000
-    min_buffer_size: int = 10_000
-    games_per_save: int = 100  # Games between disk saves (0 to disable)
-
-    # Iteration
-    training_steps_per_iter: int = 1000
-    checkpoint_interval: int = 10
-    eval_interval: int = 100
-    eval_seeds: list[int] = field(default_factory=lambda: list(range(20)))
-
-    # Paths (relative to project root)
-    checkpoint_dir: str = "outputs/checkpoints"
-    data_dir: str = "outputs/data"
-
-    # WandB
-    project_name: str = "tetris-alphazero"
-    run_name: Optional[str] = None
-    log_interval: int = 100
 
 
 class Trainer:
@@ -108,11 +65,10 @@ class Trainer:
 
         # Training state
         self.step = 0
-        self.iteration = 0
 
         # Create directories
-        Path(config.checkpoint_dir).mkdir(parents=True, exist_ok=True)
-        Path(config.data_dir).mkdir(parents=True, exist_ok=True)
+        config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        config.data_dir.mkdir(parents=True, exist_ok=True)
 
     def _create_scheduler(self):
         if self.config.lr_schedule == "cosine":
@@ -217,18 +173,10 @@ class Trainer:
             model_sync_interval: Steps between model exports
             log_to_wandb: Whether to log metrics to Weights & Biases
         """
-        # Initialize wandb
-        if log_to_wandb:
-            wandb.init(
-                project=self.config.project_name,
-                name=self.config.run_name,
-                config=vars(self.config),
-            )
-
         # Paths for parallel training
-        games_dir = Path(self.config.data_dir) / "games"
+        games_dir = self.config.data_dir / "games"
         games_dir.mkdir(parents=True, exist_ok=True)
-        onnx_path = Path(self.config.checkpoint_dir) / "parallel.onnx"
+        onnx_path = self.config.checkpoint_dir / "parallel.onnx"
 
         # Export initial model
         export_onnx(self.model, onnx_path)
@@ -345,14 +293,7 @@ class Trainer:
                         wandb.log(log_data, step=self.step)
 
                 # Checkpoint
-                if (
-                    self.step
-                    % (
-                        self.config.checkpoint_interval
-                        * self.config.training_steps_per_iter
-                    )
-                    == 0
-                ):
+                if self.step % self.config.checkpoint_interval == 0:
                     self.save()
 
         finally:

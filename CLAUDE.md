@@ -73,6 +73,7 @@ tetris_core/src/             # Rust game engine
     └── npz.rs
 
 tetris_mcts/                 # Python package
+├── config.py                # TrainingConfig dataclass (all hyperparameters)
 ├── ml/
 │   ├── network.py           # TetrisNet (PyTorch CNN)
 │   ├── training.py          # Trainer class, training loop

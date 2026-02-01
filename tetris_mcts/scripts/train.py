@@ -1,11 +1,12 @@
-from pathlib import Path
+"""Training script for Tetris AlphaZero."""
 
 import structlog
 import torch
-from pydantic.dataclasses import dataclass
+from dataclasses import dataclass
 from simple_parsing import parse
 
-from tetris_mcts.ml.training import Trainer, TrainingConfig
+from tetris_mcts.config import TrainingConfig
+from tetris_mcts.ml.training import Trainer
 
 import wandb
 
@@ -23,70 +24,30 @@ def get_best_device() -> str:
 
 @dataclass
 class ScriptArgs:
-    # Training settings
-    total_steps: int = 100000  # Total training steps
-    model_sync_interval: int = 1000  # Steps between model exports
+    """Training script arguments."""
 
-    # MCTS settings
-    simulations: int = 100  # MCTS simulations per move
-    temperature: float = 1.0  # Temperature for action selection
+    # Training config (all hyperparameters)
+    training: TrainingConfig
 
-    # Network settings
-    batch_size: int = 256  # Training batch size
-    lr: float = 0.001  # Learning rate
+    # Script-specific settings
+    total_steps: int = 100_000  # Total training steps
+    model_sync_interval: int = 1000  # Steps between ONNX exports
 
-    # Buffer settings
-    buffer_size: int = 100000  # Replay buffer size
-    min_buffer: int = 1000  # Minimum buffer size before training
-    games_per_save: int = 100  # Games between disk saves (0 to disable)
-
-    # Logging/checkpoints (outputs/ is at project root, next to tetris_mcts/)
-    checkpoint_dir: Path = (
-        Path(__file__).parent.parent.parent / "outputs" / "checkpoints"
-    )  # Directory for checkpoints
-    data_dir: Path = (
-        Path(__file__).parent.parent.parent / "outputs" / "data"
-    )  # Directory for game data
-    checkpoint_interval: int = 100  # Save checkpoint every N iterations
-    eval_interval: int = 100  # Evaluate every N iterations
-    log_interval: int = 100  # Log every N training steps
-
-    # WandB
-    project: str = "tetris-alphazero"  # WandB project name
-    run_name: str | None = None  # WandB run name
-    no_wandb: bool = False  # Disable WandB logging
-
-    # Device
+    # Runtime
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
-
-    # Resume
     resume: bool = False  # Resume from latest checkpoint
+    no_wandb: bool = False  # Disable WandB logging
 
 
 def main(args: ScriptArgs) -> None:
-    args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    args.data_dir.mkdir(parents=True, exist_ok=True)
+    config = args.training
+
+    config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    config.data_dir.mkdir(parents=True, exist_ok=True)
 
     # Auto-detect device if set to "auto"
     device = get_best_device() if args.device == "auto" else args.device
     logger.info("Using device", device=device)
-
-    config = TrainingConfig(
-        batch_size=args.batch_size,
-        learning_rate=args.lr,
-        num_simulations=args.simulations,
-        temperature=args.temperature,
-        buffer_size=args.buffer_size,
-        min_buffer_size=args.min_buffer,
-        games_per_save=args.games_per_save,
-        checkpoint_interval=args.checkpoint_interval,
-        eval_interval=args.eval_interval,
-        log_interval=args.log_interval,
-        checkpoint_dir=str(args.checkpoint_dir),
-        data_dir=str(args.data_dir),
-        project_name=args.project,
-        run_name=args.run_name,
-    )
 
     trainer = Trainer(config, device=device)
 
@@ -105,28 +66,33 @@ def main(args: ScriptArgs) -> None:
 
     if log_to_wandb:
         wandb.init(
-            project=args.project,
-            name=args.run_name,
+            project=config.project_name,
+            name=config.run_name,
             config={
                 # Training
                 "total_steps": args.total_steps,
                 "model_sync_interval": args.model_sync_interval,
-                "batch_size": args.batch_size,
-                "lr": args.lr,
+                "batch_size": config.batch_size,
+                "learning_rate": config.learning_rate,
                 "weight_decay": config.weight_decay,
+                "lr_schedule": config.lr_schedule,
+                "lr_decay_steps": config.lr_decay_steps,
+                # Network
+                "conv_filters": config.conv_filters,
+                "fc_hidden": config.fc_hidden,
                 # MCTS
-                "simulations": args.simulations,
-                "temperature": args.temperature,
+                "num_simulations": config.num_simulations,
+                "temperature": config.temperature,
                 "dirichlet_alpha": config.dirichlet_alpha,
                 "dirichlet_epsilon": config.dirichlet_epsilon,
                 # Buffer
-                "buffer_size": args.buffer_size,
-                "min_buffer": args.min_buffer,
-                "games_per_save": args.games_per_save,
+                "buffer_size": config.buffer_size,
+                "min_buffer_size": config.min_buffer_size,
+                "games_per_save": config.games_per_save,
                 # Intervals
-                "eval_interval": args.eval_interval,
-                "checkpoint_interval": args.checkpoint_interval,
-                "log_interval": args.log_interval,
+                "eval_interval": config.eval_interval,
+                "checkpoint_interval": config.checkpoint_interval,
+                "log_interval": config.log_interval,
                 # Device
                 "device": device,
             },

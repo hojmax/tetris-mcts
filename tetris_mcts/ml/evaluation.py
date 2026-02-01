@@ -22,7 +22,7 @@ class Evaluator:
     def __init__(
         self,
         model: TetrisNet,
-        checkpoint_dir: str,
+        checkpoint_dir: str | Path,
         num_simulations: int = 100,
         eval_seeds: Optional[list[int]] = None,
     ):
