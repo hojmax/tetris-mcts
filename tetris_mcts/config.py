@@ -9,6 +9,10 @@ from typing import Optional
 class TrainingConfig:
     """Training hyperparameters - all configurable via CLI."""
 
+    # Training
+    total_steps: int = 100_000
+    model_sync_interval: int = 1000  # Steps between ONNX exports
+
     # Network architecture
     conv_filters: list[int] = field(default_factory=lambda: [4, 8])
     fc_hidden: int = 128

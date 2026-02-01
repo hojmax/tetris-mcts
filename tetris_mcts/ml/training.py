@@ -153,12 +153,7 @@ class Trainer:
             return True
         return False
 
-    def train(
-        self,
-        num_steps: int = 100000,
-        model_sync_interval: int = 1000,
-        log_to_wandb: bool = True,
-    ):
+    def train(self, log_to_wandb: bool = True):
         """
         Run parallel training with Rust game generation in background.
 
@@ -169,10 +164,10 @@ class Trainer:
         generator to pick up.
 
         Args:
-            num_steps: Total number of training steps
-            model_sync_interval: Steps between model exports
             log_to_wandb: Whether to log metrics to Weights & Biases
         """
+        num_steps = self.config.total_steps
+        model_sync_interval = self.config.model_sync_interval
         # Paths for parallel training
         games_dir = self.config.data_dir / "games"
         games_dir.mkdir(parents=True, exist_ok=True)

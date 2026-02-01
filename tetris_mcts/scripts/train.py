@@ -29,10 +29,6 @@ class ScriptArgs:
     # Training config (all hyperparameters)
     training: TrainingConfig
 
-    # Script-specific settings
-    total_steps: int = 100_000  # Total training steps
-    model_sync_interval: int = 1000  # Steps between ONNX exports
-
     # Runtime
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
     resume: bool = False  # Resume from latest checkpoint
@@ -70,8 +66,8 @@ def main(args: ScriptArgs) -> None:
             name=config.run_name,
             config={
                 # Training
-                "total_steps": args.total_steps,
-                "model_sync_interval": args.model_sync_interval,
+                "total_steps": config.total_steps,
+                "model_sync_interval": config.model_sync_interval,
                 "batch_size": config.batch_size,
                 "learning_rate": config.learning_rate,
                 "weight_decay": config.weight_decay,
@@ -99,11 +95,7 @@ def main(args: ScriptArgs) -> None:
         )
 
     logger.info("Starting training with Rust game generation")
-    trainer.train(
-        num_steps=args.total_steps,
-        model_sync_interval=args.model_sync_interval,
-        log_to_wandb=log_to_wandb,
-    )
+    trainer.train(log_to_wandb=log_to_wandb)
 
     logger.info("Training complete")
 
