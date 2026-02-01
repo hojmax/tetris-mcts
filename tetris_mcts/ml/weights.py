@@ -4,15 +4,11 @@ Weight Export/Import Pipeline for Tetris AlphaZero
 Supports:
 - PyTorch checkpoint save/load
 - ONNX export for Rust inference
-- Simple binary format for manual Rust loading
 """
 
-import math
 import torch
-import numpy as np
 from pathlib import Path
 from typing import Optional
-import struct
 import json
 
 from tetris_mcts.ml.network import TetrisNet, BOARD_HEIGHT, BOARD_WIDTH, AUX_FEATURES
@@ -132,92 +128,6 @@ def export_onnx(
         return False
 
 
-def export_binary(
-    model: TetrisNet,
-    filepath: str | Path,
-) -> None:
-    """
-    Export model weights in simple binary format for manual Rust loading.
-
-    Format:
-        - Header: "TNET" (4 bytes)
-        - Version: u32 (4 bytes)
-        - Num tensors: u32 (4 bytes)
-        - For each tensor:
-            - Name length: u32
-            - Name: bytes
-            - Num dimensions: u32
-            - Dimensions: u32 * num_dims
-            - Data: f32 * product(dims)
-    """
-    model.eval()
-    state_dict = model.state_dict()
-
-    with open(filepath, "wb") as f:
-        # Header
-        f.write(b"TNET")
-        f.write(struct.pack("<I", 1))  # Version 1
-        f.write(struct.pack("<I", len(state_dict)))  # Num tensors
-
-        for name, tensor in state_dict.items():
-            # Convert to numpy
-            data = tensor.cpu().numpy().astype(np.float32)
-
-            # Name
-            name_bytes = name.encode("utf-8")
-            f.write(struct.pack("<I", len(name_bytes)))
-            f.write(name_bytes)
-
-            # Dimensions
-            f.write(struct.pack("<I", len(data.shape)))
-            for dim in data.shape:
-                f.write(struct.pack("<I", dim))
-
-            # Data (flattened, row-major)
-            f.write(data.tobytes())
-
-
-def load_binary(
-    filepath: str | Path,
-    model: TetrisNet,
-) -> None:
-    """
-    Load model weights from binary format.
-
-    Args:
-        filepath: Path to binary weights file
-        model: Model to load weights into
-    """
-    with open(filepath, "rb") as f:
-        # Header
-        header = f.read(4)
-        assert header == b"TNET", f"Invalid header: {header}"
-
-        version = struct.unpack("<I", f.read(4))[0]
-        assert version == 1, f"Unsupported version: {version}"
-
-        num_tensors = struct.unpack("<I", f.read(4))[0]
-
-        state_dict = {}
-        for _ in range(num_tensors):
-            # Name
-            name_len = struct.unpack("<I", f.read(4))[0]
-            name = f.read(name_len).decode("utf-8")
-
-            # Dimensions
-            num_dims = struct.unpack("<I", f.read(4))[0]
-            dims = tuple(struct.unpack("<I", f.read(4))[0] for _ in range(num_dims))
-
-            # Data
-            num_elements = math.prod(dims)
-            data = np.frombuffer(f.read(num_elements * 4), dtype=np.float32)
-            data = data.reshape(dims)
-
-            state_dict[name] = torch.tensor(data)
-
-        model.load_state_dict(state_dict)
-
-
 def export_metadata(
     filepath: str | Path,
     step: int,
@@ -241,12 +151,6 @@ def export_metadata(
 
     with open(filepath, "w") as f:
         json.dump(metadata, f, indent=2)
-
-
-def load_metadata(filepath: str | Path) -> dict:
-    """Load metadata from JSON file."""
-    with open(filepath, "r") as f:
-        return json.load(f)
 
 
 class WeightManager:
@@ -288,11 +192,6 @@ class WeightManager:
             onnx_path = self.checkpoint_dir / "latest.onnx"
             export_onnx(model, onnx_path)
             paths["onnx"] = onnx_path
-
-            # Export binary
-            bin_path = self.checkpoint_dir / "latest.bin"
-            export_binary(model, bin_path)
-            paths["binary"] = bin_path
 
         # Save metadata
         meta_path = self.checkpoint_dir / "latest_metadata.json"
@@ -337,82 +236,3 @@ class WeightManager:
         checkpoints = self.get_checkpoints()
         for ckpt in checkpoints[:-keep]:
             ckpt.unlink()
-
-
-if __name__ == "__main__":
-    import tempfile
-    import os
-
-    print("Testing weight export/import...")
-
-    # Create model
-    model = TetrisNet()
-    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
-
-    # Test checkpoint save/load
-    print("\nTesting checkpoint save/load...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        ckpt_path = Path(tmpdir) / "test.pt"
-        optimizer = torch.optim.Adam(model.parameters())
-
-        save_checkpoint(model, optimizer, step=100, filepath=ckpt_path)
-        print(f"Saved checkpoint to {ckpt_path}")
-
-        model2 = TetrisNet()
-        state = load_checkpoint(ckpt_path, model2)
-        print(f"Loaded checkpoint at step {state['step']}")
-
-        # Verify weights match
-        for k in model.state_dict():
-            assert torch.allclose(model.state_dict()[k], model2.state_dict()[k])
-        print("Weights match!")
-
-    # Test ONNX export
-    print("\nTesting ONNX export...")
-    with tempfile.NamedTemporaryFile(suffix=".onnx", delete=False) as f:
-        onnx_path = f.name
-
-    try:
-        export_onnx(model, onnx_path)
-        print(f"Exported ONNX to {onnx_path}")
-        print(f"File size: {os.path.getsize(onnx_path) / 1024 / 1024:.2f} MB")
-    except Exception as e:
-        print(f"ONNX export failed (may need onnx package): {e}")
-    finally:
-        if os.path.exists(onnx_path):
-            os.unlink(onnx_path)
-
-    # Test binary export
-    print("\nTesting binary export/load...")
-    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
-        bin_path = f.name
-
-    export_binary(model, bin_path)
-    print(f"Exported binary to {bin_path}")
-    print(f"File size: {os.path.getsize(bin_path) / 1024 / 1024:.2f} MB")
-
-    model3 = TetrisNet()
-    load_binary(bin_path, model3)
-    print("Loaded binary weights")
-
-    # Verify weights match
-    for k in model.state_dict():
-        assert torch.allclose(model.state_dict()[k], model3.state_dict()[k], atol=1e-6)
-    print("Weights match!")
-
-    os.unlink(bin_path)
-
-    # Test WeightManager
-    print("\nTesting WeightManager...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        manager = WeightManager(tmpdir)
-        optimizer = torch.optim.Adam(model.parameters())
-
-        paths = manager.save(model, optimizer, step=100, export_for_rust=True)
-        print(f"Saved files: {list(paths.keys())}")
-
-        model4 = TetrisNet()
-        step = manager.load_latest(model4)
-        print(f"Loaded latest at step {step}")
-
-    print("\nAll tests passed!")
