@@ -34,6 +34,13 @@ class Trainer:
         self.config = config
         self.device = torch.device(device)
 
+        # Validate paths are set (should be done by setup_run_directory)
+        if config.checkpoint_dir is None or config.data_dir is None:
+            raise ValueError(
+                "checkpoint_dir and data_dir must be set. "
+                "Call setup_run_directory() before creating Trainer."
+            )
+
         # Create model
         if model is None:
             model = TetrisNet(
@@ -168,9 +175,9 @@ class Trainer:
         """
         num_steps = self.config.total_steps
         model_sync_interval = self.config.model_sync_interval
-        # Paths for parallel training
-        games_dir = self.config.data_dir / "games"
-        games_dir.mkdir(parents=True, exist_ok=True)
+        # Paths for parallel training (validated in __init__)
+        assert self.config.checkpoint_dir is not None
+        assert self.config.data_dir is not None
         onnx_path = self.config.checkpoint_dir / "parallel.onnx"
 
         # Export initial model
@@ -187,9 +194,10 @@ class Trainer:
         mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
 
         # Start background game generator
+        # data_dir is the run directory, training_data.npz will be saved there
         generator = GameGenerator(
             model_path=str(onnx_path),
-            output_dir=str(games_dir),
+            output_dir=str(self.config.data_dir),
             config=mcts_config,
             max_moves=MAX_MOVES,
             add_noise=True,
@@ -199,7 +207,7 @@ class Trainer:
         generator.start()
         print("Started background game generator")
         print(f"  Model path: {onnx_path}")
-        print(f"  Output dir: {games_dir}")
+        print(f"  Data dir: {self.config.data_dir}")
 
         # Wait for minimum buffer size
         print(f"Waiting for {self.config.min_buffer_size} examples...")

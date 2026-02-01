@@ -5,8 +5,10 @@ import torch
 from dataclasses import dataclass
 from simple_parsing import parse
 
-from tetris_mcts.config import TrainingConfig
+from pathlib import Path
+from tetris_mcts.config import TrainingConfig, setup_run_directory
 from tetris_mcts.ml.training import Trainer
+import json
 
 import wandb
 
@@ -31,15 +33,25 @@ class ScriptArgs:
 
     # Runtime
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
-    resume: bool = False  # Resume from latest checkpoint
+    resume_dir: Path | None = None  # Resume from existing run dir (e.g., training_runs/v0)
     no_wandb: bool = False  # Disable WandB logging
 
 
 def main(args: ScriptArgs) -> None:
     config = args.training
 
-    config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    config.data_dir.mkdir(parents=True, exist_ok=True)
+    # Set up run directory
+    if args.resume_dir:
+        # Resume from existing directory
+        if not args.resume_dir.exists():
+            logger.error("Resume directory does not exist", path=str(args.resume_dir))
+            return
+        config = setup_run_directory(config, run_dir=args.resume_dir)
+        logger.info("Resuming training run", run_dir=str(config.run_dir))
+    else:
+        # Create new versioned run
+        config = setup_run_directory(config)
+        logger.info("Created new training run", run_dir=str(config.run_dir))
 
     # Auto-detect device if set to "auto"
     device = get_best_device() if args.device == "auto" else args.device
@@ -61,37 +73,13 @@ def main(args: ScriptArgs) -> None:
     log_to_wandb = not args.no_wandb
 
     if log_to_wandb:
+        # Use config's JSON serialization for wandb config
+        wandb_config = json.loads(config.to_json())
+        wandb_config["device"] = device
         wandb.init(
             project=config.project_name,
             name=config.run_name,
-            config={
-                # Training
-                "total_steps": config.total_steps,
-                "model_sync_interval": config.model_sync_interval,
-                "batch_size": config.batch_size,
-                "learning_rate": config.learning_rate,
-                "weight_decay": config.weight_decay,
-                "lr_schedule": config.lr_schedule,
-                "lr_decay_steps": config.lr_decay_steps,
-                # Network
-                "conv_filters": config.conv_filters,
-                "fc_hidden": config.fc_hidden,
-                # MCTS
-                "num_simulations": config.num_simulations,
-                "temperature": config.temperature,
-                "dirichlet_alpha": config.dirichlet_alpha,
-                "dirichlet_epsilon": config.dirichlet_epsilon,
-                # Buffer
-                "buffer_size": config.buffer_size,
-                "min_buffer_size": config.min_buffer_size,
-                "games_per_save": config.games_per_save,
-                # Intervals
-                "eval_interval": config.eval_interval,
-                "checkpoint_interval": config.checkpoint_interval,
-                "log_interval": config.log_interval,
-                # Device
-                "device": device,
-            },
+            config=wandb_config,
         )
 
     logger.info("Starting training with Rust game generation")
