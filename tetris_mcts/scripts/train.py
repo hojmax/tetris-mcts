@@ -33,7 +33,9 @@ class ScriptArgs:
 
     # Runtime
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
-    resume_dir: Path | None = None  # Resume from existing run dir (e.g., training_runs/v0)
+    resume_dir: Path | None = (  # Resume from existing run dir (e.g., training_runs/v0)
+        None
+    )
     no_wandb: bool = False  # Disable WandB logging
 
 

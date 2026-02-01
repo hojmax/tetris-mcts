@@ -214,7 +214,120 @@ Tests are in:
 
 ## Coding Rules
 
+### Code Organization
+
 - **No fallbacks or backwards compatibility**: When changing file formats, APIs, or data structures, update all code to use the new approach. Don't add fallback code to support old formats.
 - **Clean up old code**: When replacing functionality, delete the old implementation entirely. No legacy code paths, deprecated functions, or "just in case" fallbacks.
 - **Delete unused code**: If something is no longer used, remove it completely. Don't comment it out, don't add `# removed` markers, don't keep it around.
 - **Single approach**: Pick one way to do something and use it consistently. Don't support multiple approaches simultaneously.
+- **Top-level imports**: Place all imports at the top of files, never inside functions. Exception: optional dependencies or circular import avoidance.
+- **Keep functions short**: Functions should do ONE thing well. If over ~30-50 lines or multiple responsibilities, split it up.
+- **Keep it DRY**: Extract common patterns into reusable functions. If copying code, you're doing it wrong.
+
+### Script Arguments
+
+Use `simple_parsing` with dataclasses for CLI scripts:
+
+```python
+from dataclasses import dataclass
+from pathlib import Path
+from simple_parsing import parse
+
+@dataclass
+class ScriptArgs:
+    """Script description."""
+    data_path: Path  # Required arg with comment as help text
+    index: int = -1  # Optional arg with default
+    output: Path | None = None  # Optional path
+
+def main(args: ScriptArgs) -> None:
+    ...
+
+if __name__ == "__main__":
+    args = parse(ScriptArgs)
+    main(args)
+```
+
+### Code Simplification
+
+- **Early returns**: Use guard clauses to reduce nesting depth.
+- **Positive conditions**: Prefer `if is_valid` over `if not is_invalid`.
+- **Extract complex conditionals**: Name complex boolean expressions for clarity.
+- **Use `any()`/`all()`**: Instead of loop-with-flag patterns.
+
+```python
+# ❌ BAD: Deeply nested
+def get_discount(user: User) -> float:
+    if user.is_premium:
+        if user.years_active > 5:
+            return 0.25
+        return 0.10
+    return 0.0
+
+# ✅ GOOD: Early returns
+def get_discount(user: User) -> float:
+    if not user.is_premium:
+        return 0.0
+    if user.years_active <= 5:
+        return 0.10
+    return 0.25
+```
+
+### Naming Conventions
+
+- **Booleans as questions**: `is_active`, `has_data`, `was_successful` - not `active`, `data`, `success`.
+
+### Type Annotations
+
+Always use modern Python syntax:
+
+- ✅ Use: `A | B`, `A | None`, `list[A]`
+- ❌ Avoid: `Union[A, B]`, `Optional[A]`, `List[A]`
+
+Use `from __future__ import annotations` for forward references instead of quoted strings.
+
+### Comments & Documentation
+
+- Only add comments for non-intuitive things that cannot be read from code
+- Comment "why" not "what"
+- **Avoid docstrings** - use clear, descriptive function names instead. Most docstrings become outdated maintenance burdens.
+- **Never create documentation files** (.md) unless explicitly requested
+
+### Logging
+
+Use `structlog` for all logging. Never use `print()` for logging.
+
+```python
+import structlog
+logger = structlog.get_logger()
+
+logger.info("Processing started", user_id=123)
+logger.warning("Retry attempt", attempt=2)
+logger.error("Failed to process", error=str(e))
+```
+
+### File & Path Handling
+
+- Always use `pathlib.Path` for file paths
+- Use `Path(__file__).parent` for paths relative to script location
+
+### Error Handling - Fail Fast
+
+Let it fail; avoid defensive programming when you control the code/data.
+
+```python
+# ❌ BAD: Silent fallback hides bugs
+company = MAPPING.get(key, "default")
+
+# ✅ GOOD: Fail fast
+company = MAPPING[key]  # KeyError if not found
+
+# ❌ BAD: Defensive check on controlled data
+if hasattr(obj, "field") and obj.field:
+    use(obj.field)
+
+# ✅ GOOD: Trust your data structures
+use(obj.field)
+```
+
+Only be defensive for user inputs, external responses, and dynamic runtime data.

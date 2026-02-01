@@ -24,7 +24,9 @@ CELL_SIZE = 20
 BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
 PADDING = 10
-INFO_HEIGHT = 60
+INFO_HEIGHT_BASIC = 40
+INFO_HEIGHT_EXTENDED = 70
+PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
 
 
 def render_board(
@@ -36,6 +38,11 @@ def render_board(
     move_number: int = 0,
     attack: int = 0,
     info_text: Optional[str] = None,
+    # Extended info (shown on second line)
+    show_piece_info: bool = False,
+    current_piece_name: Optional[str] = None,
+    hold_piece_name: Optional[str] = None,
+    queue_pieces: Optional[list[str]] = None,
 ) -> Image.Image:
     """
     Render a Tetris board state to a PIL Image.
