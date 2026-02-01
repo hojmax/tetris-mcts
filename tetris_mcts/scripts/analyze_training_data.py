@@ -88,20 +88,20 @@ def main(args: ScriptArgs) -> None:
     for start, end in games:
         length = end - start
         game_lengths.append(length)
-        # Final value target is the cumulative attack for the game
-        final_value = value_targets[end - 1]
-        game_final_values.append(final_value)
+        # First position's value target is cumulative future attack (= total game attack)
+        total_attack = value_targets[start]
+        game_final_values.append(total_attack)
 
     game_lengths = np.array(game_lengths)
-    game_final_values = np.array(game_final_values)
+    game_total_attacks = np.array(game_final_values)
 
     # Game length stats
     print_percentiles(game_lengths, "Game Length (moves)")
     print_histogram(game_lengths, bins=10, title="Game Length Distribution")
 
-    # Final value (total attack) stats
-    print_percentiles(game_final_values, "Final Value / Total Attack")
-    print_histogram(game_final_values, bins=10, title="Total Attack Distribution")
+    # Total attack per game stats
+    print_percentiles(game_total_attacks, "Total Attack Per Game")
+    print_histogram(game_total_attacks, bins=10, title="Total Attack Distribution")
 
     # Value target distribution (all examples)
     print_percentiles(value_targets, "Value Targets (all examples)")
@@ -114,9 +114,9 @@ def main(args: ScriptArgs) -> None:
     print(f"  Games:          {n_games:>10,}")
     print(f"  Examples:       {n_examples:>10,}")
     print(f"  Avg game len:   {np.mean(game_lengths):>10.1f}")
-    print(f"  Median attack:  {np.median(game_final_values):>10.1f}")
-    print(f"  Mean attack:    {np.mean(game_final_values):>10.1f}")
-    print(f"  Max attack:     {np.max(game_final_values):>10.1f}")
+    print(f"  Median attack:  {np.median(game_total_attacks):>10.1f}")
+    print(f"  Mean attack:    {np.mean(game_total_attacks):>10.1f}")
+    print(f"  Max attack:     {np.max(game_total_attacks):>10.1f}")
 
 
 if __name__ == "__main__":

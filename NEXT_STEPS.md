@@ -4,6 +4,7 @@
 - [ ] Looking at evaluation data on wandb
 - [ ] Code for visualizing trajectories
 - [ ] Looking at training data
+- [ ] Play the tetris game to ensure the environment is working correctly
 - [ ] Save a full rollout tree from during training and inspect it with `make viz` tool
 - [ ] Look at training rollouts
 - [ ] Speeding up masking of moves
