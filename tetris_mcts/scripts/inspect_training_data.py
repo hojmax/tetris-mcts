@@ -84,17 +84,20 @@ def main(args: ScriptArgs) -> None:
         move_number = frame_idx  # Use frame index as move number
         value_target = float(data["value_targets"][i])
 
-        # Build info text
+        # Build piece info
         current_name = PIECE_NAMES[current_piece] if current_piece is not None else "?"
         hold_name = PIECE_NAMES[hold_piece] if hold_piece is not None else "-"
         queue_names = [PIECE_NAMES[p] if p is not None else "?" for p in next_queue]
-        info_text = f"Piece: {current_name}  Hold: {hold_name}  Queue: {' '.join(queue_names)}  Value: {value_target:.1f}"
 
         frame = render_board(
             board=board,
             move_number=move_number,
             attack=int(value_target),
-            info_text=info_text,
+            info_text=f"Value: {value_target:.1f}",
+            show_piece_info=True,
+            current_piece_name=current_name,
+            hold_piece_name=hold_name,
+            queue_pieces=queue_names,
         )
         frames.append(frame)
 

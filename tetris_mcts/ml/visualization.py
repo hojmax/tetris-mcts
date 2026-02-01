@@ -25,7 +25,7 @@ BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
 PADDING = 10
 INFO_HEIGHT_BASIC = 40
-INFO_HEIGHT_EXTENDED = 70
+INFO_HEIGHT_EXTENDED = 110
 PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
 
 
@@ -61,15 +61,16 @@ def render_board(
         PIL Image of the rendered board
     """
     # Calculate image dimensions
+    info_height = INFO_HEIGHT_EXTENDED if show_piece_info else INFO_HEIGHT_BASIC
     img_width = BOARD_WIDTH * CELL_SIZE + 2 * PADDING
-    img_height = BOARD_HEIGHT * CELL_SIZE + 2 * PADDING + INFO_HEIGHT
+    img_height = BOARD_HEIGHT * CELL_SIZE + 2 * PADDING + info_height
 
     # Create image with dark background
     img = Image.new("RGB", (img_width, img_height), color=(20, 20, 20))
     draw = ImageDraw.Draw(img)
 
     board_x = PADDING
-    board_y = INFO_HEIGHT
+    board_y = info_height
 
     # Draw grid lines
     grid_color = (40, 40, 40)
@@ -153,10 +154,23 @@ def render_board(
     if font is None:
         font = ImageFont.load_default()
 
-    text = f"Move: {move_number}  Attack: {attack}"
-    if info_text:
-        text += f"  {info_text}"
-    draw.text((PADDING, 10), text, fill=(200, 200, 200), font=font)
+    # Draw info text
+    if show_piece_info:
+        # 4 lines: Move/Attack, Value, Piece/Hold, Queue
+        current = current_piece_name or "?"
+        hold = hold_piece_name or "-"
+        queue = " ".join(queue_pieces) if queue_pieces else ""
+        draw.text((PADDING, 10), f"Move: {move_number}  Attack: {attack}", fill=(200, 200, 200), font=font)
+        if info_text:
+            draw.text((PADDING, 30), info_text, fill=(200, 200, 200), font=font)
+        draw.text((PADDING, 50), f"Piece: {current}  Hold: {hold}", fill=(200, 200, 200), font=font)
+        draw.text((PADDING, 70), f"Queue: {queue}", fill=(200, 200, 200), font=font)
+    else:
+        # Single line
+        text = f"Move: {move_number}  Attack: {attack}"
+        if info_text:
+            text += f"  {info_text}"
+        draw.text((PADDING, 10), text, fill=(200, 200, 200), font=font)
 
     return img
 

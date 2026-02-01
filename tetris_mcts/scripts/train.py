@@ -66,7 +66,7 @@ def main(args: ScriptArgs) -> None:
         parameters=sum(p.numel() for p in trainer.model.parameters()),
     )
 
-    if args.resume:
+    if args.resume_dir:
         if trainer.load():
             logger.info("Resumed from checkpoint", step=trainer.step)
         else:
