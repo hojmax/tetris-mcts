@@ -16,7 +16,6 @@ import time
 import wandb
 
 from tetris_mcts.ml.network import TetrisNet, MAX_MOVES
-from tetris_mcts.ml.data import SharedReplayBuffer
 from tetris_mcts.ml.weights import WeightManager, export_onnx
 from tetris_mcts.ml.loss import compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
@@ -37,24 +36,20 @@ class TrainingConfig:
     learning_rate: float = 0.001
     weight_decay: float = 1e-4
     lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
-    lr_warmup_steps: int = 1000
     lr_decay_steps: int = 100000
 
     # Self-play
     num_simulations: int = 100  # MCTS simulations per move
     temperature: float = 1.0
-    temperature_drop_move: int = 15
-    temperature_final: float = 0.1
-    num_games_per_iteration: int = 100
     dirichlet_alpha: float = 0.15
     dirichlet_epsilon: float = 0.25
 
     # Replay buffer
     buffer_size: int = 100_000
     min_buffer_size: int = 10_000
+    games_per_save: int = 100  # Games between disk saves (0 to disable)
 
     # Iteration
-    num_iterations: int = 100
     training_steps_per_iter: int = 1000
     checkpoint_interval: int = 10
     eval_interval: int = 100
@@ -212,9 +207,10 @@ class Trainer:
         Run parallel training with Rust game generation in background.
 
         The Rust GameGenerator runs in a background thread, continuously
-        generating games and writing them to disk. Python reads from disk
-        via SharedReplayBuffer and trains the model. Every model_sync_interval
-        steps, a new ONNX model is exported for the generator to pick up.
+        generating games into a shared in-memory buffer. Python samples
+        directly from the buffer via generator.sample_batch(). Every
+        model_sync_interval steps, a new ONNX model is exported for the
+        generator to pick up.
 
         Args:
             num_steps: Total number of training steps
@@ -255,21 +251,19 @@ class Trainer:
             max_moves=MAX_MOVES,
             add_noise=True,
             max_examples=self.config.buffer_size,
+            games_per_save=self.config.games_per_save,
         )
         generator.start()
         print("Started background game generator")
         print(f"  Model path: {onnx_path}")
         print(f"  Output dir: {games_dir}")
 
-        # Create shared replay buffer
-        shared_buffer = SharedReplayBuffer(games_dir)
-
         # Wait for minimum buffer size
         print(f"Waiting for {self.config.min_buffer_size} examples...")
-        while shared_buffer.size() < self.config.min_buffer_size:
+        while generator.buffer_size() < self.config.min_buffer_size:
             time.sleep(1.0)
             print(
-                f"  Buffer: {shared_buffer.size()} examples, "
+                f"  Buffer: {generator.buffer_size()} examples, "
                 f"Games: {generator.games_generated()}"
             )
 
@@ -280,25 +274,35 @@ class Trainer:
             for step in range(num_steps):
                 self.step = step + 1
 
-                # Sample batch from shared buffer
-                batch = shared_buffer.sample(self.config.batch_size)
-                if batch is None:
+                # Sample batch directly from generator's in-memory buffer
+                result = generator.sample_batch(self.config.batch_size)
+                if result is None:
                     time.sleep(0.1)
                     continue
+
+                # Convert numpy arrays to torch tensors
+                boards, aux, policy_targets, value_targets, masks = result
+                batch = (
+                    torch.from_numpy(boards).unsqueeze(1),  # Add channel dim
+                    torch.from_numpy(aux),
+                    torch.from_numpy(policy_targets),
+                    torch.from_numpy(value_targets),
+                    torch.from_numpy(masks),
+                )
 
                 # Train step
                 metrics = self.train_step(batch)
 
                 # Log metrics
                 if self.step % self.config.log_interval == 0:
-                    metrics["buffer_size"] = shared_buffer.size()
+                    metrics["buffer_size"] = generator.buffer_size()
                     metrics["games_generated"] = generator.games_generated()
                     metrics["examples_generated"] = generator.examples_generated()
                     if log_to_wandb:
                         wandb.log(metrics, step=self.step)
                     print(
                         f"Step {self.step}: loss={metrics['loss']:.4f}, "
-                        f"buffer={shared_buffer.size()}, "
+                        f"buffer={generator.buffer_size()}, "
                         f"games={generator.games_generated()}"
                     )
 

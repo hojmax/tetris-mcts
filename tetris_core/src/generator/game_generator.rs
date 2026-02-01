@@ -1,33 +1,68 @@
 //! Background Game Generator
 //!
 //! Spawns a worker thread that continuously generates self-play games
-//! using MCTS and writes training data to disk.
+//! using MCTS. Training data is kept in a shared in-memory buffer that
+//! Python can sample from directly, avoiding disk I/O during training.
 
+use numpy::{PyArray1, PyArray2};
 use pyo3::prelude::*;
+use rand::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
-use crate::mcts::{MCTSAgent, MCTSConfig};
+use crate::mcts::{MCTSAgent, MCTSConfig, TrainingExample};
 
 use super::npz::write_examples_to_npz;
 
-/// Background game generator for parallel training.
-///
-/// Spawns a worker thread that continuously generates games using MCTS
-/// and writes training data to disk in NPZ format.
-/// Number of games to batch before writing to disk
-const GAMES_PER_FLUSH: usize = 50;
+/// Shared replay buffer for thread-safe access between generator and trainer.
+struct SharedBuffer {
+    /// Training examples (circular buffer with FIFO eviction)
+    examples: RwLock<Vec<TrainingExample>>,
+    /// Maximum buffer size
+    max_size: usize,
+}
+
+impl SharedBuffer {
+    fn new(max_size: usize) -> Self {
+        SharedBuffer {
+            examples: RwLock::new(Vec::with_capacity(max_size)),
+            max_size,
+        }
+    }
+
+    /// Add examples to the buffer, evicting oldest if over capacity.
+    fn add_examples(&self, new_examples: Vec<TrainingExample>) {
+        let mut examples = self.examples.write().unwrap();
+        examples.extend(new_examples);
+
+        // FIFO eviction
+        if examples.len() > self.max_size {
+            let excess = examples.len() - self.max_size;
+            examples.drain(..excess);
+        }
+    }
+
+    /// Get current buffer size.
+    fn len(&self) -> usize {
+        self.examples.read().unwrap().len()
+    }
+
+    /// Get a copy of all examples (for disk saves).
+    fn get_all(&self) -> Vec<TrainingExample> {
+        self.examples.read().unwrap().clone()
+    }
+}
 
 #[pyclass]
 pub struct GameGenerator {
     /// Path to ONNX model file (watched for updates)
     model_path: PathBuf,
-    /// Directory to write game data files
+    /// Directory to write game data files (for periodic saves)
     output_dir: PathBuf,
     /// MCTS configuration
     config: MCTSConfig,
@@ -35,8 +70,10 @@ pub struct GameGenerator {
     max_moves: u32,
     /// Whether to add Dirichlet noise
     add_noise: bool,
-    /// Maximum training examples to keep (FIFO eviction)
-    max_examples: usize,
+    /// Number of games between disk saves (for resume capability)
+    games_per_save: usize,
+    /// Shared replay buffer (accessed by both worker thread and Python)
+    buffer: Arc<SharedBuffer>,
     /// Whether the generator is running
     running: Arc<AtomicBool>,
     /// Number of games generated since start
@@ -50,7 +87,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, output_dir, config=None, max_moves=100, add_noise=true, max_examples=100_000))]
+    #[pyo3(signature = (model_path, output_dir, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100))]
     pub fn new(
         model_path: String,
         output_dir: String,
@@ -58,6 +95,7 @@ impl GameGenerator {
         max_moves: u32,
         add_noise: bool,
         max_examples: usize,
+        games_per_save: usize,
     ) -> Self {
         GameGenerator {
             model_path: PathBuf::from(model_path),
@@ -65,7 +103,8 @@ impl GameGenerator {
             config: config.unwrap_or_default(),
             max_moves,
             add_noise,
-            max_examples,
+            games_per_save,
+            buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
             examples_generated: Arc::new(AtomicU64::new(0)),
@@ -102,7 +141,8 @@ impl GameGenerator {
         let config = self.config.clone();
         let max_moves = self.max_moves;
         let add_noise = self.add_noise;
-        let max_examples = self.max_examples;
+        let games_per_save = self.games_per_save;
+        let buffer = Arc::clone(&self.buffer);
         let running = Arc::clone(&self.running);
         let games_generated = Arc::clone(&self.games_generated);
         let examples_generated = Arc::clone(&self.examples_generated);
@@ -115,7 +155,8 @@ impl GameGenerator {
                 config,
                 max_moves,
                 add_noise,
-                max_examples,
+                games_per_save,
+                buffer,
                 running,
                 games_generated,
                 examples_generated,
@@ -168,7 +209,116 @@ impl GameGenerator {
         stats.insert("games_generated".to_string(), self.games_generated());
         stats.insert("examples_generated".to_string(), self.examples_generated());
         stats.insert("is_running".to_string(), self.is_running() as u64);
+        stats.insert("buffer_size".to_string(), self.buffer_size() as u64);
         stats
+    }
+
+    /// Get the current number of examples in the replay buffer.
+    pub fn buffer_size(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Sample a batch of training data from the replay buffer.
+    ///
+    /// Returns a tuple of numpy arrays:
+    /// (boards, aux_features, policy_targets, value_targets, action_masks)
+    ///
+    /// Returns None if the buffer is empty.
+    #[pyo3(signature = (batch_size))]
+    pub fn sample_batch<'py>(
+        &self,
+        py: Python<'py>,
+        batch_size: usize,
+    ) -> Option<(
+        &'py PyArray2<f32>,
+        &'py PyArray2<f32>,
+        &'py PyArray2<f32>,
+        &'py PyArray1<f32>,
+        &'py PyArray2<f32>,
+    )> {
+        let examples = self.buffer.examples.read().unwrap();
+        let n = examples.len();
+        if n == 0 {
+            return None;
+        }
+
+        let actual_batch = batch_size.min(n);
+        let mut rng = thread_rng();
+
+        // Sample random indices
+        let indices: Vec<usize> = (0..actual_batch)
+            .map(|_| rng.gen_range(0..n))
+            .collect();
+
+        // Allocate output arrays
+        let board_height = 20usize;
+        let board_width = 10usize;
+        let num_actions = 734usize;
+        let aux_features_size = 52usize;
+
+        let mut boards = vec![0.0f32; actual_batch * board_height * board_width];
+        let mut aux = vec![0.0f32; actual_batch * aux_features_size];
+        let mut policies = vec![0.0f32; actual_batch * num_actions];
+        let mut values = vec![0.0f32; actual_batch];
+        let mut masks = vec![0.0f32; actual_batch * num_actions];
+
+        for (i, &idx) in indices.iter().enumerate() {
+            let ex = &examples[idx];
+
+            // Copy board (already flat u8, convert to f32)
+            for (j, &val) in ex.board.iter().enumerate() {
+                boards[i * board_height * board_width + j] = val as f32;
+            }
+
+            // Build aux features (same encoding as Python)
+            let aux_offset = i * aux_features_size;
+            // Current piece one-hot (7)
+            aux[aux_offset + ex.current_piece] = 1.0;
+            // Hold piece one-hot (8) - 7 means empty
+            if ex.hold_piece < 7 {
+                aux[aux_offset + 7 + ex.hold_piece] = 1.0;
+            } else {
+                aux[aux_offset + 7 + 7] = 1.0; // Empty slot
+            }
+            // Hold available (1)
+            aux[aux_offset + 15] = if ex.hold_available { 1.0 } else { 0.0 };
+            // Next queue one-hot (5 * 7 = 35)
+            for (j, &piece) in ex.next_queue.iter().take(5).enumerate() {
+                aux[aux_offset + 16 + j * 7 + piece] = 1.0;
+            }
+            // Move number normalized (1)
+            aux[aux_offset + 51] = ex.move_number as f32 / 100.0;
+
+            // Copy policy
+            for (j, &val) in ex.policy.iter().enumerate() {
+                policies[i * num_actions + j] = val;
+            }
+
+            // Copy value
+            values[i] = ex.value;
+
+            // Copy mask
+            for (j, &val) in ex.action_mask.iter().enumerate() {
+                masks[i * num_actions + j] = if val { 1.0 } else { 0.0 };
+            }
+        }
+
+        // Create numpy arrays
+        let boards_arr = PyArray1::from_vec(py, boards)
+            .reshape([actual_batch, board_height * board_width])
+            .unwrap();
+        let aux_arr = PyArray1::from_vec(py, aux)
+            .reshape([actual_batch, aux_features_size])
+            .unwrap();
+        let policies_arr = PyArray1::from_vec(py, policies)
+            .reshape([actual_batch, num_actions])
+            .unwrap();
+        let values_arr = PyArray1::from_vec(py, values);
+        let masks_arr = PyArray1::from_vec(py, masks)
+            .reshape([actual_batch, num_actions])
+            .unwrap();
+
+        Some((boards_arr, aux_arr, policies_arr, values_arr, masks_arr))
     }
 }
 
@@ -180,7 +330,8 @@ impl GameGenerator {
         config: MCTSConfig,
         max_moves: u32,
         add_noise: bool,
-        max_examples: usize,
+        games_per_save: usize,
+        buffer: Arc<SharedBuffer>,
         running: Arc<AtomicBool>,
         games_generated: Arc<AtomicU64>,
         examples_generated: Arc<AtomicU64>,
@@ -203,9 +354,7 @@ impl GameGenerator {
             thread::sleep(Duration::from_millis(500));
         }
 
-        // All examples accumulate here, written to single file periodically
-        let mut all_examples: Vec<crate::mcts::TrainingExample> = Vec::new();
-        let mut games_since_flush = 0;
+        let mut games_since_save = 0;
         let data_file = output_dir.join("training_data.npz");
 
         // Main generation loop
@@ -227,34 +376,34 @@ impl GameGenerator {
             if let Some(result) = agent.play_game(max_moves, add_noise) {
                 let num_examples = result.examples.len() as u64;
 
-                // Add to buffer
-                all_examples.extend(result.examples);
+                // Add to shared buffer (thread-safe, handles FIFO eviction)
+                buffer.add_examples(result.examples);
 
-                // FIFO eviction: drop oldest examples if over limit
-                if all_examples.len() > max_examples {
-                    let excess = all_examples.len() - max_examples;
-                    all_examples.drain(..excess);
-                }
-
-                games_since_flush += 1;
+                games_since_save += 1;
 
                 // Update counters
                 games_generated.fetch_add(1, Ordering::SeqCst);
                 examples_generated.fetch_add(num_examples, Ordering::SeqCst);
 
-                // Flush to single file periodically
-                if games_since_flush >= GAMES_PER_FLUSH {
+                // Periodically save to disk for resume capability
+                if games_per_save > 0 && games_since_save >= games_per_save {
+                    let all_examples = buffer.get_all();
                     if let Err(e) = write_examples_to_npz(&data_file, &all_examples) {
                         eprintln!("[GameGenerator] Failed to write NPZ: {}", e);
                     }
-                    games_since_flush = 0;
+                    games_since_save = 0;
                 }
             }
         }
 
-        // Final flush
+        // Final save on shutdown
+        let all_examples = buffer.get_all();
         if !all_examples.is_empty() {
             let _ = write_examples_to_npz(&data_file, &all_examples);
+            eprintln!(
+                "[GameGenerator] Saved {} examples to disk",
+                all_examples.len()
+            );
         }
 
         eprintln!("[GameGenerator] Worker thread exiting");

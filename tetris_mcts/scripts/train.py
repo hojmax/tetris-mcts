@@ -38,6 +38,7 @@ class ScriptArgs:
     # Buffer settings
     buffer_size: int = 100000  # Replay buffer size
     min_buffer: int = 1000  # Minimum buffer size before training
+    games_per_save: int = 100  # Games between disk saves (0 to disable)
 
     # Logging/checkpoints (outputs/ is at project root, next to tetris_mcts/)
     checkpoint_dir: Path = (
@@ -77,6 +78,7 @@ def main(args: ScriptArgs) -> None:
         temperature=args.temperature,
         buffer_size=args.buffer_size,
         min_buffer_size=args.min_buffer,
+        games_per_save=args.games_per_save,
         checkpoint_interval=args.checkpoint_interval,
         eval_interval=args.eval_interval,
         log_interval=args.log_interval,
@@ -115,13 +117,12 @@ def main(args: ScriptArgs) -> None:
                 # MCTS
                 "simulations": args.simulations,
                 "temperature": args.temperature,
-                "temperature_drop_move": config.temperature_drop_move,
-                "temperature_final": config.temperature_final,
                 "dirichlet_alpha": config.dirichlet_alpha,
                 "dirichlet_epsilon": config.dirichlet_epsilon,
                 # Buffer
                 "buffer_size": args.buffer_size,
                 "min_buffer": args.min_buffer,
+                "games_per_save": args.games_per_save,
                 # Intervals
                 "eval_interval": args.eval_interval,
                 "checkpoint_interval": args.checkpoint_interval,

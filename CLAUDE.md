@@ -23,7 +23,7 @@ make rebuild    # Force rebuild
 ### Training
 
 ```bash
-python tetris_mcts/scripts/train.py --iterations 100 --games-per-iter 50 --simulations 100
+python tetris_mcts/scripts/train.py --total-steps 100000 --simulations 100
 ```
 
 ## Architecture
@@ -58,11 +58,13 @@ tetris_core/src/             # Rust game engine
 │   ├── lock_delay.rs        # Lock delay timer
 │   └── pymethods.rs         # Python API exports
 ├── mcts/                    # Monte Carlo Tree Search
-│   ├── agent.rs             # MCTSAgent (main search algorithm)
+│   ├── agent.rs             # MCTSAgent PyO3 interface
+│   ├── search.rs            # Core MCTS algorithm (simulate, expand, backup)
+│   ├── export.rs            # Tree visualization export
 │   ├── nodes.rs             # DecisionNode & ChanceNode
 │   ├── config.rs            # MCTSConfig hyperparameters
 │   ├── action_space.rs      # 734-action mapping
-│   ├── results.rs           # TrainingExample, GameResult
+│   ├── results.rs           # TrainingExample, GameResult, GameStats
 │   └── utils.rs             # PUCT scoring, Dirichlet noise
 ├── nn.rs                    # ONNX inference via tract-onnx
 └── generator/               # Background game generation
@@ -73,9 +75,12 @@ tetris_core/src/             # Rust game engine
 tetris_mcts/                 # Python package
 ├── ml/
 │   ├── network.py           # TetrisNet (PyTorch CNN)
-│   ├── training.py          # Trainer class, loss functions
-│   ├── data.py              # ReplayBuffer, TetrisDataset
-│   └── weights.py           # Checkpoint/ONNX export
+│   ├── training.py          # Trainer class, training loop
+│   ├── loss.py              # Loss functions and metrics
+│   ├── evaluation.py        # Model evaluation on fixed seeds
+│   ├── data.py              # TetrisDataset, NPZ save/load
+│   ├── weights.py           # Checkpoint/ONNX export
+│   └── visualization.py     # Board rendering for eval trajectories
 └── scripts/
     ├── tetris_game.py       # Interactive Pygame game
     ├── train.py             # Training entry point
@@ -126,8 +131,8 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 
 - `TetrisNet` - PyTorch neural network
 - `Trainer` - Training loop manager
-- `ReplayBuffer` - Circular buffer for training data
 - `WeightManager` - Checkpoint and ONNX export
+- `Evaluator` - Model evaluation on fixed seeds
 
 ## Code Patterns
 
@@ -145,10 +150,14 @@ Invalid actions get logits set to -inf before softmax, ensuring 0 probability.
 
 ### Self-Play Data Generation
 
-1. MCTS agent plays using network priors
-2. At each position: run MCTS, store improved policy from visit counts
-3. At game end: compute cumulative attack as value target
-4. Save as NPZ for Python training
+Training uses parallel Rust game generation:
+
+1. Rust `GameGenerator` runs in background thread
+2. MCTS agent plays games using network priors
+3. Training examples stored in shared in-memory buffer
+4. Python samples directly via `generator.sample_batch()` - no disk I/O
+5. Periodic disk saves (NPZ) for resume capability only
+6. Model hot-swapped when Python exports new ONNX
 
 ## Testing
 
@@ -167,6 +176,7 @@ Tests are in:
 ### Rust (tetris_core/Cargo.toml)
 
 - `pyo3` (0.20) - Python bindings
+- `numpy` (0.20) - NumPy array interop
 - `tract-onnx` (0.21) - ONNX inference
 - `rand`, `rand_distr` - RNG, Dirichlet sampling
 - `npyz` - NPZ file format
@@ -196,9 +206,10 @@ Tests are in:
 
 ### Training a model
 
-1. `python tetris_mcts/scripts/train.py --iterations N`
+1. `python tetris_mcts/scripts/train.py --total-steps N`
 2. Checkpoints saved to `outputs/checkpoints/`
 3. ONNX exported as `parallel.onnx` for Rust inference
+4. Game data periodically saved to `outputs/data/games/training_data.npz` for resume
 
 ## Coding Rules
 

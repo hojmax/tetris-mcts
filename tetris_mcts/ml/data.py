@@ -4,17 +4,13 @@ Data Serialization and Dataset Management for Tetris AlphaZero
 Handles:
 - Saving/loading training data in NPZ format
 - PyTorch Dataset for training
-- Replay buffer management
 """
 
-import logging
-import threading
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Optional
-import time
 from dataclasses import dataclass
 from tetris_mcts.ml.network import (
     NUM_ACTIONS,
@@ -24,9 +20,6 @@ from tetris_mcts.ml.network import (
     QUEUE_SIZE,
     MAX_MOVES,
 )
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -192,102 +185,3 @@ class TetrisDataset(Dataset):
             self.value_targets[idx],
             self.action_masks[idx],
         )
-
-
-class SharedReplayBuffer:
-    """
-    Replay buffer that reads from disk for multi-process training.
-
-    Self-play process writes to data_dir/games_*.npz
-    Training process reads and samples from them.
-
-    Thread-safe: uses a lock to protect cache access during parallel training.
-    """
-
-    def __init__(self, data_dir: str | Path):
-        self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._cached_data = None
-        self._cache_time = 0.0
-        self._lock = threading.Lock()
-
-    def _refresh_cache(self) -> None:
-        """Reload data from training_data.npz. Must be called with lock held."""
-        data_file = self.data_dir / "training_data.npz"
-        if not data_file.exists():
-            self._cached_data = None
-            return
-
-        try:
-            data = np.load(data_file)
-
-            # Build aux features from components
-            n = len(data["boards"])
-            aux = np.concatenate(
-                [
-                    data["current_pieces"],
-                    data["hold_pieces"],
-                    data["hold_available"].reshape(-1, 1).astype(np.float32),
-                    data["next_queue"].reshape(n, -1),
-                    data["move_numbers"].reshape(-1, 1),
-                ],
-                axis=1,
-            )
-
-            self._cached_data = {
-                "boards": data["boards"].astype(np.float32),
-                "aux_features": aux.astype(np.float32),
-                "policy_targets": data["policy_targets"],
-                "value_targets": data["value_targets"],
-                "action_masks": data["action_masks"].astype(np.float32),
-            }
-        except (OSError, ValueError, KeyError) as e:
-            logger.warning("Failed to load %s: %s", data_file, e)
-            self._cached_data = None
-            return
-
-        self._cache_time = time.time()
-
-    def sample(
-        self, batch_size: int, cache_ttl: float = 30.0
-    ) -> Optional[tuple[torch.Tensor, ...]]:
-        """
-        Sample a batch from the buffer.
-
-        Args:
-            batch_size: Number of examples to sample
-            cache_ttl: Seconds before refreshing the cache
-
-        Returns:
-            Tuple of tensors or None if buffer is empty
-        """
-        with self._lock:
-            # Refresh cache if stale
-            if self._cached_data is None or time.time() - self._cache_time > cache_ttl:
-                self._refresh_cache()
-
-            if self._cached_data is None:
-                return None
-
-            n = len(self._cached_data["boards"])
-            if n == 0:
-                return None
-
-            indices = np.random.randint(0, n, size=min(batch_size, n))
-
-            return (
-                torch.tensor(self._cached_data["boards"][indices]).unsqueeze(1),
-                torch.tensor(self._cached_data["aux_features"][indices]),
-                torch.tensor(self._cached_data["policy_targets"][indices]),
-                torch.tensor(self._cached_data["value_targets"][indices]),
-                torch.tensor(self._cached_data["action_masks"][indices]),
-            )
-
-    def size(self) -> int:
-        """Return approximate number of examples in buffer."""
-        with self._lock:
-            if self._cached_data is None:
-                self._refresh_cache()
-            if self._cached_data is None:
-                return 0
-            return len(self._cached_data["boards"])
