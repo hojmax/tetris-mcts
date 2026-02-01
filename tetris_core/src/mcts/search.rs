@@ -9,7 +9,6 @@ use super::action_space::{get_action_space, NUM_ACTIONS};
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
 use super::results::MCTSResult;
-use super::utils::sample_action;
 
 /// Run a single MCTS simulation
 ///
@@ -320,27 +319,30 @@ pub(super) fn search_internal(
 
     debug_assert!(total_visits > 0, "MCTS should have visits after simulations");
 
-    let action = if config.temperature == 0.0 {
-        let (best_action, _) = root
-            .children
-            .iter()
-            .max_by_key(|(_, child)| child.visit_count())
-            .map(|(&idx, child)| (idx, child.visit_count()))
-            .expect("MCTS root should have children after simulations");
-        result_policy[best_action] = 1.0;
-        best_action
-    } else {
-        for (&action_idx, child) in &root.children {
-            result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / config.temperature);
+    // Build policy from visit counts with temperature
+    // Temperature sharpens (T<1) or softens (T>1) the distribution for training targets
+    assert!(
+        config.temperature > 0.0,
+        "Temperature must be > 0 for training targets"
+    );
+    for (&action_idx, child) in &root.children {
+        result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / config.temperature);
+    }
+    let sum: f32 = result_policy.iter().sum();
+    if sum > 0.0 {
+        for p in &mut result_policy {
+            *p /= sum;
         }
-        let sum: f32 = result_policy.iter().sum();
-        if sum > 0.0 {
-            for p in &mut result_policy {
-                *p /= sum;
-            }
-        }
-        sample_action(&result_policy)
-    };
+    }
+
+    // Always use argmax (most visited child) for action selection
+    // No sampling - we want the best action during training
+    let action = root
+        .children
+        .iter()
+        .max_by_key(|(_, child)| child.visit_count())
+        .map(|(&idx, _)| idx)
+        .expect("MCTS root should have children after simulations");
 
     let root_value = if root.visit_count > 0 {
         root.value_sum / root.visit_count as f32

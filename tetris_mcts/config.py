@@ -30,7 +30,7 @@ class TrainingConfig:
     lr_decay_steps: int = 100000
 
     # MCTS / Self-play
-    num_simulations: int = 100
+    num_simulations: int = 400
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15
     dirichlet_epsilon: float = 0.25
