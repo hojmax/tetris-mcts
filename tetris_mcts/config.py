@@ -34,7 +34,7 @@ class TrainingConfig:
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15
     dirichlet_epsilon: float = 0.25
-    num_workers: int = 3  # Parallel game generation threads
+    num_workers: int = 5  # Parallel game generation threads
 
     # Replay buffer
     buffer_size: int = 100_000
