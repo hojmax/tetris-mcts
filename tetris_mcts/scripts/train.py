@@ -83,6 +83,9 @@ def main(args: ScriptArgs) -> None:
             name=config.run_name,
             config=wandb_config,
         )
+        # Use game_number as x-axis for per-game metrics
+        wandb.define_metric("game_number")
+        wandb.define_metric("game/*", step_metric="game_number")
 
     logger.info("Starting training with Rust game generation")
     trainer.train(log_to_wandb=log_to_wandb)

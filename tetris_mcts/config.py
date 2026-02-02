@@ -16,7 +16,7 @@ class TrainingConfig:
 
     # Training
     total_steps: int = 100_000
-    model_sync_interval: int = 1000  # Steps between ONNX exports
+    model_sync_interval: int = 2000  # Steps between ONNX exports
 
     # Network architecture
     conv_filters: list[int] = field(default_factory=lambda: [4, 8])
@@ -34,6 +34,7 @@ class TrainingConfig:
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15
     dirichlet_epsilon: float = 0.25
+    num_workers: int = 3  # Parallel game generation threads
 
     # Replay buffer
     buffer_size: int = 100_000
@@ -42,11 +43,11 @@ class TrainingConfig:
 
     # Intervals
     checkpoint_interval: int = 1000  # Steps between checkpoints
-    eval_interval: int = 20000  # Steps between evaluations
+    eval_interval: int = 200000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
 
     # Evaluation
-    eval_seeds: list[int] = field(default_factory=lambda: list(range(20)))
+    eval_seeds: list[int] = field(default_factory=lambda: list(range(5)))
 
     # Paths (set automatically by setup_run_directory)
     run_dir: Optional[Path] = None  # e.g., training_runs/v0

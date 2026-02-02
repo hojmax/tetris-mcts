@@ -95,6 +95,13 @@ impl SharedStats {
     }
 }
 
+/// Info about the last completed game (for per-game logging).
+struct LastGameInfo {
+    game_number: u64,
+    stats: GameStats,
+    total_attack: u32,
+}
+
 /// Shared replay buffer for thread-safe access between generator and trainer.
 struct SharedBuffer {
     /// Training examples (circular buffer with FIFO eviction)
@@ -148,7 +155,9 @@ pub struct GameGenerator {
     add_noise: bool,
     /// Number of games between disk saves (for resume capability)
     games_per_save: usize,
-    /// Shared replay buffer (accessed by both worker thread and Python)
+    /// Number of worker threads
+    num_workers: usize,
+    /// Shared replay buffer (accessed by both worker threads and Python)
     buffer: Arc<SharedBuffer>,
     /// Whether the generator is running
     running: Arc<AtomicBool>,
@@ -158,14 +167,16 @@ pub struct GameGenerator {
     examples_generated: Arc<AtomicU64>,
     /// Aggregate game statistics
     game_stats: Arc<SharedStats>,
-    /// Thread handle (for joining on stop)
-    thread_handle: Option<JoinHandle<()>>,
+    /// Last completed game's stats (for per-game logging)
+    last_game: Arc<RwLock<Option<LastGameInfo>>>,
+    /// Thread handles (for joining on stop)
+    thread_handles: Vec<JoinHandle<()>>,
 }
 
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, output_dir, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100))]
+    #[pyo3(signature = (model_path, output_dir, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3))]
     pub fn new(
         model_path: String,
         output_dir: String,
@@ -174,6 +185,7 @@ impl GameGenerator {
         add_noise: bool,
         max_examples: usize,
         games_per_save: usize,
+        num_workers: usize,
     ) -> Self {
         GameGenerator {
             model_path: PathBuf::from(model_path),
@@ -182,20 +194,22 @@ impl GameGenerator {
             max_moves,
             add_noise,
             games_per_save,
+            num_workers: num_workers.max(1), // At least 1 worker
             buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
             examples_generated: Arc::new(AtomicU64::new(0)),
             game_stats: Arc::new(SharedStats::new()),
-            thread_handle: None,
+            last_game: Arc::new(RwLock::new(None)),
+            thread_handles: Vec::new(),
         }
     }
 
     /// Start background game generation.
     ///
-    /// Spawns a worker thread that continuously generates games and writes
-    /// them to the output directory. The thread watches the model file for
-    /// changes and hot-swaps when updated.
+    /// Spawns worker threads that continuously generate games and write
+    /// them to the output directory. The threads watch the model file for
+    /// changes and hot-swap when updated.
     pub fn start(&mut self) -> PyResult<()> {
         if self.running.load(Ordering::SeqCst) {
             return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -214,43 +228,51 @@ impl GameGenerator {
         // Set running flag
         self.running.store(true, Ordering::SeqCst);
 
-        // Clone Arc handles for the thread
-        let model_path = self.model_path.clone();
-        let output_dir = self.output_dir.clone();
-        let config = self.config.clone();
-        let max_moves = self.max_moves;
-        let add_noise = self.add_noise;
-        let games_per_save = self.games_per_save;
-        let buffer = Arc::clone(&self.buffer);
-        let running = Arc::clone(&self.running);
-        let games_generated = Arc::clone(&self.games_generated);
-        let examples_generated = Arc::clone(&self.examples_generated);
-        let game_stats = Arc::clone(&self.game_stats);
+        // Spawn worker threads
+        for worker_id in 0..self.num_workers {
+            // Clone Arc handles for each thread
+            let model_path = self.model_path.clone();
+            let output_dir = self.output_dir.clone();
+            let config = self.config.clone();
+            let max_moves = self.max_moves;
+            let add_noise = self.add_noise;
+            let games_per_save = self.games_per_save;
+            let num_workers = self.num_workers;
+            let buffer = Arc::clone(&self.buffer);
+            let running = Arc::clone(&self.running);
+            let games_generated = Arc::clone(&self.games_generated);
+            let examples_generated = Arc::clone(&self.examples_generated);
+            let game_stats = Arc::clone(&self.game_stats);
+            let last_game = Arc::clone(&self.last_game);
 
-        // Spawn worker thread
-        let handle = thread::spawn(move || {
-            Self::worker_loop(
-                model_path,
-                output_dir,
-                config,
-                max_moves,
-                add_noise,
-                games_per_save,
-                buffer,
-                running,
-                games_generated,
-                examples_generated,
-                game_stats,
-            );
-        });
+            let handle = thread::spawn(move || {
+                Self::worker_loop(
+                    worker_id,
+                    num_workers,
+                    model_path,
+                    output_dir,
+                    config,
+                    max_moves,
+                    add_noise,
+                    games_per_save,
+                    buffer,
+                    running,
+                    games_generated,
+                    examples_generated,
+                    game_stats,
+                    last_game,
+                );
+            });
 
-        self.thread_handle = Some(handle);
+            self.thread_handles.push(handle);
+        }
+
         Ok(())
     }
 
     /// Stop background game generation.
     ///
-    /// Signals the worker thread to stop and waits for it to finish.
+    /// Signals the worker threads to stop and waits for them to finish.
     pub fn stop(&mut self) -> PyResult<()> {
         if !self.running.load(Ordering::SeqCst) {
             return Ok(());
@@ -259,8 +281,8 @@ impl GameGenerator {
         // Signal stop
         self.running.store(false, Ordering::SeqCst);
 
-        // Wait for thread to finish
-        if let Some(handle) = self.thread_handle.take() {
+        // Wait for all threads to finish
+        for handle in self.thread_handles.drain(..) {
             handle.join().map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Worker thread panicked")
             })?;
@@ -297,6 +319,29 @@ impl GameGenerator {
     /// Get aggregate game statistics (line clears, T-spins, etc.)
     pub fn get_game_stats(&self) -> HashMap<String, u32> {
         self.game_stats.to_dict()
+    }
+
+    /// Get the last completed game's stats for per-game logging.
+    /// Returns (game_number, stats_dict) or None if no games completed yet.
+    pub fn get_last_game_stats(&self) -> Option<(u64, HashMap<String, u32>)> {
+        let guard = self.last_game.read().unwrap();
+        guard.as_ref().map(|info| {
+            let mut d = HashMap::new();
+            d.insert("singles".to_string(), info.stats.singles);
+            d.insert("doubles".to_string(), info.stats.doubles);
+            d.insert("triples".to_string(), info.stats.triples);
+            d.insert("tetrises".to_string(), info.stats.tetrises);
+            d.insert("tspin_minis".to_string(), info.stats.tspin_minis);
+            d.insert("tspin_singles".to_string(), info.stats.tspin_singles);
+            d.insert("tspin_doubles".to_string(), info.stats.tspin_doubles);
+            d.insert("tspin_triples".to_string(), info.stats.tspin_triples);
+            d.insert("perfect_clears".to_string(), info.stats.perfect_clears);
+            d.insert("back_to_backs".to_string(), info.stats.back_to_backs);
+            d.insert("max_combo".to_string(), info.stats.max_combo);
+            d.insert("total_lines".to_string(), info.stats.total_lines);
+            d.insert("total_attack".to_string(), info.total_attack);
+            (info.game_number, d)
+        })
     }
 
     /// Get the current number of examples in the replay buffer.
@@ -411,6 +456,8 @@ impl GameGenerator {
 impl GameGenerator {
     /// Worker thread main loop.
     fn worker_loop(
+        worker_id: usize,
+        num_workers: usize,
         model_path: PathBuf,
         output_dir: PathBuf,
         config: MCTSConfig,
@@ -422,6 +469,7 @@ impl GameGenerator {
         games_generated: Arc<AtomicU64>,
         examples_generated: Arc<AtomicU64>,
         game_stats: Arc<SharedStats>,
+        last_game: Arc<RwLock<Option<LastGameInfo>>>,
     ) {
         let mut agent = MCTSAgent::new(config);
         let mut current_mtime: u64 = 0;
@@ -434,14 +482,21 @@ impl GameGenerator {
                     .expect("Model path contains invalid UTF-8");
                 if agent.load_model(path_str) {
                     current_mtime = mtime;
-                    eprintln!("[GameGenerator] Loaded initial model");
+                    if worker_id == 0 {
+                        eprintln!(
+                            "[GameGenerator] Loaded initial model ({} workers)",
+                            num_workers
+                        );
+                    }
                     break;
                 }
             }
             thread::sleep(Duration::from_millis(500));
         }
 
-        let mut games_since_save = 0;
+        // Only worker 0 handles disk saves to avoid race conditions
+        let is_save_worker = worker_id == 0;
+        let mut local_games_count: usize = 0;
         let data_file = output_dir.join("training_data.npz");
 
         // Main generation loop
@@ -454,7 +509,9 @@ impl GameGenerator {
                         .expect("Model path contains invalid UTF-8");
                     if agent.load_model(path_str) {
                         current_mtime = mtime;
-                        eprintln!("[GameGenerator] Reloaded updated model");
+                        if worker_id == 0 {
+                            eprintln!("[GameGenerator] Reloaded updated model");
+                        }
                     }
                 }
             }
@@ -466,7 +523,7 @@ impl GameGenerator {
                 // Add to shared buffer (thread-safe, handles FIFO eviction)
                 buffer.add_examples(result.examples);
 
-                games_since_save += 1;
+                local_games_count += 1;
 
                 // Update counters
                 games_generated.fetch_add(1, Ordering::SeqCst);
@@ -475,28 +532,38 @@ impl GameGenerator {
                 // Accumulate game stats
                 game_stats.add(&result.stats, result.total_attack);
 
-                // Periodically save to disk for resume capability
-                if games_per_save > 0 && games_since_save >= games_per_save {
+                // Store last game info for per-game logging
+                let game_number = games_generated.load(Ordering::SeqCst);
+                *last_game.write().unwrap() = Some(LastGameInfo {
+                    game_number,
+                    stats: result.stats,
+                    total_attack: result.total_attack,
+                });
+
+                // Periodically save to disk for resume capability (only worker 0)
+                if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
                     let all_examples = buffer.get_all();
                     if let Err(e) = write_examples_to_npz(&data_file, &all_examples) {
                         eprintln!("[GameGenerator] Failed to write NPZ: {}", e);
                     }
-                    games_since_save = 0;
+                    local_games_count = 0;
                 }
             }
         }
 
-        // Final save on shutdown
-        let all_examples = buffer.get_all();
-        if !all_examples.is_empty() {
-            let _ = write_examples_to_npz(&data_file, &all_examples);
-            eprintln!(
-                "[GameGenerator] Saved {} examples to disk",
-                all_examples.len()
-            );
+        // Final save on shutdown (only worker 0)
+        if is_save_worker {
+            let all_examples = buffer.get_all();
+            if !all_examples.is_empty() {
+                let _ = write_examples_to_npz(&data_file, &all_examples);
+                eprintln!(
+                    "[GameGenerator] Saved {} examples to disk",
+                    all_examples.len()
+                );
+            }
         }
 
-        eprintln!("[GameGenerator] Worker thread exiting");
+        eprintln!("[GameGenerator] Worker {} exiting", worker_id);
     }
 
     /// Get the modification time of a file as seconds since UNIX epoch.
@@ -525,9 +592,9 @@ impl GameGenerator {
 
 impl Drop for GameGenerator {
     fn drop(&mut self) {
-        // Ensure thread is stopped when generator is dropped
+        // Ensure all threads are stopped when generator is dropped
         self.running.store(false, Ordering::SeqCst);
-        if let Some(handle) = self.thread_handle.take() {
+        for handle in self.thread_handles.drain(..) {
             let _ = handle.join();
         }
     }

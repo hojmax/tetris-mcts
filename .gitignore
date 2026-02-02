@@ -3,5 +3,5 @@ tetris_core/target/
 .env
 *.egg-info/
 __pycache__/
-outputs/
+training_runs/
 wandb/

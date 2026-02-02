@@ -203,6 +203,7 @@ class Trainer:
             add_noise=True,
             max_examples=self.config.buffer_size,
             games_per_save=self.config.games_per_save,
+            num_workers=self.config.num_workers,
         )
         generator.start()
         print("Started background game generator")
@@ -220,6 +221,8 @@ class Trainer:
 
         print(f"\nStarting training for {num_steps} steps")
         print(f"Config: {self.config}")
+
+        last_logged_game = 0  # Track which game we last logged
 
         try:
             for step in range(num_steps):
@@ -249,12 +252,18 @@ class Trainer:
                     metrics["buffer_size"] = generator.buffer_size()
                     metrics["games_generated"] = generator.games_generated()
                     metrics["examples_generated"] = generator.examples_generated()
-                    # Add game stats (line clears, T-spins, etc.)
-                    game_stats = generator.get_game_stats()
-                    for key, value in game_stats.items():
-                        metrics[f"game/{key}"] = value
                     if log_to_wandb:
                         wandb.log(metrics, step=self.step)
+                        # Log per-game stats with game_number as x-axis
+                        last_game = generator.get_last_game_stats()
+                        if last_game is not None:
+                            game_number, game_stats = last_game
+                            if game_number != last_logged_game:
+                                game_metrics = {"game_number": game_number}
+                                for key, value in game_stats.items():
+                                    game_metrics[f"game/{key}"] = value
+                                wandb.log(game_metrics)
+                                last_logged_game = game_number
                     print(
                         f"Step {self.step}: loss={metrics['loss']:.4f}, "
                         f"lr={metrics['learning_rate']:.2e}, "

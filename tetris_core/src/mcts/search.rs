@@ -315,34 +315,38 @@ pub(super) fn search_internal(
 
     // Build result policy from visit counts
     let mut result_policy = vec![0.0; NUM_ACTIONS];
-    let total_visits: u32 = root.children.values().map(|c| c.visit_count()).sum();
 
-    debug_assert!(total_visits > 0, "MCTS should have visits after simulations");
-
-    // Build policy from visit counts with temperature
-    // Temperature sharpens (T<1) or softens (T>1) the distribution for training targets
-    assert!(
-        config.temperature > 0.0,
-        "Temperature must be > 0 for training targets"
+    debug_assert!(
+        root.children.values().map(|c| c.visit_count()).sum::<u32>() > 0,
+        "MCTS should have visits after simulations"
     );
-    for (&action_idx, child) in &root.children {
-        result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / config.temperature);
-    }
-    let sum: f32 = result_policy.iter().sum();
-    if sum > 0.0 {
-        for p in &mut result_policy {
-            *p /= sum;
-        }
-    }
 
     // Always use argmax (most visited child) for action selection
-    // No sampling - we want the best action during training
     let action = root
         .children
         .iter()
         .max_by_key(|(_, child)| child.visit_count())
         .map(|(&idx, _)| idx)
         .expect("MCTS root should have children after simulations");
+
+    // Build policy from visit counts with temperature
+    // Temperature=0 means deterministic (one-hot on best action)
+    // Temperature sharpens (T<1) or softens (T>1) the distribution
+    if config.temperature == 0.0 {
+        // One-hot policy on the best action (for evaluation)
+        result_policy[action] = 1.0;
+    } else {
+        for (&action_idx, child) in &root.children {
+            result_policy[action_idx] =
+                (child.visit_count() as f32).powf(1.0 / config.temperature);
+        }
+        let sum: f32 = result_policy.iter().sum();
+        if sum > 0.0 {
+            for p in &mut result_policy {
+                *p /= sum;
+            }
+        }
+    }
 
     let root_value = if root.visit_count > 0 {
         root.value_sum / root.visit_count as f32
