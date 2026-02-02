@@ -223,6 +223,7 @@ class Trainer:
         print(f"Config: {self.config}")
 
         last_logged_game = 0  # Track which game we last logged
+        train_start_time = time.time()
 
         try:
             for step in range(num_steps):
@@ -249,9 +250,13 @@ class Trainer:
 
                 # Log metrics
                 if self.step % self.config.log_interval == 0:
+                    elapsed = time.time() - train_start_time
+                    games = generator.games_generated()
                     metrics["buffer_size"] = generator.buffer_size()
-                    metrics["games_generated"] = generator.games_generated()
+                    metrics["games_generated"] = games
                     metrics["examples_generated"] = generator.examples_generated()
+                    metrics["games_per_second"] = games / elapsed if elapsed > 0 else 0
+                    metrics["steps_per_second"] = self.step / elapsed if elapsed > 0 else 0
                     if log_to_wandb:
                         wandb.log(metrics, step=self.step)
                         # Log per-game stats with game_number as x-axis
@@ -268,7 +273,9 @@ class Trainer:
                         f"Step {self.step}: loss={metrics['loss']:.4f}, "
                         f"lr={metrics['learning_rate']:.2e}, "
                         f"buffer={generator.buffer_size()}, "
-                        f"games={generator.games_generated()}"
+                        f"games={games}, "
+                        f"games/s={metrics['games_per_second']:.2f}, "
+                        f"steps/s={metrics['steps_per_second']:.1f}"
                     )
 
                 # Export updated model for generator
