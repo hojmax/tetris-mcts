@@ -27,7 +27,7 @@ class TrainingConfig:
     learning_rate: float = 0.001
     weight_decay: float = 1e-4
     lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
-    lr_decay_steps: int = 100000
+    lr_decay_steps: int = 10000
 
     # MCTS / Self-play
     num_simulations: int = 400

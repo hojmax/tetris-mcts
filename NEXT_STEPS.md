@@ -1,5 +1,8 @@
 # Next Steps
 
+- [ ] Continue training with more steps
+- [ ] Look at tetris_mcts/scripts/buffer_viewer.py
+
 - [ ] Visualizing MCTS search and verifying correctness
 - [ ] Looking at evaluation data on wandb
 - [ ] Code for visualizing trajectories
