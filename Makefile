@@ -68,3 +68,9 @@ SIMS ?= 100
 OUTPUT_PROFILE ?= benchmarks/profile_results.jsonl
 profile: .build_marker
 	$(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE)
+
+# Profile with samply (interactive flamegraph viewer)
+# Usage: make profile-samply SIMS=50
+# Requires: cargo install samply
+profile-samply: .build_marker
+	samply record $(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --num_games 3

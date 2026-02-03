@@ -454,222 +454,321 @@ def compute_loss(model, batch):
 
 ### Training Configuration
 
+Configuration is managed via `TrainingConfig` dataclass in `config.py`:
+
 ```python
-config = {
-    # Network
-    'conv_filters': [4, 8],
-    'fc_hidden': 128,
+from tetris_mcts.config import TrainingConfig
 
+config = TrainingConfig(
     # Training
-    'batch_size': 256,
-    'learning_rate': 0.001,
-    'weight_decay': 1e-4,
-    'lr_schedule': 'cosine',
+    total_steps=100_000,
+    batch_size=256,
+    learning_rate=0.001,
+    weight_decay=1e-4,
+    lr_schedule='cosine',  # 'cosine', 'step', or 'none'
 
-    # Self-play
-    'num_simulations': 100,      # MCTS simulations per move
-    'temperature': 1.0,          # For first 15 moves
-    'temperature_drop': 0.1,     # After move 15
-    'num_games_per_iteration': 100,
+    # Network architecture
+    conv_filters=[4, 8],
+    fc_hidden=128,
+
+    # MCTS / Self-play
+    num_simulations=400,  # MCTS simulations per move
+    temperature=1.0,
+    dirichlet_alpha=0.15,
+    dirichlet_epsilon=0.25,
+    num_workers=5,  # Parallel game generation threads
 
     # Replay buffer
-    'buffer_size': 100000,
-    'min_buffer_size': 10000,    # Start training after this many examples
+    buffer_size=100_000,
+    min_buffer_size=100,  # Minimum examples before training starts
 
-    # Iteration
-    'num_iterations': 100,
-    'training_steps_per_iter': 1000,
-    'checkpoint_interval': 10,
-}
+    # Intervals
+    model_sync_interval=2000,  # Steps between ONNX exports
+    checkpoint_interval=1000,
+    eval_interval=200_000,
+    log_interval=100,
+)
+```
+
+**Command-line overrides** (via `simple_parsing`):
+
+```bash
+python tetris_mcts/scripts/train.py \
+    --training.total-steps 500000 \
+    --training.num-simulations 800 \
+    --training.learning-rate 0.0005
 ```
 
 ### Parallel Training Architecture
 
-Self-play and training run in parallel:
+The implementation uses **integrated parallel game generation** via Rust `GameGenerator`:
 
-- **Self-play process** (Rust): Continuously generates games, fills replay buffer
-- **Training process** (Python): Continuously trains on buffer
-- **Weight sync**: Every N training steps, export new weights for self-play
+- **GameGenerator** (Rust): Spawns worker threads that continuously generate self-play games using MCTS
+- **In-memory buffer**: Training examples stored in shared memory (no disk I/O during training)
+- **Direct sampling**: Python training loop samples batches directly from buffer via PyO3
+- **Weight sync**: Every N training steps, export ONNX model; GameGenerator hot-swaps it
 
 ```
-┌─────────────────┐         ┌─────────────────┐
-│   Self-Play     │         │    Training     │
-│    (Rust)       │         │    (Python)     │
-│                 │         │                 │
-│  Load weights ◄─┼─────────┼─ Export weights │
-│       │         │         │       ▲         │
-│       ▼         │         │       │         │
-│  Play games     │         │  Train on batch │
-│       │         │         │       ▲         │
-│       ▼         │  shared │       │         │
-│  Write to ──────┼─────────┼► Read from      │
-│  buffer         │  buffer │  buffer         │
-└─────────────────┘         └─────────────────┘
+┌────────────────────────────────────────┐
+│       Python Training Process          │
+│                                        │
+│  ┌──────────────────────────────────┐  │
+│  │   Trainer.train()                │  │
+│  │                                  │  │
+│  │  1. generator.sample_batch()     │  │ ◄─── Direct sampling via PyO3
+│  │  2. Train on batch               │  │
+│  │  3. Export ONNX (periodic)       │  │
+│  │  4. Log metrics                  │  │
+│  └──────────────────────────────────┘  │
+│            │                           │
+│            │ PyO3 binding              │
+└────────────┼───────────────────────────┘
+             │
+             ▼
+┌────────────────────────────────────────┐
+│    Rust GameGenerator (cdylib)         │
+│                                        │
+│  ┌─────────┐  ┌─────────┐              │
+│  │ Worker  │  │ Worker  │  ...         │ ◄─── num_workers threads
+│  │ Thread  │  │ Thread  │              │
+│  └────┬────┘  └────┬────┘              │
+│       │            │                   │
+│       │  Play MCTS games               │
+│       │  using current NN              │
+│       ▼            ▼                   │
+│  ┌──────────────────────────────────┐  │
+│  │   Shared In-Memory Buffer        │  │ ◄─── RwLock<Vec<TrainingExample>>
+│  │   (RingBuffer, max size)         │  │
+│  └──────────────────────────────────┘  │
+│       ▲                                │
+│       │                                │
+│       └── Hot-swap ONNX model          │ ◄─── When Python exports new weights
+│           (atomic reload)              │
+└────────────────────────────────────────┘
 ```
+
+**Key benefits of this architecture:**
+
+- No separate processes or IPC overhead
+- No disk I/O during training (only periodic saves for resume)
+- Simple weight synchronization (just export ONNX when needed)
+- Game generation continues uninterrupted during training steps
 
 ```python
-# Shared replay buffer (e.g., memory-mapped file or Redis)
-WEIGHT_SYNC_INTERVAL = 1000  # Sync weights every N training steps
+# Python training loop (simplified)
+from tetris_core import GameGenerator, MCTSConfig
 
-def training_process():
+def train():
     model = TetrisNet()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config['learning_rate'])
-    replay_buffer = SharedReplayBuffer(config['buffer_size'])
+    mcts_config = MCTSConfig(num_simulations=400, ...)
 
-    # Export initial weights
-    export_weights(model, 'weights/latest.bin')
+    # Create GameGenerator with worker threads
+    generator = GameGenerator(
+        model_path="parallel.onnx",
+        mcts_config=mcts_config,
+        num_workers=5,
+        buffer_size=100_000,
+    )
 
-    step = 0
-    while True:
-        # Wait for minimum buffer size
-        if replay_buffer.size() < config['min_buffer_size']:
-            time.sleep(1)
-            continue
+    for step in range(total_steps):
+        # Sample directly from Rust buffer (no disk I/O)
+        batch = generator.sample_batch(batch_size=256)
 
-        # Training step
-        batch = replay_buffer.sample(config['batch_size'])
+        # Train
         optimizer.zero_grad()
-        loss, p_loss, v_loss = compute_loss(model, batch)
+        loss = compute_loss(model, batch)
         loss.backward()
         optimizer.step()
-        step += 1
 
-        # Logging
-        wandb.log({
-            'loss': loss.item(),
-            'policy_loss': p_loss.item(),
-            'value_loss': v_loss.item(),
-            'step': step,
-            'buffer_size': replay_buffer.size(),
-        })
+        # Export ONNX periodically
+        if step % model_sync_interval == 0:
+            export_onnx(model, "parallel.onnx")
+            generator.reload_model()  # Atomic hot-swap in Rust
 
-        # Sync weights to self-play
-        if step % WEIGHT_SYNC_INTERVAL == 0:
-            export_weights(model, 'weights/latest.bin')
-            wandb.log({'weight_version': step // WEIGHT_SYNC_INTERVAL})
-
-        # Evaluation
-        if step % config['eval_interval'] == 0:
-            metrics = evaluate_model(model)
-            wandb.log(metrics)
-            torch.save(model.state_dict(), f'checkpoints/model_{step}.pt')
-
-def selfplay_process():
-    """Rust process that continuously generates games"""
-    # Runs: cargo run --release -- --weights weights/latest.bin --buffer shared_buffer
-    # Automatically reloads weights when file changes
-    pass
+        # Log metrics
+        if step % log_interval == 0:
+            game_stats = generator.get_stats()  # Aggregated game stats
+            wandb.log({
+                'loss': loss.item(),
+                'games_generated': game_stats['total_games'],
+                'avg_attack': game_stats['avg_attack'],
+                ...
+            })
 ```
 
-```rust
-// Rust self-play worker
-fn selfplay_loop(buffer_path: &str, weights_path: &str) {
-    let mut model = load_weights(weights_path);
-    let mut last_weights_modified = get_modified_time(weights_path);
+**Rust GameGenerator implementation** (simplified):
 
-    loop {
-        // Check for new weights
-        let current_modified = get_modified_time(weights_path);
-        if current_modified > last_weights_modified {
-            model = load_weights(weights_path);
-            last_weights_modified = current_modified;
-            println!("Loaded new weights");
-        }
-
-        // Play one game
-        let examples = play_game(&model, MAX_MOVES);
-
-        // Append to shared buffer
-        append_to_buffer(buffer_path, &examples);
-    }
-}
-```
+- Worker threads continuously generate games via MCTS + current neural network
+- Each completed game produces training examples that are added to shared buffer
+- Buffer is a ring buffer (FIFO): old examples replaced when buffer is full
+- Neural network reloaded atomically when Python exports new ONNX model
+- Aggregate statistics (line clears, T-spins, combos) tracked with atomic counters
 
 ---
 
 ## 6. Rust-Python Integration
 
-### Option A: Export to ONNX, Run in Rust
+### ONNX Export and Inference
+
+The implementation uses **tract-onnx** for fast CPU inference in Rust:
+
+**Python: Export ONNX Model** (`weights.py`)
 
 ```python
-# Python: Export model
-def export_model_for_rust(model, path):
+def export_onnx(model: TetrisNet, path: Path) -> None:
+    """Export PyTorch model to ONNX for Rust inference."""
     model.eval()
     dummy_board = torch.zeros(1, 1, 20, 10)
     dummy_aux = torch.zeros(1, 52)  # 7 + 8 + 1 + 35 + 1 = 52
-    torch.onnx.export(model, (dummy_board, dummy_aux), path)
+
+    torch.onnx.export(
+        model,
+        (dummy_board, dummy_aux),
+        path,
+        input_names=["board", "aux"],
+        output_names=["policy_logits", "value"],
+        dynamic_axes={
+            "board": {0: "batch_size"},
+            "aux": {0: "batch_size"},
+        },
+    )
 ```
 
-```rust
-// Rust: Load and run ONNX
-use ort::{Environment, SessionBuilder, Value};
-
-fn load_model(path: &str) -> Session {
-    let env = Environment::builder().build().unwrap();
-    SessionBuilder::new(&env).with_model_from_file(path).unwrap()
-}
-
-fn evaluate(session: &Session, state: &GameState) -> (Vec<f32>, f32) {
-    let board_tensor = state.board_to_tensor();
-    let aux_tensor = state.aux_to_tensor();
-
-    let outputs = session.run(vec![
-        Value::from_array(board_tensor),
-        Value::from_array(aux_tensor),
-    ]).unwrap();
-
-    let policy: Vec<f32> = outputs[0].try_extract().unwrap();
-    let value: f32 = outputs[1].try_extract().unwrap()[0];
-
-    (policy, value)
-}
-```
-
-### Option B: Manual Weight Loading (Faster for Tiny Networks)
+**Rust: Load and Run ONNX** (`nn.rs`)
 
 ```rust
-// Rust: Implement forward pass manually
-struct TetrisNet {
-    conv1_weights: Array4<f32>,
-    conv1_bias: Array1<f32>,
-    conv2_weights: Array4<f32>,
-    conv2_bias: Array1<f32>,
-    fc1_weights: Array2<f32>,
-    fc1_bias: Array1<f32>,
-    policy_weights: Array2<f32>,
-    policy_bias: Array1<f32>,
-    value_weights: Array2<f32>,
-    value_bias: Array1<f32>,
+use tract_onnx::prelude::*;
+
+pub struct TetrisNN {
+    model: Arc<TypedRunnableModel<TypedModel>>,
 }
 
-impl TetrisNet {
-    fn forward(&self, board: &Array2<f32>, aux: &Array1<f32>) -> (Array1<f32>, f32) {
-        // Conv layers
-        let x = conv2d(&board, &self.conv1_weights, &self.conv1_bias);
-        let x = relu(&x);
-        let x = conv2d(&x, &self.conv2_weights, &self.conv2_bias);
-        let x = relu(&x);
+impl TetrisNN {
+    /// Load ONNX model from file
+    pub fn load<P: AsRef<Path>>(path: P) -> TractResult<Self> {
+        let model = tract_onnx::onnx()
+            .model_for_path(path)?
+            .into_optimized()?
+            .into_runnable()?;
 
-        // Flatten and concat
-        let x = x.into_shape(1600).unwrap();  // 20*10*8 = 1600
-        let x = concatenate![Axis(0), x, aux];
+        Ok(TetrisNN {
+            model: Arc::new(model),
+        })
+    }
 
-        // FC layer
-        let x = self.fc1_weights.dot(&x) + &self.fc1_bias;
-        let x = relu(&x);
+    /// Run inference with action mask applied
+    pub fn predict_masked(
+        &self,
+        env: &TetrisEnv,
+        move_number: usize,
+        action_mask: &[bool],
+    ) -> TractResult<(Vec<f32>, f32)> {
+        // Encode state to tensors
+        let (board_vec, aux_vec) = encode_state(env, move_number);
 
-        // Heads
-        let policy_logits = self.policy_weights.dot(&x) + &self.policy_bias;
-        let value = (self.value_weights.dot(&x) + &self.value_bias)[0].tanh();
+        // Create tract tensors
+        let board = tract_ndarray::Array4::from_shape_vec(
+            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
+            board_vec,
+        )?.into_tensor();
 
-        (policy_logits, value)
+        let aux = tract_ndarray::Array2::from_shape_vec(
+            (1, AUX_FEATURES),
+            aux_vec,
+        )?.into_tensor();
+
+        // Run inference
+        let result = self.model.run(tvec!(board, aux))?;
+
+        // Extract outputs
+        let policy_logits = result[0].to_array_view::<f32>()?;
+        let value = result[1].to_array_view::<f32>()?[[0]];
+
+        // Apply softmax with masking
+        let policy = apply_mask_and_softmax(policy_logits.as_slice().unwrap(), action_mask);
+
+        Ok((policy, value))
     }
 }
 ```
 
-### Benchmark Both Options
+**Why tract-onnx?**
 
-For tiny networks (< 100K params), manual Rust implementation may be faster than ONNX runtime overhead, especially on CPU.
+- Fast CPU inference with SIMD optimizations
+- Small dependency footprint (no Python runtime needed)
+- Supports all operations used by TetrisNet (Conv2d, BatchNorm, LayerNorm, Linear)
+- Model optimization at load time
+- Thread-safe (can share across workers)
+
+---
+
+## 6.5. Training Directory Structure
+
+Training runs are organized with automatic versioning:
+
+```
+training_runs/
+├── v0/                    # First training run
+│   ├── config.json        # Saved hyperparameters
+│   ├── training_data.npz  # Periodic backup of training data
+│   └── checkpoints/
+│       ├── step_1000.pt
+│       ├── step_2000.pt
+│       └── ...
+├── v1/                    # Second training run
+│   └── ...
+└── v2/                    # And so on...
+```
+
+**Key features:**
+
+- Automatic version incrementing (v0, v1, v2, ...)
+- Each run gets isolated directory with checkpoints and config
+- Resume capability: `--resume-dir training_runs/v0`
+- Config saved as JSON for reproducibility
+- NPZ backup files for recovery (training primarily uses in-memory buffer)
+
+**Usage:**
+
+```bash
+# New run (auto-creates training_runs/v0)
+python tetris_mcts/scripts/train.py --total-steps 100000
+
+# Resume from checkpoint
+python tetris_mcts/scripts/train.py --resume-dir training_runs/v0
+```
+
+---
+
+## 6.6. Available Tools & Scripts
+
+### Training
+
+- **`train.py`** - Main training script with WandB logging
+- **`evaluate.py`** - Evaluate trained model on fixed seeds
+
+### Visualization
+
+- **`tetris_game.py`** - Interactive Pygame Tetris (manual play or MCTS agent)
+- **`mcts_visualizer.py`** - Dash app for MCTS tree visualization (port 8050)
+- **`replay_viewer.py`** - View saved game replays
+- **`buffer_viewer.py`** - Inspect GameGenerator's in-memory training buffer
+
+### Data Analysis
+
+- **`inspect_training_data.py`** - View contents of training_data.npz files
+- **`analyze_training_data.py`** - Compute statistics over training data
+- **`count_reachable_states.py`** - Enumerate all 734 valid piece placements
+- **`profile_games.py`** - Performance profiling of game generation
+
+**Quick access via Makefile:**
+
+```bash
+make play      # Launch interactive Tetris
+make viz       # Launch MCTS tree visualizer
+make test      # Run Rust tests
+make build     # Rebuild Rust extension
+```
 
 ---
 
@@ -690,45 +789,6 @@ fn add_dirichlet_noise(priors: &mut [f32], alpha: f32, epsilon: f32) {
 // AlphaZero uses alpha=0.3 for chess, epsilon=0.25
 // For Tetris with 734 actions, try alpha=0.15, epsilon=0.25
 ```
-
----
-
-## 8. Implementation Phases
-
-### Phase 1: Infrastructure
-
-- [ ] Create action index mapping (734 positions)
-- [ ] Implement move masking in Rust
-- [ ] Set up data serialization format
-- [ ] PyTorch network skeleton
-- [ ] Weight export/import pipeline
-
-### Phase 2: Basic Training
-
-- [ ] Random policy self-play (no MCTS)
-- [ ] Train network on random games
-- [ ] Verify training loop works
-- [ ] WandB integration
-
-### Phase 3: MCTS Integration
-
-- [ ] Implement MCTS with chance nodes
-- [ ] Handle 7-bag probabilities correctly
-- [ ] PUCT selection with network priors
-- [ ] Generate training data from MCTS games
-
-### Phase 4: Full AlphaZero Loop
-
-- [ ] Iterative self-play + training
-- [ ] Replay buffer management
-- [ ] Learning rate scheduling
-- [ ] Checkpoint management
-
-### Phase 5: Optimization
-
-- [ ] Benchmark ONNX vs manual Rust inference
-- [ ] Tune hyperparameters (MCTS sims, temperature, etc.)
-- [ ] Profile and optimize bottlenecks
 
 ---
 
@@ -800,18 +860,25 @@ fn evaluate(model: &Model) -> EvalMetrics {
 
 ## 10. Hyperparameter Recommendations
 
-| Parameter           | Initial Value | Notes                                   |
-| ------------------- | ------------- | --------------------------------------- |
-| MCTS simulations    | 100           | Increase for stronger play              |
-| c_puct              | 1.5           | Exploration constant                    |
-| Temperature         | 1.0           | Sampling from visit counts (0 = argmax) |
-| Dirichlet alpha     | 0.15          | Lower than chess due to more actions    |
-| Dirichlet epsilon   | 0.25          | Standard AlphaZero value                |
-| Batch size          | 256           |                                         |
-| Learning rate       | 0.001         | With Adam                               |
-| Replay buffer       | 100K          | Examples, not games                     |
-| Training steps/iter | 1000          |                                         |
-| Games per iteration | 100           |                                         |
+**Current defaults** (from `config.py`):
+
+| Parameter           | Default Value | Notes                                      |
+| ------------------- | ------------- | ------------------------------------------ |
+| total_steps         | 100,000       | Total training steps                       |
+| MCTS simulations    | 400           | Increase for stronger play (100-800 range) |
+| c_puct              | 1.5           | Exploration constant (MCTSConfig)          |
+| Temperature         | 1.0           | Sampling from visit counts (0 = argmax)    |
+| Dirichlet alpha     | 0.15          | Lower than chess due to more actions       |
+| Dirichlet epsilon   | 0.25          | Standard AlphaZero value                   |
+| Batch size          | 256           | Training batch size                        |
+| Learning rate       | 0.001         | With Adam optimizer                        |
+| Weight decay        | 1e-4          | L2 regularization                          |
+| LR schedule         | cosine        | Options: cosine, step, none                |
+| Replay buffer       | 100K          | Max examples in memory (ring buffer)       |
+| num_workers         | 5             | Parallel game generation threads           |
+| model_sync_interval | 2000          | Steps between ONNX exports                 |
+| checkpoint_interval | 1000          | Steps between saving checkpoints           |
+| log_interval        | 100           | Steps between WandB logging                |
 
 ---
 

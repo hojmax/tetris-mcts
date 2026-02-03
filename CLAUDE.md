@@ -23,7 +23,45 @@ make rebuild    # Force rebuild
 ### Training
 
 ```bash
-python tetris_mcts/scripts/train.py --total-steps 100000 --simulations 100
+# Start new training run (creates training_runs/v0/)
+python tetris_mcts/scripts/train.py --training.total-steps 100000
+
+# With custom hyperparameters
+python tetris_mcts/scripts/train.py \
+    --training.total-steps 500000 \
+    --training.num-simulations 800 \
+    --training.learning-rate 0.0005
+
+# Resume from checkpoint
+python tetris_mcts/scripts/train.py --resume-dir training_runs/v0
+```
+
+### Performance Profiling
+
+**Timing Benchmarks** (saves results to JSONL):
+```bash
+make profile              # 10 games, 100 simulations (default)
+make profile SIMS=50      # Faster profiling with fewer simulations
+make profile SIMS=200     # More accurate with more simulations
+```
+Results saved to `benchmarks/profile_results.jsonl` with timing data for comparison across runs.
+
+**Interactive Profiling** (requires [samply](https://github.com/mstange/samply)):
+```bash
+# Install samply (one-time)
+cargo install samply
+
+# Profile and view flamegraph in browser
+make profile-samply SIMS=50
+
+# Or run directly
+samply record python tetris_mcts/scripts/profile_games.py --num_games 3 --simulations 50
+```
+Opens interactive flamegraph viewer showing ALL function calls automatically. Best for finding bottlenecks during development.
+
+**macOS native profiling** (Instruments):
+```bash
+instruments -t "Time Profiler" python tetris_mcts/scripts/profile_games.py --num_games 3
 ```
 
 ## Architecture
@@ -83,10 +121,16 @@ tetris_mcts/                 # Python package
 │   ├── weights.py           # Checkpoint/ONNX export
 │   └── visualization.py     # Board rendering for eval trajectories
 └── scripts/
-    ├── tetris_game.py       # Interactive Pygame game
-    ├── train.py             # Training entry point
-    ├── mcts_visualizer.py   # Dash tree visualization
-    └── count_reachable_states.py
+    ├── train.py                    # Training entry point
+    ├── evaluate.py                 # Evaluate trained model on fixed seeds
+    ├── tetris_game.py              # Interactive Pygame game
+    ├── mcts_visualizer.py          # Dash tree visualization (localhost:8050)
+    ├── replay_viewer.py            # View saved game replays
+    ├── buffer_viewer.py            # Inspect GameGenerator's in-memory buffer
+    ├── inspect_training_data.py    # View contents of NPZ files
+    ├── analyze_training_data.py    # Compute statistics over training data
+    ├── count_reachable_states.py  # Enumerate 734 valid placements
+    └── profile_games.py            # Performance profiling of game generation
 ```
 
 ## Key Concepts
@@ -137,6 +181,17 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 
 ## Code Patterns
 
+### Default Hyperparameters
+
+From `config.py` TrainingConfig defaults:
+- **MCTS**: 400 simulations, c_puct=1.5, temperature=1.0
+- **Training**: batch_size=256, lr=0.001, cosine schedule, weight_decay=1e-4
+- **Architecture**: Conv(1→4→8), FC(1652→128), 734 policy outputs, 1 value output
+- **Buffer**: 100K examples (ring buffer), 5 parallel workers
+- **Exploration**: Dirichlet alpha=0.15, epsilon=0.25
+
+Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
+
 ### Loss Function
 
 ```python
@@ -151,14 +206,14 @@ Invalid actions get logits set to -inf before softmax, ensuring 0 probability.
 
 ### Self-Play Data Generation
 
-Training uses parallel Rust game generation:
+Training uses parallel Rust game generation via `GameGenerator`:
 
-1. Rust `GameGenerator` runs in background thread
-2. MCTS agent plays games using network priors
-3. Training examples stored in shared in-memory buffer
-4. Python samples directly via `generator.sample_batch()` - no disk I/O
-5. Periodic disk saves (NPZ) for resume capability only
-6. Model hot-swapped when Python exports new ONNX
+1. Multiple worker threads (default: 5) run MCTS games in parallel
+2. Each game uses network priors + Dirichlet noise for exploration
+3. Training examples from completed games stored in shared in-memory ring buffer
+4. Python samples directly via `generator.sample_batch()` - no disk I/O during training
+5. Periodic NPZ saves for resume capability only
+6. Model hot-swapped atomically when Python exports new ONNX
 
 ## Testing
 
@@ -207,10 +262,54 @@ Tests are in:
 
 ### Training a model
 
-1. `python tetris_mcts/scripts/train.py --total-steps N`
-2. Checkpoints saved to `outputs/checkpoints/`
-3. ONNX exported as `parallel.onnx` for Rust inference
-4. Game data periodically saved to `outputs/data/games/training_data.npz` for resume
+1. Run `python tetris_mcts/scripts/train.py --training.total-steps N`
+2. Creates versioned directory: `training_runs/v0/`, `v1/`, etc.
+3. Checkpoints saved to `training_runs/vN/checkpoints/step_*.pt`
+4. ONNX exported as `parallel.onnx` in project root for Rust inference
+5. Training data backed up to `training_runs/vN/training_data.npz` (periodic saves)
+6. Resume with `--resume-dir training_runs/vN`
+
+## Training Directory Structure
+
+```
+training_runs/
+├── v0/                          # First training run
+│   ├── config.json              # Saved hyperparameters
+│   ├── training_data.npz        # Periodic backup (resume capability)
+│   └── checkpoints/
+│       ├── step_1000.pt
+│       ├── step_2000.pt
+│       └── ...
+├── v1/                          # Second run
+└── v2/                          # And so on...
+```
+
+- Automatic version incrementing
+- Each run isolated with its own checkpoints and config
+- Config saved as JSON for reproducibility
+- Resume preserves version number
+
+## WandB Metrics
+
+### Training Metrics
+- `loss`, `policy_loss`, `value_loss` - Loss components
+- `learning_rate` - Current LR (with scheduling)
+- `policy_entropy` - Policy distribution entropy
+- `buffer_size` - Current examples in memory
+
+### Per-Game Metrics (step_metric="game_number")
+- `game/attack` - Total attack in game
+- `game/lines` - Total lines cleared
+- `game/singles`, `doubles`, `triples`, `tetrises` - Line clear counts
+- `game/tspin_*` - T-spin statistics
+- `game/max_combo` - Longest combo achieved
+- `game/back_to_back` - Back-to-back count
+
+### Evaluation Metrics (fixed seeds, 100 moves)
+- `eval/avg_attack` - Average attack over eval games
+- `eval/max_attack` - Best single game
+- `eval/attack_per_piece` - Efficiency metric
+- Breakdown by clear types and T-spins
 
 ## Coding Rules
 
