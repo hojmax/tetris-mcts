@@ -4,7 +4,7 @@
 - [ ] Look at tetris_mcts/scripts/buffer_viewer.py
 - [ ] Caching board representation from network in inference.
 - [ ] Storing boards in three 64bit numbers (1 bit per field, 20x10=200 fields, 200 bits). Useful for caching.
-
+- [ ] Performance profiler on 10 games generated.
 
 - [ ] Visualizing MCTS search and verifying correctness
 - [ ] Looking at evaluation data on wandb

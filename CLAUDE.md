@@ -232,13 +232,14 @@ Use `simple_parsing` with dataclasses for CLI scripts:
 from dataclasses import dataclass
 from pathlib import Path
 from simple_parsing import parse
+from tetris_mcts.config import PROJECT_ROOT
 
 @dataclass
 class ScriptArgs:
     """Script description."""
     data_path: Path  # Required arg with comment as help text
     index: int = -1  # Optional arg with default
-    output: Path | None = None  # Optional path
+    output: Path = PROJECT_ROOT / "outputs" / "results.jsonl"  # Use PROJECT_ROOT for relative paths
 
 def main(args: ScriptArgs) -> None:
     ...
@@ -246,6 +247,25 @@ def main(args: ScriptArgs) -> None:
 if __name__ == "__main__":
     args = parse(ScriptArgs)
     main(args)
+```
+
+**Important**: Put default values directly in the dataclass fields, not as global constants:
+
+```python
+# ✅ GOOD: Default values in dataclass
+@dataclass
+class ScriptArgs:
+    model_path: Path = PROJECT_ROOT / "benchmarks" / "models" / "model.onnx"
+    batch_size: int = 32
+
+# ❌ BAD: Global constants for defaults
+DEFAULT_MODEL = PROJECT_ROOT / "benchmarks" / "models" / "model.onnx"
+DEFAULT_BATCH_SIZE = 32
+
+@dataclass
+class ScriptArgs:
+    model_path: Path = DEFAULT_MODEL
+    batch_size: int = DEFAULT_BATCH_SIZE
 ```
 
 ### Code Simplification
@@ -309,7 +329,22 @@ logger.error("Failed to process", error=str(e))
 ### File & Path Handling
 
 - Always use `pathlib.Path` for file paths
-- Use `Path(__file__).parent` for paths relative to script location
+- **Use relative paths with `PROJECT_ROOT`**: Import `PROJECT_ROOT` from `tetris_mcts.config` for project-relative paths instead of hardcoding absolute paths
+- For script-relative paths within the same directory, use `Path(__file__).parent`
+
+```python
+from tetris_mcts.config import PROJECT_ROOT
+
+# ✅ GOOD: Relative to project root with explicit separators
+model_path = PROJECT_ROOT / "benchmarks" / "models" / "model.onnx"
+config_path = PROJECT_ROOT / "configs" / "training.yaml"
+
+# ❌ BAD: Hardcoded absolute paths
+model_path = Path("/Users/someone/project/benchmarks/models/model.onnx")
+
+# ❌ BAD: Redefining PROJECT_ROOT
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # Import instead!
+```
 
 ### Error Handling - Fail Fast
 

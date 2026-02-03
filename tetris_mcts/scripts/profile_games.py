@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+import structlog
+from simple_parsing import parse
+
+from tetris_core import MCTSConfig, evaluate_model
+from tetris_mcts.config import PROJECT_ROOT
+
+logger = structlog.get_logger()
+
+
+@dataclass
+class ProfileArgs:
+    """Profile MCTS game generation performance with fixed seeds."""
+
+    model_path: Path = PROJECT_ROOT / "benchmarks" / "models" / "parallel.onnx"  # Path to ONNX model
+    num_games: int = 10  # Number of games to profile
+    simulations: int = 100  # MCTS simulations per move
+    seed_start: int = 42  # Starting seed for deterministic games
+    c_puct: float = 1.5  # PUCT exploration constant
+    temperature: float = 0.0  # Temperature for action selection (0=greedy)
+    dirichlet_alpha: float = 0.15  # Dirichlet noise alpha
+    dirichlet_epsilon: float = 0.25  # Dirichlet noise weight
+    max_moves: int = 100  # Maximum moves per game
+    output: Path = PROJECT_ROOT / "benchmarks" / "profile_results.jsonl"  # Output JSONL file
+
+
+def main(args: ProfileArgs) -> None:
+    if not args.model_path.exists():
+        logger.error("Model not found", path=str(args.model_path))
+        return
+
+    logger.info(
+        "Starting performance profiling",
+        model=str(args.model_path),
+        num_games=args.num_games,
+        simulations=args.simulations,
+        seed_start=args.seed_start,
+    )
+
+    config = MCTSConfig()
+    config.num_simulations = args.simulations
+    config.c_puct = args.c_puct
+    config.temperature = args.temperature
+    config.dirichlet_alpha = args.dirichlet_alpha
+    config.dirichlet_epsilon = args.dirichlet_epsilon
+
+    seeds = list(range(args.seed_start, args.seed_start + args.num_games))
+
+    logger.info("Starting game evaluation", seeds=seeds)
+    start_time = time.perf_counter()
+
+    result = evaluate_model(
+        model_path=str(args.model_path),
+        seeds=seeds,
+        config=config,
+        max_moves=args.max_moves,
+    )
+
+    end_time = time.perf_counter()
+    total_time = end_time - start_time
+
+    logger.info(
+        "Profiling complete",
+        total_time_sec=f"{total_time:.3f}",
+        games=result.num_games,
+        avg_moves=f"{result.avg_moves:.1f}",
+        avg_attack=f"{result.avg_attack:.1f}",
+    )
+
+    total_moves = int(result.avg_moves * result.num_games)
+    total_attack = int(result.avg_attack * result.num_games)
+    avg_time_per_game = total_time / result.num_games
+    avg_time_per_move = total_time / total_moves if total_moves > 0 else 0
+    moves_per_second = total_moves / total_time if total_time > 0 else 0
+    games_per_second = result.num_games / total_time if total_time > 0 else 0
+
+    print("\n" + "=" * 60)
+    print("PERFORMANCE SUMMARY")
+    print("=" * 60)
+    print(f"Total time:          {total_time:.3f}s")
+    print(f"Games completed:     {result.num_games}")
+    print(f"Total moves:         {total_moves}")
+    print(f"Total attack:        {total_attack}")
+    print()
+    print(f"Avg time/game:       {avg_time_per_game:.3f}s")
+    print(f"Avg time/move:       {avg_time_per_move * 1000:.1f}ms")
+    print(f"Avg moves/game:      {result.avg_moves:.1f}")
+    print(f"Avg attack/game:     {result.avg_attack:.1f}")
+    print(f"Max attack:          {result.max_attack}")
+    print(f"Attack/piece:        {result.attack_per_piece:.3f}")
+    print()
+    print(f"Throughput:          {moves_per_second:.1f} moves/sec")
+    print(f"                     {games_per_second:.2f} games/sec")
+    print("=" * 60)
+
+    # Save results to JSONL file
+    timestamp = datetime.now().isoformat()
+
+    profile_data = {
+        "timestamp": timestamp,
+        "model_path": str(args.model_path),
+        "config": {
+            "num_games": args.num_games,
+            "simulations": args.simulations,
+            "seed_start": args.seed_start,
+            "c_puct": args.c_puct,
+            "temperature": args.temperature,
+            "dirichlet_alpha": args.dirichlet_alpha,
+            "dirichlet_epsilon": args.dirichlet_epsilon,
+            "max_moves": args.max_moves,
+        },
+        "timing": {
+            "total_time_sec": total_time,
+            "avg_time_per_game_sec": avg_time_per_game,
+            "avg_time_per_move_ms": avg_time_per_move * 1000,
+            "moves_per_second": moves_per_second,
+            "games_per_second": games_per_second,
+        },
+        "results": {
+            "num_games": result.num_games,
+            "total_moves": total_moves,
+            "total_attack": total_attack,
+            "avg_moves": result.avg_moves,
+            "avg_attack": result.avg_attack,
+            "max_attack": result.max_attack,
+            "attack_per_piece": result.attack_per_piece,
+        },
+    }
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with args.output.open("a") as f:
+        f.write(json.dumps(profile_data) + "\n")
+
+    logger.info("Results saved", output=str(args.output))
+
+
+if __name__ == "__main__":
+    args = parse(ProfileArgs)
+    main(args)

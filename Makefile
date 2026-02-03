@@ -1,4 +1,4 @@
-.PHONY: run build clean rebuild test check play viz train evaluate replay
+.PHONY: run build clean rebuild test check play viz train evaluate replay profile
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -60,3 +60,11 @@ evaluate: .build_marker
 FILE ?= replays.jsonl
 replay: .build_marker
 	$(PYTHON) tetris_mcts/scripts/replay_viewer.py $(FILE)
+
+# Profile game generation performance (builds first if needed)
+# Usage: make profile MODEL=benchmarks/models/parallel.onnx SIMS=100 OUTPUT=benchmarks/profile.jsonl
+MODEL_PROFILE ?= benchmarks/models/parallel.onnx
+SIMS ?= 100
+OUTPUT_PROFILE ?= benchmarks/profile_results.jsonl
+profile: .build_marker
+	$(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE)
