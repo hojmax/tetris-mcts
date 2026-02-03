@@ -12,13 +12,29 @@ This is **tetris-mcts**, an AlphaZero-style reinforcement learning system for Te
 ## Quick Commands
 
 ```bash
-make build      # Compile Rust with maturin
+make build      # Compile Rust with maturin (release mode, slow but optimized)
+make build-dev  # Fast debug build (~10x faster, for development only)
 make play       # Run interactive Tetris game
 make viz        # Run MCTS tree visualizer (Dash app at localhost:8050)
 make test       # Run Rust tests (cargo test)
 make check      # Run ruff + pyright linting
-make rebuild    # Force rebuild
+make rebuild    # Force clean rebuild (slow, only when needed)
 ```
+
+**Development tip:** Use `make build-dev` for fast iteration. Only use `make build` or `make rebuild` for benchmarking or production.
+
+**Speed up Rust compilation** (optional):
+```bash
+# Install sccache (caches compiled crates)
+cargo install sccache
+
+# Enable in shell profile (~/.zshrc or ~/.bashrc)
+export RUSTC_WRAPPER=sccache
+
+# Check cache stats
+sccache --show-stats
+```
+This caches compiled dependencies across projects, making rebuilds much faster.
 
 ### Training
 

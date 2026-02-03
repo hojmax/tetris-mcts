@@ -1,4 +1,4 @@
-.PHONY: run build clean rebuild test check play viz train evaluate replay profile
+.PHONY: run build build-dev clean rebuild test check play viz train evaluate replay profile profile-samply
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -8,13 +8,18 @@ PYTHON := .venv/bin/python
 # Find all Rust source files (including subdirectories)
 RUST_SRC := $(shell find tetris_core/src -name '*.rs')
 
-# Build marker file to track if build is up to date
+# Build marker file to track if build is up to date (release mode)
 .build_marker: $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@touch .build_marker
 
 # Explicit build target
 build: .build_marker
+
+# Fast debug build (much faster, for development only)
+build-dev:
+	$(CARGO_ENV) && $(PYTHON) -m maturin develop --manifest-path tetris_core/Cargo.toml
+	@touch .build_marker
 
 # Run the game (builds first if needed)
 play: .build_marker
