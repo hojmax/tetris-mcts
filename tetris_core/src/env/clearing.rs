@@ -69,18 +69,16 @@ impl TetrisEnv {
             let (is_tspin, is_mini) = self.check_tspin(&piece);
 
             for (x, y) in get_cells(piece.piece_type, piece.rotation, piece.x, piece.y) {
-                if y >= 0 && y < self.height as i32 && x >= 0 && x < self.width as i32 {
-                    self.board[y as usize][x as usize] = 1;
-                    self.board_colors[y as usize][x as usize] = Some(piece.piece_type);
-                    // Update column height if this cell is higher (lower y) than current
-                    if y < self.column_heights[x as usize] {
-                        self.column_heights[x as usize] = y;
-                    }
-                    // Update row fill count
-                    self.row_fill_counts[y as usize] += 1;
+                self.board[y as usize][x as usize] = 1;
+                self.board_colors[y as usize][x as usize] = Some(piece.piece_type);
+                // Update column height if this cell is higher (lower y) than current
+                if y < self.column_heights[x as usize] {
+                    self.column_heights[x as usize] = y;
                 }
+                // Update row fill count
+                self.row_fill_counts[y as usize] += 1;
             }
-            // Tetrominos always have 4 cells
+            // Tetrominos always have 4 cells (all within bounds due to is_valid_position check)
             self.total_blocks += 4;
 
             self.clear_lines_internal(is_tspin, is_mini);

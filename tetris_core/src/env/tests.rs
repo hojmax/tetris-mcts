@@ -520,11 +520,11 @@ mod tests {
     }
 
     #[test]
-    fn test_is_valid_position_above_board_valid() {
+    fn test_is_valid_position_above_board_invalid() {
         let env = TetrisEnv::new(10, 20);
-        // Piece above visible board but not colliding is valid
+        // Piece with any cells above visible board is now invalid
         let piece = Piece::with_position(T_PIECE, 3, -2, 0);
-        assert!(env.is_valid_position_for(&piece));
+        assert!(!env.is_valid_position_for(&piece));
     }
 
     // ==================== T-Spin Detection Tests ====================
