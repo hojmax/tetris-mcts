@@ -5,9 +5,11 @@
 use pyo3::prelude::*;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES};
+use crate::moves::Placement;
 use crate::scoring::AttackResult;
 
 #[pyclass]
@@ -51,6 +53,9 @@ pub struct TetrisEnv {
     /// Number of filled cells per row. Used for O(1) line clear detection.
     /// A row is full when `row_fill_counts[y] == width`.
     pub(crate) row_fill_counts: Vec<u8>,
+    /// Cached placements for current piece (invalidated when piece or board changes)
+    /// Using RefCell for interior mutability to cache with &self
+    pub(crate) placements_cache: RefCell<Option<Vec<Placement>>>,
 }
 
 impl TetrisEnv {
@@ -83,6 +88,7 @@ impl TetrisEnv {
             column_heights: vec![height as i32; width],
             total_blocks: 0,
             row_fill_counts: vec![0; height],
+            placements_cache: RefCell::new(None),
         };
         env.spawn_piece_internal();
         env
@@ -113,6 +119,13 @@ impl TetrisEnv {
         self.column_heights = vec![self.height as i32; self.width];
         self.total_blocks = 0;
         self.row_fill_counts = vec![0; self.height];
+        *self.placements_cache.borrow_mut() = None;
         self.spawn_piece_internal();
+    }
+
+    /// Invalidate the placements cache (call when board or piece changes)
+    #[inline]
+    pub(crate) fn invalidate_placement_cache(&self) {
+        *self.placements_cache.borrow_mut() = None;
     }
 }

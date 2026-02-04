@@ -347,12 +347,22 @@ impl TetrisEnv {
     }
 
     pub fn get_possible_placements(&self) -> Vec<Placement> {
-        if let Some(ref piece) = self.current_piece {
+        // Check cache first
+        if let Some(ref cached) = *self.placements_cache.borrow() {
+            return cached.clone();
+        }
+
+        // Cache miss - compute placements
+        let placements = if let Some(ref piece) = self.current_piece {
             let board = Board::new(self.width, self.height, &self.board);
             find_all_placements(&board, piece.piece_type, piece.x, piece.y)
         } else {
             Vec::new()
-        }
+        };
+
+        // Store in cache and return
+        *self.placements_cache.borrow_mut() = Some(placements.clone());
+        placements
     }
 
     pub fn get_placements_for_piece(&self, piece_type: usize) -> Vec<Placement> {

@@ -5,9 +5,11 @@
 //! planning and move evaluation.
 
 use pyo3::prelude::*;
-use std::collections::{HashMap, HashSet, VecDeque};
+use smallvec::SmallVec;
+use std::collections::{HashMap, VecDeque};
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
+use crate::mcts::get_action_space;
 use crate::piece::{get_cells, Piece};
 
 /// Actions that can be taken during piece movement
@@ -58,6 +60,9 @@ pub struct Placement {
     /// Whether the last move before hard drop was a rotation
     #[pyo3(get)]
     pub last_move_was_rotation: bool,
+    /// Pre-computed action index for fast lookup (0-733)
+    #[pyo3(get)]
+    pub action_index: usize,
 }
 
 #[pymethods]
@@ -154,11 +159,24 @@ fn try_rotate(
 /// Information tracked during BFS for each path
 #[derive(Clone)]
 struct PathInfo {
-    moves: Vec<u8>,
+    // Use SmallVec to avoid heap allocations for short move sequences
+    // 32 bytes can hold 32 moves, which covers most cases
+    moves: SmallVec<[u8; 32]>,
     /// Kick index of the last rotation (if any)
     last_kick_index: usize,
     /// Whether the last move was a rotation
     last_move_was_rotation: bool,
+}
+
+/// Convert piece state to bitset index
+/// Board bounds: x in [-3, 12], y in [-3, 22], rotation in [0, 3]
+/// Total states: 16 * 26 * 4 = 1,664
+#[inline]
+fn state_to_index(state: &PieceState) -> usize {
+    let x_offset = (state.x + 3) as usize; // 0..16
+    let y_offset = (state.y + 3) as usize; // 0..26
+    let rot = state.rotation; // 0..4
+    x_offset * 104 + y_offset * 4 + rot
 }
 
 /// Find all possible placements for a piece on the given board
@@ -183,21 +201,24 @@ pub fn find_all_placements(
         return Vec::new();
     }
 
-    // BFS to find all reachable states
-    let mut visited: HashSet<PieceState> = HashSet::new();
-    let mut queue: VecDeque<(PieceState, PathInfo)> = VecDeque::new();
+    // Use bitset instead of HashSet for visited states (much faster)
+    // 1,664 states / 64 = 26 u64s needed
+    let mut visited = [0u64; 26];
+    let mut queue: VecDeque<(PieceState, PathInfo)> = VecDeque::with_capacity(128);
 
     // Track final positions (after hard drop) -> path info
     // Key: (final_x, final_y, rotation)
     let mut final_positions: HashMap<(i32, i32, usize), PathInfo> = HashMap::new();
 
     let start_info = PathInfo {
-        moves: Vec::new(),
+        moves: SmallVec::new(),
         last_kick_index: 0,
         last_move_was_rotation: false,
     };
 
-    visited.insert(start_state);
+    // Mark start state as visited
+    let start_idx = state_to_index(&start_state);
+    visited[start_idx / 64] |= 1u64 << (start_idx % 64);
     queue.push_back((start_state, start_info));
 
     while let Some((state, path_info)) = queue.pop_front() {
@@ -249,8 +270,17 @@ pub fn find_all_placements(
             };
 
             if let Some(new_state) = new_state {
-                if !visited.contains(&new_state) {
-                    visited.insert(new_state);
+                // Check visited using bitset
+                let idx = state_to_index(&new_state);
+                let word = idx / 64;
+                let bit = idx % 64;
+                let is_visited = (visited[word] & (1u64 << bit)) != 0;
+
+                if !is_visited {
+                    // Mark as visited
+                    visited[word] |= 1u64 << bit;
+
+                    // Clone and push to moves
                     let mut new_moves = path_info.moves.clone();
                     new_moves.push(action.to_u8());
 
@@ -268,37 +298,51 @@ pub fn find_all_placements(
 
     // Deduplicate by actual cells occupied (not just x, y, rotation)
     // This handles cases like O piece where different rotations look identical
-    let mut seen_cells: HashSet<[(i32, i32); 4]> = HashSet::new();
+    // Use HashMap instead of HashSet + Vec sort for cells comparison
+    let mut seen_cells: HashMap<u64, ()> = HashMap::new();
     let mut placements: Vec<Placement> = Vec::new();
+    let action_space = get_action_space();
 
-    // Sort for deterministic deduplication order (HashMap iteration is non-deterministic)
-    let mut sorted_positions: Vec<_> = final_positions.into_iter().collect();
-    sorted_positions.sort_by_key(|((x, y, rot), _)| (*rot, *y, *x));
+    for ((x, y, rotation), mut path_info) in final_positions {
+        // Hash the cells to deduplicate O piece
+        let cells = get_cells(piece_type, rotation, x, y);
+        // Create a simple hash from sorted cell positions
+        let cell_hash = cells[0].0 as u64
+            | ((cells[0].1 as u64) << 8)
+            | ((cells[1].0 as u64) << 16)
+            | ((cells[1].1 as u64) << 24)
+            | ((cells[2].0 as u64) << 32)
+            | ((cells[2].1 as u64) << 40)
+            | ((cells[3].0 as u64) << 48)
+            | ((cells[3].1 as u64) << 56);
 
-    for ((x, y, rotation), mut path_info) in sorted_positions {
-        let mut cells = get_cells(piece_type, rotation, x, y);
-        cells.sort(); // Normalize for comparison
-
-        if seen_cells.insert(cells) {
+        if seen_cells.insert(cell_hash, ()).is_none() {
             // Add hard drop to complete the move sequence
             path_info.moves.push(Action::HardDrop.to_u8());
 
+            // Pre-compute action index
+            let action_index = action_space
+                .placement_to_index(x, y, rotation)
+                .unwrap_or(0); // Should never fail for valid placements
+
             placements.push(Placement {
                 piece: Piece::with_position(piece_type, x, y, rotation),
-                moves: path_info.moves,
+                moves: path_info.moves.to_vec(),
                 column: x,
                 rotation,
                 last_kick_index: path_info.last_kick_index,
                 last_move_was_rotation: path_info.last_move_was_rotation,
+                action_index,
             });
         }
     }
 
-    // Sort by rotation first, then column
-    placements.sort_by(|a, b| {
+    // Sort by rotation, column, then y for fully deterministic ordering
+    placements.sort_unstable_by(|a, b| {
         a.rotation
             .cmp(&b.rotation)
             .then_with(|| a.column.cmp(&b.column))
+            .then_with(|| a.piece.y.cmp(&b.piece.y))
     });
 
     placements

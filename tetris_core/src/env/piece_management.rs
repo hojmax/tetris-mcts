@@ -57,6 +57,8 @@ impl TetrisEnv {
         if !is_valid {
             self.game_over = true;
         }
+        // Invalidate placements cache when piece changes
+        self.invalidate_placement_cache();
     }
 
     pub(crate) fn spawn_piece_from_type(&mut self, piece_type: usize) {
