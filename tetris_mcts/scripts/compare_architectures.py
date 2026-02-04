@@ -29,13 +29,20 @@ class CompareArgs:
 def benchmark_architecture(
     conv_filters: list[int],
     fc_hidden: int,
+    conv_kernel_size: int,
+    conv_padding: int,
     batch_size: int,
     num_iterations: int,
 ) -> dict:
     """Benchmark a specific architecture."""
 
     # Create model
-    model = TetrisNet(conv_filters=conv_filters, fc_hidden=fc_hidden)
+    model = TetrisNet(
+        conv_filters=conv_filters,
+        fc_hidden=fc_hidden,
+        conv_kernel_size=conv_kernel_size,
+        conv_padding=conv_padding,
+    )
     model.eval()
 
     param_count = count_parameters(model)
@@ -78,10 +85,34 @@ def main() -> None:
     args = parse(CompareArgs)
 
     architectures = [
-        {"name": "Original (Large)", "conv_filters": [4, 8], "fc_hidden": 128},
-        {"name": "New (Small)", "conv_filters": [2, 4], "fc_hidden": 64},
-        {"name": "Tiny", "conv_filters": [2, 2], "fc_hidden": 32},
-        {"name": "Extra Large", "conv_filters": [8, 16], "fc_hidden": 256},
+        {
+            "name": "Original (Large)",
+            "conv_filters": [4, 8],
+            "fc_hidden": 128,
+            "conv_kernel_size": 3,
+            "conv_padding": 1,
+        },
+        {
+            "name": "New (Small)",
+            "conv_filters": [2, 4],
+            "fc_hidden": 64,
+            "conv_kernel_size": 3,
+            "conv_padding": 1,
+        },
+        {
+            "name": "Tiny",
+            "conv_filters": [2, 2],
+            "fc_hidden": 32,
+            "conv_kernel_size": 3,
+            "conv_padding": 1,
+        },
+        {
+            "name": "Extra Large",
+            "conv_filters": [8, 16],
+            "fc_hidden": 256,
+            "conv_kernel_size": 3,
+            "conv_padding": 1,
+        },
     ]
 
     logger.info(
@@ -96,6 +127,8 @@ def main() -> None:
         result = benchmark_architecture(
             conv_filters=arch["conv_filters"],
             fc_hidden=arch["fc_hidden"],
+            conv_kernel_size=arch["conv_kernel_size"],
+            conv_padding=arch["conv_padding"],
             batch_size=args.batch_size,
             num_iterations=args.num_iterations,
         )

@@ -313,13 +313,9 @@ pub(super) fn search_internal(
     }
 
     // Create RNG (seeded if config.seed is Some, otherwise thread_rng)
-    // Combine MCTS seed with env seed and move number for deterministic but unique RNG per (game, move)
+    // Combine MCTS seed with env seed and move number for unique RNG per (game, move)
     let mut rng = if let Some(mcts_seed) = config.seed {
-        // Hash env seed + mcts seed + move number to ensure each (game, move) pair gets unique RNG
-        let combined_seed = mcts_seed
-            .wrapping_mul(1000000007)  // Large prime
-            .wrapping_add(env.seed.wrapping_mul(1000000009))  // Another large prime
-            .wrapping_add(move_number as u64);
+        let combined_seed = mcts_seed.wrapping_add(env.seed).wrapping_add(move_number as u64);
         StdRng::seed_from_u64(combined_seed)
     } else {
         StdRng::from_rng(thread_rng()).expect("Failed to create RNG from thread_rng")

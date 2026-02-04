@@ -145,10 +145,8 @@ impl DecisionNode {
             let u = c_puct * prior * sqrt_total / (1.0 + n as f32);
             let value = q + u;
 
-            // Use action_idx as tiebreaker for deterministic selection
-            // Use epsilon for float comparison to handle rounding
-            let eps = 1e-9;
-            if value > best_value + eps || ((value - best_value).abs() <= eps && action_idx < best_action) {
+            // Use action_idx as tiebreaker for more consistent selection
+            if value > best_value || (value == best_value && action_idx < best_action) {
                 best_value = value;
                 best_action = action_idx;
             }
