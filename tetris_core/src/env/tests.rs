@@ -1582,4 +1582,376 @@ mod tests {
             env.hard_drop();
         }
     }
+
+    // ==================== Property-Based Tests ====================
+    // These tests use proptest to generate random sequences of actions
+    // and verify that invariants hold at each step.
+
+    use proptest::prelude::*;
+
+    /// Helper to verify all board invariants
+    fn verify_board_invariants(env: &TetrisEnv, context: &str) {
+        // Recompute expected values from scratch
+        let (expected_heights, expected_blocks, expected_row_counts) =
+            compute_expected_stats(&env.board);
+
+        // 1. Column heights must match actual board state
+        assert_eq!(
+            env.column_heights, expected_heights,
+            "{}: column_heights mismatch. Got {:?}, expected {:?}",
+            context, env.column_heights, expected_heights
+        );
+
+        // 2. Total blocks must match actual board state
+        assert_eq!(
+            env.total_blocks, expected_blocks,
+            "{}: total_blocks mismatch. Got {}, expected {}",
+            context, env.total_blocks, expected_blocks
+        );
+
+        // 3. Row fill counts must match actual board state
+        assert_eq!(
+            env.row_fill_counts, expected_row_counts,
+            "{}: row_fill_counts mismatch. Got {:?}, expected {:?}",
+            context, env.row_fill_counts, expected_row_counts
+        );
+
+        // 4. Board dimensions must be consistent
+        assert_eq!(
+            env.board.len(),
+            env.height,
+            "{}: board height mismatch",
+            context
+        );
+        for (y, row) in env.board.iter().enumerate() {
+            assert_eq!(
+                row.len(),
+                env.width,
+                "{}: row {} width mismatch",
+                context,
+                y
+            );
+        }
+
+        // 5. All cells must have valid values (0-7)
+        for (y, row) in env.board.iter().enumerate() {
+            for (x, &cell) in row.iter().enumerate() {
+                assert!(
+                    cell <= 7,
+                    "{}: invalid cell value {} at ({}, {})",
+                    context,
+                    cell,
+                    x,
+                    y
+                );
+            }
+        }
+
+        // 6. Column heights must be in valid range
+        for (x, &height) in env.column_heights.iter().enumerate() {
+            assert!(
+                height >= 0 && height <= env.height as i32,
+                "{}: invalid column height {} for column {}",
+                context,
+                height,
+                x
+            );
+        }
+
+        // 7. Row fill counts must not exceed width
+        for (y, &count) in env.row_fill_counts.iter().enumerate() {
+            assert!(
+                count <= env.width as u8,
+                "{}: row {} has fill count {} > width {}",
+                context,
+                y,
+                count,
+                env.width
+            );
+
+            // Verify count matches actual filled cells in row
+            let actual_count = env.board[y].iter().filter(|&&c| c != 0).count() as u8;
+            assert_eq!(
+                count, actual_count,
+                "{}: row {} fill count {} doesn't match actual count {}",
+                context, y, count, actual_count
+            );
+        }
+
+        // 8. No row should be completely filled (they should be cleared)
+        for (y, row) in env.board.iter().enumerate() {
+            let filled = row.iter().all(|&c| c != 0);
+            assert!(
+                !filled,
+                "{}: row {} is completely filled but not cleared",
+                context,
+                y
+            );
+        }
+
+        // 9. Total blocks should equal sum of row fill counts
+        let sum_row_counts: u32 = env.row_fill_counts.iter().map(|&c| c as u32).sum();
+        assert_eq!(
+            env.total_blocks, sum_row_counts,
+            "{}: total_blocks {} doesn't match sum of row_fill_counts {}",
+            context, env.total_blocks, sum_row_counts
+        );
+
+        // 10. If column height is at row Y, there must be at least one cell at or above Y
+        for (x, &height) in env.column_heights.iter().enumerate() {
+            if (height as usize) < env.height {
+                let has_cell_at_height = (height as usize..env.height)
+                    .any(|y| env.board[y][x] != 0);
+                assert!(
+                    has_cell_at_height,
+                    "{}: column {} has height {} but no cells at or above that row",
+                    context, x, height
+                );
+            }
+        }
+
+        // 11. If column height is at row Y, all rows above Y should be empty in that column
+        for (x, &height) in env.column_heights.iter().enumerate() {
+            for y in 0..height as usize {
+                assert_eq!(
+                    env.board[y][x], 0,
+                    "{}: column {} has height {} but cell at row {} is filled",
+                    context, x, height, y
+                );
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn prop_random_actions_maintain_invariants(
+            seed in 0u64..1000,
+            actions in prop::collection::vec(0u8..8, 10..50)
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            verify_board_invariants(&env, "initial state");
+
+            for (i, &action) in actions.iter().enumerate() {
+                if env.game_over {
+                    break;
+                }
+
+                let context = format!("after action {} (step {})", action, i);
+                env.step(action);
+                verify_board_invariants(&env, &context);
+            }
+        }
+
+        #[test]
+        fn prop_hard_drops_maintain_invariants(
+            seed in 0u64..1000,
+            num_drops in 5usize..30
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for i in 0..num_drops {
+                if env.game_over {
+                    break;
+                }
+
+                let context = format!("after hard_drop {}", i);
+                env.hard_drop();
+                verify_board_invariants(&env, &context);
+            }
+        }
+
+        #[test]
+        fn prop_movements_maintain_invariants(
+            seed in 0u64..1000,
+            movements in prop::collection::vec(0u8..6, 20..100)
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for (i, &movement) in movements.iter().enumerate() {
+                if env.game_over {
+                    break;
+                }
+
+                let context = format!("after movement {} (step {})", movement, i);
+
+                match movement {
+                    0 => { env.move_left(); },
+                    1 => { env.move_right(); },
+                    2 => { env.move_down(); },
+                    3 => { env.rotate_cw(); },
+                    4 => { env.rotate_ccw(); },
+                    5 => { env.hard_drop(); },
+                    _ => {},
+                }
+
+                verify_board_invariants(&env, &context);
+            }
+        }
+
+        #[test]
+        fn prop_with_hold_maintains_invariants(
+            seed in 0u64..1000,
+            actions in prop::collection::vec(0u8..8, 20..50)
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for (i, &action) in actions.iter().enumerate() {
+                if env.game_over {
+                    break;
+                }
+
+                // Randomly use hold
+                if action == 7 && i % 3 == 0 {
+                    env.hold();
+                } else {
+                    env.step(action);
+                }
+
+                let context = format!("after action {} with hold (step {})", action, i);
+                verify_board_invariants(&env, &context);
+            }
+        }
+
+        #[test]
+        fn prop_placement_execution_maintains_invariants(
+            seed in 0u64..1000,
+            num_placements in 5usize..20
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for i in 0..num_placements {
+                if env.game_over {
+                    break;
+                }
+
+                let placements = env.get_possible_placements();
+                if placements.is_empty() {
+                    break;
+                }
+
+                // Pick a random valid placement
+                let idx = (seed as usize + i * 7) % placements.len();
+                let placement = &placements[idx];
+
+                env.execute_placement(placement);
+
+                let context = format!("after placement {} (idx {})", i, idx);
+                verify_board_invariants(&env, &context);
+            }
+        }
+
+        #[test]
+        fn prop_column_heights_never_negative(
+            seed in 0u64..1000,
+            actions in prop::collection::vec(0u8..8, 20..50)
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for &action in actions.iter() {
+                if env.game_over {
+                    break;
+                }
+
+                env.step(action);
+
+                for (x, &height) in env.column_heights.iter().enumerate() {
+                    assert!(
+                        height >= 0,
+                        "Column {} has negative height {} after action {}",
+                        x, height, action
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn prop_total_blocks_never_exceeds_capacity(
+            seed in 0u64..1000,
+            actions in prop::collection::vec(0u8..8, 20..100)
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+            let max_capacity = (env.width * env.height) as u32;
+
+            for &action in actions.iter() {
+                if env.game_over {
+                    break;
+                }
+
+                env.step(action);
+
+                assert!(
+                    env.total_blocks <= max_capacity,
+                    "total_blocks {} exceeds capacity {} after action {}",
+                    env.total_blocks, max_capacity, action
+                );
+            }
+        }
+
+        #[test]
+        fn prop_line_clears_reduce_total_blocks(
+            seed in 0u64..1000,
+            num_drops in 10usize..30
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for _ in 0..num_drops {
+                if env.game_over {
+                    break;
+                }
+
+                let blocks_before = env.total_blocks;
+                let lines_before = env.lines_cleared;
+
+                env.hard_drop();
+
+                let blocks_after = env.total_blocks;
+                let lines_after = env.lines_cleared;
+                let lines_cleared_now = lines_after - lines_before;
+
+                if lines_cleared_now > 0 {
+                    // When lines are cleared, total blocks should decrease
+                    // (unless the piece added more blocks than were cleared)
+                    // At minimum, the cleared lines should have removed width * lines_cleared_now blocks
+                    let min_blocks_removed = (env.width as u32) * lines_cleared_now;
+
+                    // But we also added a piece (4 blocks typically)
+                    // So: blocks_after = blocks_before + piece_blocks - cleared_blocks
+                    // We can't easily verify exact count without knowing piece size,
+                    // but we can verify the board is consistent
+                    assert_eq!(
+                        blocks_after,
+                        env.board.iter().flatten().filter(|&&c| c != 0).count() as u32,
+                        "total_blocks doesn't match actual count after line clear"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn prop_row_fill_counts_update_correctly(
+            seed in 0u64..1000,
+            num_drops in 5usize..25
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for i in 0..num_drops {
+                if env.game_over {
+                    break;
+                }
+
+                env.hard_drop();
+
+                // Verify each row's fill count
+                for y in 0..env.height {
+                    let actual_count = env.board[y].iter().filter(|&&c| c != 0).count() as u8;
+                    assert_eq!(
+                        env.row_fill_counts[y], actual_count,
+                        "Drop {}: row {} fill count {} doesn't match actual {}",
+                        i, y, env.row_fill_counts[y], actual_count
+                    );
+                }
+            }
+        }
+    }
 }

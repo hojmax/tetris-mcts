@@ -1,11 +1,20 @@
 # Next Steps
 
+
+- [ ] Performance profiler on 10 games generated.
+- [ ] is_valid_position_at: 6.5% on 85 calls??
+- [ ] find_all_placements: Optimize find all placements (63% of runtime?)
+- [ ] predict_masked: 17% of runtime
+- [ ] load_model: Load model called 32 times??
+- [ ] Fix the quicktest failures.
+
+
 - [ ] Continue training with more steps
 - [ ] Look at tetris_mcts/scripts/buffer_viewer.py
 - [ ] Caching board representation from network in inference.
-- [ ] Storing boards in three 64bit numbers (1 bit per field, 20x10=200 fields, 200 bits). Useful for caching.
-- [ ] Performance profiler on 10 games generated.
+- [ ] Storing boards in four 64bit numbers (1 bit per field, 20x10=200 fields, 200 bits). Useful for caching.
 
+- [ ] Optimize int4 and int8 everywhere.
 - [ ] Visualizing MCTS search and verifying correctness
 - [ ] Looking at evaluation data on wandb
 - [ ] Code for visualizing trajectories
