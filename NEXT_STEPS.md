@@ -1,12 +1,13 @@
 # Next Steps
 
-
 - [ ] Performance profiler on 10 games generated.
 - [ ] is_valid_position_at: 6.5% on 85 calls??
 - [ ] find_all_placements: Optimize find all placements (63% of runtime?)
 - [ ] predict_masked: 17% of runtime
 - [ ] load_model: Load model called 32 times??
+
 - [ ] Fix the quicktest failures.
+- [ ] Look around and add more tests.
 
 
 - [ ] Continue training with more steps
