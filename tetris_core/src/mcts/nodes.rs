@@ -3,6 +3,7 @@
 //! Decision nodes (player moves) and chance nodes (piece spawns).
 
 use rand::prelude::*;
+use rand::rngs::StdRng;
 use std::collections::HashMap;
 
 use crate::env::TetrisEnv;
@@ -144,7 +145,10 @@ impl DecisionNode {
             let u = c_puct * prior * sqrt_total / (1.0 + n as f32);
             let value = q + u;
 
-            if value > best_value {
+            // Use action_idx as tiebreaker for deterministic selection
+            // Use epsilon for float comparison to handle rounding
+            let eps = 1e-9;
+            if value > best_value + eps || ((value - best_value).abs() <= eps && action_idx < best_action) {
                 best_value = value;
                 best_action = action_idx;
             }
@@ -206,14 +210,13 @@ impl ChanceNode {
     }
 
     /// Randomly select a piece from the possible outcomes
-    pub fn select_piece_random(&self) -> usize {
-        let mut rng = thread_rng();
+    pub fn select_piece_random(&self, rng: &mut StdRng) -> usize {
         if self.bag_remaining.is_empty() {
             // New bag - any piece is equally likely
             rng.gen_range(0..NUM_PIECE_TYPES)
         } else {
             // Select from remaining pieces in current bag
-            *self.bag_remaining.choose(&mut rng).unwrap()
+            *self.bag_remaining.choose(rng).unwrap()
         }
     }
 }
@@ -371,22 +374,26 @@ mod tests {
 
     #[test]
     fn test_chance_node_empty_bag() {
+        use rand::SeedableRng;
+        let mut rng = StdRng::seed_from_u64(42);
         let env = TetrisEnv::new(10, 20);
         let node = ChanceNode::new(env, 0, vec![], 0.0, vec![]);
 
         // Empty bag - any piece should be selectable
-        let piece = node.select_piece_random();
+        let piece = node.select_piece_random(&mut rng);
         assert!(piece < NUM_PIECE_TYPES);
     }
 
     #[test]
     fn test_chance_node_select_piece_random() {
+        use rand::SeedableRng;
+        let mut rng = StdRng::seed_from_u64(42);
         let env = TetrisEnv::new(10, 20);
         let node = ChanceNode::new(env, 0, vec![1, 3, 5], 0.0, vec![]); // O, S, J remaining
 
         // Select many pieces and verify they're from the bag
         for _ in 0..20 {
-            let piece = node.select_piece_random();
+            let piece = node.select_piece_random(&mut rng);
             assert!(
                 piece == 1 || piece == 3 || piece == 5,
                 "Piece {} should be from bag [1, 3, 5]", piece
@@ -492,13 +499,15 @@ mod tests {
 
     #[test]
     fn test_chance_node_random_selection_variety() {
+        use rand::SeedableRng;
+        let mut rng = StdRng::seed_from_u64(42);
         let env = TetrisEnv::new(10, 20);
         let node = ChanceNode::new(env, 0, vec![], 0.0, vec![]); // Empty bag = all 7 pieces possible
 
         // Select many pieces and verify we get variety
         let mut seen = std::collections::HashSet::new();
         for _ in 0..100 {
-            seen.insert(node.select_piece_random());
+            seen.insert(node.select_piece_random(&mut rng));
         }
 
         // With 100 selections from 7 pieces, we should see most of them

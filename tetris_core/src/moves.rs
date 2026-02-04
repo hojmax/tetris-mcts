@@ -6,7 +6,7 @@
 
 use pyo3::prelude::*;
 use smallvec::SmallVec;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::mcts::get_action_space;

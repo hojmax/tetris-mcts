@@ -45,6 +45,8 @@ pub struct TetrisEnv {
     pub(crate) pieces_spawned: u32,
     pub(crate) current_piece_bag_position: u32,
     pub(crate) rng: StdRng,
+    /// The seed used to initialize this environment's RNG (for determinism tracking)
+    pub(crate) seed: u64,
     /// Column heights: Y coordinate of topmost filled cell per column, or `height` if empty.
     /// Used for O(1) hard drop distance calculation.
     pub(crate) column_heights: Vec<i32>,
@@ -85,6 +87,7 @@ impl TetrisEnv {
             pieces_spawned: 0,
             current_piece_bag_position: 0,
             rng: StdRng::seed_from_u64(seed),
+            seed,
             column_heights: vec![height as i32; width],
             total_blocks: 0,
             row_fill_counts: vec![0; height],
@@ -116,6 +119,7 @@ impl TetrisEnv {
         self.pieces_spawned = 0;
         self.current_piece_bag_position = 0;
         self.rng = StdRng::seed_from_u64(seed);
+        self.seed = seed;
         self.column_heights = vec![self.height as i32; self.width];
         self.total_blocks = 0;
         self.row_fill_counts = vec![0; self.height];

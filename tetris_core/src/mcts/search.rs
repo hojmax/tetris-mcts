@@ -2,6 +2,9 @@
 //!
 //! Core search algorithm including simulation, expansion, and backpropagation.
 
+use rand::rngs::StdRng;
+use rand::{thread_rng, SeedableRng};
+
 use crate::constants::QUEUE_SIZE;
 use crate::nn::TetrisNN;
 
@@ -27,6 +30,7 @@ pub(super) fn simulate(
     nn: &TetrisNN,
     root: &mut DecisionNode,
     root_move_number: u32,
+    rng: &mut StdRng,
 ) {
     // Selection: traverse tree, tracking path for backpropagation
     // Store (node_ptr, action_idx, attack_at_this_step)
@@ -119,7 +123,7 @@ pub(super) fn simulate(
         depth += 1;
 
         // Randomly select which piece outcome to explore
-        let piece = chance_node.select_piece_random();
+        let piece = chance_node.select_piece_random(rng);
 
         // Get or create decision node for this piece
         if !chance_node.children.contains_key(&piece) {
@@ -308,9 +312,22 @@ pub(super) fn search_internal(
         root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon);
     }
 
+    // Create RNG (seeded if config.seed is Some, otherwise thread_rng)
+    // Combine MCTS seed with env seed and move number for deterministic but unique RNG per (game, move)
+    let mut rng = if let Some(mcts_seed) = config.seed {
+        // Hash env seed + mcts seed + move number to ensure each (game, move) pair gets unique RNG
+        let combined_seed = mcts_seed
+            .wrapping_mul(1000000007)  // Large prime
+            .wrapping_add(env.seed.wrapping_mul(1000000009))  // Another large prime
+            .wrapping_add(move_number as u64);
+        StdRng::seed_from_u64(combined_seed)
+    } else {
+        StdRng::from_rng(thread_rng()).expect("Failed to create RNG from thread_rng")
+    };
+
     // Run simulations
     for _ in 0..config.num_simulations {
-        simulate(config, nn, &mut root, move_number);
+        simulate(config, nn, &mut root, move_number, &mut rng);
     }
 
     // Build result policy from visit counts
@@ -322,10 +339,11 @@ pub(super) fn search_internal(
     );
 
     // Always use argmax (most visited child) for action selection
+    // Use action index as tiebreaker for deterministic behavior
     let action = root
         .children
         .iter()
-        .max_by_key(|(_, child)| child.visit_count())
+        .max_by_key(|(&idx, child)| (child.visit_count(), idx))
         .map(|(&idx, _)| idx)
         .expect("MCTS root should have children after simulations");
 

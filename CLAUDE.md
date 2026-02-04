@@ -165,7 +165,7 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 ### Neural Network (TetrisNet)
 
 - **Input**: 252 features (200 board cells + 52 auxiliary: current piece, hold, queue, move number)
-- **Architecture**: Conv2d(1→4→8) + FC(1652→128) + policy head (734) + value head (1)
+- **Architecture**: Conv2d(1→2→4) + FC(852→64) + policy head (734) + value head (1)
 - **Output**: Policy probabilities over 734 actions, value (predicted cumulative attack)
 
 ### 7-Bag Randomizer
@@ -202,7 +202,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 From `config.py` TrainingConfig defaults:
 - **MCTS**: 400 simulations, c_puct=1.5, temperature=1.0
 - **Training**: batch_size=256, lr=0.001, cosine schedule, weight_decay=1e-4
-- **Architecture**: Conv(1→4→8), FC(1652→128), 734 policy outputs, 1 value output
+- **Architecture**: Conv(1→2→4), FC(852→64), 734 policy outputs, 1 value output
 - **Buffer**: 100K examples (ring buffer), 5 parallel workers
 - **Exploration**: Dirichlet alpha=0.15, epsilon=0.25
 

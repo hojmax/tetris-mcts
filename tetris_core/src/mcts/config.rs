@@ -21,6 +21,9 @@ pub struct MCTSConfig {
     /// Dirichlet noise weight (epsilon)
     #[pyo3(get, set)]
     pub dirichlet_epsilon: f32,
+    /// Optional RNG seed for deterministic behavior (None = non-deterministic)
+    #[pyo3(get, set)]
+    pub seed: Option<u64>,
 }
 
 #[pymethods]
@@ -33,6 +36,7 @@ impl MCTSConfig {
             temperature: 1.0,
             dirichlet_alpha: 0.15,
             dirichlet_epsilon: 0.25,
+            seed: None,
         }
     }
 }

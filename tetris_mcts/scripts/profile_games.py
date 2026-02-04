@@ -27,6 +27,7 @@ class ProfileArgs:
     temperature: float = 0.0  # Temperature for action selection (0=greedy)
     dirichlet_alpha: float = 0.15  # Dirichlet noise alpha
     dirichlet_epsilon: float = 0.25  # Dirichlet noise weight
+    mcts_seed: int | None = None  # Optional MCTS RNG seed for deterministic search (None = non-deterministic)
     max_moves: int = 100  # Maximum moves per game
     output: Path = PROJECT_ROOT / "benchmarks" / "profile_results.jsonl"  # Output JSONL file
 
@@ -50,6 +51,7 @@ def main(args: ProfileArgs) -> None:
     config.temperature = args.temperature
     config.dirichlet_alpha = args.dirichlet_alpha
     config.dirichlet_epsilon = args.dirichlet_epsilon
+    config.seed = args.mcts_seed
 
     seeds = list(range(args.seed_start, args.seed_start + args.num_games))
 

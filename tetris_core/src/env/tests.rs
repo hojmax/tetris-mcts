@@ -1953,5 +1953,256 @@ mod tests {
                 }
             }
         }
+
+        #[test]
+        fn prop_7bag_randomizer_correctness(
+            seed in 0u64..1000,
+            num_pieces in 14usize..50
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+            let mut spawned_pieces = Vec::new();
+
+            for _ in 0..num_pieces {
+                if env.game_over {
+                    break;
+                }
+
+                if let Some(piece) = &env.current_piece {
+                    spawned_pieces.push(piece.piece_type);
+                }
+
+                env.hard_drop();
+            }
+
+            // Check every consecutive 7 pieces contains all piece types exactly once
+            for chunk_start in 0..=(spawned_pieces.len().saturating_sub(7)) {
+                let chunk = &spawned_pieces[chunk_start..chunk_start + 7];
+                let mut counts = [0u8; 7];
+
+                for &piece_type in chunk {
+                    counts[piece_type] += 1;
+                }
+
+                // If this is a complete bag, all pieces should appear exactly once
+                if chunk_start % 7 == 0 && chunk_start + 7 <= spawned_pieces.len() {
+                    for (piece_type, &count) in counts.iter().enumerate() {
+                        assert_eq!(
+                            count, 1,
+                            "Bag starting at piece {}: piece type {} appeared {} times (expected 1)",
+                            chunk_start, piece_type, count
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn prop_score_monotonicity(
+            seed in 0u64..1000,
+            num_drops in 10usize..50
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            let mut prev_attack = env.attack;
+            let mut prev_lines = env.lines_cleared;
+
+            for _ in 0..num_drops {
+                if env.game_over {
+                    break;
+                }
+
+                env.hard_drop();
+
+                assert!(
+                    env.attack >= prev_attack,
+                    "Attack decreased from {} to {}",
+                    prev_attack, env.attack
+                );
+
+                assert!(
+                    env.lines_cleared >= prev_lines,
+                    "Lines cleared decreased from {} to {}",
+                    prev_lines, env.lines_cleared
+                );
+
+                prev_attack = env.attack;
+                prev_lines = env.lines_cleared;
+            }
+        }
+
+        #[test]
+        fn prop_game_over_is_terminal(
+            seed in 0u64..1000,
+            actions in prop::collection::vec(0u8..8, 5..20)
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            // Play until game over
+            for &action in actions.iter() {
+                if env.game_over {
+                    break;
+                }
+                env.step(action);
+            }
+
+            if env.game_over {
+                // Capture state when game is over
+                let board_snapshot = env.board.clone();
+                let attack_snapshot = env.attack;
+                let lines_snapshot = env.lines_cleared;
+                let total_blocks_snapshot = env.total_blocks;
+
+                // Try more actions - state should not change
+                for &action in actions.iter() {
+                    env.step(action);
+
+                    assert!(env.game_over, "Game over flag was cleared");
+                    assert_eq!(env.board, board_snapshot, "Board changed after game over");
+                    assert_eq!(env.attack, attack_snapshot, "Attack changed after game over");
+                    assert_eq!(env.lines_cleared, lines_snapshot, "Lines changed after game over");
+                    assert_eq!(env.total_blocks, total_blocks_snapshot, "Total blocks changed after game over");
+                }
+            }
+        }
+
+        #[test]
+        fn prop_queue_always_populated(
+            seed in 0u64..1000,
+            num_drops in 10usize..50
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for _ in 0..num_drops {
+                if env.game_over {
+                    break;
+                }
+
+                let queue = env.get_queue(5);
+                assert_eq!(
+                    queue.len(), 5,
+                    "Queue should always have 5 pieces, got {}",
+                    queue.len()
+                );
+
+                // All queue entries should be valid piece types (0-6)
+                for &piece_type in &queue {
+                    assert!(
+                        piece_type < 7,
+                        "Invalid piece type {} in queue",
+                        piece_type
+                    );
+                }
+
+                env.hard_drop();
+            }
+        }
+
+        #[test]
+        fn prop_board_connected_after_clears(
+            seed in 0u64..1000,
+            num_drops in 10usize..30
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for _ in 0..num_drops {
+                if env.game_over {
+                    break;
+                }
+
+                env.hard_drop();
+
+                // After line clears, check that if a row Y has any blocks,
+                // then either Y is the bottom row, or at least one row below Y has blocks
+                // This ensures the board doesn't have "gaps" with empty rows between filled rows
+                let mut found_filled_row = false;
+                let mut found_gap = false;
+
+                for y in (0..env.height).rev() {
+                    let row_has_blocks = env.board[y].iter().any(|&c| c != 0);
+
+                    if row_has_blocks {
+                        if found_gap {
+                            panic!("Board has empty rows below filled rows (gap in board structure)");
+                        }
+                        found_filled_row = true;
+                    } else if found_filled_row {
+                        // Empty row above filled rows = gap
+                        found_gap = true;
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn prop_valid_placements_are_valid(
+            seed in 0u64..1000,
+            num_checks in 5usize..15
+        ) {
+            let mut env = TetrisEnv::with_seed(10, 20, seed);
+
+            for _ in 0..num_checks {
+                if env.game_over {
+                    break;
+                }
+
+                let placements = env.get_possible_placements();
+
+                for placement in &placements {
+                    // Each placement should be a valid position
+                    assert!(
+                        env.is_valid_position(
+                            placement.piece.piece_type,
+                            placement.rotation,
+                            placement.column,
+                            placement.piece.y
+                        ),
+                        "get_possible_placements returned invalid placement: piece={}, rot={}, x={}, y={}",
+                        placement.piece.piece_type, placement.rotation, placement.column, placement.piece.y
+                    );
+                }
+
+                env.hard_drop();
+            }
+        }
+
+        #[test]
+        fn prop_determinism_same_seed_same_game(
+            seed in 0u64..1000,
+            actions in prop::collection::vec(0u8..8, 10..30)
+        ) {
+            let mut env1 = TetrisEnv::with_seed(10, 20, seed);
+            let mut env2 = TetrisEnv::with_seed(10, 20, seed);
+
+            for (i, &action) in actions.iter().enumerate() {
+                if env1.game_over || env2.game_over {
+                    assert_eq!(
+                        env1.game_over, env2.game_over,
+                        "Step {}: Game over state differs",
+                        i
+                    );
+                    break;
+                }
+
+                env1.step(action);
+                env2.step(action);
+
+                assert_eq!(env1.board, env2.board, "Step {}: Boards differ", i);
+                assert_eq!(env1.attack, env2.attack, "Step {}: Attack differs", i);
+                assert_eq!(env1.lines_cleared, env2.lines_cleared, "Step {}: Lines differ", i);
+                assert_eq!(env1.total_blocks, env2.total_blocks, "Step {}: Total blocks differ", i);
+
+                // Check current piece state
+                match (&env1.current_piece, &env2.current_piece) {
+                    (Some(p1), Some(p2)) => {
+                        assert_eq!(p1.piece_type, p2.piece_type, "Step {}: Piece type differs", i);
+                        assert_eq!(p1.x, p2.x, "Step {}: Piece x differs", i);
+                        assert_eq!(p1.y, p2.y, "Step {}: Piece y differs", i);
+                        assert_eq!(p1.rotation, p2.rotation, "Step {}: Piece rotation differs", i);
+                    },
+                    (None, None) => {},
+                    _ => panic!("Step {}: One env has current_piece, other doesn't", i),
+                }
+            }
+        }
     }
 }

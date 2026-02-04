@@ -10,7 +10,7 @@ from typing import Optional
 
 import numpy as np
 
-from tetris_mcts.ml.network import TetrisNet, MAX_MOVES
+from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import export_onnx
 
 from tetris_core import MCTSConfig, MCTSAgent, TetrisEnv, evaluate_model, EvalResult
@@ -24,11 +24,13 @@ class Evaluator:
         model: TetrisNet,
         checkpoint_dir: str | Path,
         num_simulations: int = 100,
+        max_moves: int = 100,
         eval_seeds: Optional[list[int]] = None,
     ):
         self.model = model
         self.checkpoint_dir = Path(checkpoint_dir)
         self.num_simulations = num_simulations
+        self.max_moves = max_moves
         self.eval_seeds = eval_seeds if eval_seeds is not None else list(range(20))
 
     def evaluate(
@@ -61,7 +63,7 @@ class Evaluator:
             model_path=str(onnx_path),
             seeds=[int(s) for s in self.eval_seeds],
             config=mcts_config,
-            max_moves=MAX_MOVES,
+            max_moves=self.max_moves,
         )
 
         print(f"Evaluation ({result.num_games} games):")
@@ -107,7 +109,7 @@ class Evaluator:
         frames = []
         total_attack = 0
 
-        for move_idx in range(MAX_MOVES):
+        for move_idx in range(self.max_moves):
             if env.game_over or len(frames) >= max_frames:
                 break
 

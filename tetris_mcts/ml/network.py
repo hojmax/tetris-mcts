@@ -66,8 +66,10 @@ class TetrisNet(nn.Module):
 
     def __init__(
         self,
-        conv_filters: list[int] = [4, 8],
-        fc_hidden: int = 128,
+        conv_filters: list[int] = [2, 4],
+        fc_hidden: int = 64,
+        conv_kernel_size: int = 3,
+        conv_padding: int = 1,
         num_actions: int = NUM_ACTIONS,
     ):
         super().__init__()
@@ -75,10 +77,15 @@ class TetrisNet(nn.Module):
         self.num_actions = num_actions
 
         # Convolutional layers for board
-        self.conv1 = nn.Conv2d(1, conv_filters[0], kernel_size=3, padding=1)
+        self.conv1 = nn.Conv2d(
+            1, conv_filters[0], kernel_size=conv_kernel_size, padding=conv_padding
+        )
         self.bn1 = nn.BatchNorm2d(conv_filters[0])
         self.conv2 = nn.Conv2d(
-            conv_filters[0], conv_filters[1], kernel_size=3, padding=1
+            conv_filters[0],
+            conv_filters[1],
+            kernel_size=conv_kernel_size,
+            padding=conv_padding,
         )
         self.bn2 = nn.BatchNorm2d(conv_filters[1])
 

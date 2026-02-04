@@ -19,18 +19,26 @@ class TrainingConfig:
     model_sync_interval: int = 2000  # Steps between ONNX exports
 
     # Network architecture
-    conv_filters: list[int] = field(default_factory=lambda: [4, 8])
-    fc_hidden: int = 128
+    conv_filters: list[int] = field(default_factory=lambda: [2, 4])
+    fc_hidden: int = 64
+    conv_kernel_size: int = 3
+    conv_padding: int = 1
+    max_moves: int = 100  # Maximum moves for move number normalization
 
     # Optimizer
     batch_size: int = 256
     learning_rate: float = 0.001
     weight_decay: float = 1e-4
+    grad_clip_norm: float = 1.0
     lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
     lr_decay_steps: int = 10000
+    lr_min_factor: float = 0.01  # Minimum LR as fraction of initial (for cosine)
+    lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
+    lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
 
     # MCTS / Self-play
     num_simulations: int = 400
+    c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15
     dirichlet_epsilon: float = 0.25

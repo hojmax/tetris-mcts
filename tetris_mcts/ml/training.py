@@ -14,7 +14,7 @@ import time
 import wandb
 
 from tetris_mcts.config import TrainingConfig
-from tetris_mcts.ml.network import TetrisNet, MAX_MOVES
+from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import WeightManager, export_onnx
 from tetris_mcts.ml.loss import compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
@@ -46,6 +46,8 @@ class Trainer:
             model = TetrisNet(
                 conv_filters=config.conv_filters,
                 fc_hidden=config.fc_hidden,
+                conv_kernel_size=config.conv_kernel_size,
+                conv_padding=config.conv_padding,
             )
         self.model = model.to(self.device)
 
@@ -67,6 +69,7 @@ class Trainer:
             model=self.model,
             checkpoint_dir=config.checkpoint_dir,
             num_simulations=config.num_simulations,
+            max_moves=config.max_moves,
             eval_seeds=config.eval_seeds,
         )
 
@@ -82,13 +85,13 @@ class Trainer:
             return torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=self.config.lr_decay_steps,
-                eta_min=self.config.learning_rate * 0.01,
+                eta_min=self.config.learning_rate * self.config.lr_min_factor,
             )
         elif self.config.lr_schedule == "step":
             return torch.optim.lr_scheduler.StepLR(
                 self.optimizer,
-                step_size=self.config.lr_decay_steps // 3,
-                gamma=0.1,
+                step_size=self.config.lr_decay_steps // self.config.lr_step_divisor,
+                gamma=self.config.lr_step_gamma,
             )
         else:
             return None
@@ -112,7 +115,9 @@ class Trainer:
         total_loss.backward()
 
         # Gradient clipping
-        grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.model.parameters(), self.config.grad_clip_norm
+        )
 
         self.optimizer.step()
         if self.scheduler:
@@ -189,6 +194,7 @@ class Trainer:
         # Create MCTS config for generator
         mcts_config = MCTSConfig()
         mcts_config.num_simulations = self.config.num_simulations
+        mcts_config.c_puct = self.config.c_puct
         mcts_config.temperature = self.config.temperature
         mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
         mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
@@ -199,7 +205,7 @@ class Trainer:
             model_path=str(onnx_path),
             output_dir=str(self.config.data_dir),
             config=mcts_config,
-            max_moves=MAX_MOVES,
+            max_moves=self.config.max_moves,
             add_noise=True,
             max_examples=self.config.buffer_size,
             games_per_save=self.config.games_per_save,
