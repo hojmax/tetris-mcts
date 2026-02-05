@@ -37,7 +37,7 @@ class TrainingConfig:
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
 
     # MCTS / Self-play
-    num_simulations: int = 400
+    num_simulations: int = 600
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15

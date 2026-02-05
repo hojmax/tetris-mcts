@@ -24,6 +24,7 @@ make rebuild    # Force clean rebuild (slow, only when needed)
 **Development tip:** Use `make build-dev` for fast iteration. Only use `make build` or `make rebuild` for benchmarking or production.
 
 **Speed up Rust compilation** (optional):
+
 ```bash
 # Install sccache (caches compiled crates)
 cargo install sccache
@@ -34,6 +35,7 @@ export RUSTC_WRAPPER=sccache
 # Check cache stats
 sccache --show-stats
 ```
+
 This caches compiled dependencies across projects, making rebuilds much faster.
 
 ### Training
@@ -55,14 +57,17 @@ python tetris_mcts/scripts/train.py --resume-dir training_runs/v0
 ### Performance Profiling
 
 **Timing Benchmarks** (saves results to JSONL):
+
 ```bash
 make profile              # 10 games, 100 simulations (default)
 make profile SIMS=50      # Faster profiling with fewer simulations
 make profile SIMS=200     # More accurate with more simulations
 ```
+
 Results saved to `benchmarks/profile_results.jsonl` with timing data for comparison across runs.
 
 **Interactive Profiling** (requires [samply](https://github.com/mstange/samply)):
+
 ```bash
 # Install samply (one-time)
 cargo install samply
@@ -73,9 +78,11 @@ make profile-samply SIMS=50
 # Or run directly
 samply record python tetris_mcts/scripts/profile_games.py --num_games 3 --simulations 50
 ```
+
 Opens interactive flamegraph viewer showing ALL function calls automatically. Best for finding bottlenecks during development.
 
 **macOS native profiling** (Instruments):
+
 ```bash
 instruments -t "Time Profiler" python tetris_mcts/scripts/profile_games.py --num_games 3
 ```
@@ -200,6 +207,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 ### Default Hyperparameters
 
 From `config.py` TrainingConfig defaults:
+
 - **MCTS**: 400 simulations, c_puct=1.5, temperature=1.0
 - **Training**: batch_size=256, lr=0.001, cosine schedule, weight_decay=1e-4
 - **Architecture**: Conv(1→2→4), FC(852→64), 734 policy outputs, 1 value output
@@ -242,24 +250,6 @@ Tests are in:
 
 - `tetris_core/src/piece.rs` - Piece creation, colors, rotation states
 - `tetris_core/src/env/tests.rs` - Game logic, line clearing, scoring
-
-## Dependencies
-
-### Rust (tetris_core/Cargo.toml)
-
-- `pyo3` (0.20) - Python bindings
-- `numpy` (0.20) - NumPy array interop
-- `tract-onnx` (0.21) - ONNX inference
-- `rand`, `rand_distr` - RNG, Dirichlet sampling
-- `npyz` - NPZ file format
-
-### Python (pyproject.toml)
-
-- `torch` - Neural network training
-- `pygame` - Interactive game
-- `wandb` - Experiment tracking
-- `dash`, `dash-cytoscape` - MCTS tree visualization
-- `maturin` - Build Rust extension
 
 ## Common Workflows
 
@@ -308,12 +298,14 @@ training_runs/
 ## WandB Metrics
 
 ### Training Metrics
+
 - `loss`, `policy_loss`, `value_loss` - Loss components
 - `learning_rate` - Current LR (with scheduling)
 - `policy_entropy` - Policy distribution entropy
 - `buffer_size` - Current examples in memory
 
 ### Per-Game Metrics (step_metric="game_number")
+
 - `game/attack` - Total attack in game
 - `game/lines` - Total lines cleared
 - `game/singles`, `doubles`, `triples`, `tetrises` - Line clear counts
@@ -322,6 +314,7 @@ training_runs/
 - `game/back_to_back` - Back-to-back count
 
 ### Evaluation Metrics (fixed seeds, 100 moves)
+
 - `eval/avg_attack` - Average attack over eval games
 - `eval/max_attack` - Best single game
 - `eval/attack_per_piece` - Efficiency metric

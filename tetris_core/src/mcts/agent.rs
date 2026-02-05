@@ -191,10 +191,11 @@ impl MCTSAgent {
         for i in 0..num_states {
             let (ref state, move_num, ref policy, ref mask) = states[i];
 
+            // Convert board to binary (1 = filled, 0 = empty)
             let board: Vec<u8> = state
                 .get_board()
                 .iter()
-                .flat_map(|row| row.iter().copied())
+                .flat_map(|row| row.iter().map(|&cell| if cell != 0 { 1 } else { 0 }))
                 .collect();
 
             let current_piece = state.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
