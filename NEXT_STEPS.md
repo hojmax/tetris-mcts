@@ -1,6 +1,7 @@
 # Next Steps
 
 - [ ] Looking at training data
+- [ ] How many training data generation workers?
 
 - [ ] Performance profiler on 10 games generated.
 - [ ] is_valid_position_at: 6.5% on 85 calls??
