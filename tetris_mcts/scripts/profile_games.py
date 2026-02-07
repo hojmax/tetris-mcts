@@ -10,9 +10,14 @@ import structlog
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model
-from tetris_mcts.config import PROJECT_ROOT
+from tetris_mcts.config import (
+    BENCHMARKS_DIR,
+    PARALLEL_ONNX_FILENAME,
+    TrainingConfig,
+)
 
 logger = structlog.get_logger()
+DEFAULT_TRAINING_CONFIG = TrainingConfig()
 
 
 @dataclass
@@ -20,22 +25,20 @@ class ProfileArgs:
     """Profile MCTS game generation performance with fixed seeds."""
 
     model_path: Path = (
-        PROJECT_ROOT / "benchmarks" / "models" / "parallel.onnx"
+        BENCHMARKS_DIR / "models" / PARALLEL_ONNX_FILENAME
     )  # Path to ONNX model
     num_games: int = 10  # Number of games to profile
     simulations: int = 100  # MCTS simulations per move
     seed_start: int = 42  # Starting seed for deterministic games
-    c_puct: float = 1.5  # PUCT exploration constant
+    c_puct: float = DEFAULT_TRAINING_CONFIG.c_puct  # PUCT exploration constant
     temperature: float = 0.0  # Temperature for action selection (0=greedy)
-    dirichlet_alpha: float = 0.15  # Dirichlet noise alpha
-    dirichlet_epsilon: float = 0.25  # Dirichlet noise weight
+    dirichlet_alpha: float = DEFAULT_TRAINING_CONFIG.dirichlet_alpha  # Dirichlet noise alpha
+    dirichlet_epsilon: float = DEFAULT_TRAINING_CONFIG.dirichlet_epsilon  # Dirichlet noise weight
     mcts_seed: int | None = (
         None  # Optional MCTS RNG seed for deterministic search (None = non-deterministic)
     )
-    max_moves: int = 100  # Maximum moves per game
-    output: Path = (
-        PROJECT_ROOT / "benchmarks" / "profile_results.jsonl"
-    )  # Output JSONL file
+    max_moves: int = DEFAULT_TRAINING_CONFIG.max_moves  # Maximum moves per game
+    output: Path = BENCHMARKS_DIR / "profile_results.jsonl"  # Output JSONL file
 
 
 def main(args: ProfileArgs) -> None:

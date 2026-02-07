@@ -6,11 +6,10 @@ Implements proper SRS rotation and DAS/ARR for responsive controls.
 import pygame
 
 from tetris_core import TetrisEnv
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH
 
 # Constants
 CELL_SIZE = 30
-BOARD_WIDTH = 10
-BOARD_HEIGHT = 20
 LEFT_SIDEBAR_WIDTH = 120
 RIGHT_SIDEBAR_WIDTH = 120
 TOP_PADDING = 40

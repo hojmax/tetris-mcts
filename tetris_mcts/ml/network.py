@@ -22,17 +22,16 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Optional
 
-# Constants
-BOARD_HEIGHT = 20
-BOARD_WIDTH = 10
-NUM_PIECE_TYPES = 7
-QUEUE_SIZE = 5
-MAX_MOVES = 100  # Maximum moves for move number normalization
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_ACTIONS,
+    NUM_PIECE_TYPES,
+    QUEUE_SIZE,
+    TrainingConfig,
+)
 
-# Total number of valid placement actions
-# Covers x in [-3, 9], y in [-2, 19], rotation in [0, 3]
-# Action space logic implemented in Rust (tetris_core/src/mcts/action_space.rs)
-NUM_ACTIONS = 734
+MAX_MOVES = TrainingConfig().max_moves
 
 # Input feature sizes
 BOARD_FEATURES = BOARD_HEIGHT * BOARD_WIDTH  # 200

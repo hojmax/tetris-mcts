@@ -5,10 +5,14 @@ import numpy as np
 from pathlib import Path
 from simple_parsing import parse
 
+from tetris_mcts.config import (
+    DEFAULT_GIF_FRAME_DURATION_MS,
+    PIECE_NAMES,
+    QUEUE_SIZE,
+)
 from tetris_mcts.ml.visualization import render_board
 
 SCRIPT_DIR = Path(__file__).parent
-PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
 
 
 def get_piece_type(one_hot: np.ndarray) -> int | None:
@@ -39,7 +43,7 @@ class ScriptArgs:
     data_path: Path  # Path to training_data.npz file
     game_index: int = -1  # Which game to render (-1 for last)
     save_path: Path | None = None  # Output path (default: script_dir/game_{index}.gif)
-    frame_duration: int = 300  # Milliseconds per frame
+    frame_duration: int = DEFAULT_GIF_FRAME_DURATION_MS  # Milliseconds per frame
 
 
 def main(args: ScriptArgs) -> None:
@@ -80,7 +84,9 @@ def main(args: ScriptArgs) -> None:
         board = data["boards"][i]
         current_piece = get_piece_type(data["current_pieces"][i])
         hold_piece = get_piece_type(data["hold_pieces"][i])
-        next_queue = [get_piece_type(data["next_queue"][i][j]) for j in range(5)]
+        next_queue = [
+            get_piece_type(data["next_queue"][i][j]) for j in range(QUEUE_SIZE)
+        ]
         move_number = frame_idx  # Use frame index as move number
         value_target = float(data["value_targets"][i])
 

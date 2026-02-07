@@ -8,25 +8,13 @@ from PIL import Image, ImageDraw, ImageFont
 from typing import Optional
 import numpy as np
 
-# Piece colors (RGB) - matching tetris_core
-PIECE_COLORS = [
-    (93, 173, 212),  # I - Cyan
-    (219, 174, 63),  # O - Yellow
-    (178, 74, 156),  # T - Magenta
-    (114, 184, 65),  # S - Green
-    (204, 65, 65),  # Z - Red
-    (59, 84, 165),  # J - Blue
-    (227, 127, 59),  # L - Orange
-]
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, PIECE_COLORS
 
 # Board rendering constants
 CELL_SIZE = 20
-BOARD_WIDTH = 10
-BOARD_HEIGHT = 20
 PADDING = 10
 INFO_HEIGHT_BASIC = 40
 INFO_HEIGHT_EXTENDED = 110
-PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
 
 
 def render_board(

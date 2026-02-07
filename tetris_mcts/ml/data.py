@@ -12,14 +12,16 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
-from tetris_mcts.ml.network import (
-    NUM_ACTIONS,
+from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
+    NUM_ACTIONS,
     NUM_PIECE_TYPES,
     QUEUE_SIZE,
-    MAX_MOVES,
+    TrainingConfig,
 )
+
+MAX_MOVES = TrainingConfig().max_moves
 
 
 @dataclass

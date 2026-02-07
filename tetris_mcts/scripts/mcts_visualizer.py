@@ -19,6 +19,7 @@ import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
 
 from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, PIECE_COLORS, PIECE_NAMES
 
 # Global cache for TetrisEnv states (keyed by node ID)
 # This allows us to clone states and execute actions for visualization
@@ -245,23 +246,6 @@ def display_virtual_piece_node(node_data, tree_dict):
     ]
 
     return details, f"data:image/png;base64,{img_b64}", state_info
-
-
-# Number of Tetris piece types
-NUM_PIECE_TYPES = 7
-
-# Piece colors (matching tetris_core and visualization.py)
-PIECE_COLORS = [
-    (93, 173, 212),  # I - Cyan
-    (219, 174, 63),  # O - Yellow
-    (178, 74, 156),  # T - Magenta
-    (114, 184, 65),  # S - Green
-    (204, 65, 65),  # Z - Red
-    (59, 84, 165),  # J - Blue
-    (227, 127, 59),  # L - Orange
-]
-
-PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
 
 
 def render_board_to_image(env: TetrisEnv, cell_size: int = 8) -> str:
@@ -839,7 +823,7 @@ def run_mcts(
         )
 
     # Create env (same seed for consistency)
-    env = TetrisEnv.with_seed(10, 20, seed or 42)
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed or 42)
 
     # Run MCTS with current number of simulations
     result = agent.search_with_tree(env, add_noise=False, move_number=0)

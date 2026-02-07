@@ -10,6 +10,12 @@ from typing import Optional
 
 import numpy as np
 
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
+    EVAL_ONNX_FILENAME,
+)
 from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import export_onnx
 
@@ -23,16 +29,16 @@ class Evaluator:
         self,
         model: TetrisNet,
         checkpoint_dir: str | Path,
-        num_simulations: int = 100,
-        max_moves: int = 100,
-        eval_seeds: Optional[list[int]] = None,
-        eval_mcts_seed: int = 12345,
+        num_simulations: int,
+        max_moves: int,
+        eval_seeds: list[int],
+        eval_mcts_seed: int,
     ):
         self.model = model
         self.checkpoint_dir = Path(checkpoint_dir)
         self.num_simulations = num_simulations
         self.max_moves = max_moves
-        self.eval_seeds = eval_seeds if eval_seeds is not None else list(range(20))
+        self.eval_seeds = [int(s) for s in eval_seeds]
         self.eval_mcts_seed = eval_mcts_seed
 
     def evaluate(
@@ -50,7 +56,7 @@ class Evaluator:
         self.model.eval()
 
         # Export model to ONNX for Rust evaluation
-        onnx_path = self.checkpoint_dir / "eval.onnx"
+        onnx_path = self.checkpoint_dir / EVAL_ONNX_FILENAME
         export_onnx(self.model, onnx_path)
 
         if not onnx_path.exists():
@@ -84,7 +90,10 @@ class Evaluator:
             first_seed = self.eval_seeds[0]
             try:
                 trajectory_frames = self.render_trajectory(
-                    str(onnx_path), mcts_config, seed=first_seed
+                    model_path=str(onnx_path),
+                    mcts_config=mcts_config,
+                    seed=first_seed,
+                    max_frames=DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
                 )
             except Exception as e:
                 print(f"  Warning: Failed to render trajectory: {e}")
@@ -95,8 +104,8 @@ class Evaluator:
         self,
         model_path: str,
         mcts_config: MCTSConfig,
-        seed: int = 0,
-        max_frames: int = 30,
+        seed: int,
+        max_frames: int,
     ) -> list:
         """Render a single evaluation game as images.
 
@@ -111,7 +120,7 @@ class Evaluator:
             raise RuntimeError(f"Failed to load model from {model_path}")
 
         # Play one game with the seed
-        env = TetrisEnv.with_seed(10, 20, seed)
+        env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed)
         frames = []
         total_attack = 0
 

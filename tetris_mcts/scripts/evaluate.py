@@ -11,20 +11,23 @@ import structlog
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_and_save
+from tetris_mcts.config import OUTPUTS_DIR, TrainingConfig
 
 logger = structlog.get_logger()
+
+DEFAULT_TRAINING_CONFIG = TrainingConfig()
 
 
 @dataclass
 class EvalArgs:
     model_path: Path  # Path to ONNX model
-    output_path: Path = (
-        Path(__file__).parent.parent.parent / "outputs" / "replays" / "replays.jsonl"
-    )
+    output_path: Path = OUTPUTS_DIR / "replays" / "replays.jsonl"
     num_games: int = 10  # Number of games to play
-    max_moves: int = 100  # Maximum moves per game
+    max_moves: int = DEFAULT_TRAINING_CONFIG.max_moves  # Maximum moves per game
     simulations: int = 100  # MCTS simulations per move
-    mcts_seed: int = 12345  # MCTS RNG seed for deterministic evaluation
+    mcts_seed: int = (
+        DEFAULT_TRAINING_CONFIG.eval_mcts_seed
+    )  # MCTS RNG seed for deterministic evaluation
 
 
 def main(args: EvalArgs) -> None:

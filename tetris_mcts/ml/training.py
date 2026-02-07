@@ -13,7 +13,14 @@ import time
 
 import wandb
 
-from tetris_mcts.config import TrainingConfig
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    DEFAULT_GIF_FPS,
+    DEFAULT_GIF_FRAME_DURATION_MS,
+    PARALLEL_ONNX_FILENAME,
+    TrainingConfig,
+)
 from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import WeightManager, export_onnx
 from tetris_mcts.ml.loss import compute_loss, compute_metrics
@@ -71,6 +78,7 @@ class Trainer:
             num_simulations=config.num_simulations,
             max_moves=config.max_moves,
             eval_seeds=config.eval_seeds,
+            eval_mcts_seed=config.eval_mcts_seed,
         )
 
         # Training state
@@ -183,7 +191,7 @@ class Trainer:
         # Paths for parallel training (validated in __init__)
         assert self.config.checkpoint_dir is not None
         assert self.config.data_dir is not None
-        onnx_path = self.config.checkpoint_dir / "parallel.onnx"
+        onnx_path = self.config.checkpoint_dir / PARALLEL_ONNX_FILENAME
 
         # Export initial model
         export_onnx(self.model, onnx_path)
@@ -244,7 +252,9 @@ class Trainer:
                 # Convert numpy arrays to torch tensors
                 boards, aux, policy_targets, value_targets, masks = result
                 batch = (
-                    torch.from_numpy(boards).reshape(-1, 1, 20, 10),  # [batch, 1, H, W]
+                    torch.from_numpy(boards).reshape(
+                        -1, 1, BOARD_HEIGHT, BOARD_WIDTH
+                    ),  # [batch, 1, H, W]
                     torch.from_numpy(aux),
                     torch.from_numpy(policy_targets),
                     torch.from_numpy(value_targets),
@@ -316,11 +326,11 @@ class Trainer:
                                 gif_path,
                                 save_all=True,
                                 append_images=trajectory_frames[1:],
-                                duration=300,  # ms per frame
+                                duration=DEFAULT_GIF_FRAME_DURATION_MS,  # ms per frame
                                 loop=0,
                             )
                             log_data["eval/trajectory"] = wandb.Video(
-                                gif_path, fps=3, format="gif"
+                                gif_path, fps=DEFAULT_GIF_FPS, format="gif"
                             )
                         wandb.log(log_data, step=self.step)
 

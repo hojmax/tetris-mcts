@@ -13,10 +13,16 @@ from simple_parsing import field as sp_field
 from simple_parsing import parse
 
 from tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    PIECE_NAMES,
+    QUEUE_SIZE,
+    TrainingConfig,
+)
 
 logger = structlog.get_logger()
-
-PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
+DEFAULT_TRAINING_CONFIG = TrainingConfig()
 
 
 def piece_to_dict(piece: object | None) -> dict | None:
@@ -63,7 +69,7 @@ def get_state_snapshot(env: TetrisEnv) -> dict:
     board = env.get_board()
     return {
         "board_hash": board_hash(board),
-        "queue": [int(x) for x in env.get_queue(5)],
+        "queue": [int(x) for x in env.get_queue(QUEUE_SIZE)],
         "queue_len": int(env.get_queue_len()),
         "current_piece": piece_to_dict(env.get_current_piece()),
         "hold_piece": piece_to_dict(env.get_hold_piece()),
@@ -466,7 +472,7 @@ def run_seed_audit(
     seed_dir: Path,
 ) -> dict:
     """Audit one deterministic game seed."""
-    env = TetrisEnv.with_seed(10, 20, seed)
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed)
 
     moves_jsonl_path = seed_dir / "moves.jsonl"
     failures_jsonl_path = seed_dir / "failures.jsonl"
@@ -1122,11 +1128,11 @@ class ScriptArgs:
     seed_start: int = 0  # First seed when seeds list is empty
     num_seeds: int = 3  # Number of sequential seeds when seeds list is empty
     num_simulations: int = 400  # MCTS simulations per audited move
-    c_puct: float = 1.5  # PUCT exploration constant
+    c_puct: float = DEFAULT_TRAINING_CONFIG.c_puct  # PUCT exploration constant
     temperature: float = 0.0  # Action selection temperature (0 = argmax)
-    dirichlet_alpha: float = 0.15  # Dirichlet alpha (unused with epsilon=0)
+    dirichlet_alpha: float = DEFAULT_TRAINING_CONFIG.dirichlet_alpha  # Dirichlet alpha (unused with epsilon=0)
     dirichlet_epsilon: float = 0.0  # Dirichlet epsilon (0 for deterministic audits)
-    mcts_seed: int = 12345  # MCTS RNG seed for reproducibility
+    mcts_seed: int = DEFAULT_TRAINING_CONFIG.eval_mcts_seed  # MCTS RNG seed for reproducibility
     top_k_actions: int = 8  # Number of top root actions logged per move
     dump_full_tree: bool = True  # If true, write full tree JSON for each move
     check_all_valid_actions: bool = (

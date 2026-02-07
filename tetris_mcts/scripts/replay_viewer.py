@@ -14,6 +14,11 @@ from pathlib import Path
 import numpy as np
 
 from tetris_core import TetrisEnv
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    DEFAULT_GIF_FRAME_DURATION_MS,
+)
 from tetris_mcts.ml.visualization import render_board
 
 
@@ -23,7 +28,7 @@ def load_and_render_replay(replay_data: dict, output_path: Path):
     moves = replay_data["moves"]
 
     # Create environment with the replay seed
-    env = TetrisEnv.with_seed(10, 20, seed)
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed)
     frames = []
     total_attack = 0
 
@@ -55,7 +60,7 @@ def load_and_render_replay(replay_data: dict, output_path: Path):
             output_path,
             save_all=True,
             append_images=frames[1:],
-            duration=300,
+            duration=DEFAULT_GIF_FRAME_DURATION_MS,
             loop=0,
         )
 

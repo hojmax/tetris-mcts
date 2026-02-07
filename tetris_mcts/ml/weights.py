@@ -6,12 +6,25 @@ Supports:
 - ONNX export for Rust inference
 """
 
-import torch
+import contextlib
+import io
+import json
+import logging
+import warnings
 from pathlib import Path
 from typing import Optional
-import json
 
-from tetris_mcts.ml.network import TetrisNet, BOARD_HEIGHT, BOARD_WIDTH, AUX_FEATURES
+import torch
+
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    CHECKPOINT_FILENAME_PREFIX,
+    LATEST_CHECKPOINT_FILENAME,
+    LATEST_METADATA_FILENAME,
+    LATEST_ONNX_FILENAME,
+)
+from tetris_mcts.ml.network import TetrisNet, AUX_FEATURES
 
 
 def save_checkpoint(
@@ -85,9 +98,6 @@ def export_onnx(
     Returns:
         True if export succeeded, False if ONNX dependencies are missing
     """
-    import warnings
-    import logging
-
     try:
         # ONNX export must happen on CPU
         original_device = next(model.parameters()).device
@@ -104,7 +114,7 @@ def export_onnx(
         onnx_logger.setLevel(logging.ERROR)
 
         # Export without dynamic_axes for tract compatibility
-        with warnings.catch_warnings():
+        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
             warnings.filterwarnings("ignore")
             torch.onnx.export(
                 model,
@@ -183,23 +193,23 @@ class WeightManager:
         paths = {}
 
         # Save PyTorch checkpoint
-        ckpt_path = self.checkpoint_dir / f"checkpoint_{step}.pt"
+        ckpt_path = self.checkpoint_dir / f"{CHECKPOINT_FILENAME_PREFIX}_{step}.pt"
         save_checkpoint(model, optimizer, step, ckpt_path)
         paths["checkpoint"] = ckpt_path
 
         if export_for_rust:
             # Export ONNX
-            onnx_path = self.checkpoint_dir / "latest.onnx"
+            onnx_path = self.checkpoint_dir / LATEST_ONNX_FILENAME
             export_onnx(model, onnx_path)
             paths["onnx"] = onnx_path
 
         # Save metadata
-        meta_path = self.checkpoint_dir / "latest_metadata.json"
+        meta_path = self.checkpoint_dir / LATEST_METADATA_FILENAME
         export_metadata(meta_path, step, eval_metrics)
         paths["metadata"] = meta_path
 
         # Update symlink to latest checkpoint
-        latest_path = self.checkpoint_dir / "latest.pt"
+        latest_path = self.checkpoint_dir / LATEST_CHECKPOINT_FILENAME
         if latest_path.exists():
             latest_path.unlink()
         latest_path.symlink_to(ckpt_path.name)
@@ -218,7 +228,7 @@ class WeightManager:
         Returns:
             Training step of loaded checkpoint, or None if no checkpoint exists
         """
-        latest_path = self.checkpoint_dir / "latest.pt"
+        latest_path = self.checkpoint_dir / LATEST_CHECKPOINT_FILENAME
         if not latest_path.exists():
             return None
 
@@ -227,7 +237,9 @@ class WeightManager:
 
     def get_checkpoints(self) -> list[Path]:
         """Get list of all checkpoint files, sorted by step."""
-        checkpoints = list(self.checkpoint_dir.glob("checkpoint_*.pt"))
+        checkpoints = list(
+            self.checkpoint_dir.glob(f"{CHECKPOINT_FILENAME_PREFIX}_*.pt")
+        )
         checkpoints.sort(key=lambda p: int(p.stem.split("_")[1]))
         return checkpoints
 

@@ -5,6 +5,8 @@ for at least one piece.
 800 = 10 columns * 20 rows * 4 rotations
 """
 
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, PIECE_NAMES
+
 # Tetromino shapes: [piece_type][rotation][row][col]
 # Same as in Rust: I, O, T, S, Z, J, L
 TETROMINOS = [
@@ -59,11 +61,6 @@ TETROMINOS = [
     ],
 ]
 
-PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
-BOARD_WIDTH = 10
-BOARD_HEIGHT = 20
-
-
 def get_cells(piece_type, rotation, x, y):
     """Get the cells occupied by a piece at position (x, y) with given rotation."""
     shape = TETROMINOS[piece_type][rotation]
@@ -99,7 +96,7 @@ def main():
     )
 
     # Track which positions are valid for each piece
-    valid_by_piece = [set() for _ in range(7)]
+    valid_by_piece = [set() for _ in range(NUM_PIECE_TYPES)]
 
     # Track all positions valid for ANY piece
     valid_any = set()
@@ -107,14 +104,14 @@ def main():
     for y in range(Y_MIN, Y_MAX):
         for x in range(X_MIN, X_MAX):
             for rot in range(4):
-                for piece_type in range(7):
+                for piece_type in range(NUM_PIECE_TYPES):
                     if is_valid_position(piece_type, rot, x, y):
                         valid_by_piece[piece_type].add((x, y, rot))
                         valid_any.add((x, y, rot))
 
     # Print per-piece stats
     print("Valid positions per piece:")
-    for piece_type in range(7):
+    for piece_type in range(NUM_PIECE_TYPES):
         count = len(valid_by_piece[piece_type])
         by_rot = [0, 0, 0, 0]
         for _, _, rot in valid_by_piece[piece_type]:

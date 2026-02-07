@@ -24,8 +24,9 @@ from rich.table import Table
 from rich.text import Text
 from simple_parsing import parse
 
-PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
-PIECE_CHARS = ["I", "O", "T", "S", "Z", "J", "L"]
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, PIECE_NAMES, QUEUE_SIZE
+
+PIECE_CHARS = PIECE_NAMES
 PIECE_COLORS = ["cyan", "yellow", "magenta", "green", "red", "blue", "bright_red"]
 
 # Block characters for rendering
@@ -75,10 +76,12 @@ class BufferViewer:
 
     def get_frame_data(self) -> dict:
         i = self.global_idx
-        board = self.data["boards"][i].reshape(20, 10)
+        board = self.data["boards"][i].reshape(BOARD_HEIGHT, BOARD_WIDTH)
         current_piece = get_piece_type(self.data["current_pieces"][i])
         hold_piece = get_piece_type(self.data["hold_pieces"][i])
-        next_queue = [get_piece_type(self.data["next_queue"][i][j]) for j in range(5)]
+        next_queue = [
+            get_piece_type(self.data["next_queue"][i][j]) for j in range(QUEUE_SIZE)
+        ]
         value_target = float(self.data["value_targets"][i])
         policy = self.data["policy_targets"][i]
         action_mask = self.data["action_masks"][i]
@@ -96,16 +99,16 @@ class BufferViewer:
 
     def render_board(self, board: np.ndarray) -> Text:
         text = Text()
-        text.append("┌" + "──" * 10 + "┐\n", style="white")
-        for row in range(20):
+        text.append("┌" + "──" * BOARD_WIDTH + "┐\n", style="white")
+        for row in range(BOARD_HEIGHT):
             text.append("│", style="white")
-            for col in range(10):
+            for col in range(BOARD_WIDTH):
                 if board[row, col] > 0.5:
                     text.append(FILLED, style="bright_white")
                 else:
                     text.append(EMPTY)
             text.append("│\n", style="white")
-        text.append("└" + "──" * 10 + "┘", style="white")
+        text.append("└" + "──" * BOARD_WIDTH + "┘", style="white")
         return text
 
     def render_info(self, data: dict) -> Table:
