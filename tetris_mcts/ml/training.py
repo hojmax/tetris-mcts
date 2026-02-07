@@ -279,6 +279,10 @@ class Trainer:
         last_logged_game = 0  # Track which game we last logged
         train_start_time = time.time()
 
+        interrupted = False
+        pending_error: BaseException | None = None
+        stop_error: BaseException | None = None
+
         try:
             while self.step < num_steps:
                 # Sample batch directly from generator's in-memory buffer
@@ -380,17 +384,34 @@ class Trainer:
                 if self.step % self.config.checkpoint_interval == 0:
                     self.save()
 
+        except KeyboardInterrupt:
+            interrupted = True
+            logger.info("Training interrupted by user", step=self.step)
+        except BaseException as error:
+            pending_error = error
+            logger.exception("Training loop failed", step=self.step)
         finally:
             # Stop generator
-            logger.info("Stopping game generator")
-            generator.stop()
-            logger.info(
-                "Game generator stopped",
-                games_generated=generator.games_generated(),
-                examples_generated=generator.examples_generated(),
-            )
+            try:
+                logger.info("Stopping game generator")
+                generator.stop()
+                logger.info(
+                    "Game generator stopped",
+                    games_generated=generator.games_generated(),
+                    examples_generated=generator.examples_generated(),
+                )
+            except BaseException as error:
+                stop_error = error
+                logger.exception("Failed to stop game generator cleanly")
 
-        # Final save
-        self.save()
-        if log_to_wandb:
-            wandb.finish()
+            # Always save latest model state on shutdown/interruption.
+            self.save()
+            if log_to_wandb:
+                wandb.finish()
+
+        if pending_error is not None:
+            raise pending_error
+        if stop_error is not None:
+            raise stop_error
+        if interrupted:
+            logger.info("Training stopped cleanly after interrupt", step=self.step)
