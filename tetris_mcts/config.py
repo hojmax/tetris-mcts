@@ -19,19 +19,19 @@ class TrainingConfig:
     model_sync_interval: int = 2000  # Steps between ONNX exports
 
     # Network architecture
-    conv_filters: list[int] = field(default_factory=lambda: [2, 4])
-    fc_hidden: int = 64
+    conv_filters: list[int] = field(default_factory=lambda: [4, 8])
+    fc_hidden: int = 128
     conv_kernel_size: int = 3
     conv_padding: int = 1
     max_moves: int = 100  # Maximum moves for move number normalization
 
     # Optimizer
     batch_size: int = 256
-    learning_rate: float = 0.001
+    learning_rate: float = 0.0005
     weight_decay: float = 1e-4
     grad_clip_norm: float = 1.0
     lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
-    lr_decay_steps: int = 10000
+    lr_decay_steps: int = 100_000
     lr_min_factor: float = 0.01  # Minimum LR as fraction of initial (for cosine)
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
@@ -42,7 +42,7 @@ class TrainingConfig:
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15
     dirichlet_epsilon: float = 0.25
-    num_workers: int = 5  # Parallel game generation threads
+    num_workers: int = 6  # Parallel game generation threads
 
     # Replay buffer
     buffer_size: int = 100_000
@@ -50,12 +50,13 @@ class TrainingConfig:
     games_per_save: int = 2000  # Games between disk saves (0 to disable)
 
     # Intervals
-    checkpoint_interval: int = 1000  # Steps between checkpoints
+    checkpoint_interval: int = 2000  # Steps between checkpoints
     eval_interval: int = 200000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
 
     # Evaluation
     eval_seeds: list[int] = field(default_factory=lambda: list(range(5)))
+    eval_mcts_seed: int = 12345  # Fixed MCTS RNG seed for deterministic evaluation
 
     # Paths (set automatically by setup_run_directory)
     run_dir: Optional[Path] = None  # e.g., training_runs/v0

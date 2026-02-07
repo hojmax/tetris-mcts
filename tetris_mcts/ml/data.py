@@ -33,7 +33,7 @@ class TrainingExample:
     next_queue: list[int]  # List of piece types
     move_number: int
     policy_target: np.ndarray  # (734,) float32 - normalized policy probabilities
-    value_target: float  # Discounted cumulative attack
+    value_target: float  # Cumulative lines cleared
     action_mask: np.ndarray  # (734,) bool
 
 

@@ -26,12 +26,14 @@ class Evaluator:
         num_simulations: int = 100,
         max_moves: int = 100,
         eval_seeds: Optional[list[int]] = None,
+        eval_mcts_seed: int = 12345,
     ):
         self.model = model
         self.checkpoint_dir = Path(checkpoint_dir)
         self.num_simulations = num_simulations
         self.max_moves = max_moves
         self.eval_seeds = eval_seeds if eval_seeds is not None else list(range(20))
+        self.eval_mcts_seed = eval_mcts_seed
 
     def evaluate(
         self, render_trajectory: bool = False
@@ -57,6 +59,7 @@ class Evaluator:
         # Create MCTS config for evaluation (temperature=0 enforced by evaluate_model)
         mcts_config = MCTSConfig()
         mcts_config.num_simulations = self.num_simulations
+        mcts_config.seed = self.eval_mcts_seed
 
         # Run evaluation in Rust with seeded environments
         result = evaluate_model(
@@ -68,9 +71,12 @@ class Evaluator:
 
         print(f"Evaluation ({result.num_games} games):")
         print(f"  Avg attack: {result.avg_attack:.1f}")
+        print(f"  Avg lines: {result.avg_lines:.1f}")
         print(f"  Max attack: {result.max_attack}")
+        print(f"  Max lines: {result.max_lines}")
         print(f"  Avg moves: {result.avg_moves:.1f}")
         print(f"  Attack/piece: {result.attack_per_piece:.3f}")
+        print(f"  Lines/piece: {result.lines_per_piece:.3f}")
 
         # Optionally render one trajectory for visualization (always first seed)
         trajectory_frames = None

@@ -8,6 +8,7 @@ from simple_parsing import parse
 from pathlib import Path
 from tetris_mcts.config import TrainingConfig, setup_run_directory
 from tetris_mcts.ml.training import Trainer
+from tetris_mcts.ml.weights import load_checkpoint
 import json
 
 import wandb
@@ -36,11 +37,16 @@ class ScriptArgs:
     resume_dir: Path | None = (  # Resume from existing run dir (e.g., training_runs/v0)
         None
     )
+    init_checkpoint: Path | None = None  # Initialize model weights from checkpoint
     no_wandb: bool = False  # Disable WandB logging
 
 
 def main(args: ScriptArgs) -> None:
     config = args.training
+
+    if args.resume_dir and args.init_checkpoint:
+        logger.error("Cannot use resume_dir and init_checkpoint together")
+        return
 
     # Set up run directory
     if args.resume_dir:
@@ -71,6 +77,20 @@ def main(args: ScriptArgs) -> None:
             logger.info("Resumed from checkpoint", step=trainer.step)
         else:
             logger.info("No checkpoint found, starting fresh")
+    elif args.init_checkpoint:
+        if not args.init_checkpoint.exists():
+            logger.error(
+                "Init checkpoint does not exist", path=str(args.init_checkpoint)
+            )
+            return
+        state = load_checkpoint(
+            args.init_checkpoint, model=trainer.model, optimizer=None
+        )
+        logger.info(
+            "Initialized model from checkpoint",
+            path=str(args.init_checkpoint),
+            checkpoint_step=state.get("step"),
+        )
 
     log_to_wandb = not args.no_wandb
 
