@@ -31,9 +31,6 @@ class ProfileArgs:
     simulations: int = 100  # MCTS simulations per move
     seed_start: int = 42  # Starting seed for deterministic games
     c_puct: float = DEFAULT_TRAINING_CONFIG.c_puct  # PUCT exploration constant
-    temperature: float = 0.0  # Temperature for action selection (0=greedy)
-    dirichlet_alpha: float = DEFAULT_TRAINING_CONFIG.dirichlet_alpha  # Dirichlet noise alpha
-    dirichlet_epsilon: float = DEFAULT_TRAINING_CONFIG.dirichlet_epsilon  # Dirichlet noise weight
     mcts_seed: int | None = (
         None  # Optional MCTS RNG seed for deterministic search (None = non-deterministic)
     )
@@ -57,9 +54,7 @@ def main(args: ProfileArgs) -> None:
     config = MCTSConfig()
     config.num_simulations = args.simulations
     config.c_puct = args.c_puct
-    config.temperature = args.temperature
-    config.dirichlet_alpha = args.dirichlet_alpha
-    config.dirichlet_epsilon = args.dirichlet_epsilon
+    config.max_moves = args.max_moves
     config.seed = args.mcts_seed
 
     seeds = list(range(args.seed_start, args.seed_start + args.num_games))
@@ -122,10 +117,8 @@ def main(args: ProfileArgs) -> None:
             "simulations": args.simulations,
             "seed_start": args.seed_start,
             "c_puct": args.c_puct,
-            "temperature": args.temperature,
-            "dirichlet_alpha": args.dirichlet_alpha,
-            "dirichlet_epsilon": args.dirichlet_epsilon,
             "max_moves": args.max_moves,
+            "evaluation_mode": "deterministic_argmax_no_dirichlet_noise",
         },
         "timing": {
             "total_time_sec": total_time,

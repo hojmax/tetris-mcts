@@ -1,18 +1,21 @@
-//! NPZ File Writing
+//! NPZ File I/O
 //!
-//! Write training examples to NPZ format (compatible with Python numpy).
+//! Read and write training examples in NPZ format (compatible with Python numpy).
 
 use std::fs::File;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 
-use npyz::WriterBuilder;
+use npyz::{NpyFile, WriterBuilder};
+use zip::read::ZipArchive;
 use zip::write::{FileOptions, ZipWriter};
 use zip::CompressionMethod;
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::mcts::{TrainingExample, NUM_ACTIONS};
 use crate::piece::NUM_PIECE_TYPES;
+
+const TRAINING_DATA_NUMPY_QUEUE_SIZE: usize = 5;
 
 /// Write training examples to NPZ format (compatible with Python numpy).
 ///
@@ -29,6 +32,7 @@ use crate::piece::NUM_PIECE_TYPES;
 pub fn write_examples_to_npz(
     filepath: &PathBuf,
     examples: &[TrainingExample],
+    max_moves: u32,
 ) -> Result<(), String> {
     let n = examples.len();
     if n == 0 {
@@ -40,11 +44,13 @@ pub fn write_examples_to_npz(
     let mut current_pieces: Vec<f32> = vec![0.0; n * NUM_PIECE_TYPES];
     let mut hold_pieces: Vec<f32> = vec![0.0; n * (NUM_PIECE_TYPES + 1)];
     let mut hold_available: Vec<u8> = Vec::with_capacity(n);
-    let mut next_queue: Vec<f32> = vec![0.0; n * 5 * NUM_PIECE_TYPES];
+    let mut next_queue: Vec<f32> = vec![0.0; n * TRAINING_DATA_NUMPY_QUEUE_SIZE * NUM_PIECE_TYPES];
     let mut move_numbers: Vec<f32> = Vec::with_capacity(n);
     let mut policy_targets: Vec<f32> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut value_targets: Vec<f32> = Vec::with_capacity(n);
     let mut action_masks: Vec<u8> = Vec::with_capacity(n * NUM_ACTIONS);
+
+    let move_norm_denominator = max_moves as f32;
 
     for (i, ex) in examples.iter().enumerate() {
         // Board (flatten from (20, 10) to 200)
@@ -64,12 +70,19 @@ pub fn write_examples_to_npz(
         hold_available.push(ex.hold_available as u8);
 
         // Next queue one-hot (5 slots x 7 piece types)
-        for (j, &piece) in ex.next_queue.iter().take(5).enumerate() {
-            next_queue[i * 5 * NUM_PIECE_TYPES + j * NUM_PIECE_TYPES + piece] = 1.0;
+        for (j, &piece) in ex
+            .next_queue
+            .iter()
+            .take(TRAINING_DATA_NUMPY_QUEUE_SIZE)
+            .enumerate()
+        {
+            next_queue[i * TRAINING_DATA_NUMPY_QUEUE_SIZE * NUM_PIECE_TYPES
+                + j * NUM_PIECE_TYPES
+                + piece] = 1.0;
         }
 
         // Move number (normalized)
-        move_numbers.push(ex.move_number as f32 / 100.0);
+        move_numbers.push(ex.move_number as f32 / move_norm_denominator);
 
         // Policy targets
         policy_targets.extend(ex.policy.iter().copied());
@@ -119,7 +132,11 @@ pub fn write_examples_to_npz(
         &mut zip,
         options,
         "next_queue.npy",
-        &[n as u64, 5, NUM_PIECE_TYPES as u64],
+        &[
+            n as u64,
+            TRAINING_DATA_NUMPY_QUEUE_SIZE as u64,
+            NUM_PIECE_TYPES as u64,
+        ],
         &next_queue,
     )?;
     write_npy_to_zip(
@@ -153,6 +170,201 @@ pub fn write_examples_to_npz(
 
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Read training examples from NPZ format.
+pub fn read_examples_from_npz(
+    filepath: &PathBuf,
+    max_moves: u32,
+) -> Result<Vec<TrainingExample>, String> {
+    let file = File::open(filepath).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+
+    let (boards, boards_shape) = read_npy_array::<u8>(&mut archive, "boards.npy")?;
+    let (current_pieces, current_pieces_shape) =
+        read_npy_array::<f32>(&mut archive, "current_pieces.npy")?;
+    let (hold_pieces, hold_pieces_shape) = read_npy_array::<f32>(&mut archive, "hold_pieces.npy")?;
+    let (hold_available, hold_available_shape) =
+        read_npy_array_bool_like(&mut archive, "hold_available.npy")?;
+    let (next_queue, next_queue_shape) = read_npy_array::<f32>(&mut archive, "next_queue.npy")?;
+    let (move_numbers, move_numbers_shape) =
+        read_npy_array::<f32>(&mut archive, "move_numbers.npy")?;
+    let (policy_targets, policy_targets_shape) =
+        read_npy_array::<f32>(&mut archive, "policy_targets.npy")?;
+    let (value_targets, value_targets_shape) =
+        read_npy_array::<f32>(&mut archive, "value_targets.npy")?;
+    let (action_masks, action_masks_shape) =
+        read_npy_array_bool_like(&mut archive, "action_masks.npy")?;
+
+    let expected_boards_shape = vec![0, BOARD_HEIGHT as u64, BOARD_WIDTH as u64];
+    let n = validate_shape_with_dynamic_batch("boards", &boards_shape, &expected_boards_shape)?;
+    validate_shape(
+        "current_pieces",
+        &current_pieces_shape,
+        &[n as u64, NUM_PIECE_TYPES as u64],
+    )?;
+    validate_shape(
+        "hold_pieces",
+        &hold_pieces_shape,
+        &[n as u64, (NUM_PIECE_TYPES + 1) as u64],
+    )?;
+    validate_shape("hold_available", &hold_available_shape, &[n as u64])?;
+    validate_shape(
+        "next_queue",
+        &next_queue_shape,
+        &[
+            n as u64,
+            TRAINING_DATA_NUMPY_QUEUE_SIZE as u64,
+            NUM_PIECE_TYPES as u64,
+        ],
+    )?;
+    validate_shape("move_numbers", &move_numbers_shape, &[n as u64])?;
+    validate_shape(
+        "policy_targets",
+        &policy_targets_shape,
+        &[n as u64, NUM_ACTIONS as u64],
+    )?;
+    validate_shape("value_targets", &value_targets_shape, &[n as u64])?;
+    validate_shape(
+        "action_masks",
+        &action_masks_shape,
+        &[n as u64, NUM_ACTIONS as u64],
+    )?;
+
+    let mut examples = Vec::with_capacity(n);
+    let move_norm_denominator = max_moves as f32;
+    let board_size = BOARD_HEIGHT * BOARD_WIDTH;
+    let hold_size = NUM_PIECE_TYPES + 1;
+    let next_queue_size = TRAINING_DATA_NUMPY_QUEUE_SIZE * NUM_PIECE_TYPES;
+
+    for i in 0..n {
+        let board_start = i * board_size;
+        let board_end = board_start + board_size;
+
+        let current_piece_start = i * NUM_PIECE_TYPES;
+        let current_piece_end = current_piece_start + NUM_PIECE_TYPES;
+        let current_piece = argmax_index(&current_pieces[current_piece_start..current_piece_end]);
+
+        let hold_piece_start = i * hold_size;
+        let hold_piece_end = hold_piece_start + hold_size;
+        let hold_piece_index = argmax_index(&hold_pieces[hold_piece_start..hold_piece_end]);
+        let hold_piece = if hold_piece_index < NUM_PIECE_TYPES {
+            hold_piece_index
+        } else {
+            NUM_PIECE_TYPES
+        };
+
+        let next_queue_start = i * next_queue_size;
+        let mut next_queue_pieces = Vec::with_capacity(TRAINING_DATA_NUMPY_QUEUE_SIZE);
+        for slot in 0..TRAINING_DATA_NUMPY_QUEUE_SIZE {
+            let slot_start = next_queue_start + slot * NUM_PIECE_TYPES;
+            let slot_end = slot_start + NUM_PIECE_TYPES;
+            next_queue_pieces.push(argmax_index(&next_queue[slot_start..slot_end]));
+        }
+
+        let policy_start = i * NUM_ACTIONS;
+        let policy_end = policy_start + NUM_ACTIONS;
+        let mask_start = i * NUM_ACTIONS;
+        let mask_end = mask_start + NUM_ACTIONS;
+
+        examples.push(TrainingExample {
+            board: boards[board_start..board_end].to_vec(),
+            current_piece,
+            hold_piece,
+            hold_available: hold_available[i] != 0,
+            next_queue: next_queue_pieces,
+            move_number: denormalize_move_number(move_numbers[i], move_norm_denominator),
+            policy: policy_targets[policy_start..policy_end].to_vec(),
+            value: value_targets[i],
+            action_mask: action_masks[mask_start..mask_end]
+                .iter()
+                .map(|value| *value != 0)
+                .collect(),
+        });
+    }
+
+    Ok(examples)
+}
+
+fn denormalize_move_number(normalized_move_number: f32, move_norm_denominator: f32) -> u32 {
+    let scaled = (normalized_move_number * move_norm_denominator).round();
+    if scaled < 0.0 {
+        0
+    } else {
+        scaled as u32
+    }
+}
+
+fn argmax_index(values: &[f32]) -> usize {
+    let mut max_index = 0;
+    let mut max_value = f32::NEG_INFINITY;
+    for (index, value) in values.iter().enumerate() {
+        if *value > max_value {
+            max_value = *value;
+            max_index = index;
+        }
+    }
+    max_index
+}
+
+fn validate_shape(name: &str, actual: &[u64], expected: &[u64]) -> Result<(), String> {
+    if actual != expected {
+        return Err(format!(
+            "{} has shape {:?}, expected {:?}",
+            name, actual, expected
+        ));
+    }
+    Ok(())
+}
+
+fn validate_shape_with_dynamic_batch(
+    name: &str,
+    actual: &[u64],
+    expected_with_batch_placeholder: &[u64],
+) -> Result<usize, String> {
+    if actual.len() != expected_with_batch_placeholder.len() {
+        return Err(format!(
+            "{} has rank {}, expected rank {}",
+            name,
+            actual.len(),
+            expected_with_batch_placeholder.len()
+        ));
+    }
+    for i in 1..actual.len() {
+        if actual[i] != expected_with_batch_placeholder[i] {
+            return Err(format!(
+                "{} has shape {:?}, expected [N, {}, {}]",
+                name,
+                actual,
+                expected_with_batch_placeholder[1],
+                expected_with_batch_placeholder[2]
+            ));
+        }
+    }
+    Ok(actual[0] as usize)
+}
+
+fn read_npy_array<T: npyz::Deserialize>(
+    archive: &mut ZipArchive<File>,
+    entry_name: &str,
+) -> Result<(Vec<T>, Vec<u64>), String> {
+    let file = archive.by_name(entry_name).map_err(|e| e.to_string())?;
+    let npy = NpyFile::new(file).map_err(|e| e.to_string())?;
+    let shape = npy.shape().to_vec();
+    let values = npy.into_vec::<T>().map_err(|e| e.to_string())?;
+    Ok((values, shape))
+}
+
+fn read_npy_array_bool_like(
+    archive: &mut ZipArchive<File>,
+    entry_name: &str,
+) -> Result<(Vec<u8>, Vec<u64>), String> {
+    if let Ok((values, shape)) = read_npy_array::<u8>(archive, entry_name) {
+        return Ok((values, shape));
+    }
+
+    let (values, shape) = read_npy_array::<bool>(archive, entry_name)?;
+    Ok((values.into_iter().map(u8::from).collect(), shape))
 }
 
 /// Helper to write an npy array to a zip file

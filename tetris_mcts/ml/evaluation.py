@@ -72,6 +72,7 @@ class Evaluator:
         # Create MCTS config for evaluation (temperature=0 enforced by evaluate_model)
         mcts_config = MCTSConfig()
         mcts_config.num_simulations = self.num_simulations
+        mcts_config.max_moves = self.max_moves
         mcts_config.seed = self.eval_mcts_seed
 
         replay_path = self.checkpoint_dir / EVAL_REPLAYS_FILENAME

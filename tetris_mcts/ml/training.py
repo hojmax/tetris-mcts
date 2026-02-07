@@ -21,6 +21,7 @@ from tetris_mcts.config import (
     DEFAULT_GIF_FPS,
     DEFAULT_GIF_FRAME_DURATION_MS,
     PARALLEL_ONNX_FILENAME,
+    TRAINING_DATA_FILENAME,
     TrainingConfig,
 )
 from tetris_mcts.ml.network import TetrisNet
@@ -134,8 +135,6 @@ class Trainer:
         if self.scheduler:
             self.scheduler.step()
 
-        self.step += 1
-
         metrics = {
             "loss": total_loss.item(),
             "policy_loss": policy_loss.item(),
@@ -218,6 +217,12 @@ class Trainer:
             log_to_wandb: Whether to log metrics to Weights & Biases
         """
         num_steps = self.config.total_steps
+        if self.step >= num_steps:
+            print(
+                f"Target step {num_steps} already reached (current step {self.step}), "
+                "skipping training loop"
+            )
+            return
         model_sync_interval = self.config.model_sync_interval
         # Paths for parallel training (validated in __init__)
         assert self.config.checkpoint_dir is not None
@@ -237,12 +242,13 @@ class Trainer:
         mcts_config.temperature = self.config.temperature
         mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
         mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
+        mcts_config.max_moves = self.config.max_moves
 
         # Start background game generator
-        # data_dir is the run directory, training_data.npz will be saved there
+        training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME
         generator = GameGenerator(
             model_path=str(onnx_path),
-            output_dir=str(self.config.data_dir),
+            training_data_path=str(training_data_path),
             config=mcts_config,
             max_moves=self.config.max_moves,
             add_noise=True,
@@ -253,7 +259,7 @@ class Trainer:
         generator.start()
         print("Started background game generator")
         print(f"  Model path: {onnx_path}")
-        print(f"  Data dir: {self.config.data_dir}")
+        print(f"  Training data path: {training_data_path}")
 
         # Wait for minimum buffer size
         print(f"Waiting for {self.config.min_buffer_size} examples...")
@@ -264,21 +270,24 @@ class Trainer:
                 f"Games: {generator.games_generated()}"
             )
 
-        print(f"\nStarting training for {num_steps} steps")
+        start_step = self.step
+        print(f"\nStarting training until total step {num_steps}")
+        print(f"Starting from checkpoint step: {start_step}")
         print(f"Config: {self.config}")
 
         last_logged_game = 0  # Track which game we last logged
         train_start_time = time.time()
 
         try:
-            for step in range(num_steps):
-                self.step = step + 1
-
+            while self.step < num_steps:
                 # Sample batch directly from generator's in-memory buffer
                 result = generator.sample_batch(self.config.batch_size)
                 if result is None:
                     time.sleep(0.1)
                     continue
+
+                self.step += 1
+                session_step = self.step - start_step
 
                 # Convert numpy arrays to torch tensors
                 boards, aux, policy_targets, value_targets, masks = result
@@ -304,7 +313,7 @@ class Trainer:
                     metrics["examples_generated"] = generator.examples_generated()
                     metrics["games_per_second"] = games / elapsed if elapsed > 0 else 0
                     metrics["steps_per_second"] = (
-                        self.step / elapsed if elapsed > 0 else 0
+                        session_step / elapsed if elapsed > 0 else 0
                     )
                     if log_to_wandb:
                         wandb.log(metrics, step=self.step)

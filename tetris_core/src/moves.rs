@@ -328,7 +328,14 @@ pub fn find_all_placements(
             path_info.moves.push(Action::HardDrop.to_u8());
 
             // Pre-compute action index
-            let action_index = action_space.placement_to_index(x, y, rotation).unwrap_or(0); // Should never fail for valid placements
+            let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
+                debug_assert!(
+                    false,
+                    "BUG: valid placement ({}, {}, {}) missing from action space",
+                    x, y, rotation
+                );
+                continue;
+            };
 
             placements.push(Placement {
                 piece: Piece::with_position(piece_type, x, y, rotation),

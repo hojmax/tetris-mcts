@@ -1103,6 +1103,7 @@ def build_mcts_config(args: "ScriptArgs") -> MCTSConfig:
     config.temperature = args.temperature
     config.dirichlet_alpha = args.dirichlet_alpha
     config.dirichlet_epsilon = args.dirichlet_epsilon
+    config.max_moves = args.max_moves
     config.seed = args.mcts_seed
     return config
 

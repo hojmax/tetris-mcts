@@ -18,7 +18,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use crate::mcts::GameStats;
 use crate::mcts::{MCTSAgent, MCTSConfig, TrainingExample};
 
-use super::npz::write_examples_to_npz;
+use super::npz::{read_examples_from_npz, write_examples_to_npz};
 
 /// Aggregate game statistics (thread-safe counters).
 #[derive(Default)]
@@ -199,8 +199,8 @@ impl SharedBuffer {
 pub struct GameGenerator {
     /// Path to ONNX model file (watched for updates)
     model_path: PathBuf,
-    /// Directory to write game data files (for periodic saves)
-    output_dir: PathBuf,
+    /// Full path to training_data.npz (for periodic saves and replay preload)
+    training_data_path: PathBuf,
     /// MCTS configuration
     config: MCTSConfig,
     /// Maximum moves per game
@@ -230,10 +230,10 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, output_dir, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3))]
     pub fn new(
         model_path: String,
-        output_dir: String,
+        training_data_path: String,
         config: Option<MCTSConfig>,
         max_moves: u32,
         add_noise: bool,
@@ -241,10 +241,13 @@ impl GameGenerator {
         games_per_save: usize,
         num_workers: usize,
     ) -> Self {
+        let mut resolved_config = config.unwrap_or_default();
+        resolved_config.max_moves = max_moves;
+
         GameGenerator {
             model_path: PathBuf::from(model_path),
-            output_dir: PathBuf::from(output_dir),
-            config: config.unwrap_or_default(),
+            training_data_path: PathBuf::from(training_data_path),
+            config: resolved_config,
             max_moves,
             add_noise,
             games_per_save,
@@ -262,7 +265,7 @@ impl GameGenerator {
     /// Start background game generation.
     ///
     /// Spawns worker threads that continuously generate games and write
-    /// them to the output directory. The threads watch the model file for
+    /// them to training_data_path. The threads watch the model file for
     /// changes and hot-swap when updated.
     pub fn start(&mut self) -> PyResult<()> {
         if self.running.load(Ordering::SeqCst) {
@@ -271,13 +274,49 @@ impl GameGenerator {
             ));
         }
 
-        // Create output directory if needed
-        fs::create_dir_all(&self.output_dir).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to create output directory: {}",
-                e
-            ))
-        })?;
+        // Create training data parent directory if needed.
+        if let Some(parent_dir) = self.training_data_path.parent() {
+            if !parent_dir.as_os_str().is_empty() {
+                fs::create_dir_all(parent_dir).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                        "Failed to create training data directory {}: {}",
+                        parent_dir.display(),
+                        e
+                    ))
+                })?;
+            }
+        }
+
+        // Load existing replay buffer snapshot if present.
+        if self.training_data_path.exists() {
+            let loaded_examples =
+                read_examples_from_npz(&self.training_data_path, self.max_moves).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to load replay data from {}: {}",
+                        self.training_data_path.display(),
+                        e
+                    ))
+                })?;
+
+            if !loaded_examples.is_empty() {
+                let loaded_examples_count = loaded_examples.len();
+                self.buffer.add_examples(loaded_examples);
+                let retained_examples_count = self.buffer.len();
+                self.examples_generated
+                    .store(retained_examples_count as u64, Ordering::SeqCst);
+                eprintln!(
+                    "[GameGenerator] Loaded {} replay examples from {}",
+                    retained_examples_count,
+                    self.training_data_path.display()
+                );
+                if retained_examples_count < loaded_examples_count {
+                    eprintln!(
+                        "[GameGenerator] Dropped {} replay examples due to max_examples cap",
+                        loaded_examples_count - retained_examples_count
+                    );
+                }
+            }
+        }
 
         // Set running flag
         self.running.store(true, Ordering::SeqCst);
@@ -286,7 +325,7 @@ impl GameGenerator {
         for worker_id in 0..self.num_workers {
             // Clone Arc handles for each thread
             let model_path = self.model_path.clone();
-            let output_dir = self.output_dir.clone();
+            let training_data_path = self.training_data_path.clone();
             let config = self.config.clone();
             let max_moves = self.max_moves;
             let add_noise = self.add_noise;
@@ -304,7 +343,7 @@ impl GameGenerator {
                     worker_id,
                     num_workers,
                     model_path,
-                    output_dir,
+                    training_data_path,
                     config,
                     max_moves,
                     add_noise,
@@ -445,6 +484,7 @@ impl GameGenerator {
         let mut policies = vec![0.0f32; actual_batch * num_actions];
         let mut values = vec![0.0f32; actual_batch];
         let mut masks = vec![0.0f32; actual_batch * num_actions];
+        let move_norm_denominator = self.max_moves as f32;
 
         for (i, &idx) in indices.iter().enumerate() {
             let ex = &examples[idx];
@@ -471,7 +511,7 @@ impl GameGenerator {
                 aux[aux_offset + 16 + j * 7 + piece] = 1.0;
             }
             // Move number normalized (1)
-            aux[aux_offset + 51] = ex.move_number as f32 / 100.0;
+            aux[aux_offset + 51] = ex.move_number as f32 / move_norm_denominator;
 
             // Copy policy
             for (j, &val) in ex.policy.iter().enumerate() {
@@ -512,7 +552,7 @@ impl GameGenerator {
         worker_id: usize,
         num_workers: usize,
         model_path: PathBuf,
-        output_dir: PathBuf,
+        training_data_path: PathBuf,
         config: MCTSConfig,
         max_moves: u32,
         add_noise: bool,
@@ -550,7 +590,6 @@ impl GameGenerator {
         // Only worker 0 handles disk saves to avoid race conditions
         let is_save_worker = worker_id == 0;
         let mut local_games_count: usize = 0;
-        let data_file = output_dir.join("training_data.npz");
 
         // Main generation loop
         while running.load(Ordering::SeqCst) {
@@ -597,7 +636,9 @@ impl GameGenerator {
                 // Periodically save to disk for resume capability (only worker 0)
                 if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
                     let all_examples = buffer.get_all();
-                    if let Err(e) = write_examples_to_npz(&data_file, &all_examples) {
+                    if let Err(e) =
+                        write_examples_to_npz(&training_data_path, &all_examples, max_moves)
+                    {
                         eprintln!("[GameGenerator] Failed to write NPZ: {}", e);
                     }
                     local_games_count = 0;
@@ -609,7 +650,7 @@ impl GameGenerator {
         if is_save_worker {
             let all_examples = buffer.get_all();
             if !all_examples.is_empty() {
-                let _ = write_examples_to_npz(&data_file, &all_examples);
+                let _ = write_examples_to_npz(&training_data_path, &all_examples, max_moves);
                 eprintln!(
                     "[GameGenerator] Saved {} examples to disk",
                     all_examples.len()

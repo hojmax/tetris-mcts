@@ -84,11 +84,12 @@ def load_checkpoint(
         optimizer.load_state_dict(state["optimizer_state_dict"])
     if scheduler is not None:
         if "scheduler_state_dict" not in state:
-            raise ValueError(
-                f"Checkpoint {filepath} is missing scheduler_state_dict; "
-                "cannot resume scheduler state"
+            print(
+                f"Warning: Checkpoint {filepath} is missing scheduler_state_dict; "
+                "using fresh scheduler state from current config."
             )
-        scheduler.load_state_dict(state["scheduler_state_dict"])
+        else:
+            scheduler.load_state_dict(state["scheduler_state_dict"])
 
     return state
 

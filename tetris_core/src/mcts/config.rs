@@ -24,6 +24,9 @@ pub struct MCTSConfig {
     /// Optional RNG seed for deterministic behavior (None = non-deterministic)
     #[pyo3(get, set)]
     pub seed: Option<u64>,
+    /// Maximum episodes moves. Used for move-number normalization in NN features
+    #[pyo3(get, set)]
+    pub max_moves: u32,
 }
 
 #[pymethods]
@@ -37,6 +40,7 @@ impl MCTSConfig {
             dirichlet_alpha: 0.15,
             dirichlet_epsilon: 0.25,
             seed: None,
+            max_moves: 100,
         }
     }
 }

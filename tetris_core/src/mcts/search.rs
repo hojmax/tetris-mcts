@@ -61,7 +61,13 @@ pub(super) fn simulate(
         // Check if child exists
         if !node.children.contains_key(&action_idx) {
             // Expansion: create new child (NN evaluation happens inside expand_action)
-            let child = match expand_action(nn, node, action_idx, root_move_number + depth + 1) {
+            let child = match expand_action(
+                nn,
+                node,
+                action_idx,
+                root_move_number + depth + 1,
+                config.max_moves,
+            ) {
                 Some(c) => c,
                 None => {
                     // Expansion should never fail for a valid action selected by MCTS.
@@ -157,6 +163,7 @@ fn expand_action(
     parent: &DecisionNode,
     action_idx: usize,
     move_number: u32,
+    max_moves: u32,
 ) -> Option<MCTSNode> {
     let mut new_state = parent.state.clone();
 
@@ -202,16 +209,17 @@ fn expand_action(
     // Get NN policy and value - cached for all DecisionNode children
     // (They all see the same visible state, only differing in the hidden 6th queue piece)
     let mask = crate::nn::get_action_mask(&new_state);
-    let (policy, nn_value) = match nn.predict_masked(&new_state, move_number as usize, &mask) {
-        Ok(result) => result,
-        Err(e) => {
-            eprintln!(
-                "[MCTS] NN prediction failed during expansion at move {}: {}",
-                move_number, e
-            );
-            return None;
-        }
-    };
+    let (policy, nn_value) =
+        match nn.predict_masked(&new_state, move_number as usize, &mask, max_moves as usize) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!(
+                    "[MCTS] NN prediction failed during expansion at move {}: {}",
+                    move_number, e
+                );
+                return None;
+            }
+        };
 
     Some(MCTSNode::Chance(ChanceNode::new(
         new_state,

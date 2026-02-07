@@ -25,7 +25,6 @@ def inspect_onnx(model_path: Path) -> None:
     """Inspect ONNX model structure."""
     try:
         import onnx
-        from onnx import numpy_helper
     except ImportError:
         logger.error("onnx package not installed. Install with: pip install onnx")
         return
@@ -78,6 +77,7 @@ def inspect_onnx(model_path: Path) -> None:
         )
 
         # Find conv2
+        conv2_filters = None
         for initializer in model.graph.initializer:
             if "conv2.weight" in initializer.name:
                 conv2_weight = list(initializer.dims)
@@ -86,7 +86,9 @@ def inspect_onnx(model_path: Path) -> None:
                 break
 
         # Determine which config
-        if out_channels == 4 and conv2_filters == 8:
+        if conv2_filters is None:
+            logger.warning("Could not locate conv2.weight in model initializers")
+        elif out_channels == 4 and conv2_filters == 8:
             logger.info("✓ This is the OLD (large) architecture: [4, 8] filters")
         elif out_channels == 2 and conv2_filters == 4:
             logger.info("✓ This is the NEW (small) architecture: [2, 4] filters")

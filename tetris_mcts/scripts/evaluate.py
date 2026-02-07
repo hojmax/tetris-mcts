@@ -45,6 +45,7 @@ def main(args: EvalArgs) -> None:
     # Create MCTS config
     config = MCTSConfig()
     config.num_simulations = args.simulations
+    config.max_moves = args.max_moves
     config.seed = args.mcts_seed
 
     # Generate seeds (sequential for reproducibility)

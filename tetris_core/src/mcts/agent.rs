@@ -91,16 +91,17 @@ impl MCTSAgent {
             }
 
             // Get NN policy and value for root
-            let (policy, nn_value) = match nn.predict_masked(&env, move_idx as usize, &mask) {
-                Ok(result) => result,
-                Err(e) => {
-                    eprintln!(
-                        "[MCTSAgent] NN prediction failed at move {}: {}. Ending game early.",
-                        move_idx, e
-                    );
-                    break;
-                }
-            };
+            let (policy, nn_value) =
+                match nn.predict_masked(&env, move_idx as usize, &mask, max_moves as usize) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!(
+                            "[MCTSAgent] NN prediction failed at move {}: {}. Ending game early.",
+                            move_idx, e
+                        );
+                        break;
+                    }
+                };
 
             // Store state before making move
             states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
@@ -285,7 +286,12 @@ impl MCTSAgent {
         }
 
         let (policy, nn_value) = nn
-            .predict_masked(env, move_number as usize, &mask)
+            .predict_masked(
+                env,
+                move_number as usize,
+                &mask,
+                self.config.max_moves as usize,
+            )
             .expect("Neural network prediction failed");
 
         let (mcts_result, root) = search_internal(
@@ -341,7 +347,12 @@ impl MCTSAgent {
         }
 
         let (policy, nn_value) = nn
-            .predict_masked(env, move_number as usize, &mask)
+            .predict_masked(
+                env,
+                move_number as usize,
+                &mask,
+                self.config.max_moves as usize,
+            )
             .expect("Neural network prediction failed");
 
         let (mcts_result, _root) = search_internal(
@@ -423,7 +434,7 @@ mod tests {
         // Run MCTS search to expand the action
         let mask = crate::nn::get_action_mask(&env);
         let nn = agent.nn.as_ref().unwrap();
-        let (nn_policy, nn_value) = nn.predict_masked(&env, 0, &mask).unwrap();
+        let (nn_policy, nn_value) = nn.predict_masked(&env, 0, &mask, 100).unwrap();
 
         let (_result, root_after) =
             search_internal(&agent.config, nn, &env, nn_policy, nn_value, false, 0);

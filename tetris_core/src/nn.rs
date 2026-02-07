@@ -11,7 +11,6 @@ use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, QUEUE_SIZE};
 use crate::env::TetrisEnv;
 use crate::piece::NUM_PIECE_TYPES;
 const AUX_FEATURES: usize = 52; // 7 + 8 + 1 + 35 + 1
-const MAX_MOVES: usize = 100;
 
 /// Neural network model wrapper
 pub struct TetrisNN {
@@ -37,8 +36,9 @@ impl TetrisNN {
         env: &TetrisEnv,
         move_number: usize,
         action_mask: &[bool],
+        max_moves: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (board_tensor, aux_tensor) = encode_state(env, move_number);
+        let (board_tensor, aux_tensor) = encode_state(env, move_number, max_moves);
 
         let board =
             tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
@@ -74,7 +74,7 @@ impl Clone for TetrisNN {
 }
 
 /// Encode a TetrisEnv state into neural network input tensors
-fn encode_state(env: &TetrisEnv, move_number: usize) -> (Vec<f32>, Vec<f32>) {
+fn encode_state(env: &TetrisEnv, move_number: usize, max_moves: usize) -> (Vec<f32>, Vec<f32>) {
     // Board tensor: binary (1 = filled, 0 = empty) - flatten to 200 values (will be reshaped to 1x20x10)
     let board = env.get_board();
     let board_tensor: Vec<f32> = board
@@ -111,7 +111,8 @@ fn encode_state(env: &TetrisEnv, move_number: usize) -> (Vec<f32>, Vec<f32>) {
     }
 
     // Move number: normalized (1)
-    aux.push(move_number as f32 / MAX_MOVES as f32);
+    let normalized_denominator = max_moves as f32;
+    aux.push(move_number as f32 / normalized_denominator);
 
     (board_tensor, aux)
 }
@@ -175,7 +176,7 @@ mod tests {
         env.hard_drop();
         env.hard_drop();
 
-        let (board_tensor, _) = encode_state(&env, 0);
+        let (board_tensor, _) = encode_state(&env, 0, 100);
 
         // Verify size
         assert_eq!(board_tensor.len(), BOARD_HEIGHT * BOARD_WIDTH);
@@ -208,7 +209,7 @@ mod tests {
     #[test]
     fn test_auxiliary_features_format() {
         let env = TetrisEnv::new(10, 20);
-        let (_, aux) = encode_state(&env, 42);
+        let (_, aux) = encode_state(&env, 42, 100);
 
         // Total size: 7 + 8 + 1 + 35 + 1 = 52
         assert_eq!(aux.len(), AUX_FEATURES);
@@ -282,7 +283,7 @@ mod tests {
 
         // Move number: normalized (1)
         let move_norm = aux[idx];
-        let expected_norm = 42.0 / MAX_MOVES as f32;
+        let expected_norm = 42.0 / 100.0;
         assert!(
             (move_norm - expected_norm).abs() < 1e-6,
             "Move number should be {}, got {}",
@@ -309,7 +310,7 @@ mod tests {
         // | Move number    | 1          | Normalized: move_idx / 100      |
 
         let env = TetrisEnv::new(10, 20);
-        let (board, aux) = encode_state(&env, 50);
+        let (board, aux) = encode_state(&env, 50, 100);
 
         assert_eq!(board.len(), 20 * 10, "Board should be 20x10 = 200 values");
         assert_eq!(

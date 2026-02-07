@@ -598,7 +598,7 @@ mod tests {
         // Only fill 2 corners - not enough for T-spin
         env.board[10][4] = 1; // top-left corner
         env.board[10][6] = 1; // top-right corner
-        // Leave bottom corners empty
+                              // Leave bottom corners empty
 
         let piece = Piece::with_position(T_PIECE, 4, 10, 0);
         env.current_piece = Some(piece.clone());

@@ -129,6 +129,7 @@ pub fn evaluate_model(
     // Use provided config but force temperature=0 for argmax
     let mut config = config.unwrap_or_default();
     config.temperature = 0.0; // Argmax for deterministic evaluation
+    config.max_moves = max_moves;
 
     let mut agent = MCTSAgent::new(config);
 
@@ -181,14 +182,14 @@ pub fn evaluate_model(
 
             // Get NN policy and value
             let nn = agent.get_nn().expect("Model should be loaded");
-            let (policy, nn_value) =
-                nn.predict_masked(&env, move_idx as usize, &mask)
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                            "NN prediction failed: {}",
-                            e
-                        ))
-                    })?;
+            let (policy, nn_value) = nn
+                .predict_masked(&env, move_idx as usize, &mask, max_moves as usize)
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "NN prediction failed: {}",
+                        e
+                    ))
+                })?;
 
             // Run MCTS search (no noise, argmax via config.temperature=0)
             let result = agent.search(&env, policy, nn_value, false, move_idx as u32);
@@ -242,10 +243,7 @@ pub fn evaluate_model(
 
     if let Some(writer) = replay_writer.as_mut() {
         writer.flush().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to flush output: {}",
-                e
-            ))
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to flush output: {}", e))
         })?;
     }
 
