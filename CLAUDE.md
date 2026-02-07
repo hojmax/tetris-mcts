@@ -42,16 +42,16 @@ This caches compiled dependencies across projects, making rebuilds much faster.
 
 ```bash
 # Start new training run (creates training_runs/v0/)
-python tetris_mcts/scripts/train.py --training.total-steps 100000
+python tetris_mcts/train.py --training.total-steps 100000
 
 # With custom hyperparameters
-python tetris_mcts/scripts/train.py \
+python tetris_mcts/train.py \
     --training.total-steps 500000 \
     --training.num-simulations 800 \
     --training.learning-rate 0.0005
 
 # Resume from checkpoint
-python tetris_mcts/scripts/train.py --resume-dir training_runs/v0
+python tetris_mcts/train.py --resume-dir training_runs/v0
 ```
 
 ### Performance Profiling
@@ -235,7 +235,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
 1. Multiple worker threads (default: 5) run MCTS games in parallel
 2. Each game uses network priors + Dirichlet noise for exploration
 3. Training examples from completed games stored in shared in-memory ring buffer
-4. Python samples directly via `generator.sample_batch()` - no disk I/O during training
+4. Python samples directly via `generator.sample_batch(batch_size, max_moves)` - no disk I/O during training
 5. Periodic NPZ saves for resume capability only
 6. Model hot-swapped atomically when Python exports new ONNX
 
@@ -268,7 +268,7 @@ Tests are in:
 
 ### Training a model
 
-1. Run `python tetris_mcts/scripts/train.py --training.total-steps N`
+1. Run `python tetris_mcts/train.py --training.total-steps N`
 2. Creates versioned directory: `training_runs/v0/`, `v1/`, etc.
 3. Checkpoints saved to `training_runs/vN/checkpoints/step_*.pt`
 4. ONNX exported as `parallel.onnx` in project root for Rust inference

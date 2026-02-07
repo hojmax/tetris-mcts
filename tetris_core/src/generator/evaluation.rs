@@ -126,6 +126,12 @@ pub fn evaluate_model(
     max_moves: u32,
     output_path: Option<String>,
 ) -> PyResult<EvalResult> {
+    if max_moves == 0 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "max_moves must be > 0",
+        ));
+    }
+
     // Use provided config but force temperature=0 for argmax
     let mut config = config.unwrap_or_default();
     config.temperature = 0.0; // Argmax for deterministic evaluation

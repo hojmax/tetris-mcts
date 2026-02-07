@@ -58,7 +58,7 @@ check:
 # Train a model (builds first if needed)
 # Usage: make train ARGS="--iterations 10 --games-per-iter 50"
 train: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/train.py $(ARGS)
+	$(PYTHON) tetris_mcts/train.py $(ARGS)
 
 # Evaluate a model and save replays (builds first if needed)
 # Usage: make evaluate MODEL=checkpoints/latest.onnx OUTPUT=replays.jsonl

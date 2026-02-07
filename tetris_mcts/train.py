@@ -40,9 +40,9 @@ class ScriptArgs:
 
     # Runtime
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
-    resume_dir: Path | None = (  # Bootstrap a new run from existing run dir (e.g., training_runs/v37)
-        None
-    )
+    resume_dir: (  # Bootstrap a new run from existing run dir (e.g., training_runs/v37)
+        Path | None
+    ) = None
     init_checkpoint: Path | None = None  # Initialize model weights from checkpoint
     no_wandb: bool = False  # Disable WandB logging
 
@@ -63,7 +63,9 @@ def main(args: ScriptArgs) -> None:
             logger.error("Resume directory does not exist", path=str(source_run_dir))
             return
         if not source_run_dir.is_dir():
-            logger.error("Resume directory is not a directory", path=str(source_run_dir))
+            logger.error(
+                "Resume directory is not a directory", path=str(source_run_dir)
+            )
             return
 
         source_checkpoint = (

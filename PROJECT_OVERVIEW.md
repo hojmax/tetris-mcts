@@ -493,7 +493,7 @@ config = TrainingConfig(
 **Command-line overrides** (via `simple_parsing`):
 
 ```bash
-python tetris_mcts/scripts/train.py \
+python tetris_mcts/train.py \
     --training.total-steps 500000 \
     --training.num-simulations 800 \
     --training.learning-rate 0.0005
@@ -515,7 +515,7 @@ The implementation uses **integrated parallel game generation** via Rust `GameGe
 │  ┌──────────────────────────────────┐  │
 │  │   Trainer.train()                │  │
 │  │                                  │  │
-│  │  1. generator.sample_batch()     │  │ ◄─── Direct sampling via PyO3
+│  │  1. generator.sample_batch(...)  │  │ ◄─── Direct sampling via PyO3
 │  │  2. Train on batch               │  │
 │  │  3. Export ONNX (periodic)       │  │
 │  │  4. Log metrics                  │  │
@@ -569,18 +569,23 @@ def train():
         conv_padding=config.conv_padding,
     )
     mcts_config = MCTSConfig(num_simulations=400, ...)
+    mcts_config.max_moves = config.max_moves
 
     # Create GameGenerator with worker threads
     generator = GameGenerator(
         model_path="parallel.onnx",
-        mcts_config=mcts_config,
+        training_data_path="training_runs/v0/training_data.npz",
+        config=mcts_config,
+        max_moves=config.max_moves,
         num_workers=5,
-        buffer_size=100_000,
+        max_examples=100_000,
     )
 
     for step in range(total_steps):
         # Sample directly from Rust buffer (no disk I/O)
-        batch = generator.sample_batch(batch_size=256)
+        batch = generator.sample_batch(batch_size=256, max_moves=config.max_moves)
+        if batch is None:
+            continue
 
         # Train
         optimizer.zero_grad()
@@ -591,16 +596,17 @@ def train():
         # Export ONNX periodically
         if step % model_sync_interval == 0:
             export_onnx(model, "parallel.onnx")
-            generator.reload_model()  # Atomic hot-swap in Rust
+            # No explicit reload call needed: GameGenerator watches model_path
+            # and hot-swaps atomically when the file timestamp changes.
 
         # Log metrics
         if step % log_interval == 0:
-            game_stats = generator.get_stats()  # Aggregated game stats
+            stats = generator.get_stats()
             wandb.log({
                 'loss': loss.item(),
-                'games_generated': game_stats['total_games'],
-                'avg_attack': game_stats['avg_attack'],
-                ...
+                'games_generated': stats['games_generated'],
+                'examples_generated': stats['examples_generated'],
+                'buffer_size': stats['buffer_size'],
             })
 ```
 
@@ -740,10 +746,10 @@ training_runs/
 
 ```bash
 # New run (auto-creates training_runs/v0)
-python tetris_mcts/scripts/train.py --total-steps 100000
+python tetris_mcts/train.py --total-steps 100000
 
 # Resume from checkpoint
-python tetris_mcts/scripts/train.py --resume-dir training_runs/v0
+python tetris_mcts/train.py --resume-dir training_runs/v0
 ```
 
 ---

@@ -105,6 +105,29 @@ class TrainingConfig:
     project_name: str = "tetris-alphazero"
     run_name: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        if self.total_steps <= 0:
+            raise ValueError("total_steps must be > 0")
+        if self.batch_size <= 0:
+            raise ValueError("batch_size must be > 0")
+        if self.num_simulations <= 0:
+            raise ValueError("num_simulations must be > 0")
+        if self.num_workers <= 0:
+            raise ValueError("num_workers must be > 0")
+        if self.max_moves <= 0:
+            raise ValueError("max_moves must be > 0")
+        if self.buffer_size <= 0:
+            raise ValueError("buffer_size must be > 0")
+        if self.min_buffer_size <= 0:
+            raise ValueError("min_buffer_size must be > 0")
+        if self.min_buffer_size > self.buffer_size:
+            raise ValueError(
+                "min_buffer_size must be <= buffer_size "
+                f"(got {self.min_buffer_size} > {self.buffer_size})"
+            )
+        if self.games_per_save < 0:
+            raise ValueError("games_per_save must be >= 0")
+
     def to_json(self) -> str:
         """Serialize config to JSON string."""
         d = asdict(self)

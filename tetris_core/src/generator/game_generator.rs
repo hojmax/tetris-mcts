@@ -240,18 +240,34 @@ impl GameGenerator {
         max_examples: usize,
         games_per_save: usize,
         num_workers: usize,
-    ) -> Self {
+    ) -> PyResult<Self> {
+        if max_moves == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_moves must be > 0",
+            ));
+        }
+        if max_examples == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_examples must be > 0",
+            ));
+        }
+        if num_workers == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "num_workers must be > 0",
+            ));
+        }
+
         let mut resolved_config = config.unwrap_or_default();
         resolved_config.max_moves = max_moves;
 
-        GameGenerator {
+        Ok(GameGenerator {
             model_path: PathBuf::from(model_path),
             training_data_path: PathBuf::from(training_data_path),
             config: resolved_config,
             max_moves,
             add_noise,
             games_per_save,
-            num_workers: num_workers.max(1), // At least 1 worker
+            num_workers,
             buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
@@ -259,7 +275,7 @@ impl GameGenerator {
             game_stats: Arc::new(SharedStats::new()),
             last_game: Arc::new(RwLock::new(None)),
             thread_handles: Vec::new(),
-        }
+        })
     }
 
     /// Start background game generation.
@@ -289,8 +305,8 @@ impl GameGenerator {
 
         // Load existing replay buffer snapshot if present.
         if self.training_data_path.exists() {
-            let loaded_examples =
-                read_examples_from_npz(&self.training_data_path, self.max_moves).map_err(|e| {
+            let loaded_examples = read_examples_from_npz(&self.training_data_path, self.max_moves)
+                .map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                         "Failed to load replay data from {}: {}",
                         self.training_data_path.display(),
@@ -449,22 +465,31 @@ impl GameGenerator {
     /// (boards, aux_features, policy_targets, value_targets, action_masks)
     ///
     /// Returns None if the buffer is empty.
-    #[pyo3(signature = (batch_size))]
+    #[pyo3(signature = (batch_size, max_moves))]
     pub fn sample_batch<'py>(
         &self,
         py: Python<'py>,
         batch_size: usize,
-    ) -> Option<(
-        &'py PyArray2<f32>,
-        &'py PyArray2<f32>,
-        &'py PyArray2<f32>,
-        &'py PyArray1<f32>,
-        &'py PyArray2<f32>,
-    )> {
+        max_moves: u32,
+    ) -> PyResult<
+        Option<(
+            &'py PyArray2<f32>,
+            &'py PyArray2<f32>,
+            &'py PyArray2<f32>,
+            &'py PyArray1<f32>,
+            &'py PyArray2<f32>,
+        )>,
+    > {
+        if max_moves == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_moves must be > 0",
+            ));
+        }
+
         let examples = self.buffer.examples.read().unwrap();
         let n = examples.len();
         if n == 0 {
-            return None;
+            return Ok(None);
         }
 
         let actual_batch = batch_size.min(n);
@@ -484,7 +509,7 @@ impl GameGenerator {
         let mut policies = vec![0.0f32; actual_batch * num_actions];
         let mut values = vec![0.0f32; actual_batch];
         let mut masks = vec![0.0f32; actual_batch * num_actions];
-        let move_norm_denominator = self.max_moves as f32;
+        let move_norm_denominator = max_moves as f32;
 
         for (i, &idx) in indices.iter().enumerate() {
             let ex = &examples[idx];
@@ -542,7 +567,13 @@ impl GameGenerator {
             .reshape([actual_batch, num_actions])
             .unwrap();
 
-        Some((boards_arr, aux_arr, policies_arr, values_arr, masks_arr))
+        Ok(Some((
+            boards_arr,
+            aux_arr,
+            policies_arr,
+            values_arr,
+            masks_arr,
+        )))
     }
 }
 

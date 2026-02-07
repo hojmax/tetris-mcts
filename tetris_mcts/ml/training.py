@@ -281,7 +281,10 @@ class Trainer:
         try:
             while self.step < num_steps:
                 # Sample batch directly from generator's in-memory buffer
-                result = generator.sample_batch(self.config.batch_size)
+                result = generator.sample_batch(
+                    self.config.batch_size,
+                    self.config.max_moves,
+                )
                 if result is None:
                     time.sleep(0.1)
                     continue
