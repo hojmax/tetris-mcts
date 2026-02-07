@@ -16,7 +16,7 @@ use crate::piece::NUM_PIECE_TYPES;
 
 /// Write training examples to NPZ format (compatible with Python numpy).
 ///
-/// Format matches `save_training_data()` in Python data.py:
+/// Format matches the Python training dataset layout expected by scripts:
 /// - boards: (N, 20, 10) bool
 /// - current_pieces: (N, 7) float32 one-hot
 /// - hold_pieces: (N, 8) float32 one-hot
