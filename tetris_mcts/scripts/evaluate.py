@@ -1,7 +1,7 @@
 """
 Evaluate a trained model and save game replays to JSONL format.
 
-Uses the Rust evaluate_and_save function for fast evaluation.
+Uses the Rust evaluate_model function for fast evaluation.
 """
 
 from dataclasses import dataclass
@@ -10,7 +10,7 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_core import MCTSConfig, evaluate_and_save
+from tetris_core import MCTSConfig, evaluate_model
 from tetris_mcts.config import OUTPUTS_DIR, TrainingConfig
 
 logger = structlog.get_logger()
@@ -51,12 +51,12 @@ def main(args: EvalArgs) -> None:
     seeds = list(range(args.num_games))
 
     # Run evaluation and save replays
-    result = evaluate_and_save(
+    result = evaluate_model(
         model_path=str(args.model_path),
-        output_path=str(args.output_path),
         seeds=seeds,
         config=config,
         max_moves=args.max_moves,
+        output_path=str(args.output_path),
     )
 
     logger.info(

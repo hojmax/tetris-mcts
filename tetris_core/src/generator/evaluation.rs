@@ -115,16 +115,18 @@ impl EvalResult {
 ///     seeds: List of random seeds to use (determines piece sequence)
 ///     config: MCTS configuration (temperature is forced to 0 for argmax)
 ///     max_moves: Maximum moves per game
+///     output_path: Optional path to save replays as JSONL
 ///
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (model_path, seeds, config=None, max_moves=100))]
+#[pyo3(signature = (model_path, seeds, config=None, max_moves=100, output_path=None))]
 pub fn evaluate_model(
     model_path: &str,
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
     max_moves: u32,
+    output_path: Option<String>,
 ) -> PyResult<EvalResult> {
     // Use provided config but force temperature=0 for argmax
     let mut config = config.unwrap_or_default();
@@ -139,6 +141,19 @@ pub fn evaluate_model(
         )));
     }
 
+    let mut replay_writer = if let Some(path) = output_path.as_deref() {
+        let file = File::create(path).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to create output file {}: {}",
+                path, e
+            ))
+        })?;
+        Some(BufWriter::new(file))
+    } else {
+        None
+    };
+    let save_replays = replay_writer.is_some();
+
     let mut total_attack: u32 = 0;
     let mut max_attack: u32 = 0;
     let mut total_lines: u32 = 0;
@@ -152,6 +167,7 @@ pub fn evaluate_model(
         let mut game_attack: u32 = 0;
         let mut game_lines: u32 = 0;
         let mut game_moves: u32 = 0;
+        let mut replay_moves: Vec<ReplayMove> = Vec::new();
 
         // Play game with MCTS (no noise, argmax via temperature=0)
         for move_idx in 0..max_moves {
@@ -194,9 +210,38 @@ pub fn evaluate_model(
                     game_lines += attack_result.lines_cleared;
                 }
                 game_moves += 1;
+                if save_replays {
+                    replay_moves.push(ReplayMove {
+                        x,
+                        y,
+                        rotation: rot,
+                        attack,
+                    });
+                }
             } else {
                 break;
             }
+        }
+
+        if let Some(writer) = replay_writer.as_mut() {
+            let replay = GameReplay {
+                seed: *seed,
+                moves: replay_moves,
+                total_attack: game_attack,
+                num_moves: game_moves,
+            };
+            let json = serde_json::to_string(&replay).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to serialize replay: {}",
+                    e
+                ))
+            })?;
+            writeln!(writer, "{}", json).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                    "Failed to write replay: {}",
+                    e
+                ))
+            })?;
         }
 
         total_attack += game_attack;
@@ -207,182 +252,14 @@ pub fn evaluate_model(
         game_results.push((game_attack, game_moves));
     }
 
-    let num_games = seeds.len() as u32;
-    let avg_attack = if num_games > 0 {
-        total_attack as f32 / num_games as f32
-    } else {
-        0.0
-    };
-    let avg_lines = if num_games > 0 {
-        total_lines as f32 / num_games as f32
-    } else {
-        0.0
-    };
-    let avg_moves = if num_games > 0 {
-        total_moves as f32 / num_games as f32
-    } else {
-        0.0
-    };
-    let attack_per_piece = if total_moves > 0 {
-        total_attack as f32 / total_moves as f32
-    } else {
-        0.0
-    };
-    let lines_per_piece = if total_moves > 0 {
-        total_lines as f32 / total_moves as f32
-    } else {
-        0.0
-    };
-
-    Ok(EvalResult {
-        num_games,
-        total_attack,
-        max_attack,
-        total_lines,
-        max_lines,
-        total_moves,
-        avg_attack,
-        avg_lines,
-        avg_moves,
-        attack_per_piece,
-        lines_per_piece,
-        game_results,
-    })
-}
-
-/// Evaluate a model and save game replays to a JSONL file.
-///
-/// Each line in the output file is a JSON object representing one game,
-/// containing the seed and move sequence for replay visualization.
-///
-/// Args:
-///     model_path: Path to ONNX model file
-///     output_path: Path to output JSONL file
-///     seeds: List of random seeds to use
-///     config: MCTS configuration (temperature is forced to 0)
-///     max_moves: Maximum moves per game
-///
-/// Returns:
-///     EvalResult with aggregated statistics
-#[pyfunction]
-#[pyo3(signature = (model_path, output_path, seeds, config=None, max_moves=100))]
-pub fn evaluate_and_save(
-    model_path: &str,
-    output_path: &str,
-    seeds: Vec<u64>,
-    config: Option<MCTSConfig>,
-    max_moves: u32,
-) -> PyResult<EvalResult> {
-    let mut config = config.unwrap_or_default();
-    config.temperature = 0.0;
-
-    let mut agent = MCTSAgent::new(config);
-
-    if !agent.load_model(model_path) {
-        return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-            "Failed to load model from {}",
-            model_path
-        )));
-    }
-
-    let file = File::create(output_path).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-            "Failed to create output file {}: {}",
-            output_path, e
-        ))
-    })?;
-    let mut writer = BufWriter::new(file);
-
-    let mut total_attack: u32 = 0;
-    let mut max_attack: u32 = 0;
-    let mut total_lines: u32 = 0;
-    let mut max_lines: u32 = 0;
-    let mut total_moves: u32 = 0;
-    let mut game_results: Vec<(u32, u32)> = Vec::with_capacity(seeds.len());
-
-    for seed in &seeds {
-        let mut env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, *seed);
-        let mut game_attack: u32 = 0;
-        let mut game_lines: u32 = 0;
-        let mut replay_moves: Vec<ReplayMove> = Vec::new();
-
-        for move_idx in 0..max_moves {
-            if env.game_over {
-                break;
-            }
-
-            let mask = crate::nn::get_action_mask(&env);
-            if !mask.iter().any(|&x| x) {
-                break;
-            }
-
-            let nn = agent.get_nn().expect("Model should be loaded");
-            let (policy, nn_value) =
-                nn.predict_masked(&env, move_idx as usize, &mask)
-                    .map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                            "NN prediction failed: {}",
-                            e
-                        ))
-                    })?;
-
-            let result = agent.search(&env, policy, nn_value, false, move_idx as u32);
-
-            let (x, y, rot) = get_action_space()
-                .index_to_placement(result.action)
-                .expect("Invalid action from MCTS");
-
-            let placements = env.get_possible_placements();
-            if let Some(placement) = placements
-                .iter()
-                .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)
-            {
-                let attack = env.execute_placement(placement);
-                game_attack += attack;
-                if let Some(attack_result) = env.get_last_attack_result() {
-                    game_lines += attack_result.lines_cleared;
-                }
-
-                replay_moves.push(ReplayMove {
-                    x,
-                    y,
-                    rotation: rot,
-                    attack,
-                });
-            } else {
-                break;
-            }
-        }
-
-        let replay = GameReplay {
-            seed: *seed,
-            moves: replay_moves.clone(),
-            total_attack: game_attack,
-            num_moves: replay_moves.len() as u32,
-        };
-
-        // Write replay as JSON line
-        let json = serde_json::to_string(&replay).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to serialize replay: {}",
+    if let Some(writer) = replay_writer.as_mut() {
+        writer.flush().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to flush output: {}",
                 e
             ))
         })?;
-        writeln!(writer, "{}", json).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to write replay: {}", e))
-        })?;
-
-        total_attack += game_attack;
-        max_attack = max_attack.max(game_attack);
-        total_lines += game_lines;
-        max_lines = max_lines.max(game_lines);
-        total_moves += replay_moves.len() as u32;
-        game_results.push((game_attack, replay_moves.len() as u32));
     }
-
-    writer.flush().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("Failed to flush output: {}", e))
-    })?;
 
     let num_games = seeds.len() as u32;
     let avg_attack = if num_games > 0 {

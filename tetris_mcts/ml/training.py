@@ -10,6 +10,8 @@ Implements:
 import torch
 from typing import Optional
 import time
+from pathlib import Path
+import tempfile
 
 import wandb
 
@@ -25,6 +27,7 @@ from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import WeightManager, export_onnx
 from tetris_mcts.ml.loss import compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
+from tetris_mcts.ml.visualization import create_trajectory_gif
 
 from tetris_core import MCTSConfig, GameGenerator
 
@@ -153,6 +156,29 @@ class Trainer:
     def evaluate(self, render_trajectory: bool = False):
         """Evaluate current model using MCTS on fixed seeds."""
         return self.evaluator.evaluate(render_trajectory)
+
+    def _create_wandb_gif_video(
+        self,
+        frames: list,
+    ) -> tuple[Optional[object], Optional[Path]]:
+        if not frames:
+            return None, None
+
+        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as f:
+            gif_path = Path(f.name)
+
+        create_trajectory_gif(
+            frames=frames,
+            output_path=str(gif_path),
+            duration=DEFAULT_GIF_FRAME_DURATION_MS,
+        )
+
+        video = wandb.Video(
+            str(gif_path),
+            fps=DEFAULT_GIF_FPS,
+            format="gif",
+        )
+        return video, gif_path
 
     def save(self):
         """Save model checkpoint."""
@@ -308,6 +334,7 @@ class Trainer:
                         render_trajectory=log_to_wandb
                     )
                     if log_to_wandb:
+                        eval_gif_path: Optional[Path] = None
                         log_data = {
                             "eval/avg_attack": eval_result.avg_attack,
                             "eval/max_attack": eval_result.max_attack,
@@ -316,23 +343,14 @@ class Trainer:
                         }
                         # Log trajectory as animated GIF
                         if trajectory_frames:
-                            import tempfile
-
-                            with tempfile.NamedTemporaryFile(
-                                suffix=".gif", delete=False
-                            ) as f:
-                                gif_path = f.name
-                            trajectory_frames[0].save(
-                                gif_path,
-                                save_all=True,
-                                append_images=trajectory_frames[1:],
-                                duration=DEFAULT_GIF_FRAME_DURATION_MS,  # ms per frame
-                                loop=0,
+                            eval_video, eval_gif_path = self._create_wandb_gif_video(
+                                trajectory_frames
                             )
-                            log_data["eval/trajectory"] = wandb.Video(
-                                gif_path, fps=DEFAULT_GIF_FPS, format="gif"
-                            )
+                            if eval_video is not None:
+                                log_data["eval/trajectory"] = eval_video
                         wandb.log(log_data, step=self.step)
+                        if eval_gif_path is not None:
+                            eval_gif_path.unlink(missing_ok=True)
 
                 # Checkpoint
                 if self.step % self.config.checkpoint_interval == 0:

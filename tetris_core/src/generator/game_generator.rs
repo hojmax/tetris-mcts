@@ -153,6 +153,7 @@ struct LastGameInfo {
     game_number: u64,
     stats: GameStats,
     total_attack: u32,
+    num_moves: u32,
 }
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
@@ -393,6 +394,7 @@ impl GameGenerator {
             d.insert("max_combo".to_string(), info.stats.max_combo);
             d.insert("total_lines".to_string(), info.stats.total_lines);
             d.insert("total_attack".to_string(), info.total_attack);
+            d.insert("episode_length".to_string(), info.num_moves);
             (info.game_number, d)
         })
     }
@@ -589,6 +591,7 @@ impl GameGenerator {
                     game_number,
                     stats: result.stats,
                     total_attack: result.total_attack,
+                    num_moves: result.num_moves,
                 });
 
                 // Periodically save to disk for resume capability (only worker 0)

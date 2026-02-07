@@ -5,6 +5,7 @@ Implements evaluation of trained models using MCTS on fixed seeds,
 with optional trajectory visualization.
 """
 
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -15,11 +16,17 @@ from tetris_mcts.config import (
     BOARD_WIDTH,
     DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
     EVAL_ONNX_FILENAME,
+    EVAL_REPLAYS_FILENAME,
 )
 from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import export_onnx
 
-from tetris_core import MCTSConfig, MCTSAgent, TetrisEnv, evaluate_model, EvalResult
+from tetris_core import (
+    MCTSConfig,
+    TetrisEnv,
+    evaluate_model,
+    EvalResult,
+)
 
 
 class Evaluator:
@@ -67,12 +74,17 @@ class Evaluator:
         mcts_config.num_simulations = self.num_simulations
         mcts_config.seed = self.eval_mcts_seed
 
-        # Run evaluation in Rust with seeded environments
+        replay_path = self.checkpoint_dir / EVAL_REPLAYS_FILENAME
+
+        # Run evaluation in Rust with seeded environments.
+        # If trajectory rendering is requested, save replays and render from that file
+        # instead of running a second Python-side MCTS rollout.
         result = evaluate_model(
             model_path=str(onnx_path),
             seeds=[int(s) for s in self.eval_seeds],
             config=mcts_config,
             max_moves=self.max_moves,
+            output_path=str(replay_path) if render_trajectory else None,
         )
 
         print(f"Evaluation ({result.num_games} games):")
@@ -84,15 +96,12 @@ class Evaluator:
         print(f"  Attack/piece: {result.attack_per_piece:.3f}")
         print(f"  Lines/piece: {result.lines_per_piece:.3f}")
 
-        # Optionally render one trajectory for visualization (always first seed)
+        # Optionally render one trajectory from saved replay (always first seed).
         trajectory_frames = None
         if render_trajectory and self.eval_seeds:
-            first_seed = self.eval_seeds[0]
             try:
-                trajectory_frames = self.render_trajectory(
-                    model_path=str(onnx_path),
-                    mcts_config=mcts_config,
-                    seed=first_seed,
+                trajectory_frames = self.render_first_replay(
+                    replay_path=replay_path,
                     max_frames=DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
                 )
             except Exception as e:
@@ -100,31 +109,39 @@ class Evaluator:
 
         return result, trajectory_frames
 
-    def render_trajectory(
+    def render_first_replay(
         self,
-        model_path: str,
-        mcts_config: MCTSConfig,
-        seed: int,
+        replay_path: Path,
         max_frames: int,
     ) -> list:
-        """Render a single evaluation game as images.
+        """Render first game trajectory from a replay JSONL file."""
+        with replay_path.open() as f:
+            first_line = f.readline().strip()
 
-        Returns:
-            List of PIL Images showing the game progression
-        """
+        if first_line == "":
+            return []
+
+        replay = json.loads(first_line)
+        return self.render_replay(
+            replay=replay,
+            max_frames=max_frames,
+        )
+
+    def render_replay(
+        self,
+        replay: dict,
+        max_frames: int,
+    ) -> list:
+        """Render a replay dict (seed + moves) into trajectory frames."""
         from tetris_mcts.ml.visualization import render_board
 
-        # Create agent and load model
-        agent = MCTSAgent(mcts_config)
-        if not agent.load_model(model_path):
-            raise RuntimeError(f"Failed to load model from {model_path}")
-
-        # Play one game with the seed
+        seed = int(replay["seed"])
+        moves = replay["moves"]
         env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed)
         frames = []
         total_attack = 0
 
-        for move_idx in range(self.max_moves):
+        for move_idx, move in enumerate(moves):
             if env.game_over or len(frames) >= max_frames:
                 break
 
@@ -144,7 +161,6 @@ class Evaluator:
                 if ghost:
                     ghost_cells = ghost.get_cells()
 
-            # Render frame
             frame = render_board(
                 board=board,
                 board_colors=board_colors,
@@ -156,24 +172,24 @@ class Evaluator:
             )
             frames.append(frame)
 
-            # Get action from MCTS
             placements = env.get_possible_placements()
-            if not placements:
+            placement = None
+            for candidate in placements:
+                if (
+                    candidate.piece.x == move["x"]
+                    and candidate.piece.y == move["y"]
+                    and candidate.piece.rotation == move["rotation"]
+                ):
+                    placement = candidate
+                    break
+
+            if placement is None:
                 break
 
-            # Use MCTS to select action
-            result = agent.select_action(env, add_noise=False, move_number=move_idx)
-            if result is None:
-                break
+            env.execute_placement(placement)
+            total_attack += int(move["attack"])
 
-            # Execute action
-            attack = env.execute_action_index(result.action)
-            if attack is None:
-                break
-            total_attack += attack
-
-        # Add final frame
-        if not env.game_over and len(frames) < max_frames:
+        if len(frames) < max_frames:
             board = np.array(env.get_board())
             board_colors = env.get_board_colors()
             frame = render_board(
