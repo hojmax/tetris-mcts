@@ -140,7 +140,11 @@ impl AttackResult {
     fn __repr__(&self) -> String {
         format!(
             "AttackResult(lines={}, attack={}, combo={}, b2b={}, tspin={})",
-            self.lines_cleared, self.total_attack, self.combo, self.back_to_back_active, self.is_tspin
+            self.lines_cleared,
+            self.total_attack,
+            self.combo,
+            self.back_to_back_active,
+            self.is_tspin
         )
     }
 }
@@ -255,7 +259,10 @@ mod tests {
         assert_eq!(determine_clear_type(4, false, false), ClearType::Tetris);
 
         // T-spins
-        assert_eq!(determine_clear_type(1, true, true), ClearType::TSpinMiniSingle);
+        assert_eq!(
+            determine_clear_type(1, true, true),
+            ClearType::TSpinMiniSingle
+        );
         assert_eq!(determine_clear_type(1, true, false), ClearType::TSpinSingle);
         assert_eq!(determine_clear_type(2, true, false), ClearType::TSpinDouble);
         assert_eq!(determine_clear_type(3, true, false), ClearType::TSpinTriple);

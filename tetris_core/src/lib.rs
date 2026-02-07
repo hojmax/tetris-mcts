@@ -29,7 +29,9 @@ pub mod scoring;
 pub use env::TetrisEnv;
 pub use generator::{evaluate_and_save, evaluate_model, EvalResult, GameGenerator};
 pub use kicks::{get_i_kicks, get_jlstz_kicks, get_kicks_for_piece};
-pub use mcts::{MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport, GameResult};
+pub use mcts::{
+    GameResult, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
+};
 pub use moves::{find_all_placements, Action, Board, Placement};
 pub use piece::{get_cells, Piece, COLORS, NUM_PIECE_TYPES, TETROMINOS, TETROMINO_CELLS};
 pub use scoring::{

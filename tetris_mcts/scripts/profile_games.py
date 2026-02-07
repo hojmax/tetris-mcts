@@ -19,7 +19,9 @@ logger = structlog.get_logger()
 class ProfileArgs:
     """Profile MCTS game generation performance with fixed seeds."""
 
-    model_path: Path = PROJECT_ROOT / "benchmarks" / "models" / "parallel.onnx"  # Path to ONNX model
+    model_path: Path = (
+        PROJECT_ROOT / "benchmarks" / "models" / "parallel.onnx"
+    )  # Path to ONNX model
     num_games: int = 10  # Number of games to profile
     simulations: int = 100  # MCTS simulations per move
     seed_start: int = 42  # Starting seed for deterministic games
@@ -27,9 +29,13 @@ class ProfileArgs:
     temperature: float = 0.0  # Temperature for action selection (0=greedy)
     dirichlet_alpha: float = 0.15  # Dirichlet noise alpha
     dirichlet_epsilon: float = 0.25  # Dirichlet noise weight
-    mcts_seed: int | None = None  # Optional MCTS RNG seed for deterministic search (None = non-deterministic)
+    mcts_seed: int | None = (
+        None  # Optional MCTS RNG seed for deterministic search (None = non-deterministic)
+    )
     max_moves: int = 100  # Maximum moves per game
-    output: Path = PROJECT_ROOT / "benchmarks" / "profile_results.jsonl"  # Output JSONL file
+    output: Path = (
+        PROJECT_ROOT / "benchmarks" / "profile_results.jsonl"
+    )  # Output JSONL file
 
 
 def main(args: ProfileArgs) -> None:

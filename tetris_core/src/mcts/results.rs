@@ -223,7 +223,9 @@ impl MCTSTreeExport {
     fn __repr__(&self) -> String {
         format!(
             "MCTSTree(nodes={}, simulations={}, action={})",
-            self.nodes.len(), self.num_simulations, self.selected_action
+            self.nodes.len(),
+            self.num_simulations,
+            self.selected_action
         )
     }
 
@@ -240,7 +242,8 @@ impl MCTSTreeExport {
     /// Get children of a node
     fn get_children(&self, id: usize) -> Vec<TreeNodeExport> {
         if let Some(node) = self.nodes.get(id) {
-            node.children.iter()
+            node.children
+                .iter()
                 .filter_map(|&child_id| self.nodes.get(child_id).cloned())
                 .collect()
         } else {
@@ -272,7 +275,9 @@ impl MCTSTreeExport {
             if node.children.is_empty() {
                 0
             } else {
-                1 + node.children.iter()
+                1 + node
+                    .children
+                    .iter()
                     .map(|&child_id| self.compute_depth(child_id))
                     .max()
                     .unwrap_or(0)
@@ -282,7 +287,13 @@ impl MCTSTreeExport {
         }
     }
 
-    fn collect_at_depth(&self, node_id: usize, current_depth: usize, target_depth: usize, result: &mut Vec<TreeNodeExport>) {
+    fn collect_at_depth(
+        &self,
+        node_id: usize,
+        current_depth: usize,
+        target_depth: usize,
+        result: &mut Vec<TreeNodeExport>,
+    ) {
         if let Some(node) = self.nodes.get(node_id) {
             if current_depth == target_depth {
                 result.push(node.clone());
@@ -410,7 +421,7 @@ mod tests {
         let example = TrainingExample {
             board: vec![0; 200],
             current_piece: 0,
-            hold_piece: 3, // S piece in hold
+            hold_piece: 3,         // S piece in hold
             hold_available: false, // Already used hold this turn
             next_queue: vec![],
             move_number: 0,

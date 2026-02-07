@@ -119,9 +119,17 @@ class BufferViewer:
         table.add_row("", "")
 
         # Piece info
-        current = PIECE_NAMES[data["current_piece"]] if data["current_piece"] is not None else "-"
-        hold = PIECE_NAMES[data["hold_piece"]] if data["hold_piece"] is not None else "-"
-        queue = " ".join(PIECE_NAMES[p] if p is not None else "?" for p in data["next_queue"])
+        current = (
+            PIECE_NAMES[data["current_piece"]]
+            if data["current_piece"] is not None
+            else "-"
+        )
+        hold = (
+            PIECE_NAMES[data["hold_piece"]] if data["hold_piece"] is not None else "-"
+        )
+        queue = " ".join(
+            PIECE_NAMES[p] if p is not None else "?" for p in data["next_queue"]
+        )
 
         table.add_row("Current", current)
         table.add_row("Hold", hold)
@@ -171,7 +179,11 @@ class BufferViewer:
         )
 
         layout["main"].split_row(
-            Layout(Panel(self.render_board(data["board"]), title="Board"), name="board", ratio=1),
+            Layout(
+                Panel(self.render_board(data["board"]), title="Board"),
+                name="board",
+                ratio=1,
+            ),
             Layout(Panel(self.render_info(data), title="Info"), name="info", ratio=1),
         )
 
@@ -254,7 +266,7 @@ class BufferViewer:
                             return "left"
                         elif ch3 == "1":
                             # Shift+arrow
-                            ch4 = sys.stdin.read(1)
+                            sys.stdin.read(1)
                             ch5 = sys.stdin.read(1)
                             if ch5 == "C":
                                 return "shift_right"
@@ -265,7 +277,9 @@ class BufferViewer:
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-        with Live(self.render(), console=self.console, refresh_per_second=30, screen=True) as live:
+        with Live(
+            self.render(), console=self.console, refresh_per_second=30, screen=True
+        ) as live:
             while True:
                 key = get_key()
 
@@ -287,7 +301,9 @@ class BufferViewer:
                     live.stop()
                     self.console.clear()
                     try:
-                        game_str = self.console.input(f"[bold]Go to game (1-{self.n_games}): [/]")
+                        game_str = self.console.input(
+                            f"[bold]Go to game (1-{self.n_games}): [/]"
+                        )
                         game_num = int(game_str) - 1
                         self.goto_game(game_num)
                     except (ValueError, KeyboardInterrupt):

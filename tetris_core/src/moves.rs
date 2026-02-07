@@ -6,7 +6,7 @@
 
 use pyo3::prelude::*;
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::mcts::get_action_space;
@@ -146,11 +146,14 @@ fn try_rotate(
         let new_x = state.x + dx;
         let new_y = state.y + dy;
         if board.is_valid_position_at(piece_type, to_state, new_x, new_y) {
-            return Some((PieceState {
-                x: new_x,
-                y: new_y,
-                rotation: to_state,
-            }, kick_index));
+            return Some((
+                PieceState {
+                    x: new_x,
+                    y: new_y,
+                    rotation: to_state,
+                },
+                kick_index,
+            ));
         }
     }
     None
@@ -287,7 +290,11 @@ pub fn find_all_placements(
                     let is_rotation = rotate.is_some();
                     let new_info = PathInfo {
                         moves: new_moves,
-                        last_kick_index: if is_rotation { kick_index } else { path_info.last_kick_index },
+                        last_kick_index: if is_rotation {
+                            kick_index
+                        } else {
+                            path_info.last_kick_index
+                        },
                         last_move_was_rotation: is_rotation,
                     };
                     queue.push_back((new_state, new_info));
@@ -321,9 +328,7 @@ pub fn find_all_placements(
             path_info.moves.push(Action::HardDrop.to_u8());
 
             // Pre-compute action index
-            let action_index = action_space
-                .placement_to_index(x, y, rotation)
-                .unwrap_or(0); // Should never fail for valid placements
+            let action_index = action_space.placement_to_index(x, y, rotation).unwrap_or(0); // Should never fail for valid placements
 
             placements.push(Placement {
                 piece: Piece::with_position(piece_type, x, y, rotation),
@@ -414,10 +419,7 @@ mod tests {
 
         for placement in &placements {
             // Every placement should end with hard drop
-            assert!(
-                !placement.moves.is_empty(),
-                "Placement should have moves"
-            );
+            assert!(!placement.moves.is_empty(), "Placement should have moves");
             assert_eq!(
                 *placement.moves.last().unwrap(),
                 Action::HardDrop.to_u8(),
@@ -523,7 +525,10 @@ mod tests {
         let board = Board::new(10, 20, &cells);
 
         let placements = find_all_placements(&board, 0, 3, 0);
-        assert!(placements.is_empty(), "Should have no placements when spawn is blocked");
+        assert!(
+            placements.is_empty(),
+            "Should have no placements when spawn is blocked"
+        );
     }
 
     #[test]

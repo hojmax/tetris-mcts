@@ -8,7 +8,9 @@ impl TetrisEnv {
     /// Internal placement logic with explicit T-spin detection info
     pub(crate) fn place_piece_internal_with_kick(
         &mut self,
-        x: i32, y: i32, rotation: usize,
+        x: i32,
+        y: i32,
+        rotation: usize,
         was_rotation: bool,
         kick_index: usize,
     ) -> u32 {

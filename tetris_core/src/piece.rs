@@ -7,216 +7,76 @@ pub const TETROMINOS: [[[[u8; 4]; 4]; 4]; 7] = [
     // I piece - index 0
     [
         // State 0 (spawn)
-        [
-            [0, 0, 0, 0],
-            [1, 1, 1, 1],
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
         // State R (CW from spawn)
-        [
-            [0, 0, 1, 0],
-            [0, 0, 1, 0],
-            [0, 0, 1, 0],
-            [0, 0, 1, 0],
-        ],
+        [[0, 0, 1, 0], [0, 0, 1, 0], [0, 0, 1, 0], [0, 0, 1, 0]],
         // State 2 (180°)
-        [
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-            [1, 1, 1, 1],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0]],
         // State L (CCW from spawn)
-        [
-            [0, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 1, 0, 0],
-        ],
+        [[0, 1, 0, 0], [0, 1, 0, 0], [0, 1, 0, 0], [0, 1, 0, 0]],
     ],
     // O piece - index 1
     [
         // All states are the same for O (centered in matrix for rotation stability)
-        [
-            [0, 0, 0, 0],
-            [0, 1, 1, 0],
-            [0, 1, 1, 0],
-            [0, 0, 0, 0],
-        ],
-        [
-            [0, 0, 0, 0],
-            [0, 1, 1, 0],
-            [0, 1, 1, 0],
-            [0, 0, 0, 0],
-        ],
-        [
-            [0, 0, 0, 0],
-            [0, 1, 1, 0],
-            [0, 1, 1, 0],
-            [0, 0, 0, 0],
-        ],
-        [
-            [0, 0, 0, 0],
-            [0, 1, 1, 0],
-            [0, 1, 1, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0]],
+        [[0, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0]],
+        [[0, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0]],
+        [[0, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0]],
     ],
     // T piece - index 2
     [
         // State 0 (spawn)
-        [
-            [0, 1, 0, 0],
-            [1, 1, 1, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 0, 0], [1, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
         // State R
-        [
-            [0, 1, 0, 0],
-            [0, 1, 1, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 0, 0], [0, 1, 1, 0], [0, 1, 0, 0], [0, 0, 0, 0]],
         // State 2
-        [
-            [0, 0, 0, 0],
-            [1, 1, 1, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [1, 1, 1, 0], [0, 1, 0, 0], [0, 0, 0, 0]],
         // State L
-        [
-            [0, 1, 0, 0],
-            [1, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 0, 0], [1, 1, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]],
     ],
     // S piece - index 3
     [
         // State 0 (spawn)
-        [
-            [0, 1, 1, 0],
-            [1, 1, 0, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 1, 0], [1, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
         // State R
-        [
-            [0, 1, 0, 0],
-            [0, 1, 1, 0],
-            [0, 0, 1, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 0, 0], [0, 1, 1, 0], [0, 0, 1, 0], [0, 0, 0, 0]],
         // State 2
-        [
-            [0, 0, 0, 0],
-            [0, 1, 1, 0],
-            [1, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [0, 1, 1, 0], [1, 1, 0, 0], [0, 0, 0, 0]],
         // State L
-        [
-            [1, 0, 0, 0],
-            [1, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[1, 0, 0, 0], [1, 1, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]],
     ],
     // Z piece - index 4
     [
         // State 0 (spawn)
-        [
-            [1, 1, 0, 0],
-            [0, 1, 1, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
         // State R
-        [
-            [0, 0, 1, 0],
-            [0, 1, 1, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 1, 0], [0, 1, 1, 0], [0, 1, 0, 0], [0, 0, 0, 0]],
         // State 2
-        [
-            [0, 0, 0, 0],
-            [1, 1, 0, 0],
-            [0, 1, 1, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [1, 1, 0, 0], [0, 1, 1, 0], [0, 0, 0, 0]],
         // State L
-        [
-            [0, 1, 0, 0],
-            [1, 1, 0, 0],
-            [1, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 0, 0], [1, 1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 0]],
     ],
     // J piece - index 5
     [
         // State 0 (spawn)
-        [
-            [1, 0, 0, 0],
-            [1, 1, 1, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[1, 0, 0, 0], [1, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
         // State R
-        [
-            [0, 1, 1, 0],
-            [0, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 1, 0], [0, 1, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]],
         // State 2
-        [
-            [0, 0, 0, 0],
-            [1, 1, 1, 0],
-            [0, 0, 1, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [1, 1, 1, 0], [0, 0, 1, 0], [0, 0, 0, 0]],
         // State L
-        [
-            [0, 1, 0, 0],
-            [0, 1, 0, 0],
-            [1, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 0, 0], [0, 1, 0, 0], [1, 1, 0, 0], [0, 0, 0, 0]],
     ],
     // L piece - index 6
     [
         // State 0 (spawn)
-        [
-            [0, 0, 1, 0],
-            [1, 1, 1, 0],
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 1, 0], [1, 1, 1, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
         // State R
-        [
-            [0, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 1, 1, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 1, 0, 0], [0, 1, 0, 0], [0, 1, 1, 0], [0, 0, 0, 0]],
         // State 2
-        [
-            [0, 0, 0, 0],
-            [1, 1, 1, 0],
-            [1, 0, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[0, 0, 0, 0], [1, 1, 1, 0], [1, 0, 0, 0], [0, 0, 0, 0]],
         // State L
-        [
-            [1, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 0, 0],
-        ],
+        [[1, 1, 0, 0], [0, 1, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0]],
     ],
 ];
 
@@ -276,13 +136,13 @@ pub const TETROMINO_CELLS: [[[(i8, i8); 4]; 4]; 7] = [
 
 /// Colors for each tetromino (RGB) - matching Jstris style
 pub const COLORS: [(u8, u8, u8); 7] = [
-    (93, 173, 212),   // I - Light blue/Cyan
-    (219, 174, 63),   // O - Golden yellow
-    (178, 74, 156),   // T - Magenta
-    (114, 184, 65),   // S - Green
-    (204, 65, 65),    // Z - Red
-    (59, 84, 165),    // J - Blue
-    (227, 127, 59),   // L - Orange
+    (93, 173, 212), // I - Light blue/Cyan
+    (219, 174, 63), // O - Golden yellow
+    (178, 74, 156), // T - Magenta
+    (114, 184, 65), // S - Green
+    (204, 65, 65),  // Z - Red
+    (59, 84, 165),  // J - Blue
+    (227, 127, 59), // L - Orange
 ];
 
 /// Number of piece types (tetromino variants)
@@ -294,7 +154,12 @@ pub const MAX_PIECE_CELLS: usize = 4;
 /// Get the cells occupied by a piece at a given position using precomputed offsets.
 /// Returns a fixed-size array of exactly 4 cells (all tetrominos have 4 cells).
 #[inline]
-pub fn get_cells(piece_type: usize, rotation: usize, x: i32, y: i32) -> [(i32, i32); MAX_PIECE_CELLS] {
+pub fn get_cells(
+    piece_type: usize,
+    rotation: usize,
+    x: i32,
+    y: i32,
+) -> [(i32, i32); MAX_PIECE_CELLS] {
     let offsets = &TETROMINO_CELLS[piece_type][rotation];
     [
         (x + offsets[0].0 as i32, y + offsets[0].1 as i32),
@@ -402,7 +267,13 @@ mod tests {
             for rotation in 0..4 {
                 let piece = Piece::with_position(piece_type, 0, 0, rotation);
                 let cells = piece.get_cells();
-                assert_eq!(cells.len(), 4, "Piece type {} rotation {} should have 4 cells", piece_type, rotation);
+                assert_eq!(
+                    cells.len(),
+                    4,
+                    "Piece type {} rotation {} should have 4 cells",
+                    piece_type,
+                    rotation
+                );
             }
         }
     }
@@ -426,7 +297,11 @@ mod tests {
         for rotation in 0..4 {
             let cells = get_cells(1, rotation, 0, 0);
             let base_cells = get_cells(1, 0, 0, 0);
-            assert_eq!(cells, base_cells, "O piece rotation {} should match spawn state", rotation);
+            assert_eq!(
+                cells, base_cells,
+                "O piece rotation {} should match spawn state",
+                rotation
+            );
         }
     }
 
@@ -466,7 +341,11 @@ mod tests {
                         }
                     }
                 }
-                assert_eq!(cell_count, 4, "Piece {} rotation {} should have exactly 4 cells", piece_type, rotation);
+                assert_eq!(
+                    cell_count, 4,
+                    "Piece {} rotation {} should have exactly 4 cells",
+                    piece_type, rotation
+                );
             }
         }
     }
@@ -478,12 +357,18 @@ mod tests {
         let cells_r = piece_r.get_cells();
         // All cells should have same x coordinate in R state
         let x_coords: Vec<i32> = cells_r.iter().map(|(x, _)| *x).collect();
-        assert!(x_coords.iter().all(|&x| x == x_coords[0]), "I piece in R state should be vertical");
+        assert!(
+            x_coords.iter().all(|&x| x == x_coords[0]),
+            "I piece in R state should be vertical"
+        );
 
         let piece_l = Piece::with_position(0, 0, 0, 3);
         let cells_l = piece_l.get_cells();
         let x_coords: Vec<i32> = cells_l.iter().map(|(x, _)| *x).collect();
-        assert!(x_coords.iter().all(|&x| x == x_coords[0]), "I piece in L state should be vertical");
+        assert!(
+            x_coords.iter().all(|&x| x == x_coords[0]),
+            "I piece in L state should be vertical"
+        );
     }
 
     #[test]

@@ -38,7 +38,10 @@ impl TetrisEnv {
         // Ensure we have enough pieces in the queue
         self.fill_queue(7);
 
-        let piece_type = self.piece_queue.pop_front().expect("Queue should not be empty after fill_queue");
+        let piece_type = self
+            .piece_queue
+            .pop_front()
+            .expect("Queue should not be empty after fill_queue");
         let mut piece = Piece::new(piece_type);
 
         piece.x = spawn_x(self.width);

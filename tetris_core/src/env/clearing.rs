@@ -5,8 +5,8 @@
 use crate::constants::T_PIECE;
 use crate::piece::{get_cells, Piece};
 use crate::scoring::{
-    calculate_attack, combo_attack, determine_clear_type, AttackResult,
-    BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,
+    calculate_attack, combo_attack, determine_clear_type, AttackResult, BACK_TO_BACK_BONUS,
+    PERFECT_CLEAR_ATTACK,
 };
 
 use super::TetrisEnv;

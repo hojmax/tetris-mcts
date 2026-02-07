@@ -10,7 +10,9 @@ use crate::env::TetrisEnv;
 use super::action_space::get_action_space;
 use super::config::MCTSConfig;
 use super::export::export_decision_node;
-use super::results::{GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport};
+use super::results::{
+    GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
+};
 use super::search::search_internal;
 
 /// MCTS Agent for Tetris
@@ -286,8 +288,15 @@ impl MCTSAgent {
             .predict_masked(env, move_number as usize, &mask)
             .expect("Neural network prediction failed");
 
-        let (mcts_result, root) =
-            search_internal(&self.config, nn, env, policy, nn_value, add_noise, move_number);
+        let (mcts_result, root) = search_internal(
+            &self.config,
+            nn,
+            env,
+            policy,
+            nn_value,
+            add_noise,
+            move_number,
+        );
 
         // Export tree structure
         let mut nodes: Vec<TreeNodeExport> = Vec::new();
@@ -335,8 +344,15 @@ impl MCTSAgent {
             .predict_masked(env, move_number as usize, &mask)
             .expect("Neural network prediction failed");
 
-        let (mcts_result, _root) =
-            search_internal(&self.config, nn, env, policy, nn_value, add_noise, move_number);
+        let (mcts_result, _root) = search_internal(
+            &self.config,
+            nn,
+            env,
+            policy,
+            nn_value,
+            add_noise,
+            move_number,
+        );
         Some(mcts_result)
     }
 }
@@ -356,17 +372,27 @@ impl MCTSAgent {
         add_noise: bool,
         move_number: u32,
     ) -> MCTSResult {
-        let nn = self.nn.as_ref().expect("Neural network required for search");
-        let (result, _root) =
-            search_internal(&self.config, nn, env, policy, nn_value, add_noise, move_number);
+        let nn = self
+            .nn
+            .as_ref()
+            .expect("Neural network required for search");
+        let (result, _root) = search_internal(
+            &self.config,
+            nn,
+            env,
+            policy,
+            nn_value,
+            add_noise,
+            move_number,
+        );
         result
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::nodes::{DecisionNode, MCTSNode};
+    use super::*;
 
     #[test]
     fn test_expand_action_updates_state() {

@@ -140,7 +140,8 @@ def run_tree_math_audit(
         if int(node.visit_count) > 0:
             recomputed_mean = float(node.value_sum) / float(node.visit_count)
             check_and_record(
-                abs(recomputed_mean - float(node.mean_value)) <= args.value_mean_tolerance,
+                abs(recomputed_mean - float(node.mean_value))
+                <= args.value_mean_tolerance,
                 (
                     f"Node {node_id} mean mismatch: exported={node.mean_value} "
                     f"recomputed={recomputed_mean}"
@@ -214,7 +215,9 @@ def run_tree_math_audit(
                     ),
                     failures,
                 )
-                possible_pieces = {int(x) for x in node.state.get_possible_next_pieces()}
+                possible_pieces = {
+                    int(x) for x in node.state.get_possible_next_pieces()
+                }
                 if child.edge_from_parent is not None:
                     check_and_record(
                         int(child.edge_from_parent) in possible_pieces,
@@ -295,7 +298,9 @@ def run_tree_math_audit(
                 failures,
             )
 
-            possible_pieces = sorted(int(x) for x in node.state.get_possible_next_pieces())
+            possible_pieces = sorted(
+                int(x) for x in node.state.get_possible_next_pieces()
+            )
             piece_visit_counts: dict[int, int] = {piece: 0 for piece in possible_pieces}
             for child_id_raw in node.children:
                 child_id = int(child_id_raw)
@@ -483,8 +488,8 @@ def run_seed_audit(
     decision_backup_mismatch_count = 0
     reward_attack_mismatch_count = 0
     chance_uniform_violation_count = 0
-    chance_model_hidden_piece_counts: dict[tuple[int, ...], dict[int, int]] = defaultdict(
-        lambda: defaultdict(int)
+    chance_model_hidden_piece_counts: dict[tuple[int, ...], dict[int, int]] = (
+        defaultdict(lambda: defaultdict(int))
     )
 
     logger.info("Auditing seed", seed=seed, max_moves=args.max_moves)
@@ -637,7 +642,9 @@ def run_seed_audit(
                     failures,
                 )
 
-                child_lines, child_total_attack = get_lines_and_attack_from_state(child.state)
+                child_lines, child_total_attack = get_lines_and_attack_from_state(
+                    child.state
+                )
                 check_and_record(
                     sim_lines == child_lines,
                     (
@@ -721,7 +728,8 @@ def run_seed_audit(
                     failures,
                 )
                 check_and_record(
-                    transition_env.get_queue_len() == decision_child.state.get_queue_len(),
+                    transition_env.get_queue_len()
+                    == decision_child.state.get_queue_len(),
                     (
                         f"Chance->decision queue_len mismatch for action {action}, "
                         f"piece {piece}"
@@ -755,7 +763,9 @@ def run_seed_audit(
                     failures,
                 )
 
-            child_lines, _child_total_attack = get_lines_and_attack_from_state(child.state)
+            child_lines, _child_total_attack = get_lines_and_attack_from_state(
+                child.state
+            )
             policy_prob = (
                 float(mcts_result.policy[action])
                 if 0 <= action < len(mcts_result.policy)
@@ -771,11 +781,17 @@ def run_seed_audit(
                 "policy_prob": safe_float(policy_prob),
                 "attack": int(child.attack),
                 "reward": safe_float(child.reward),
-                "reward_attack_delta": safe_float(abs(float(child.reward) - float(child.attack))),
+                "reward_attack_delta": safe_float(
+                    abs(float(child.reward) - float(child.attack))
+                ),
                 "lines": int(child_lines),
-                "q_minus_reward": safe_float(float(child.mean_value) - float(child.reward)),
+                "q_minus_reward": safe_float(
+                    float(child.mean_value) - float(child.reward)
+                ),
                 "q_minus_reward_minus_nn": safe_float(
-                    float(child.mean_value) - float(child.reward) - float(child.nn_value)
+                    float(child.mean_value)
+                    - float(child.reward)
+                    - float(child.nn_value)
                 ),
                 "piece_children": int(len(child.children)),
                 "possible_next_pieces": sorted(int(x) for x in possible_pieces),
@@ -831,8 +847,8 @@ def run_seed_audit(
         selected_tree_attack = 0
         selected_tree_q = 0.0
         if selected_child is not None:
-            selected_tree_lines, selected_tree_total_attack = get_lines_and_attack_from_state(
-                selected_child.state
+            selected_tree_lines, selected_tree_total_attack = (
+                get_lines_and_attack_from_state(selected_child.state)
             )
             selected_tree_attack = int(selected_child.attack)
             check_and_record(
@@ -899,7 +915,9 @@ def run_seed_audit(
 
         top_valid_line_row: dict | None = None
         if valid_action_rows:
-            line_candidates = [row for row in valid_action_rows if row.get("lines", 0) > 0]
+            line_candidates = [
+                row for row in valid_action_rows if row.get("lines", 0) > 0
+            ]
             if line_candidates:
                 line_candidates.sort(
                     key=lambda row: (
@@ -913,7 +931,9 @@ def run_seed_audit(
 
         top_valid_attack_row: dict | None = None
         if valid_action_rows:
-            attack_candidates = [row for row in valid_action_rows if row.get("attack", 0) > 0]
+            attack_candidates = [
+                row for row in valid_action_rows if row.get("attack", 0) > 0
+            ]
             if attack_candidates:
                 attack_candidates.sort(
                     key=lambda row: (
@@ -936,7 +956,9 @@ def run_seed_audit(
                 "num_simulations": int(mcts_result.num_simulations),
                 "selected_action": int(selected_action),
                 "selected_policy_prob": safe_float(mcts_result.policy[selected_action]),
-                "policy_entropy": safe_float(compute_policy_entropy(mcts_result.policy)),
+                "policy_entropy": safe_float(
+                    compute_policy_entropy(mcts_result.policy)
+                ),
                 "root_value": safe_float(mcts_result.value),
             },
             "selected_action": {
@@ -1089,10 +1111,14 @@ def get_seeds(args: "ScriptArgs") -> list[int]:
 @dataclass
 class ScriptArgs:
     model_path: Path = sp_field(positional=True)  # Path to ONNX model to audit
-    output_dir: Path = Path(__file__).parent / "outputs" / "mcts_tree_audits"  # Directory for audit artifacts
+    output_dir: Path = (
+        Path(__file__).parent / "outputs" / "mcts_tree_audits"
+    )  # Directory for audit artifacts
     run_name: str = ""  # Optional explicit run directory name (empty = auto-generated)
     max_moves: int = 30  # Maximum moves to audit per seed
-    seeds: list[int] = sp_field(default_factory=list)  # Explicit seed list (overrides seed_start/num_seeds)
+    seeds: list[int] = sp_field(
+        default_factory=list
+    )  # Explicit seed list (overrides seed_start/num_seeds)
     seed_start: int = 0  # First seed when seeds list is empty
     num_seeds: int = 3  # Number of sequential seeds when seeds list is empty
     num_simulations: int = 400  # MCTS simulations per audited move
@@ -1103,14 +1129,28 @@ class ScriptArgs:
     mcts_seed: int = 12345  # MCTS RNG seed for reproducibility
     top_k_actions: int = 8  # Number of top root actions logged per move
     dump_full_tree: bool = True  # If true, write full tree JSON for each move
-    check_all_valid_actions: bool = True  # If true, evaluate all valid root actions for immediate lines
-    value_mean_tolerance: float = 1e-5  # Tolerance for exported mean-value consistency checks
-    value_sum_tolerance: float = 1e-3  # Tolerance for decision-node value-sum accounting checks
-    reward_attack_tolerance: float = 1e-6  # Tolerance for chance reward vs attack consistency checks
-    check_uniform_piece_sampling: bool = True  # If true, check chance-node piece-visit uniformity at high visits
-    min_visits_for_uniform_check: int = 140  # Minimum visits before enforcing uniformity checks on a chance node
+    check_all_valid_actions: bool = (
+        True  # If true, evaluate all valid root actions for immediate lines
+    )
+    value_mean_tolerance: float = (
+        1e-5  # Tolerance for exported mean-value consistency checks
+    )
+    value_sum_tolerance: float = (
+        1e-3  # Tolerance for decision-node value-sum accounting checks
+    )
+    reward_attack_tolerance: float = (
+        1e-6  # Tolerance for chance reward vs attack consistency checks
+    )
+    check_uniform_piece_sampling: bool = (
+        True  # If true, check chance-node piece-visit uniformity at high visits
+    )
+    min_visits_for_uniform_check: int = (
+        140  # Minimum visits before enforcing uniformity checks on a chance node
+    )
     max_uniform_rel_deviation: float = 0.9  # Max relative deviation from uniform piece counts for high-visit chance nodes
-    fail_on_invariant_error: bool = True  # If true, exit non-zero on any invariant failure
+    fail_on_invariant_error: bool = (
+        True  # If true, exit non-zero on any invariant failure
+    )
 
 
 def main(args: ScriptArgs) -> None:

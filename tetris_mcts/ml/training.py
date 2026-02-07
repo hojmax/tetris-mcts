@@ -262,7 +262,9 @@ class Trainer:
                     metrics["games_generated"] = games
                     metrics["examples_generated"] = generator.examples_generated()
                     metrics["games_per_second"] = games / elapsed if elapsed > 0 else 0
-                    metrics["steps_per_second"] = self.step / elapsed if elapsed > 0 else 0
+                    metrics["steps_per_second"] = (
+                        self.step / elapsed if elapsed > 0 else 0
+                    )
                     if log_to_wandb:
                         wandb.log(metrics, step=self.step)
                         # Log per-game stats with game_number as x-axis

@@ -29,7 +29,13 @@ impl TetrisEnv {
         self.is_valid_position(piece.piece_type, piece.rotation, piece.x, piece.y)
     }
 
-    pub(crate) fn is_valid_position(&self, piece_type: usize, rotation: usize, x: i32, y: i32) -> bool {
+    pub(crate) fn is_valid_position(
+        &self,
+        piece_type: usize,
+        rotation: usize,
+        x: i32,
+        y: i32,
+    ) -> bool {
         for (cx, cy) in get_cells(piece_type, rotation, x, y) {
             if cx < 0 || cx >= self.width as i32 || cy < 0 || cy >= self.height as i32 {
                 return false;

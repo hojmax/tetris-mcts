@@ -455,7 +455,12 @@ mod tests {
         // All cells should be empty
         for y in 0..20 {
             for x in 0..10 {
-                assert!(!env.is_cell_filled(x, y), "Cell ({}, {}) should be empty", x, y);
+                assert!(
+                    !env.is_cell_filled(x, y),
+                    "Cell ({}, {}) should be empty",
+                    x,
+                    y
+                );
             }
         }
     }
@@ -1010,7 +1015,10 @@ mod tests {
         // Move piece down until it lands on the stack
         while env.move_down() {}
 
-        assert!(env.is_grounded(), "Piece on top of stack should be grounded");
+        assert!(
+            env.is_grounded(),
+            "Piece on top of stack should be grounded"
+        );
     }
 
     #[test]
@@ -1240,11 +1248,7 @@ mod tests {
 
             let attack = env.place_piece_internal_with_kick(4, 17, rotation, false, 0);
             // Should not panic and piece should be placed
-            assert!(
-                env.lines_cleared >= 0,
-                "Rotation {} should work",
-                rotation
-            );
+            assert!(env.lines_cleared >= 0, "Rotation {} should work", rotation);
         }
     }
 
@@ -1304,7 +1308,10 @@ mod tests {
 
         // Verify state changed
         let new_piece = env_clone.get_current_piece();
-        assert!(new_piece.is_some(), "Should have a new piece after placement");
+        assert!(
+            new_piece.is_some(),
+            "Should have a new piece after placement"
+        );
 
         let new_piece_type = new_piece.unwrap().piece_type;
         let new_queue: Vec<usize> = env_clone.get_queue(5);
@@ -1373,12 +1380,18 @@ mod tests {
         let (expected_heights, expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board);
 
-        assert_eq!(env.column_heights, expected_heights,
-            "column_heights mismatch after hard_drop");
-        assert_eq!(env.total_blocks, expected_blocks,
-            "total_blocks mismatch after hard_drop");
-        assert_eq!(env.row_fill_counts, expected_row_counts,
-            "row_fill_counts mismatch after hard_drop");
+        assert_eq!(
+            env.column_heights, expected_heights,
+            "column_heights mismatch after hard_drop"
+        );
+        assert_eq!(
+            env.total_blocks, expected_blocks,
+            "total_blocks mismatch after hard_drop"
+        );
+        assert_eq!(
+            env.row_fill_counts, expected_row_counts,
+            "row_fill_counts mismatch after hard_drop"
+        );
     }
 
     #[test]
@@ -1396,12 +1409,18 @@ mod tests {
         let (expected_heights, expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board);
 
-        assert_eq!(env.column_heights, expected_heights,
-            "column_heights mismatch after multiple drops");
-        assert_eq!(env.total_blocks, expected_blocks,
-            "total_blocks mismatch after multiple drops");
-        assert_eq!(env.row_fill_counts, expected_row_counts,
-            "row_fill_counts mismatch after multiple drops");
+        assert_eq!(
+            env.column_heights, expected_heights,
+            "column_heights mismatch after multiple drops"
+        );
+        assert_eq!(
+            env.total_blocks, expected_blocks,
+            "total_blocks mismatch after multiple drops"
+        );
+        assert_eq!(
+            env.row_fill_counts, expected_row_counts,
+            "row_fill_counts mismatch after multiple drops"
+        );
     }
 
     #[test]
@@ -1424,12 +1443,19 @@ mod tests {
         let (expected_heights, expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board);
 
-        assert_eq!(env.column_heights, expected_heights,
-            "column_heights mismatch after line clears (cleared {} lines)", total_clears);
-        assert_eq!(env.total_blocks, expected_blocks,
-            "total_blocks mismatch after line clears");
-        assert_eq!(env.row_fill_counts, expected_row_counts,
-            "row_fill_counts mismatch after line clears");
+        assert_eq!(
+            env.column_heights, expected_heights,
+            "column_heights mismatch after line clears (cleared {} lines)",
+            total_clears
+        );
+        assert_eq!(
+            env.total_blocks, expected_blocks,
+            "total_blocks mismatch after line clears"
+        );
+        assert_eq!(
+            env.row_fill_counts, expected_row_counts,
+            "row_fill_counts mismatch after line clears"
+        );
     }
 
     #[test]
@@ -1501,20 +1527,20 @@ mod tests {
 
         // Set up rows with different fill levels
         for x in 0..3 {
-            env.board[19][x] = 1;  // 3 cells in row 19
+            env.board[19][x] = 1; // 3 cells in row 19
         }
         for x in 0..7 {
-            env.board[18][x] = 1;  // 7 cells in row 18
+            env.board[18][x] = 1; // 7 cells in row 18
         }
         for x in 0..10 {
-            env.board[17][x] = 1;  // 10 cells in row 17 (full)
+            env.board[17][x] = 1; // 10 cells in row 17 (full)
         }
         env.sync_board_stats();
 
         assert_eq!(env.row_fill_counts[19], 3);
         assert_eq!(env.row_fill_counts[18], 7);
         assert_eq!(env.row_fill_counts[17], 10);
-        assert_eq!(env.row_fill_counts[16], 0);  // Empty row
+        assert_eq!(env.row_fill_counts[16], 0); // Empty row
     }
 
     #[test]
@@ -1522,16 +1548,16 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
 
         // Create varied column heights
-        env.board[19][0] = 1;  // Column 0: height at y=19
-        env.board[15][1] = 1;  // Column 1: height at y=15
-        env.board[10][2] = 1;  // Column 2: height at y=10
-        env.board[19][2] = 1;  // Also in column 2, but lower
+        env.board[19][0] = 1; // Column 0: height at y=19
+        env.board[15][1] = 1; // Column 1: height at y=15
+        env.board[10][2] = 1; // Column 2: height at y=10
+        env.board[19][2] = 1; // Also in column 2, but lower
         env.sync_board_stats();
 
         assert_eq!(env.column_heights[0], 19);
         assert_eq!(env.column_heights[1], 15);
-        assert_eq!(env.column_heights[2], 10);  // Topmost cell
-        assert_eq!(env.column_heights[3], 20);  // Empty column = height
+        assert_eq!(env.column_heights[2], 10); // Topmost cell
+        assert_eq!(env.column_heights[3], 20); // Empty column = height
     }
 
     #[test]
@@ -1540,10 +1566,21 @@ mod tests {
 
         // Place exactly 15 blocks
         let positions = [
-            (0, 19), (1, 19), (2, 19),
-            (0, 18), (1, 18), (2, 18), (3, 18),
-            (5, 15), (6, 15), (7, 15), (8, 15), (9, 15),
-            (0, 10), (5, 10), (9, 10),
+            (0, 19),
+            (1, 19),
+            (2, 19),
+            (0, 18),
+            (1, 18),
+            (2, 18),
+            (3, 18),
+            (5, 15),
+            (6, 15),
+            (7, 15),
+            (8, 15),
+            (9, 15),
+            (0, 10),
+            (5, 10),
+            (9, 10),
         ];
         for (x, y) in positions {
             env.board[y][x] = 1;
@@ -1569,15 +1606,23 @@ mod tests {
             let inc_row_counts = env.row_fill_counts.clone();
 
             // Recalculate from scratch
-            let (sync_heights, sync_blocks, sync_row_counts) =
-                compute_expected_stats(&env.board);
+            let (sync_heights, sync_blocks, sync_row_counts) = compute_expected_stats(&env.board);
 
-            assert_eq!(inc_heights, sync_heights,
-                "Iteration {}: column_heights incremental != sync", i);
-            assert_eq!(inc_blocks, sync_blocks,
-                "Iteration {}: total_blocks incremental != sync", i);
-            assert_eq!(inc_row_counts, sync_row_counts,
-                "Iteration {}: row_fill_counts incremental != sync", i);
+            assert_eq!(
+                inc_heights, sync_heights,
+                "Iteration {}: column_heights incremental != sync",
+                i
+            );
+            assert_eq!(
+                inc_blocks, sync_blocks,
+                "Iteration {}: total_blocks incremental != sync",
+                i
+            );
+            assert_eq!(
+                inc_row_counts, sync_row_counts,
+                "Iteration {}: row_fill_counts incremental != sync",
+                i
+            );
 
             env.hard_drop();
         }
@@ -1684,8 +1729,7 @@ mod tests {
             assert!(
                 !filled,
                 "{}: row {} is completely filled but not cleared",
-                context,
-                y
+                context, y
             );
         }
 
@@ -1700,8 +1744,8 @@ mod tests {
         // 10. If column height is at row Y, there must be at least one cell at or above Y
         for (x, &height) in env.column_heights.iter().enumerate() {
             if (height as usize) < env.height {
-                let has_cell_at_height = (height as usize..env.height)
-                    .any(|y| env.board[y][x] != 0);
+                let has_cell_at_height =
+                    (height as usize..env.height).any(|y| env.board[y][x] != 0);
                 assert!(
                     has_cell_at_height,
                     "{}: column {} has height {} but no cells at or above that row",

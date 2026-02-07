@@ -63,7 +63,11 @@ pub fn get_i_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
 
 /// Get the appropriate wall kicks for a piece type
 /// piece_type: 0=I, 1=O, 2=T, 3=S, 4=Z, 5=J, 6=L
-pub fn get_kicks_for_piece(piece_type: usize, from_state: usize, to_state: usize) -> [(i32, i32); 5] {
+pub fn get_kicks_for_piece(
+    piece_type: usize,
+    from_state: usize,
+    to_state: usize,
+) -> [(i32, i32); 5] {
     match piece_type {
         0 => get_i_kicks(from_state, to_state),
         1 => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)], // O piece: no kicks needed
@@ -79,24 +83,48 @@ mod tests {
     fn test_jlstz_kicks_first_is_identity() {
         // First kick should always be (0, 0) - try without offset first
         let transitions = [
-            (0, 1), (1, 0), (1, 2), (2, 1),
-            (2, 3), (3, 2), (3, 0), (0, 3),
+            (0, 1),
+            (1, 0),
+            (1, 2),
+            (2, 1),
+            (2, 3),
+            (3, 2),
+            (3, 0),
+            (0, 3),
         ];
         for (from, to) in transitions.iter() {
             let kicks = get_jlstz_kicks(*from, *to);
-            assert_eq!(kicks[0], (0, 0), "First kick for {}->{} should be (0,0)", from, to);
+            assert_eq!(
+                kicks[0],
+                (0, 0),
+                "First kick for {}->{} should be (0,0)",
+                from,
+                to
+            );
         }
     }
 
     #[test]
     fn test_i_kicks_first_is_identity() {
         let transitions = [
-            (0, 1), (1, 0), (1, 2), (2, 1),
-            (2, 3), (3, 2), (3, 0), (0, 3),
+            (0, 1),
+            (1, 0),
+            (1, 2),
+            (2, 1),
+            (2, 3),
+            (3, 2),
+            (3, 0),
+            (0, 3),
         ];
         for (from, to) in transitions.iter() {
             let kicks = get_i_kicks(*from, *to);
-            assert_eq!(kicks[0], (0, 0), "First I-kick for {}->{} should be (0,0)", from, to);
+            assert_eq!(
+                kicks[0],
+                (0, 0),
+                "First I-kick for {}->{} should be (0,0)",
+                from,
+                to
+            );
         }
     }
 
@@ -186,33 +214,49 @@ mod tests {
     fn test_all_valid_jlstz_transitions() {
         // All valid single-step transitions should have proper kicks
         let valid_transitions = [
-            (0, 1), (1, 0),  // 0 <-> R
-            (1, 2), (2, 1),  // R <-> 2
-            (2, 3), (3, 2),  // 2 <-> L
-            (3, 0), (0, 3),  // L <-> 0
+            (0, 1),
+            (1, 0), // 0 <-> R
+            (1, 2),
+            (2, 1), // R <-> 2
+            (2, 3),
+            (3, 2), // 2 <-> L
+            (3, 0),
+            (0, 3), // L <-> 0
         ];
 
         for (from, to) in valid_transitions.iter() {
             let kicks = get_jlstz_kicks(*from, *to);
             // Should have non-trivial kicks (not all zeros after first)
             let has_non_trivial = kicks[1..].iter().any(|&(x, y)| x != 0 || y != 0);
-            assert!(has_non_trivial, "Transition {}->{} should have non-trivial kicks", from, to);
+            assert!(
+                has_non_trivial,
+                "Transition {}->{} should have non-trivial kicks",
+                from, to
+            );
         }
     }
 
     #[test]
     fn test_all_valid_i_transitions() {
         let valid_transitions = [
-            (0, 1), (1, 0),
-            (1, 2), (2, 1),
-            (2, 3), (3, 2),
-            (3, 0), (0, 3),
+            (0, 1),
+            (1, 0),
+            (1, 2),
+            (2, 1),
+            (2, 3),
+            (3, 2),
+            (3, 0),
+            (0, 3),
         ];
 
         for (from, to) in valid_transitions.iter() {
             let kicks = get_i_kicks(*from, *to);
             let has_non_trivial = kicks[1..].iter().any(|&(x, y)| x != 0 || y != 0);
-            assert!(has_non_trivial, "I transition {}->{} should have non-trivial kicks", from, to);
+            assert!(
+                has_non_trivial,
+                "I transition {}->{} should have non-trivial kicks",
+                from, to
+            );
         }
     }
 }

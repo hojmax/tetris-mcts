@@ -114,7 +114,9 @@ impl TetrisEnv {
             }
         }
 
-        if let (Some(hold_type), Some(hold_bag_pos)) = (self.hold_piece, self.hold_piece_bag_position) {
+        if let (Some(hold_type), Some(hold_bag_pos)) =
+            (self.hold_piece, self.hold_piece_bag_position)
+        {
             let hold_pos = hold_bag_pos as usize;
             if hold_pos >= bag_start && hold_pos < bag_end {
                 used_in_bag.insert(hold_type);
@@ -155,7 +157,8 @@ impl TetrisEnv {
             let current_bag_pos = self.current_piece_bag_position;
 
             if let Some(held_type) = self.hold_piece {
-                let held_bag_pos = self.hold_piece_bag_position
+                let held_bag_pos = self
+                    .hold_piece_bag_position
                     .expect("hold_piece_bag_position should be set when hold_piece is Some");
 
                 self.hold_piece = Some(current_type);
@@ -293,13 +296,27 @@ impl TetrisEnv {
         let old_attack = self.attack;
 
         match action {
-            1 => { self.move_left(); }
-            2 => { self.move_right(); }
-            3 => { self.move_down(); }
-            4 => { self.rotate_cw(); }
-            5 => { self.rotate_ccw(); }
-            6 => { self.hard_drop(); }
-            7 => { self.hold(); }
+            1 => {
+                self.move_left();
+            }
+            2 => {
+                self.move_right();
+            }
+            3 => {
+                self.move_down();
+            }
+            4 => {
+                self.rotate_cw();
+            }
+            5 => {
+                self.rotate_ccw();
+            }
+            6 => {
+                self.hard_drop();
+            }
+            7 => {
+                self.hold();
+            }
             _ => {}
         }
 
@@ -340,7 +357,9 @@ impl TetrisEnv {
         let rotation = placement.piece.rotation;
 
         self.place_piece_internal_with_kick(
-            x, y, rotation,
+            x,
+            y,
+            rotation,
             placement.last_move_was_rotation,
             placement.last_kick_index,
         )
@@ -371,7 +390,12 @@ impl TetrisEnv {
         }
 
         let board = Board::new(self.width, self.height, &self.board);
-        find_all_placements(&board, piece_type, spawn_x(self.width), spawn_y_offset(piece_type))
+        find_all_placements(
+            &board,
+            piece_type,
+            spawn_x(self.width),
+            spawn_y_offset(piece_type),
+        )
     }
 
     pub fn get_possible_placements_with_hold(&self) -> (Vec<Placement>, Vec<Placement>) {
@@ -410,9 +434,9 @@ impl TetrisEnv {
         let (x, y, rot) = action_space.index_to_placement(action_idx)?;
 
         let placements = self.get_possible_placements();
-        let placement = placements.iter().find(|p| {
-            p.piece.x == x && p.piece.y == y && p.piece.rotation == rot
-        })?;
+        let placement = placements
+            .iter()
+            .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)?;
 
         Some(self.execute_placement(placement))
     }

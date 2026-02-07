@@ -12,13 +12,17 @@ use rand_distr::{Distribution, Gamma};
 /// # Panics
 /// Panics if alpha <= 0
 pub fn sample_dirichlet(alpha: f32, n: usize) -> Vec<f32> {
-    debug_assert!(alpha > 0.0, "Dirichlet alpha must be positive, got {}", alpha);
+    debug_assert!(
+        alpha > 0.0,
+        "Dirichlet alpha must be positive, got {}",
+        alpha
+    );
     debug_assert!(n > 0, "Dirichlet n must be positive");
 
     let mut rng = thread_rng();
     // Gamma::new only fails if alpha <= 0 or scale <= 0
-    let gamma = Gamma::new(alpha as f64, 1.0)
-        .expect("Invalid Dirichlet alpha parameter (must be > 0)");
+    let gamma =
+        Gamma::new(alpha as f64, 1.0).expect("Invalid Dirichlet alpha parameter (must be > 0)");
 
     let samples: Vec<f64> = (0..n).map(|_| gamma.sample(&mut rng)).collect();
     let sum: f64 = samples.iter().sum();
@@ -28,8 +32,7 @@ pub fn sample_dirichlet(alpha: f32, n: usize) -> Vec<f32> {
         debug_assert!(
             false,
             "Dirichlet sampling produced all zeros with alpha={} n={} - falling back to uniform",
-            alpha,
-            n
+            alpha, n
         );
         return vec![1.0 / n as f32; n];
     }

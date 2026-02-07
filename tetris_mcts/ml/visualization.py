@@ -160,10 +160,20 @@ def render_board(
         current = current_piece_name or "?"
         hold = hold_piece_name or "-"
         queue = " ".join(queue_pieces) if queue_pieces else ""
-        draw.text((PADDING, 10), f"Move: {move_number}  Attack: {attack}", fill=(200, 200, 200), font=font)
+        draw.text(
+            (PADDING, 10),
+            f"Move: {move_number}  Attack: {attack}",
+            fill=(200, 200, 200),
+            font=font,
+        )
         if info_text:
             draw.text((PADDING, 30), info_text, fill=(200, 200, 200), font=font)
-        draw.text((PADDING, 50), f"Piece: {current}  Hold: {hold}", fill=(200, 200, 200), font=font)
+        draw.text(
+            (PADDING, 50),
+            f"Piece: {current}  Hold: {hold}",
+            fill=(200, 200, 200),
+            font=font,
+        )
         draw.text((PADDING, 70), f"Queue: {queue}", fill=(200, 200, 200), font=font)
     else:
         # Single line

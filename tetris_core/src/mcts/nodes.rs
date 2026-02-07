@@ -285,7 +285,11 @@ mod tests {
 
         // Priors should be normalized to sum to 1
         let sum: f32 = node.action_priors.iter().sum();
-        assert!((sum - 1.0).abs() < 0.01, "Priors should sum to 1, got {}", sum);
+        assert!(
+            (sum - 1.0).abs() < 0.01,
+            "Priors should sum to 1, got {}",
+            sum
+        );
 
         // Each valid action should have a prior
         assert_eq!(node.action_priors.len(), node.valid_actions.len());
@@ -310,7 +314,10 @@ mod tests {
 
         // Priors should still sum to approximately 1
         let sum: f32 = node.action_priors.iter().sum();
-        assert!((sum - 1.0).abs() < 0.01, "Priors should still sum to 1 after noise");
+        assert!(
+            (sum - 1.0).abs() < 0.01,
+            "Priors should still sum to 1 after noise"
+        );
 
         // At least some priors should have changed
         let changed = node
@@ -394,7 +401,8 @@ mod tests {
             let piece = node.select_piece_random(&mut rng);
             assert!(
                 piece == 1 || piece == 3 || piece == 5,
-                "Piece {} should be from bag [1, 3, 5]", piece
+                "Piece {} should be from bag [1, 3, 5]",
+                piece
             );
         }
     }
@@ -462,7 +470,11 @@ mod tests {
         let mut unique = indices.clone();
         unique.sort();
         unique.dedup();
-        assert_eq!(unique.len(), indices.len(), "Should have no duplicate action indices");
+        assert_eq!(
+            unique.len(),
+            indices.len(),
+            "Should have no duplicate action indices"
+        );
     }
 
     #[test]
@@ -509,6 +521,10 @@ mod tests {
         }
 
         // With 100 selections from 7 pieces, we should see most of them
-        assert!(seen.len() >= 5, "Random selection should produce variety, got {} unique pieces", seen.len());
+        assert!(
+            seen.len() >= 5,
+            "Random selection should produce variety, got {} unique pieces",
+            seen.len()
+        );
     }
 }
