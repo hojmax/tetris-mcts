@@ -6,3 +6,5 @@ __pycache__/
 training_runs/
 wandb/
 outputs/
+.build_marker_release
+.build_marker_dev
