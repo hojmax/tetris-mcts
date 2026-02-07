@@ -379,6 +379,7 @@ pub fn find_all_placements_with_hold(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     fn empty_cells(width: usize, height: usize) -> Vec<Vec<u8>> {
         vec![vec![0; width]; height]

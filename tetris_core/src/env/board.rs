@@ -63,6 +63,7 @@ impl TetrisEnv {
 
     /// Recalculate column_heights, total_blocks, and row_fill_counts from the board state.
     /// Call this after directly modifying the board (e.g., in tests or set_board).
+    #[cfg(test)]
     pub(crate) fn sync_board_stats(&mut self) {
         self.total_blocks = 0;
         self.row_fill_counts = vec![0; self.height];

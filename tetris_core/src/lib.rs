@@ -12,6 +12,7 @@
 //! - `mcts`: Monte Carlo Tree Search for AlphaZero-style play
 //! - `nn`: Neural network inference using tract-onnx
 //! - `generator`: Background game generation and evaluation
+#![allow(non_local_definitions)] // PyO3 #[pymethods] triggers this warning with current toolchain.
 
 use pyo3::prelude::*;
 
