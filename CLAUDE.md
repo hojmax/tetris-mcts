@@ -140,12 +140,9 @@ tetris_mcts/                 # Python package
 │   ├── training.py          # Trainer class, training loop
 │   ├── loss.py              # Loss functions and metrics
 │   ├── evaluation.py        # Model evaluation on fixed seeds
-│   ├── data.py              # TetrisDataset, NPZ save/load
 │   ├── weights.py           # Checkpoint/ONNX export
 │   └── visualization.py     # Board rendering for eval trajectories
 └── scripts/
-    ├── train.py                    # Training entry point
-    ├── evaluate.py                 # Evaluate trained model on fixed seeds
     ├── tetris_game.py              # Interactive Pygame game
     ├── mcts_visualizer.py          # Dash tree visualization (localhost:8050)
     ├── replay_viewer.py            # View saved game replays
@@ -172,7 +169,7 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 ### Neural Network (TetrisNet)
 
 - **Input**: 252 features (200 board cells + 52 auxiliary: current piece, hold, queue, move number)
-- **Architecture**: Conv2d(1→2→4) + FC(852→64) + policy head (734) + value head (1)
+- **Architecture**: Conv2d(1→4→8) + FC(1652→128) + policy head (734) + value head (1)
 - **Output**: Policy probabilities over 734 actions, value (predicted cumulative attack)
 
 ### 7-Bag Randomizer
@@ -188,7 +185,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 
 ### Rust (exported to Python)
 
-- `TetrisEnv` - Game state (board, piece, queue, hold, score, game_over)
+- `TetrisEnv` - Game state (board, piece, queue, hold, attack, lines, game_over)
 - `Piece` - Tetromino (piece_type, x, y, rotation)
 - `MCTSAgent` - MCTS search coordinator
 - `MCTSConfig` - Search hyperparameters (num_simulations, c_puct, temperature, etc.)
@@ -208,13 +205,17 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 
 From `config.py` TrainingConfig defaults:
 
-- **MCTS**: 400 simulations, c_puct=1.5, temperature=1.0
-- **Training**: batch_size=256, lr=0.001, cosine schedule, weight_decay=1e-4
-- **Architecture**: Conv(1→2→4), FC(852→64), 734 policy outputs, 1 value output
-- **Buffer**: 100K examples (ring buffer), 5 parallel workers
+- **MCTS**: 600 simulations, c_puct=1.5, temperature=1.0
+- **Training**: batch_size=256, lr=0.0005, cosine schedule, weight_decay=1e-4
+- **Architecture**: Conv(1→4→8), FC(1652→128), 734 policy outputs, 1 value output
+- **Buffer**: 100K examples (ring buffer), 6 parallel workers
 - **Exploration**: Dirichlet alpha=0.15, epsilon=0.25
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
+
+Temperature behavior:
+- `temperature` shapes the MCTS visit-count policy target used for training.
+- Action execution still uses the best move (argmax / most-visited child) during both training and evaluation.
 
 ### Loss Function
 
@@ -270,8 +271,8 @@ Tests are in:
 
 1. Run `python tetris_mcts/train.py --training.total-steps N`
 2. Creates versioned directory: `training_runs/v0/`, `v1/`, etc.
-3. Checkpoints saved to `training_runs/vN/checkpoints/step_*.pt`
-4. ONNX exported as `parallel.onnx` in project root for Rust inference
+3. Checkpoints saved to `training_runs/vN/checkpoints/checkpoint_*.pt` with `latest.pt` symlink
+4. ONNX exported in `training_runs/vN/checkpoints/` (`latest.onnx` and `parallel.onnx`)
 5. Training data backed up to `training_runs/vN/training_data.npz` (periodic saves)
 6. Resume with `--resume-dir training_runs/vN`
 
@@ -283,9 +284,10 @@ training_runs/
 │   ├── config.json              # Saved hyperparameters
 │   ├── training_data.npz        # Periodic backup (resume capability)
 │   └── checkpoints/
-│       ├── step_1000.pt
-│       ├── step_2000.pt
-│       └── ...
+│       ├── checkpoint_1000.pt
+│       ├── latest.pt
+│       ├── latest.onnx
+│       └── parallel.onnx
 ├── v1/                          # Second run
 └── v2/                          # And so on...
 ```

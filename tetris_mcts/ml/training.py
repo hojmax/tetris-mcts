@@ -190,19 +190,6 @@ class Trainer:
         )
         print(f"Saved checkpoint at step {self.step}")
 
-    def load(self) -> bool:
-        """Load latest checkpoint if available."""
-        step = self.weight_manager.load_latest(
-            self.model,
-            self.optimizer,
-            self.scheduler,
-        )
-        if step is not None:
-            self.step = step
-            print(f"Loaded checkpoint at step {step}")
-            return True
-        return False
-
     def train(self, log_to_wandb: bool = True):
         """
         Run parallel training with Rust game generation in background.

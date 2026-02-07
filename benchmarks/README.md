@@ -5,7 +5,7 @@ This directory contains performance profiling tools and results for tracking reg
 ## Files
 
 - `models/parallel.onnx` - Fixed benchmark model (checked into git)
-- `profile_results.jsonl` - Timing results from `make profile` (gitignored)
+- `profile_results.jsonl` - Timing results from `make profile` (tracked history of benchmark runs)
 
 ## Quick Start
 

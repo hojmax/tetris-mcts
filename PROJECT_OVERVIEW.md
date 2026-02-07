@@ -289,7 +289,8 @@ fn self_play_game(network: &Network, config: &Config) -> Vec<TrainingExample> {
 
         mcts_search(&mut root, config.num_simulations, network);
 
-        // Get improved policy from MCTS visit counts
+        // Get improved policy target from MCTS visit counts.
+        // Temperature shapes the training target distribution only.
         let pi = get_mcts_policy(&root, config.temperature);
 
         // Store training example (state, policy, placeholder value)
@@ -299,8 +300,8 @@ fn self_play_game(network: &Network, config: &Config) -> Vec<TrainingExample> {
             value: 0.0,  // Fill in after game ends
         });
 
-        // Select action (sample from pi during training, argmax during eval)
-        let action = sample_action(&pi, config.temperature);
+        // Select action to execute: always best move (argmax / most visited)
+        let action = argmax_action(&pi);
         game.apply_action(action);
     }
 
@@ -869,30 +870,6 @@ fn evaluate(model: &Model) -> EvalMetrics {
 - `eval/avg_combo_length` - average combo length when combo > 0
 - `eval/back_to_back_count` - number of back-to-back clears
 - `eval/back_to_back_attack` - total attack from B2B bonuses
-
----
-
-## 10. Hyperparameter Recommendations
-
-**Current defaults** (from `config.py`):
-
-| Parameter           | Default Value | Notes                                      |
-| ------------------- | ------------- | ------------------------------------------ |
-| total_steps         | 100,000       | Total training steps                       |
-| MCTS simulations    | 400           | Increase for stronger play (100-800 range) |
-| c_puct              | 1.5           | Exploration constant (MCTSConfig)          |
-| Temperature         | 1.0           | Sampling from visit counts (0 = argmax)    |
-| Dirichlet alpha     | 0.15          | Lower than chess due to more actions       |
-| Dirichlet epsilon   | 0.25          | Standard AlphaZero value                   |
-| Batch size          | 256           | Training batch size                        |
-| Learning rate       | 0.001         | With Adam optimizer                        |
-| Weight decay        | 1e-4          | L2 regularization                          |
-| LR schedule         | cosine        | Options: cosine, step, none                |
-| Replay buffer       | 100K          | Max examples in memory (ring buffer)       |
-| num_workers         | 5             | Parallel game generation threads           |
-| model_sync_interval | 2000          | Steps between ONNX exports                 |
-| checkpoint_interval | 1000          | Steps between saving checkpoints           |
-| log_interval        | 100           | Steps between WandB logging                |
 
 ---
 

@@ -200,21 +200,22 @@ pub fn evaluate_model(
             // Run MCTS search (no noise, argmax via config.temperature=0)
             let result = agent.search(&env, policy, nn_value, false, move_idx as u32);
 
-            // Execute action from action index directly.
-            if let Some(attack) = env.execute_action_index(result.action) {
-                game_attack += attack;
-                if let Some(attack_result) = env.get_last_attack_result() {
-                    game_lines += attack_result.lines_cleared;
-                }
-                game_moves += 1;
-                if save_replays {
-                    replay_moves.push(ReplayMove {
-                        action: result.action,
-                        attack,
-                    });
-                }
-            } else {
-                break;
+            let attack = env.execute_action_index(result.action).ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "MCTS returned unexecutable action index: {}",
+                    result.action
+                ))
+            })?;
+            game_attack += attack;
+            if let Some(attack_result) = env.get_last_attack_result() {
+                game_lines += attack_result.lines_cleared;
+            }
+            game_moves += 1;
+            if save_replays {
+                replay_moves.push(ReplayMove {
+                    action: result.action,
+                    attack,
+                });
             }
         }
 

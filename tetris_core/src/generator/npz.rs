@@ -395,3 +395,88 @@ fn write_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize + Copy>(
         .map_err(|e: std::io::Error| e.to_string())?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcts::NUM_ACTIONS;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "tetris_core_{}_{}_{}.npz",
+            name,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    fn make_example(move_number: u32, hold_piece: usize) -> TrainingExample {
+        let mut board = vec![0u8; BOARD_HEIGHT * BOARD_WIDTH];
+        board[0] = 1;
+        board[42] = 1;
+
+        let mut policy = vec![0.0; NUM_ACTIONS];
+        policy[0] = 0.25;
+        policy[13] = 0.75;
+
+        let mut action_mask = vec![false; NUM_ACTIONS];
+        action_mask[0] = true;
+        action_mask[13] = true;
+
+        TrainingExample {
+            board,
+            current_piece: 2,
+            hold_piece,
+            hold_available: true,
+            next_queue: vec![0, 1, 2, 3, 4],
+            move_number,
+            policy,
+            value: 3.5,
+            action_mask,
+        }
+    }
+
+    #[test]
+    fn test_npz_round_trip_preserves_examples() {
+        let path = unique_temp_path("roundtrip");
+        let examples = vec![make_example(0, 7), make_example(88, 5)];
+
+        write_examples_to_npz(&path, &examples, 100).expect("write should succeed");
+        let loaded = read_examples_from_npz(&path, 100).expect("read should succeed");
+        fs::remove_file(&path).expect("temp file cleanup should succeed");
+
+        assert_eq!(loaded.len(), examples.len());
+        for (expected, actual) in examples.iter().zip(loaded.iter()) {
+            assert_eq!(actual.board, expected.board);
+            assert_eq!(actual.current_piece, expected.current_piece);
+            assert_eq!(actual.hold_piece, expected.hold_piece);
+            assert_eq!(actual.hold_available, expected.hold_available);
+            assert_eq!(actual.next_queue, expected.next_queue);
+            assert_eq!(actual.move_number, expected.move_number);
+            assert_eq!(actual.value, expected.value);
+            assert_eq!(actual.policy.len(), expected.policy.len());
+            assert_eq!(actual.action_mask, expected.action_mask);
+            assert_eq!(actual.policy[0], expected.policy[0]);
+            assert_eq!(actual.policy[13], expected.policy[13]);
+        }
+    }
+
+    #[test]
+    fn test_validate_shape_with_dynamic_batch_rejects_mismatched_dims() {
+        let err = validate_shape_with_dynamic_batch("boards", &[2, 19, 10], &[0, 20, 10])
+            .expect_err("shape mismatch should error");
+        assert!(err.contains("expected [N, 20, 10]"));
+    }
+
+    #[test]
+    fn test_denormalize_move_number_clamps_negative() {
+        let move_num = denormalize_move_number(-0.25, 100.0);
+        assert_eq!(move_num, 0);
+    }
+}

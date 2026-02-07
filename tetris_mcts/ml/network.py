@@ -19,9 +19,7 @@ Output:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from collections.abc import Sequence
-from typing import Optional
 
 from tetris_mcts.config import (
     BOARD_HEIGHT,
@@ -29,10 +27,7 @@ from tetris_mcts.config import (
     NUM_ACTIONS,
     NUM_PIECE_TYPES,
     QUEUE_SIZE,
-    TrainingConfig,
 )
-
-MAX_MOVES = TrainingConfig().max_moves
 
 # Input feature sizes
 BOARD_FEATURES = BOARD_HEIGHT * BOARD_WIDTH  # 200
@@ -49,9 +44,6 @@ AUX_FEATURES = (
     + QUEUE_FEATURES
     + MOVE_NUMBER_FEATURES
 )  # 52
-
-TOTAL_FEATURES = BOARD_FEATURES + AUX_FEATURES  # 252
-
 
 class TetrisNet(nn.Module):
     """
@@ -82,7 +74,9 @@ class TetrisNet(nn.Module):
         conv1 = conv_filters[1]
 
         # Convolutional layers for board
-        self.conv1 = nn.Conv2d(1, conv0, kernel_size=conv_kernel_size, padding=conv_padding)
+        self.conv1 = nn.Conv2d(
+            1, conv0, kernel_size=conv_kernel_size, padding=conv_padding
+        )
         self.bn1 = nn.BatchNorm2d(conv0)
         self.conv2 = nn.Conv2d(
             conv0,
@@ -141,77 +135,3 @@ class TetrisNet(nn.Module):
         value = self.value_head(x)
 
         return policy_logits, value
-
-
-def encode_state(
-    board: np.ndarray,
-    current_piece: int,
-    hold_piece: Optional[int],
-    hold_available: bool,
-    next_queue: list[int],
-    move_number: int,
-    max_moves: int = MAX_MOVES,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Encode game state into neural network input format.
-
-    Args:
-        board: 2D array (20, 10), 1 = filled, 0 = empty
-        current_piece: Integer 0-6
-        hold_piece: Integer 0-6 or None
-        hold_available: Whether hold can be used this turn
-        next_queue: List of piece types (0-6), up to 5 elements
-        move_number: Current move number (0-indexed)
-        max_moves: Maximum moves for normalization
-
-    Returns:
-        board_tensor: Shape (1, 20, 10) for CNN
-        aux_tensor: Shape (52,) auxiliary features
-
-    Raises:
-        ValueError: If board dimensions are incorrect
-    """
-    # Validate board dimensions
-    if board.shape != (BOARD_HEIGHT, BOARD_WIDTH):
-        raise ValueError(
-            f"Board shape must be ({BOARD_HEIGHT}, {BOARD_WIDTH}), got {board.shape}"
-        )
-
-    # Board: (1, 20, 10)
-    board_tensor = board.astype(np.float32).reshape(1, BOARD_HEIGHT, BOARD_WIDTH)
-
-    # Build auxiliary features
-    aux = []
-
-    # Current piece: one-hot (7)
-    current_onehot = np.zeros(NUM_PIECE_TYPES, dtype=np.float32)
-    current_onehot[current_piece] = 1.0
-    aux.append(current_onehot)
-
-    # Hold piece: one-hot (8) - 7 pieces + empty
-    hold_onehot = np.zeros(HOLD_PIECE_FEATURES, dtype=np.float32)
-    if hold_piece is not None:
-        hold_onehot[hold_piece] = 1.0
-    else:
-        hold_onehot[NUM_PIECE_TYPES] = 1.0  # Empty slot
-    aux.append(hold_onehot)
-
-    # Hold available: binary (1)
-    aux.append(np.array([1.0 if hold_available else 0.0], dtype=np.float32))
-
-    # Next queue: one-hot per slot (5 x 7 = 35)
-    queue_features = np.zeros((QUEUE_SIZE, NUM_PIECE_TYPES), dtype=np.float32)
-    for i, piece in enumerate(next_queue[:QUEUE_SIZE]):
-        queue_features[i, piece] = 1.0
-    aux.append(queue_features.flatten())
-
-    # Move number: normalized (1)
-    normalized_move = move_number / max_moves
-    aux.append(np.array([normalized_move], dtype=np.float32))
-
-    aux_tensor = np.concatenate(aux)
-    assert aux_tensor.shape == (AUX_FEATURES,), (
-        f"Expected {AUX_FEATURES}, got {aux_tensor.shape}"
-    )
-
-    return board_tensor, aux_tensor

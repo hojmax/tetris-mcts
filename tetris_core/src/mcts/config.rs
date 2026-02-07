@@ -50,3 +50,20 @@ impl Default for MCTSConfig {
         MCTSConfig::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_values() {
+        let config = MCTSConfig::default();
+        assert_eq!(config.num_simulations, 100);
+        assert_eq!(config.c_puct, 1.5);
+        assert_eq!(config.temperature, 1.0);
+        assert_eq!(config.dirichlet_alpha, 0.15);
+        assert_eq!(config.dirichlet_epsilon, 0.25);
+        assert_eq!(config.seed, None);
+        assert_eq!(config.max_moves, 100);
+    }
+}

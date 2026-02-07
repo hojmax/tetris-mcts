@@ -5,7 +5,6 @@
 use pyo3::prelude::*;
 use std::collections::HashSet;
 
-use crate::mcts::get_action_space;
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
 use crate::piece::{Piece, COLORS};
 use crate::scoring::AttackResult;
@@ -430,15 +429,8 @@ impl TetrisEnv {
     /// Returns:
     ///     Attack sent if successful, or None if action is invalid
     pub fn execute_action_index(&mut self, action_idx: usize) -> Option<u32> {
-        let action_space = get_action_space();
-        let (x, y, rot) = action_space.index_to_placement(action_idx)?;
-        let piece = self.current_piece.as_ref()?;
-        let board = Board::new(self.width, self.height, &self.board);
-        let placements = find_all_placements(&board, piece.piece_type, piece.x, piece.y);
-        let placement = placements
-            .iter()
-            .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)?;
-
+        let placements = self.get_possible_placements();
+        let placement = placements.iter().find(|p| p.action_index == action_idx)?;
         Some(self.execute_placement(placement))
     }
 }

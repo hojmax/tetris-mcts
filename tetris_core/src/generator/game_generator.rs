@@ -728,3 +728,117 @@ impl Drop for GameGenerator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
+    use crate::mcts::NUM_ACTIONS;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_example(move_number: u32) -> TrainingExample {
+        let mut policy = vec![0.0; NUM_ACTIONS];
+        policy[0] = 1.0;
+        let mut action_mask = vec![false; NUM_ACTIONS];
+        action_mask[0] = true;
+
+        TrainingExample {
+            board: vec![0; BOARD_HEIGHT * BOARD_WIDTH],
+            current_piece: 0,
+            hold_piece: 7,
+            hold_available: true,
+            next_queue: vec![0, 1, 2, 3, 4],
+            move_number,
+            policy,
+            value: move_number as f32,
+            action_mask,
+        }
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "tetris_generator_{}_{}_{}.npz",
+            name,
+            std::process::id(),
+            nanos
+        ))
+    }
+
+    #[test]
+    fn test_shared_buffer_fifo_eviction() {
+        let buffer = SharedBuffer::new(3);
+        buffer.add_examples(vec![make_example(1), make_example(2)]);
+        buffer.add_examples(vec![make_example(3), make_example(4)]);
+
+        let kept = buffer.get_all();
+        assert_eq!(kept.len(), 3);
+        let move_numbers: Vec<u32> = kept.iter().map(|e| e.move_number).collect();
+        assert_eq!(move_numbers, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_shared_stats_accumulates_and_tracks_max_combo() {
+        let stats = SharedStats::new();
+        let game_a = GameStats {
+            singles: 1,
+            doubles: 0,
+            triples: 0,
+            tetrises: 0,
+            tspin_minis: 0,
+            tspin_singles: 0,
+            tspin_doubles: 0,
+            tspin_triples: 0,
+            perfect_clears: 0,
+            back_to_backs: 1,
+            max_combo: 2,
+            total_lines: 1,
+        };
+        let game_b = GameStats {
+            singles: 0,
+            doubles: 1,
+            triples: 0,
+            tetrises: 1,
+            tspin_minis: 0,
+            tspin_singles: 1,
+            tspin_doubles: 0,
+            tspin_triples: 0,
+            perfect_clears: 1,
+            back_to_backs: 0,
+            max_combo: 5,
+            total_lines: 6,
+        };
+
+        stats.add(&game_a, 0);
+        stats.add(&game_b, 7);
+        let d = stats.to_dict();
+
+        assert_eq!(d["games_with_attack"], 1);
+        assert_eq!(d["games_with_lines"], 2);
+        assert_eq!(d["singles"], 1);
+        assert_eq!(d["doubles"], 1);
+        assert_eq!(d["tetrises"], 1);
+        assert_eq!(d["tspin_singles"], 1);
+        assert_eq!(d["perfect_clears"], 1);
+        assert_eq!(d["back_to_backs"], 1);
+        assert_eq!(d["max_combo"], 5);
+        assert_eq!(d["total_lines"], 7);
+        assert_eq!(d["total_attack"], 7);
+    }
+
+    #[test]
+    fn test_get_model_mtime_for_missing_and_existing_file() {
+        let missing = unique_temp_path("missing");
+        assert_eq!(GameGenerator::get_model_mtime(&missing), None);
+
+        let existing = unique_temp_path("existing");
+        fs::write(&existing, b"model").expect("temp file write should succeed");
+        let mtime = GameGenerator::get_model_mtime(&existing);
+        fs::remove_file(&existing).expect("temp file cleanup should succeed");
+        assert!(mtime.is_some());
+    }
+}

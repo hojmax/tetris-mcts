@@ -1,4 +1,4 @@
-.PHONY: run build build-dev clean rebuild test check play viz train evaluate replay profile profile-samply
+.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -59,13 +59,6 @@ check:
 # Usage: make train ARGS="--iterations 10 --games-per-iter 50"
 train: $(RELEASE_MARKER)
 	$(PYTHON) tetris_mcts/train.py $(ARGS)
-
-# Evaluate a model and save replays (builds first if needed)
-# Usage: make evaluate MODEL=checkpoints/latest.onnx OUTPUT=replays.jsonl
-MODEL ?= checkpoints/latest.onnx
-OUTPUT ?= replays.jsonl
-evaluate: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/evaluate.py --model-path $(MODEL) --output-path $(OUTPUT)
 
 # View replay file
 # Usage: make replay FILE=replays.jsonl

@@ -256,9 +256,3 @@ class WeightManager:
         )
         checkpoints.sort(key=lambda p: int(p.stem.split("_")[1]))
         return checkpoints
-
-    def cleanup_old_checkpoints(self, keep: int = 5) -> None:
-        """Keep only the N most recent checkpoints."""
-        checkpoints = self.get_checkpoints()
-        for ckpt in checkpoints[:-keep]:
-            ckpt.unlink()

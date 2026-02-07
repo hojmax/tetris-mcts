@@ -6,7 +6,7 @@
 
 use pyo3::prelude::*;
 use smallvec::SmallVec;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::mcts::get_action_space;
@@ -303,27 +303,30 @@ pub fn find_all_placements(
         }
     }
 
-    // Deduplicate by actual cells occupied (not just x, y, rotation)
-    // This handles cases like O piece where different rotations look identical
-    // Use HashMap instead of HashSet + Vec sort for cells comparison
-    let mut seen_cells: HashMap<u64, ()> = HashMap::new();
+    // Deduplicate by actual cells occupied (not just x, y, rotation).
+    // This handles cases like O piece where different rotations look identical.
+    // Use a full coordinate key (including negative values) to avoid collisions.
+    let mut seen_cells: HashSet<[(i32, i32); 4]> = HashSet::new();
     let mut placements: Vec<Placement> = Vec::new();
     let action_space = get_action_space();
 
-    for ((x, y, rotation), mut path_info) in final_positions {
-        // Hash the cells to deduplicate O piece
-        let cells = get_cells(piece_type, rotation, x, y);
-        // Create a simple hash from sorted cell positions
-        let cell_hash = cells[0].0 as u64
-            | ((cells[0].1 as u64) << 8)
-            | ((cells[1].0 as u64) << 16)
-            | ((cells[1].1 as u64) << 24)
-            | ((cells[2].0 as u64) << 32)
-            | ((cells[2].1 as u64) << 40)
-            | ((cells[3].0 as u64) << 48)
-            | ((cells[3].1 as u64) << 56);
+    let mut final_entries: Vec<((i32, i32, usize), PathInfo)> =
+        final_positions.into_iter().collect();
+    final_entries.sort_unstable_by(|a, b| {
+        let (ax, ay, arot) = a.0;
+        let (bx, by, brot) = b.0;
+        arot.cmp(&brot)
+            .then_with(|| ax.cmp(&bx))
+            .then_with(|| ay.cmp(&by))
+    });
 
-        if seen_cells.insert(cell_hash, ()).is_none() {
+    for ((x, y, rotation), mut path_info) in final_entries {
+        let mut cells = get_cells(piece_type, rotation, x, y);
+        debug_assert_eq!(cells.len(), 4, "Tetromino should have exactly 4 cells");
+        cells.sort_unstable();
+        let cell_key = [cells[0], cells[1], cells[2], cells[3]];
+
+        if seen_cells.insert(cell_key) {
             // Add hard drop to complete the move sequence
             path_info.moves.push(Action::HardDrop.to_u8());
 

@@ -110,3 +110,61 @@ pub(super) fn export_chance_node(
 
     id
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::env::TetrisEnv;
+
+    #[test]
+    fn test_export_decision_node_sorts_children_and_sets_edges() {
+        let env = TetrisEnv::with_seed(10, 20, 7);
+        let mut root = DecisionNode::new(env.clone(), 0);
+        root.visit_count = 4;
+        root.value_sum = 10.0;
+
+        let chance_high = ChanceNode::new(env.clone(), 3, vec![1, 2], 0.0, vec![0.5, 0.5]);
+        let mut chance_low = ChanceNode::new(env.clone(), 1, vec![4, 5], 0.0, vec![0.5, 0.5]);
+
+        // Insert out of order to verify deterministic sorting in export.
+        let mut decision_piece_5 = DecisionNode::new(env.clone(), 1);
+        decision_piece_5.visit_count = 2;
+        decision_piece_5.value_sum = 5.0;
+        let mut decision_piece_2 = DecisionNode::new(env.clone(), 1);
+        decision_piece_2.visit_count = 1;
+        decision_piece_2.value_sum = 1.0;
+        chance_low
+            .children
+            .insert(5, MCTSNode::Decision(decision_piece_5));
+        chance_low
+            .children
+            .insert(2, MCTSNode::Decision(decision_piece_2));
+
+        root.children.insert(10, MCTSNode::Chance(chance_high));
+        root.children.insert(1, MCTSNode::Chance(chance_low));
+
+        let mut nodes = Vec::new();
+        let root_id = export_decision_node(&root, None, None, &mut nodes);
+
+        assert_eq!(root_id, 0);
+        assert_eq!(nodes[0].node_type, "decision");
+        assert_eq!(nodes[0].mean_value, 2.5);
+
+        // Root children should be sorted by action index: 1 then 10.
+        let root_child_edges: Vec<usize> = nodes[0]
+            .children
+            .iter()
+            .map(|&id| nodes[id].edge_from_parent.unwrap())
+            .collect();
+        assert_eq!(root_child_edges, vec![1, 10]);
+
+        // The chance node on action 1 should sort its piece children: 2 then 5.
+        let chance_node_id = nodes[0].children[0];
+        let chance_child_edges: Vec<usize> = nodes[chance_node_id]
+            .children
+            .iter()
+            .map(|&id| nodes[id].edge_from_parent.unwrap())
+            .collect();
+        assert_eq!(chance_child_edges, vec![2, 5]);
+    }
+}
