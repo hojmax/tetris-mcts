@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import structlog
 
 from tetris_mcts.config import (
     BOARD_HEIGHT,
@@ -27,6 +28,8 @@ from tetris_core import (
     evaluate_model,
     EvalResult,
 )
+
+logger = structlog.get_logger()
 
 
 class Evaluator:
@@ -88,14 +91,17 @@ class Evaluator:
             output_path=str(replay_path) if render_trajectory else None,
         )
 
-        print(f"Evaluation ({result.num_games} games):")
-        print(f"  Avg attack: {result.avg_attack:.1f}")
-        print(f"  Avg lines: {result.avg_lines:.1f}")
-        print(f"  Max attack: {result.max_attack}")
-        print(f"  Max lines: {result.max_lines}")
-        print(f"  Avg moves: {result.avg_moves:.1f}")
-        print(f"  Attack/piece: {result.attack_per_piece:.3f}")
-        print(f"  Lines/piece: {result.lines_per_piece:.3f}")
+        logger.info(
+            "Evaluation complete",
+            num_games=result.num_games,
+            avg_attack=result.avg_attack,
+            avg_lines=result.avg_lines,
+            max_attack=result.max_attack,
+            max_lines=result.max_lines,
+            avg_moves=result.avg_moves,
+            attack_per_piece=result.attack_per_piece,
+            lines_per_piece=result.lines_per_piece,
+        )
 
         # Optionally render one trajectory from saved replay (always first seed).
         trajectory_frames = None
@@ -106,7 +112,7 @@ class Evaluator:
                     max_frames=DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
                 )
             except Exception as e:
-                print(f"  Warning: Failed to render trajectory: {e}")
+                logger.warning("Failed to render evaluation trajectory", error=str(e))
 
         return result, trajectory_frames
 

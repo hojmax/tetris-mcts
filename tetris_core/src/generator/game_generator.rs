@@ -7,7 +7,7 @@
 use numpy::{PyArray1, PyArray2};
 use pyo3::prelude::*;
 use rand::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -159,7 +159,7 @@ struct LastGameInfo {
 /// Shared replay buffer for thread-safe access between generator and trainer.
 struct SharedBuffer {
     /// Training examples (circular buffer with FIFO eviction)
-    examples: RwLock<Vec<TrainingExample>>,
+    examples: RwLock<VecDeque<TrainingExample>>,
     /// Maximum buffer size
     max_size: usize,
 }
@@ -167,7 +167,7 @@ struct SharedBuffer {
 impl SharedBuffer {
     fn new(max_size: usize) -> Self {
         SharedBuffer {
-            examples: RwLock::new(Vec::with_capacity(max_size)),
+            examples: RwLock::new(VecDeque::with_capacity(max_size)),
             max_size,
         }
     }
@@ -176,11 +176,8 @@ impl SharedBuffer {
     fn add_examples(&self, new_examples: Vec<TrainingExample>) {
         let mut examples = self.examples.write().unwrap();
         examples.extend(new_examples);
-
-        // FIFO eviction
-        if examples.len() > self.max_size {
-            let excess = examples.len() - self.max_size;
-            examples.drain(..excess);
+        while examples.len() > self.max_size {
+            examples.pop_front();
         }
     }
 
@@ -191,7 +188,7 @@ impl SharedBuffer {
 
     /// Get a copy of all examples (for disk saves).
     fn get_all(&self) -> Vec<TrainingExample> {
-        self.examples.read().unwrap().clone()
+        self.examples.read().unwrap().iter().cloned().collect()
     }
 }
 
@@ -486,17 +483,24 @@ impl GameGenerator {
             ));
         }
 
-        let examples = self.buffer.examples.read().unwrap();
-        let n = examples.len();
-        if n == 0 {
-            return Ok(None);
-        }
+        // Snapshot sampled examples under lock, then release lock before heavy work.
+        let sampled_examples: Vec<TrainingExample> = {
+            let examples = self.buffer.examples.read().unwrap();
+            let n = examples.len();
+            if n == 0 {
+                return Ok(None);
+            }
 
-        let actual_batch = batch_size.min(n);
-        let mut rng = thread_rng();
-
-        // Sample random indices
-        let indices: Vec<usize> = (0..actual_batch).map(|_| rng.gen_range(0..n)).collect();
+            let actual_batch = batch_size.min(n);
+            let mut rng = thread_rng();
+            (0..actual_batch)
+                .map(|_| {
+                    let idx = rng.gen_range(0..n);
+                    examples[idx].clone()
+                })
+                .collect()
+        };
+        let actual_batch = sampled_examples.len();
 
         // Allocate output arrays
         let board_height = 20usize;
@@ -511,9 +515,7 @@ impl GameGenerator {
         let mut masks = vec![0.0f32; actual_batch * num_actions];
         let move_norm_denominator = max_moves as f32;
 
-        for (i, &idx) in indices.iter().enumerate() {
-            let ex = &examples[idx];
-
+        for (i, ex) in sampled_examples.iter().enumerate() {
             // Copy board (already flat u8, convert to f32)
             for (j, &val) in ex.board.iter().enumerate() {
                 boards[i * board_height * board_width + j] = val as f32;
@@ -596,7 +598,7 @@ impl GameGenerator {
         last_game: Arc<RwLock<Option<LastGameInfo>>>,
     ) {
         let mut agent = MCTSAgent::new(config);
-        let mut current_mtime: u64 = 0;
+        let mut current_mtime: u128 = 0;
 
         // Wait for initial model
         while running.load(Ordering::SeqCst) {
@@ -692,11 +694,20 @@ impl GameGenerator {
         eprintln!("[GameGenerator] Worker {} exiting", worker_id);
     }
 
-    /// Get the modification time of a file as seconds since UNIX epoch.
-    fn get_model_mtime(path: &PathBuf) -> Option<u64> {
+    /// Get the modification time of a file as nanoseconds since UNIX epoch.
+    fn get_model_mtime(path: &PathBuf) -> Option<u128> {
         match fs::metadata(path) {
             Ok(meta) => match meta.modified() {
-                Ok(time) => Some(time.duration_since(UNIX_EPOCH).unwrap().as_secs()),
+                Ok(time) => match time.duration_since(UNIX_EPOCH) {
+                    Ok(duration) => Some(duration.as_nanos()),
+                    Err(e) => {
+                        eprintln!(
+                            "[GameGenerator] Failed to convert modification time for {:?}: {}",
+                            path, e
+                        );
+                        None
+                    }
+                },
                 Err(e) => {
                     eprintln!(
                         "[GameGenerator] Failed to get modification time for {:?}: {}",

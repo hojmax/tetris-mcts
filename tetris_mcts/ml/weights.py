@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+import structlog
 
 from tetris_mcts.config import (
     BOARD_HEIGHT,
@@ -25,6 +26,8 @@ from tetris_mcts.config import (
     LATEST_ONNX_FILENAME,
 )
 from tetris_mcts.ml.network import TetrisNet, AUX_FEATURES
+
+logger = structlog.get_logger()
 
 
 def save_checkpoint(
@@ -84,9 +87,9 @@ def load_checkpoint(
         optimizer.load_state_dict(state["optimizer_state_dict"])
     if scheduler is not None:
         if "scheduler_state_dict" not in state:
-            print(
-                f"Warning: Checkpoint {filepath} is missing scheduler_state_dict; "
-                "using fresh scheduler state from current config."
+            logger.warning(
+                "Checkpoint missing scheduler state; using fresh scheduler state",
+                checkpoint=str(filepath),
             )
         else:
             scheduler.load_state_dict(state["scheduler_state_dict"])
@@ -110,19 +113,19 @@ def export_onnx(
     Returns:
         True if export succeeded, False if ONNX dependencies are missing
     """
+    # ONNX export must happen on CPU
+    original_device = next(model.parameters()).device
+    onnx_logger = logging.getLogger("torch.onnx")
+    old_level = onnx_logger.level
     try:
-        # ONNX export must happen on CPU
-        original_device = next(model.parameters()).device
-        model_cpu = model.cpu()
-        model_cpu.eval()
+        model.cpu()
+        model.eval()
 
         # Create dummy inputs (batch size 1, tract handles this)
         dummy_board = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
         dummy_aux = torch.zeros(1, AUX_FEATURES)
 
         # Suppress ONNX export warnings
-        onnx_logger = logging.getLogger("torch.onnx")
-        old_level = onnx_logger.level
         onnx_logger.setLevel(logging.ERROR)
 
         # Export without dynamic_axes for tract compatibility
@@ -139,15 +142,13 @@ def export_onnx(
                 output_names=["policy_logits", "value"],
                 verbose=False,
             )
-
-        onnx_logger.setLevel(old_level)
-
-        # Move model back to original device
-        model.to(original_device)
         return True
     except (ImportError, ModuleNotFoundError) as e:
-        print(f"Warning: ONNX export skipped (missing dependencies): {e}")
+        logger.warning("ONNX export skipped; missing dependencies", error=str(e))
         return False
+    finally:
+        onnx_logger.setLevel(old_level)
+        model.to(original_device)
 
 
 def export_metadata(

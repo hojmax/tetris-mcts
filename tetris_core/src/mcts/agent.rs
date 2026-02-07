@@ -429,8 +429,6 @@ mod tests {
         root.set_nn_output(&policy, 0.0);
 
         // Get a valid action
-        let action_idx = root.valid_actions[0];
-
         // Run MCTS search to expand the action
         let mask = crate::nn::get_action_mask(&env);
         let nn = agent.nn.as_ref().unwrap();
@@ -450,7 +448,6 @@ mod tests {
             match child {
                 MCTSNode::Chance(chance_node) => {
                     let new_piece = chance_node.state.get_current_piece();
-                    let new_queue: Vec<usize> = chance_node.state.get_queue(5);
 
                     // The current piece should have changed (old piece was placed, new one spawned)
                     if let Some(ref new_p) = new_piece {

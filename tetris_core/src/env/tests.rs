@@ -280,9 +280,8 @@ mod tests {
     #[test]
     fn test_step_returns_attack() {
         let mut env = TetrisEnv::new(10, 20);
-        let (reward, game_over) = env.step(6); // hard_drop
+        let (_reward, game_over) = env.step(6); // hard_drop
         assert!(!game_over);
-        assert!(reward >= 0);
     }
 
     #[test]
@@ -548,7 +547,7 @@ mod tests {
         env.last_move_was_rotation = true;
         env.last_kick_index = 0;
 
-        let (is_tspin, is_mini) = env.check_tspin(&piece);
+        let (is_tspin, _) = env.check_tspin(&piece);
         // With 3 corners filled and both front corners filled, should be full T-spin
         assert!(is_tspin, "Should detect T-spin with 3 corners filled");
     }
@@ -800,8 +799,6 @@ mod tests {
         }
         env.lock_delay_ms = Some(200); // Simulate some time passed
 
-        let lock_moves_before = env.lock_moves_remaining;
-
         // Rotate should reset lock delay if successful
         if env.rotate_cw() {
             assert!(
@@ -839,7 +836,6 @@ mod tests {
         }
 
         // Get initial position
-        let initial_x = env.current_piece.as_ref().unwrap().x;
         let initial_rotation = env.current_piece.as_ref().unwrap().rotation;
 
         // Rotate - might use wall kick
@@ -881,7 +877,6 @@ mod tests {
     #[test]
     fn test_hard_drop_distance_calculation() {
         let mut env = TetrisEnv::new(10, 20);
-        let initial_y = env.current_piece.as_ref().unwrap().y;
         let drop_distance = env.hard_drop();
 
         // Drop distance should match how far piece traveled
@@ -890,7 +885,7 @@ mod tests {
 
     #[test]
     fn test_ghost_piece_at_bottom() {
-        let mut env = TetrisEnv::new(10, 20);
+        let env = TetrisEnv::new(10, 20);
         let ghost = env.get_ghost_piece();
         assert!(ghost.is_some());
 
@@ -1128,7 +1123,7 @@ mod tests {
 
         // O piece shape has cells at rows 1-2, cols 1-2 of the 4x4 grid
         // So at y=17, cells are at y=18 and y=19 (valid)
-        let attack = env.place_piece_internal_with_kick(4, 17, 0, false, 0);
+        env.place_piece_internal_with_kick(4, 17, 0, false, 0);
 
         // Piece should be locked, new piece spawned
         assert!(env.current_piece.is_some());
@@ -1175,7 +1170,7 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
 
         // Place with rotation flag set
-        let attack = env.place_piece_internal_with_kick(3, 18, 1, true, 0);
+        env.place_piece_internal_with_kick(3, 18, 1, true, 0);
 
         // The placement should work (assuming position is valid for rotated piece)
         // Main thing is it doesn't crash
@@ -1194,7 +1189,7 @@ mod tests {
         env.sync_board_stats();
 
         // Place with kick_index = 4 (special T-spin kick)
-        let attack = env.place_piece_internal_with_kick(4, 17, 0, true, 4);
+        env.place_piece_internal_with_kick(4, 17, 0, true, 4);
 
         // The last_kick_index should be set
         // (Note: piece gets locked so we can't check it directly, but the attack should reflect it)
@@ -1246,9 +1241,13 @@ mod tests {
             // Use T piece which has distinct rotations
             env.spawn_piece_from_type(T_PIECE);
 
-            let attack = env.place_piece_internal_with_kick(4, 17, rotation, false, 0);
+            env.place_piece_internal_with_kick(4, 17, rotation, false, 0);
             // Should not panic and piece should be placed
-            assert!(env.lines_cleared >= 0, "Rotation {} should work", rotation);
+            assert!(
+                env.current_piece.is_some(),
+                "Rotation {} should work",
+                rotation
+            );
         }
     }
 
@@ -1944,7 +1943,6 @@ mod tests {
                     break;
                 }
 
-                let blocks_before = env.total_blocks;
                 let lines_before = env.lines_cleared;
 
                 env.hard_drop();
@@ -1957,8 +1955,6 @@ mod tests {
                     // When lines are cleared, total blocks should decrease
                     // (unless the piece added more blocks than were cleared)
                     // At minimum, the cleared lines should have removed width * lines_cleared_now blocks
-                    let min_blocks_removed = (env.width as u32) * lines_cleared_now;
-
                     // But we also added a piece (4 blocks typically)
                     // So: blocks_after = blocks_before + piece_blocks - cleared_blocks
                     // We can't easily verify exact count without knowing piece size,

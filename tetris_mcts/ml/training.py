@@ -14,6 +14,7 @@ from pathlib import Path
 import tempfile
 
 import wandb
+import structlog
 
 from tetris_mcts.config import (
     BOARD_HEIGHT,
@@ -31,6 +32,8 @@ from tetris_mcts.ml.evaluation import Evaluator
 from tetris_mcts.ml.visualization import create_trajectory_gif
 
 from tetris_core import MCTSConfig, GameGenerator
+
+logger = structlog.get_logger()
 
 
 class Trainer:
@@ -188,7 +191,7 @@ class Trainer:
             self.step,
             export_for_rust=True,
         )
-        print(f"Saved checkpoint at step {self.step}")
+        logger.info("Saved checkpoint", step=self.step)
 
     def train(self, log_to_wandb: bool = True):
         """
@@ -205,9 +208,10 @@ class Trainer:
         """
         num_steps = self.config.total_steps
         if self.step >= num_steps:
-            print(
-                f"Target step {num_steps} already reached (current step {self.step}), "
-                "skipping training loop"
+            logger.info(
+                "Target step already reached; skipping training loop",
+                target_step=num_steps,
+                current_step=self.step,
             )
             return
         model_sync_interval = self.config.model_sync_interval
@@ -244,23 +248,33 @@ class Trainer:
             num_workers=self.config.num_workers,
         )
         generator.start()
-        print("Started background game generator")
-        print(f"  Model path: {onnx_path}")
-        print(f"  Training data path: {training_data_path}")
+        logger.info(
+            "Started background game generator",
+            model_path=str(onnx_path),
+            training_data_path=str(training_data_path),
+            num_workers=self.config.num_workers,
+        )
 
         # Wait for minimum buffer size
-        print(f"Waiting for {self.config.min_buffer_size} examples...")
+        logger.info(
+            "Waiting for minimum replay buffer size",
+            min_examples=self.config.min_buffer_size,
+        )
         while generator.buffer_size() < self.config.min_buffer_size:
             time.sleep(1.0)
-            print(
-                f"  Buffer: {generator.buffer_size()} examples, "
-                f"Games: {generator.games_generated()}"
+            logger.info(
+                "Buffer fill progress",
+                buffer_size=generator.buffer_size(),
+                games_generated=generator.games_generated(),
             )
 
         start_step = self.step
-        print(f"\nStarting training until total step {num_steps}")
-        print(f"Starting from checkpoint step: {start_step}")
-        print(f"Config: {self.config}")
+        logger.info(
+            "Starting training loop",
+            target_step=num_steps,
+            start_step=start_step,
+            config=str(self.config),
+        )
 
         last_logged_game = 0  # Track which game we last logged
         train_start_time = time.time()
@@ -315,21 +329,27 @@ class Trainer:
                                 game_metrics = {"game_number": game_number}
                                 for key, value in game_stats.items():
                                     game_metrics[f"game/{key}"] = value
-                                wandb.log(game_metrics)
+                                wandb.log(game_metrics, step=self.step)
                                 last_logged_game = game_number
-                    print(
-                        f"Step {self.step}: loss={metrics['loss']:.4f}, "
-                        f"lr={metrics['learning_rate']:.2e}, "
-                        f"buffer={generator.buffer_size()}, "
-                        f"games={games}, "
-                        f"games/s={metrics['games_per_second']:.2f}, "
-                        f"steps/s={metrics['steps_per_second']:.1f}"
+                    logger.info(
+                        "Training progress",
+                        step=self.step,
+                        loss=metrics["loss"],
+                        learning_rate=metrics["learning_rate"],
+                        buffer_size=generator.buffer_size(),
+                        games_generated=games,
+                        games_per_second=metrics["games_per_second"],
+                        steps_per_second=metrics["steps_per_second"],
                     )
 
                 # Export updated model for generator
                 if self.step % model_sync_interval == 0:
                     export_onnx(self.model, onnx_path)
-                    print(f"  Exported model at step {self.step}")
+                    logger.info(
+                        "Exported model for generator",
+                        step=self.step,
+                        path=str(onnx_path),
+                    )
 
                 # Evaluate
                 if self.step % self.config.eval_interval == 0:
@@ -362,11 +382,12 @@ class Trainer:
 
         finally:
             # Stop generator
-            print("\nStopping game generator...")
+            logger.info("Stopping game generator")
             generator.stop()
-            print(
-                f"Final stats: {generator.games_generated()} games, "
-                f"{generator.examples_generated()} examples"
+            logger.info(
+                "Game generator stopped",
+                games_generated=generator.games_generated(),
+                examples_generated=generator.examples_generated(),
             )
 
         # Final save

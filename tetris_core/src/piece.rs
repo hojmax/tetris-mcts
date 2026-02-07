@@ -244,11 +244,10 @@ mod tests {
 
     #[test]
     fn test_piece_colors() {
-        // Each piece type should have a unique color
+        // Piece color lookup should succeed for each piece type.
         for i in 0..NUM_PIECE_TYPES {
             let piece = Piece::new(i);
-            let color = piece.get_color();
-            assert!(color.0 <= 255 && color.1 <= 255 && color.2 <= 255);
+            let _color = piece.get_color();
         }
     }
 

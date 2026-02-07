@@ -127,6 +127,21 @@ class TrainingConfig:
             )
         if self.games_per_save < 0:
             raise ValueError("games_per_save must be >= 0")
+        if self.lr_schedule not in {"cosine", "step", "none"}:
+            raise ValueError(
+                f"lr_schedule must be one of cosine, step, none (got {self.lr_schedule})"
+            )
+        if self.lr_decay_steps <= 0:
+            raise ValueError("lr_decay_steps must be > 0")
+        if self.lr_step_divisor <= 0:
+            raise ValueError("lr_step_divisor must be > 0")
+        if self.lr_schedule == "step":
+            step_size = self.lr_decay_steps // self.lr_step_divisor
+            if step_size <= 0:
+                raise ValueError(
+                    "StepLR step_size must be > 0; adjust lr_decay_steps or lr_step_divisor "
+                    f"(got {self.lr_decay_steps} // {self.lr_step_divisor} = {step_size})"
+                )
 
     def to_json(self) -> str:
         """Serialize config to JSON string."""
