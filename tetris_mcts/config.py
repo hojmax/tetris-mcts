@@ -52,7 +52,7 @@ class TrainingConfig:
     """Training hyperparameters - all configurable via CLI."""
 
     # Training
-    total_steps: int = 100_000
+    total_steps: int = 100_000_000
     model_sync_interval: int = 2000  # Steps between ONNX exports
 
     # Network architecture
@@ -88,11 +88,11 @@ class TrainingConfig:
 
     # Intervals
     checkpoint_interval: int = 2000  # Steps between checkpoints
-    eval_interval: int = 200000  # Steps between evaluations
+    eval_interval: int = 5000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
 
     # Evaluation
-    eval_seeds: list[int] = field(default_factory=lambda: list(range(5)))
+    eval_seeds: list[int] = field(default_factory=lambda: list(range(1)))
     eval_mcts_seed: int = 12345  # Fixed MCTS RNG seed for deterministic evaluation
 
     # Paths (set automatically by setup_run_directory)

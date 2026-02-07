@@ -10,14 +10,12 @@ use std::io::{BufWriter, Write};
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
-use crate::mcts::{get_action_space, MCTSAgent, MCTSConfig};
+use crate::mcts::{MCTSAgent, MCTSConfig};
 
 /// A single move in a game replay.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReplayMove {
-    pub x: i32,
-    pub y: i32,
-    pub rotation: usize,
+    pub action: usize,
     pub attack: u32,
 }
 
@@ -195,16 +193,8 @@ pub fn evaluate_model(
             // Run MCTS search (no noise, argmax via config.temperature=0)
             let result = agent.search(&env, policy, nn_value, false, move_idx as u32);
 
-            // Execute action
-            let (x, y, rot) = get_action_space()
-                .index_to_placement(result.action)
-                .expect("Invalid action from MCTS");
-            let placements = env.get_possible_placements();
-            if let Some(placement) = placements
-                .iter()
-                .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)
-            {
-                let attack = env.execute_placement(placement);
+            // Execute action from action index directly.
+            if let Some(attack) = env.execute_action_index(result.action) {
                 game_attack += attack;
                 if let Some(attack_result) = env.get_last_attack_result() {
                     game_lines += attack_result.lines_cleared;
@@ -212,9 +202,7 @@ pub fn evaluate_model(
                 game_moves += 1;
                 if save_replays {
                     replay_moves.push(ReplayMove {
-                        x,
-                        y,
-                        rotation: rot,
+                        action: result.action,
                         attack,
                     });
                 }

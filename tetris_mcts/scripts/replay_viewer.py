@@ -37,22 +37,12 @@ def load_and_render_replay(replay_data: dict, output_path: Path):
 
     # Execute each move and render
     for i, move in enumerate(moves):
-        # Find and execute placement
-        placements = env.get_possible_placements()
-        placement = None
-        for p in placements:
-            if (
-                p.piece.x == move["x"]
-                and p.piece.y == move["y"]
-                and p.piece.rotation == move["rotation"]
-            ):
-                placement = p
-                break
-
-        if placement:
-            env.execute_placement(placement)
-            total_attack += move["attack"]
-            frames.append(_render_frame(env, i + 1, total_attack))
+        action = int(move["action"])
+        attack = env.execute_action_index(action)
+        if attack is None:
+            raise ValueError(f"Invalid replay action index: {action}")
+        total_attack += int(move["attack"])
+        frames.append(_render_frame(env, i + 1, total_attack))
 
     # Save as GIF
     if frames:

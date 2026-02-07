@@ -172,21 +172,10 @@ class Evaluator:
             )
             frames.append(frame)
 
-            placements = env.get_possible_placements()
-            placement = None
-            for candidate in placements:
-                if (
-                    candidate.piece.x == move["x"]
-                    and candidate.piece.y == move["y"]
-                    and candidate.piece.rotation == move["rotation"]
-                ):
-                    placement = candidate
-                    break
-
-            if placement is None:
-                break
-
-            env.execute_placement(placement)
+            action = int(move["action"])
+            attack = env.execute_action_index(action)
+            if attack is None:
+                raise ValueError(f"Invalid replay action index: {action}")
             total_attack += int(move["attack"])
 
         if len(frames) < max_frames:

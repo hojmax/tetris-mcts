@@ -432,8 +432,9 @@ impl TetrisEnv {
     pub fn execute_action_index(&mut self, action_idx: usize) -> Option<u32> {
         let action_space = get_action_space();
         let (x, y, rot) = action_space.index_to_placement(action_idx)?;
-
-        let placements = self.get_possible_placements();
+        let piece = self.current_piece.as_ref()?;
+        let board = Board::new(self.width, self.height, &self.board);
+        let placements = find_all_placements(&board, piece.piece_type, piece.x, piece.y);
         let placement = placements
             .iter()
             .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)?;
