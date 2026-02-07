@@ -185,6 +185,7 @@ class Trainer:
         self.weight_manager.save(
             self.model,
             self.optimizer,
+            self.scheduler,
             self.step,
             export_for_rust=True,
         )
@@ -192,7 +193,11 @@ class Trainer:
 
     def load(self) -> bool:
         """Load latest checkpoint if available."""
-        step = self.weight_manager.load_latest(self.model, self.optimizer)
+        step = self.weight_manager.load_latest(
+            self.model,
+            self.optimizer,
+            self.scheduler,
+        )
         if step is not None:
             self.step = step
             print(f"Loaded checkpoint at step {step}")

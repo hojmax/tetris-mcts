@@ -30,6 +30,7 @@ from tetris_mcts.ml.network import TetrisNet, AUX_FEATURES
 def save_checkpoint(
     model: TetrisNet,
     optimizer: Optional[torch.optim.Optimizer],
+    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
     step: int,
     filepath: str | Path,
     **extra_state,
@@ -51,6 +52,8 @@ def save_checkpoint(
     }
     if optimizer is not None:
         state["optimizer_state_dict"] = optimizer.state_dict()
+    if scheduler is not None:
+        state["scheduler_state_dict"] = scheduler.state_dict()
 
     torch.save(state, filepath)
 
@@ -59,6 +62,7 @@ def load_checkpoint(
     filepath: str | Path,
     model: Optional[TetrisNet] = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
 ) -> dict:
     """
     Load a training checkpoint.
@@ -78,6 +82,13 @@ def load_checkpoint(
 
     if optimizer is not None and "optimizer_state_dict" in state:
         optimizer.load_state_dict(state["optimizer_state_dict"])
+    if scheduler is not None:
+        if "scheduler_state_dict" not in state:
+            raise ValueError(
+                f"Checkpoint {filepath} is missing scheduler_state_dict; "
+                "cannot resume scheduler state"
+            )
+        scheduler.load_state_dict(state["scheduler_state_dict"])
 
     return state
 
@@ -181,6 +192,7 @@ class WeightManager:
         self,
         model: TetrisNet,
         optimizer: Optional[torch.optim.Optimizer],
+        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
         step: int,
         eval_metrics: Optional[dict] = None,
         export_for_rust: bool = True,
@@ -194,7 +206,7 @@ class WeightManager:
 
         # Save PyTorch checkpoint
         ckpt_path = self.checkpoint_dir / f"{CHECKPOINT_FILENAME_PREFIX}_{step}.pt"
-        save_checkpoint(model, optimizer, step, ckpt_path)
+        save_checkpoint(model, optimizer, scheduler, step, ckpt_path)
         paths["checkpoint"] = ckpt_path
 
         if export_for_rust:
@@ -221,6 +233,7 @@ class WeightManager:
         self,
         model: TetrisNet,
         optimizer: Optional[torch.optim.Optimizer] = None,
+        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     ) -> Optional[int]:
         """
         Load the latest checkpoint.
@@ -232,7 +245,7 @@ class WeightManager:
         if not latest_path.exists():
             return None
 
-        state = load_checkpoint(latest_path, model, optimizer)
+        state = load_checkpoint(latest_path, model, optimizer, scheduler)
         return state.get("step", 0)
 
     def get_checkpoints(self) -> list[Path]:

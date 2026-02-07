@@ -23,4 +23,4 @@ pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode, No
 pub use results::{
     GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
 };
-pub use utils::{sample_action, sample_dirichlet};
+pub use utils::sample_dirichlet;

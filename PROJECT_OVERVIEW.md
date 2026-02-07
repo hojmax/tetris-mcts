@@ -557,9 +557,17 @@ The implementation uses **integrated parallel game generation** via Rust `GameGe
 ```python
 # Python training loop (simplified)
 from tetris_core import GameGenerator, MCTSConfig
+from tetris_mcts.config import TrainingConfig
+from tetris_mcts.ml.network import TetrisNet
 
 def train():
-    model = TetrisNet()
+    config = TrainingConfig()
+    model = TetrisNet(
+        conv_filters=config.conv_filters,
+        fc_hidden=config.fc_hidden,
+        conv_kernel_size=config.conv_kernel_size,
+        conv_padding=config.conv_padding,
+    )
     mcts_config = MCTSConfig(num_simulations=400, ...)
 
     # Create GameGenerator with worker threads

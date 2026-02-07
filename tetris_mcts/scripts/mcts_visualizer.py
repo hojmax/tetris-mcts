@@ -248,44 +248,6 @@ def display_virtual_piece_node(node_data, tree_dict):
     return details, f"data:image/png;base64,{img_b64}", state_info
 
 
-def render_board_to_image(env: TetrisEnv, cell_size: int = 8) -> str:
-    """Render a TetrisEnv board to a base64 PNG image."""
-    board = env.get_board()
-    board_colors = env.get_board_colors()
-    height = len(board)
-    width = len(board[0]) if board else 10
-
-    img = Image.new("RGB", (width * cell_size, height * cell_size), (20, 20, 20))
-    draw = ImageDraw.Draw(img)
-
-    for y in range(height):
-        for x in range(width):
-            if board[y][x] != 0:
-                color_idx = board_colors[y][x]
-                if color_idx is not None and color_idx < len(PIECE_COLORS):
-                    color = PIECE_COLORS[color_idx]
-                else:
-                    color = (80, 80, 80)
-
-                x1, y1 = x * cell_size, y * cell_size
-                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
-                draw.rectangle([x1, y1, x2, y2], fill=color)
-
-    # Draw grid lines
-    for x in range(width + 1):
-        draw.line(
-            [(x * cell_size, 0), (x * cell_size, height * cell_size)], fill=(40, 40, 40)
-        )
-    for y in range(height + 1):
-        draw.line(
-            [(0, y * cell_size), (width * cell_size, y * cell_size)], fill=(40, 40, 40)
-        )
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
-
-
 def build_cytoscape_elements(tree, max_nodes: int = 500, show_unvisited: bool = True):
     """Convert MCTSTreeExport to Cytoscape elements."""
     elements = []

@@ -7,7 +7,7 @@ Input Representation:
 - Hold piece: 8 (one-hot, 7 pieces + empty)
 - Hold available: 1 (binary)
 - Next queue: 5 x 7 = 35 (one-hot per slot)
-- Move number: 1 (normalized: move_idx / 100)
+- Move number: 1 (normalized: move_idx / max_moves)
 
 Total input: 200 + 7 + 8 + 1 + 35 + 1 = 252 features
 
@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from collections.abc import Sequence
 from typing import Optional
 
 from tetris_mcts.config import (
@@ -65,38 +66,41 @@ class TetrisNet(nn.Module):
 
     def __init__(
         self,
-        conv_filters: list[int] = [2, 4],
-        fc_hidden: int = 64,
-        conv_kernel_size: int = 3,
-        conv_padding: int = 1,
-        num_actions: int = NUM_ACTIONS,
+        conv_filters: Sequence[int],
+        fc_hidden: int,
+        conv_kernel_size: int,
+        conv_padding: int,
     ):
         super().__init__()
 
-        self.num_actions = num_actions
+        self.num_actions = NUM_ACTIONS
+        if len(conv_filters) != 2:
+            raise ValueError(
+                f"Expected exactly 2 convolutional filters, got {len(conv_filters)}"
+            )
+        conv0 = conv_filters[0]
+        conv1 = conv_filters[1]
 
         # Convolutional layers for board
-        self.conv1 = nn.Conv2d(
-            1, conv_filters[0], kernel_size=conv_kernel_size, padding=conv_padding
-        )
-        self.bn1 = nn.BatchNorm2d(conv_filters[0])
+        self.conv1 = nn.Conv2d(1, conv0, kernel_size=conv_kernel_size, padding=conv_padding)
+        self.bn1 = nn.BatchNorm2d(conv0)
         self.conv2 = nn.Conv2d(
-            conv_filters[0],
-            conv_filters[1],
+            conv0,
+            conv1,
             kernel_size=conv_kernel_size,
             padding=conv_padding,
         )
-        self.bn2 = nn.BatchNorm2d(conv_filters[1])
+        self.bn2 = nn.BatchNorm2d(conv1)
 
-        # Flattened conv output size: 20 * 10 * 8 = 1,600
-        conv_flat_size = BOARD_HEIGHT * BOARD_WIDTH * conv_filters[1]
+        # Flattened conv output size: 20 * 10 * conv1
+        conv_flat_size = BOARD_HEIGHT * BOARD_WIDTH * conv1
 
         # Fully connected layer
         self.fc1 = nn.Linear(conv_flat_size + AUX_FEATURES, fc_hidden)
         self.ln1 = nn.LayerNorm(fc_hidden)
 
         # Policy head
-        self.policy_head = nn.Linear(fc_hidden, num_actions)
+        self.policy_head = nn.Linear(fc_hidden, NUM_ACTIONS)
 
         # Value head
         self.value_head = nn.Linear(fc_hidden, 1)
@@ -137,33 +141,6 @@ class TetrisNet(nn.Module):
         value = self.value_head(x)
 
         return policy_logits, value
-
-    def predict(
-        self,
-        board: torch.Tensor,
-        aux_features: torch.Tensor,
-        action_mask: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Get policy probabilities and value.
-
-        Args:
-            board: Shape (batch, 1, 20, 10)
-            aux_features: Shape (batch, 52)
-            action_mask: Shape (batch, 734), 1 = valid, 0 = invalid
-
-        Returns:
-            policy: Shape (batch, 734) - softmax probabilities
-            value: Shape (batch, 1) - predicted value
-        """
-        policy_logits, value = self.forward(board, aux_features)
-
-        if action_mask is not None:
-            # Mask invalid actions before softmax
-            policy_logits = policy_logits.masked_fill(action_mask == 0, float("-inf"))
-
-        policy = F.softmax(policy_logits, dim=-1)
-        return policy, value
 
 
 def encode_state(
@@ -238,51 +215,3 @@ def encode_state(
     )
 
     return board_tensor, aux_tensor
-
-
-def encode_batch(states: list[dict]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Encode a batch of states into tensors.
-
-    Args:
-        states: List of state dicts with keys:
-            - board: (20, 10) array
-            - current_piece: int
-            - hold_piece: int or None
-            - hold_available: bool
-            - next_queue: list of ints
-            - move_number: int
-            - action_mask: (734,) array
-
-    Returns:
-        boards: (batch, 1, 20, 10)
-        aux: (batch, 52)
-        masks: (batch, 734)
-    """
-    boards = []
-    aux_features = []
-    masks = []
-
-    for state in states:
-        board_t, aux_t = encode_state(
-            board=state["board"],
-            current_piece=state["current_piece"],
-            hold_piece=state.get("hold_piece"),
-            hold_available=state.get("hold_available", True),
-            next_queue=state.get("next_queue", []),
-            move_number=state.get("move_number", 0),
-        )
-        boards.append(board_t)
-        aux_features.append(aux_t)
-        masks.append(state.get("action_mask", np.ones(NUM_ACTIONS, dtype=np.float32)))
-
-    return (
-        torch.tensor(np.stack(boards)),
-        torch.tensor(np.stack(aux_features)),
-        torch.tensor(np.stack(masks)),
-    )
-
-
-def count_parameters(model: nn.Module) -> int:
-    """Count total trainable parameters."""
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)

@@ -49,8 +49,6 @@ class TetrisGame:
 
         # Key state tracking for DAS/ARR
         self.key_states = {}
-        self.left_held = False
-        self.right_held = False
         self.down_held = False
 
         # Mini block size for sidebar pieces
@@ -111,7 +109,6 @@ class TetrisGame:
                     continue
 
                 if event.key == pygame.K_LEFT:
-                    self.left_held = True
                     self.env.move_left()
                     self.key_states[pygame.K_LEFT] = {
                         "pressed_time": current_time,
@@ -120,7 +117,6 @@ class TetrisGame:
                     }
 
                 elif event.key == pygame.K_RIGHT:
-                    self.right_held = True
                     self.env.move_right()
                     self.key_states[pygame.K_RIGHT] = {
                         "pressed_time": current_time,
@@ -152,12 +148,10 @@ class TetrisGame:
 
             if event.type == pygame.KEYUP:
                 if event.key == pygame.K_LEFT:
-                    self.left_held = False
                     if pygame.K_LEFT in self.key_states:
                         del self.key_states[pygame.K_LEFT]
 
                 elif event.key == pygame.K_RIGHT:
-                    self.right_held = False
                     if pygame.K_RIGHT in self.key_states:
                         del self.key_states[pygame.K_RIGHT]
 
