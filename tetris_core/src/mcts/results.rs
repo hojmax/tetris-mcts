@@ -280,7 +280,7 @@ impl MCTSTreeExport {
                     .iter()
                     .map(|&child_id| self.compute_depth(child_id))
                     .max()
-                    .unwrap_or(0)
+                    .expect("non-empty children guaranteed by is_empty check")
             }
         } else {
             0
