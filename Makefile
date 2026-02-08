@@ -53,11 +53,11 @@ clean:
 	rm -rf tetris_core/target $(RELEASE_MARKER) $(DEV_MARKER)
 
 check:
-	uv run ruff check --fix
-	uv run ruff format
+	$(PYTHON) -m ruff check --fix
+	$(PYTHON) -m ruff format
 	$(CARGO_ENV) && cargo fix --manifest-path tetris_core/Cargo.toml --lib -p tetris_core --allow-dirty
 	$(CARGO_ENV) && cargo fmt --manifest-path tetris_core/Cargo.toml
-	uv run pyright
+	$(PYTHON) -m pyright
 
 # Train a model (builds first if needed)
 # Usage: make train ARGS="--iterations 10 --games-per-iter 50"

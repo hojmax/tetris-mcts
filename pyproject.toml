@@ -7,7 +7,6 @@ requires-python = ">=3.12"
 dependencies = [
     "pygame",
     "maturin",
-    "tetris_core",
     "numpy",
     "torch",
     "wandb",
@@ -25,9 +24,6 @@ dependencies = [
     "rich",
     "pytest",
 ]
-
-[tool.uv.sources]
-tetris_core = { path = "tetris_core" }
 
 [tool.pyright]
 reportAttributeAccessIssue = "none"  # tetris_core is a native module
