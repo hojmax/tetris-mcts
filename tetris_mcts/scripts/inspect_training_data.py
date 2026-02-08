@@ -10,10 +10,14 @@ from rich.console import Console
 from simple_parsing import parse
 
 from tetris_mcts.config import (
+    CHECKPOINT_DIRNAME,
+    CONFIG_FILENAME,
     DEFAULT_GIF_FRAME_DURATION_MS,
+    LATEST_CHECKPOINT_FILENAME,
     PIECE_NAMES,
     QUEUE_SIZE,
 )
+from tetris_mcts.ml.value_predictor import ValuePredictor
 from tetris_mcts.ml.visualization import render_board
 
 SCRIPT_DIR = Path(__file__).parent
@@ -56,6 +60,17 @@ class ScriptArgs:
     print_buffer_vectors: bool = (
         True  # Print full literal vectors/matrices for selected game
     )
+    checkpoint_path: Path | None = None  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
+    config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
+
+    def __post_init__(self) -> None:
+        run_dir = self.data_path.parent
+        if self.checkpoint_path is None:
+            self.checkpoint_path = (
+                run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
+            )
+        if self.config_path is None:
+            self.config_path = run_dir / CONFIG_FILENAME
 
 
 def format_array(arr: np.ndarray) -> str:
@@ -102,6 +117,21 @@ def main(args: ScriptArgs) -> None:
             "Expected .npz file", path=str(args.data_path), suffix=args.data_path.suffix
         )
         return
+
+    value_predictor: ValuePredictor | None = None
+    if args.checkpoint_path.exists() and args.config_path.exists():
+        value_predictor = ValuePredictor(args.checkpoint_path, args.config_path)
+        logger.info(
+            "Loaded model predictions",
+            checkpoint_path=str(args.checkpoint_path),
+            config_path=str(args.config_path),
+        )
+    else:
+        logger.warning(
+            "Model predictions disabled: checkpoint/config not found",
+            checkpoint_path=str(args.checkpoint_path),
+            config_path=str(args.config_path),
+        )
 
     # Load data
     with np.load(args.data_path) as data:
@@ -154,6 +184,17 @@ def main(args: ScriptArgs) -> None:
             can_hold = bool(data["hold_available"][i])
             move_number = frame_idx  # Use frame index as move number
             value_target = float(data["value_targets"][i])
+            value_pred = None
+            if value_predictor is not None:
+                value_pred = value_predictor.predict_value(
+                    index=i,
+                    board=data["boards"][i],
+                    current_piece=data["current_pieces"][i],
+                    hold_piece=data["hold_pieces"][i],
+                    hold_available=float(data["hold_available"][i]),
+                    next_queue=data["next_queue"][i],
+                    move_number=float(data["move_numbers"][i]),
+                )
 
             # Build piece info
             current_name = (
@@ -166,6 +207,7 @@ def main(args: ScriptArgs) -> None:
                 board=board,
                 move_number=move_number,
                 attack=int(value_target),
+                value_pred=value_pred,
                 info_text=f"Can hold: {'yes' if can_hold else 'no'}",
                 show_piece_info=True,
                 current_piece_name=current_name,

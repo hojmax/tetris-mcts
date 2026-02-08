@@ -26,6 +26,8 @@ def render_board(
     move_number: int = 0,
     attack: int = 0,
     info_text: Optional[str] = None,
+    vpred: Optional[float] = None,
+    value_pred: Optional[float] = None,
     # Extended info (shown on second line)
     show_piece_info: bool = False,
     current_piece_name: Optional[str] = None,
@@ -143,6 +145,12 @@ def render_board(
         font = ImageFont.load_default()
 
     # Draw info text
+    resolved_value_pred = value_pred if value_pred is not None else vpred
+    if value_pred is not None and vpred is not None and value_pred != vpred:
+        raise ValueError(
+            f"Conflicting value prediction inputs: value_pred={value_pred}, vpred={vpred}"
+        )
+
     if show_piece_info:
         # 4 lines: Move/Attack, Value, Piece/Hold, Queue
         current = current_piece_name or "?"
@@ -154,8 +162,18 @@ def render_board(
             fill=(200, 200, 200),
             font=font,
         )
+        second_line = (
+            f"Vpred: {resolved_value_pred:.2f}"
+            if resolved_value_pred is not None
+            else ""
+        )
         if info_text:
-            draw.text((PADDING, 30), info_text, fill=(200, 200, 200), font=font)
+            if second_line == "":
+                second_line = info_text
+            else:
+                second_line += f"  {info_text}"
+        if second_line:
+            draw.text((PADDING, 30), second_line, fill=(200, 200, 200), font=font)
         draw.text(
             (PADDING, 50),
             f"Piece: {current}  Hold: {hold}",
@@ -166,6 +184,8 @@ def render_board(
     else:
         # Single line
         text = f"Move: {move_number}  Attack: {attack}"
+        if resolved_value_pred is not None:
+            text += f"  Vpred: {resolved_value_pred:.2f}"
         if info_text:
             text += f"  {info_text}"
         draw.text((PADDING, 10), text, fill=(200, 200, 200), font=font)
