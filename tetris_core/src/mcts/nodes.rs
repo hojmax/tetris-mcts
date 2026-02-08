@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::env::TetrisEnv;
 use crate::piece::NUM_PIECE_TYPES;
 
-use super::action_space::get_action_space;
+use super::action_space::{HOLD_ACTION_INDEX, NUM_ACTIONS};
 use super::utils::sample_dirichlet;
 
 /// Trait for common node statistics (visit count, value sum, mean value)
@@ -231,18 +231,25 @@ impl NodeStats for ChanceNode {
 
 /// Get valid action indices for a state
 pub fn get_valid_action_indices(env: &TetrisEnv) -> Vec<usize> {
-    let action_space = get_action_space();
-    let placements = env.get_possible_placements();
+    let current_placements = env.get_possible_placements();
 
-    let mut indices = Vec::new();
-    for p in placements {
-        let piece = &p.piece;
-        if let Some(idx) = action_space.placement_to_index(piece.x, piece.y, piece.rotation) {
-            indices.push(idx);
-        }
+    let mut valid = vec![false; NUM_ACTIONS];
+    for p in current_placements {
+        debug_assert!(p.action_index < NUM_ACTIONS);
+        valid[p.action_index] = true;
     }
 
-    indices
+    let hold_is_available =
+        !env.game_over && !env.is_hold_used() && env.get_current_piece().is_some();
+    if hold_is_available {
+        valid[HOLD_ACTION_INDEX] = true;
+    }
+
+    valid
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, is_valid)| if *is_valid { Some(idx) } else { None })
+        .collect()
 }
 
 #[cfg(test)]
@@ -279,8 +286,8 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         let mut node = DecisionNode::new(env, 0);
 
-        // Create mock policy with 734 actions
-        let policy = vec![1.0; 734];
+        // Create mock policy over all actions
+        let policy = vec![1.0; NUM_ACTIONS];
         node.set_nn_output(&policy, 0.5);
 
         // Priors should be normalized to sum to 1
@@ -304,7 +311,7 @@ mod tests {
         let mut node = DecisionNode::new(env, 0);
 
         // Set uniform priors
-        let policy = vec![1.0; 734];
+        let policy = vec![1.0; NUM_ACTIONS];
         node.set_nn_output(&policy, 0.0);
 
         let priors_before: Vec<f32> = node.action_priors.clone();
@@ -333,7 +340,7 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         let mut node = DecisionNode::new(env, 0);
 
-        let policy = vec![1.0; 734];
+        let policy = vec![1.0; NUM_ACTIONS];
         node.set_nn_output(&policy, 0.0);
 
         // With no visits, selection should return a valid action
@@ -346,7 +353,7 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         let mut node = DecisionNode::new(env.clone(), 0);
 
-        let policy = vec![1.0; 734];
+        let policy = vec![1.0; NUM_ACTIONS];
         node.set_nn_output(&policy, 0.0);
         node.visit_count = 10;
 
@@ -366,7 +373,7 @@ mod tests {
     fn test_chance_node_creation() {
         let env = TetrisEnv::new(10, 20);
         let bag: Vec<usize> = vec![0, 1, 2];
-        let policy = vec![0.1; 734];
+        let policy = vec![0.1; NUM_ACTIONS];
         let node = ChanceNode::new(env, 5, bag.clone(), 0.0, policy.clone());
 
         assert_eq!(node.visit_count, 0);
@@ -374,7 +381,7 @@ mod tests {
         assert_eq!(node.attack, 5);
         assert!(node.children.is_empty());
         assert_eq!(node.bag_remaining, bag);
-        assert_eq!(node.cached_policy.len(), 734);
+        assert_eq!(node.cached_policy.len(), NUM_ACTIONS);
     }
 
     #[test]
@@ -463,7 +470,7 @@ mod tests {
 
         // All indices should be within action space bounds
         for idx in &indices {
-            assert!(*idx < 734, "Action index {} out of bounds", idx);
+            assert!(*idx < NUM_ACTIONS, "Action index {} out of bounds", idx);
         }
 
         // No duplicate indices
@@ -495,7 +502,7 @@ mod tests {
         let mut node = DecisionNode::new(env.clone(), 0);
 
         // Create non-uniform priors
-        let mut policy = vec![0.001; 734];
+        let mut policy = vec![0.001; NUM_ACTIONS];
         if let Some(&first_action) = node.valid_actions.first() {
             policy[first_action] = 0.9; // High prior for first action
         }

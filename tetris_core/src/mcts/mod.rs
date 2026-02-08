@@ -16,7 +16,10 @@ mod search;
 mod utils;
 
 // Re-export public API
-pub use action_space::{get_action_space, ActionSpace, NUM_ACTIONS};
+pub use action_space::{
+    get_action_space, ActionSpace, HOLD_ACTION_INDEX, NUM_ACTIONS,
+    NUM_PLACEMENT_ACTIONS,
+};
 pub use agent::MCTSAgent;
 pub use config::MCTSConfig;
 pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode, NodeStats};

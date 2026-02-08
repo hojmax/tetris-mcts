@@ -1,5 +1,57 @@
 # Deep Review
 
+## Issues
+
+1:
+```
+
+  3. Medium: clear_lines_internal() rebuilds full board every lock, even when no
+     lines clear
+
+  - tetris_core/src/env/clearing.rs:96 through tetris_core/src/env/
+    clearing.rs:129 always allocates/rebuilds row vectors.
+  - No fast path for “no full rows”.
+  - Impact: avoidable per-move overhead in hot game loop.
+
+```
+2:
+```
+  4. Medium: repeated O(n) placement scans on hot path (duplicate logic)
+
+  - tetris_core/src/mcts/search.rs:185 does linear .find(...) by (x,y,rot)
+    during expansion.
+  - tetris_core/src/mcts/agent.rs:116 does another linear .find(...) for chosen
+    action.
+  - tetris_core/src/env/pymethods.rs:431 already has execute_action_index()
+    path.
+  - Impact: unnecessary repeated scans and duplicated conversion logic in MCTS-
+    critical paths.
+
+```
+3:
+```
+  5. Medium: unnecessary board cloning in inference/training-example
+     construction
+
+  - tetris_core/src/nn.rs:79 uses env.get_board() (clones board) every
+    prediction.
+  - tetris_core/src/mcts/agent.rs:198 uses state.get_board() (clone) before
+    flattening.
+  - Impact: repeated allocations/copies in very hot loops.
+
+```
+and:
+```
+  6. Low: dead/unused field in core node struct
+
+  - tetris_core/src/mcts/nodes.rs:66 DecisionNode.prior is set at tetris_core/
+    src/mcts/nodes.rs:96 and only surfaced in export (tetris_core/src/mcts/
+    export.rs:30), not used in selection/backprop.
+  - Impact: extra state and cognitive load without behavioral effect.
+
+```
+
+
 ## tetris_core/src/scoring.rs ✅
 
 Are we throwing an error on "\_ => ClearType::None, // Invalid"? in determine_clear_type

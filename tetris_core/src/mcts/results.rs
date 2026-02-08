@@ -10,7 +10,7 @@ use crate::env::TetrisEnv;
 #[pyclass]
 #[derive(Clone)]
 pub struct MCTSResult {
-    /// Policy (visit counts normalized) over all 734 actions
+    /// Policy (visit counts normalized) over all actions
     #[pyo3(get)]
     pub policy: Vec<f32>,
     /// Selected action index
@@ -56,13 +56,13 @@ pub struct TrainingExample {
     /// Move number (0-99)
     #[pyo3(get)]
     pub move_number: u32,
-    /// MCTS policy target (734 values)
+    /// MCTS policy target (NUM_ACTIONS values)
     #[pyo3(get)]
     pub policy: Vec<f32>,
     /// Value target (cumulative attack from this point)
     #[pyo3(get)]
     pub value: f32,
-    /// Action mask (734 values, true = valid)
+    /// Action mask (NUM_ACTIONS values, true = valid)
     #[pyo3(get)]
     pub action_mask: Vec<bool>,
 }
@@ -315,11 +315,12 @@ impl MCTSTreeExport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcts::NUM_ACTIONS;
 
     #[test]
     fn test_mcts_result_creation() {
         let result = MCTSResult {
-            policy: vec![0.1; 734],
+            policy: vec![0.1; NUM_ACTIONS],
             action: 42,
             value: 0.75,
             num_simulations: 800,
@@ -328,13 +329,13 @@ mod tests {
         assert_eq!(result.action, 42);
         assert!((result.value - 0.75).abs() < 0.001);
         assert_eq!(result.num_simulations, 800);
-        assert_eq!(result.policy.len(), 734);
+        assert_eq!(result.policy.len(), NUM_ACTIONS);
     }
 
     #[test]
     fn test_mcts_result_repr() {
         let result = MCTSResult {
-            policy: vec![0.0; 734],
+            policy: vec![0.0; NUM_ACTIONS],
             action: 100,
             value: 1.5,
             num_simulations: 1000,
@@ -349,7 +350,7 @@ mod tests {
     #[test]
     fn test_mcts_result_clone() {
         let result = MCTSResult {
-            policy: vec![0.5; 734],
+            policy: vec![0.5; NUM_ACTIONS],
             action: 10,
             value: 2.0,
             num_simulations: 500,
@@ -371,9 +372,9 @@ mod tests {
             hold_available: true,
             next_queue: vec![0, 1, 2, 3, 4],
             move_number: 50,
-            policy: vec![0.0; 734],
+            policy: vec![0.0; NUM_ACTIONS],
             value: 10.5,
-            action_mask: vec![false; 734],
+            action_mask: vec![false; NUM_ACTIONS],
         };
 
         assert_eq!(example.board.len(), 200);
@@ -382,9 +383,9 @@ mod tests {
         assert!(example.hold_available);
         assert_eq!(example.next_queue.len(), 5);
         assert_eq!(example.move_number, 50);
-        assert_eq!(example.policy.len(), 734);
+        assert_eq!(example.policy.len(), NUM_ACTIONS);
         assert!((example.value - 10.5).abs() < 0.001);
-        assert_eq!(example.action_mask.len(), 734);
+        assert_eq!(example.action_mask.len(), NUM_ACTIONS);
     }
 
     #[test]
@@ -448,9 +449,9 @@ mod tests {
             hold_available: false,
             next_queue: vec![6, 0, 1],
             move_number: 99,
-            policy: vec![0.1; 734],
+            policy: vec![0.1; NUM_ACTIONS],
             value: 25.0,
-            action_mask: vec![true; 734],
+            action_mask: vec![true; NUM_ACTIONS],
         };
 
         let cloned = example.clone();
@@ -469,6 +470,8 @@ mod tests {
             examples: vec![],
             total_attack: 150,
             num_moves: 75,
+            avg_moves: 0.0,
+            max_moves: 0,
             stats: GameStats::default(),
         };
 
@@ -486,9 +489,9 @@ mod tests {
             hold_available: true,
             next_queue: vec![1, 2, 3, 4, 5],
             move_number: 0,
-            policy: vec![0.0; 734],
+            policy: vec![0.0; NUM_ACTIONS],
             value: 100.0,
-            action_mask: vec![true; 734],
+            action_mask: vec![true; NUM_ACTIONS],
         };
 
         let example2 = TrainingExample {
@@ -498,15 +501,17 @@ mod tests {
             hold_available: false,
             next_queue: vec![2, 3, 4, 5, 6],
             move_number: 1,
-            policy: vec![0.0; 734],
+            policy: vec![0.0; NUM_ACTIONS],
             value: 95.0,
-            action_mask: vec![true; 734],
+            action_mask: vec![true; NUM_ACTIONS],
         };
 
         let result = GameResult {
             examples: vec![example1, example2],
             total_attack: 100,
             num_moves: 2,
+            avg_moves: 0.0,
+            max_moves: 0,
             stats: GameStats::default(),
         };
 
@@ -523,6 +528,8 @@ mod tests {
             examples: vec![],
             total_attack: 200,
             num_moves: 100,
+            avg_moves: 0.0,
+            max_moves: 0,
             stats: GameStats::default(),
         };
 
@@ -535,7 +542,7 @@ mod tests {
     #[test]
     fn test_policy_sums_to_one() {
         // A valid policy should sum to approximately 1.0
-        let mut policy = vec![0.0; 734];
+        let mut policy = vec![0.0; NUM_ACTIONS];
         // Distribute probability over first 10 valid actions
         for i in 0..10 {
             policy[i] = 0.1;
@@ -559,8 +566,8 @@ mod tests {
     fn test_action_mask_consistency() {
         // If action_mask[i] is true, policy[i] could be non-zero
         // If action_mask[i] is false, policy[i] should be zero
-        let mut policy = vec![0.0; 734];
-        let mut action_mask = vec![false; 734];
+        let mut policy = vec![0.0; NUM_ACTIONS];
+        let mut action_mask = vec![false; NUM_ACTIONS];
 
         // Mark some actions as valid and give them probability
         for i in [0, 10, 20, 30, 40] {
@@ -581,7 +588,7 @@ mod tests {
         };
 
         // Check consistency: invalid actions should have zero policy
-        for i in 0..734 {
+        for i in 0..NUM_ACTIONS {
             if !example.action_mask[i] {
                 assert_eq!(
                     example.policy[i], 0.0,

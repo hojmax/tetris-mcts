@@ -1,6 +1,6 @@
 //! Action Space for Tetris MCTS
 //!
-//! Maps (x, y, rotation) placements to action indices 0-733.
+//! Maps (x, y, rotation) placements to action indices and defines an explicit hold action.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -11,11 +11,15 @@ use crate::piece::NUM_PIECE_TYPES;
 /// Global cached ActionSpace (initialized once on first use)
 static ACTION_SPACE: OnceLock<ActionSpace> = OnceLock::new();
 
-/// Number of actions in the action space
-pub const NUM_ACTIONS: usize = 734;
+/// Number of placement actions in the action space
+pub const NUM_PLACEMENT_ACTIONS: usize = 734;
+/// Dedicated hold action index.
+pub const HOLD_ACTION_INDEX: usize = NUM_PLACEMENT_ACTIONS;
+/// Total number of actions in the action space.
+pub const NUM_ACTIONS: usize = NUM_PLACEMENT_ACTIONS + 1;
 
-/// Action index mapping
-/// Maps (x, y, rotation) to action index 0-733
+/// Placement action index mapping
+/// Maps (x, y, rotation) to placement action indices 0..NUM_PLACEMENT_ACTIONS-1
 /// Built at module load time to match Python's action_space.py
 #[derive(Clone)]
 pub struct ActionSpace {
@@ -112,12 +116,18 @@ mod tests {
     #[test]
     fn test_action_space() {
         let action_space = ActionSpace::new();
-        assert_eq!(action_space.num_actions(), 734);
+        assert_eq!(action_space.num_actions(), NUM_PLACEMENT_ACTIONS);
 
         // Test roundtrip
         for (idx, &(x, y, rot)) in action_space.action_to_placement.iter().enumerate() {
             let idx2 = action_space.placement_to_index(x, y, rot).unwrap();
             assert_eq!(idx, idx2);
         }
+    }
+
+    #[test]
+    fn test_hold_action_index_is_after_placements() {
+        assert_eq!(HOLD_ACTION_INDEX, NUM_PLACEMENT_ACTIONS);
+        assert_eq!(NUM_ACTIONS, NUM_PLACEMENT_ACTIONS + 1);
     }
 }

@@ -5,6 +5,7 @@
 use pyo3::prelude::*;
 use std::collections::HashSet;
 
+use crate::mcts::HOLD_ACTION_INDEX;
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
 use crate::piece::{Piece, COLORS};
 use crate::scoring::AttackResult;
@@ -188,6 +189,10 @@ impl TetrisEnv {
                 y: spawn_y_offset(piece_type),
                 rotation: 0,
             });
+            self.clear_lock_delay();
+            self.last_move_was_rotation = false;
+            self.last_kick_index = 0;
+            self.invalidate_placement_cache();
         }
     }
 
@@ -418,19 +423,25 @@ impl TetrisEnv {
         }
     }
 
-    /// Execute an action by its index (0-733) in the action space.
+    /// Execute an action by its index in the action space.
     ///
-    /// Converts the action index to (x, y, rotation), finds the matching
-    /// placement from valid placements, and executes it.
+    /// Placement actions execute immediately. The dedicated hold action executes
+    /// hold as a standalone action and returns zero attack.
     ///
     /// Args:
-    ///     action_idx: Action index from MCTS (0-733)
+    ///     action_idx: Action index from MCTS
     ///
     /// Returns:
     ///     Attack sent if successful, or None if action is invalid
     pub fn execute_action_index(&mut self, action_idx: usize) -> Option<u32> {
+        if action_idx == HOLD_ACTION_INDEX {
+            return if self.hold() { Some(0) } else { None };
+        }
+
         let placements = self.get_possible_placements();
-        let placement = placements.iter().find(|p| p.action_index == action_idx)?;
-        Some(self.execute_placement(placement))
+        if let Some(placement) = placements.iter().find(|p| p.action_index == action_idx) {
+            return Some(self.execute_placement(placement));
+        }
+        None
     }
 }

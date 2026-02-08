@@ -8,7 +8,7 @@ use rand::{thread_rng, SeedableRng};
 use crate::constants::QUEUE_SIZE;
 use crate::nn::TetrisNN;
 
-use super::action_space::{get_action_space, NUM_ACTIONS};
+use super::action_space::NUM_ACTIONS;
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
 use super::results::MCTSResult;
@@ -167,36 +167,18 @@ fn expand_action(
 ) -> Option<MCTSNode> {
     let mut new_state = parent.state.clone();
 
-    // Get placement coordinates from action index
-    let (x, y, rot) = match get_action_space().index_to_placement(action_idx) {
-        Some(coords) => coords,
+    // Execute by action index so hold actions are handled consistently.
+    let attack = match new_state.execute_action_index(action_idx) {
+        Some(attack) => attack,
         None => {
             debug_assert!(
                 false,
-                "BUG: action index {} is not in valid action space",
+                "BUG: action {} selected by MCTS is not executable",
                 action_idx
             );
             return None;
         }
     };
-
-    // Find the matching placement to get move sequence for T-spin detection
-    let placements = new_state.get_possible_placements();
-    let placement = match placements
-        .iter()
-        .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)
-    {
-        Some(p) => p,
-        None => {
-            debug_assert!(
-                false,
-                "BUG: placement ({}, {}, rot={}) not found in possible placements for action {}",
-                x, y, rot, action_idx
-            );
-            return None;
-        }
-    };
-    let attack = new_state.execute_placement(placement);
 
     // Truncate to visible queue length FIRST.
     // This ensures expand_chance pushes to position 5 (the first "unseen" position).

@@ -7,7 +7,6 @@ use pyo3::prelude::*;
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
 
-use super::action_space::get_action_space;
 use super::config::MCTSConfig;
 use super::export::export_decision_node;
 use super::results::{
@@ -115,15 +114,9 @@ impl MCTSAgent {
             let result = self.search(&env, policy, nn_value, add_noise, move_idx);
 
             // Execute the selected action
-            let (x, y, rot) = get_action_space()
-                .index_to_placement(result.action)
-                .expect("MCTS returned invalid action index");
-            let placements = env.get_possible_placements();
-            let placement = placements
-                .iter()
-                .find(|p| p.piece.x == x && p.piece.y == y && p.piece.rotation == rot)
-                .expect("MCTS selected action not found in valid placements");
-            let attack = env.execute_placement(placement);
+            let attack = env
+                .execute_action_index(result.action)
+                .expect("MCTS selected action is not executable");
             attacks.push(attack);
 
             // Collect stats from the attack result
@@ -416,6 +409,7 @@ impl MCTSAgent {
 mod tests {
     use super::super::nodes::{DecisionNode, MCTSNode};
     use super::*;
+    use crate::mcts::NUM_ACTIONS;
 
     #[test]
     fn test_expand_action_updates_state() {
@@ -436,7 +430,7 @@ mod tests {
         let initial_queue: Vec<usize> = env.get_queue(5);
 
         // Create a decision node
-        let policy = vec![1.0 / 734.0; 734];
+        let policy = vec![1.0 / NUM_ACTIONS as f32; NUM_ACTIONS];
         let mut root = DecisionNode::new(env.clone(), 0);
         root.set_nn_output(&policy, 0.0);
 

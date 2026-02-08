@@ -16,7 +16,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::mcts::GameStats;
-use crate::mcts::{MCTSAgent, MCTSConfig, TrainingExample};
+use crate::mcts::{MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
 use super::npz::{read_examples_from_npz, write_examples_to_npz};
 
@@ -512,7 +512,7 @@ impl GameGenerator {
         // Allocate output arrays
         let board_height = 20usize;
         let board_width = 10usize;
-        let num_actions = 734usize;
+        let num_actions = NUM_ACTIONS;
         let aux_features_size = 52usize;
 
         let mut boards = vec![0.0f32; actual_batch * board_height * board_width];

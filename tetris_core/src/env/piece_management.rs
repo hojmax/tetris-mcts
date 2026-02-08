@@ -71,6 +71,7 @@ impl TetrisEnv {
         piece.y = spawn_y_offset(piece_type);
         piece.rotation = 0;
 
+        self.clear_lock_delay();
         self.last_move_was_rotation = false;
         self.last_kick_index = 0;
 
@@ -79,5 +80,7 @@ impl TetrisEnv {
         if !is_valid {
             self.game_over = true;
         }
+        // Invalidate placements cache when piece changes
+        self.invalidate_placement_cache();
     }
 }

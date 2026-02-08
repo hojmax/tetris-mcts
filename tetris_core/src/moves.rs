@@ -60,7 +60,7 @@ pub struct Placement {
     /// Whether the last move before hard drop was a rotation
     #[pyo3(get)]
     pub last_move_was_rotation: bool,
-    /// Pre-computed action index for fast lookup (0-733)
+    /// Pre-computed placement action index for fast lookup (0..NUM_PLACEMENT_ACTIONS-1)
     #[pyo3(get)]
     pub action_index: usize,
 }

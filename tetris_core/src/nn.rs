@@ -50,6 +50,17 @@ impl TetrisNN {
         let outputs = self.model.run(tvec!(board.into(), aux.into()))?;
 
         let policy_logits: Vec<f32> = outputs[0].to_array_view::<f32>()?.iter().copied().collect();
+        if policy_logits.len() != action_mask.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "NN policy output size mismatch: model={}, expected={} (action space changed; re-export ONNX)",
+                    policy_logits.len(),
+                    action_mask.len()
+                ),
+            )
+            .into());
+        }
 
         let value = outputs[1]
             .to_array_view::<f32>()?
@@ -148,17 +159,21 @@ fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
 
 /// Get action mask from environment
 pub fn get_action_mask(env: &TetrisEnv) -> Vec<bool> {
-    use crate::mcts::{get_action_space, NUM_ACTIONS};
+    use crate::mcts::{HOLD_ACTION_INDEX, NUM_ACTIONS};
 
-    let action_space = get_action_space();
-    let placements = env.get_possible_placements();
+    let current_placements = env.get_possible_placements();
 
     let mut mask = vec![false; NUM_ACTIONS];
 
-    for p in placements {
-        if let Some(idx) = action_space.placement_to_index(p.piece.x, p.piece.y, p.piece.rotation) {
-            mask[idx] = true;
-        }
+    for p in current_placements {
+        debug_assert!(p.action_index < NUM_ACTIONS);
+        mask[p.action_index] = true;
+    }
+
+    let hold_is_available =
+        !env.game_over && !env.is_hold_used() && env.get_current_piece().is_some();
+    if hold_is_available {
+        mask[HOLD_ACTION_INDEX] = true;
     }
 
     mask
