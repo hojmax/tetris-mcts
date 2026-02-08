@@ -40,9 +40,9 @@ class ScriptArgs:
 
     # Runtime
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
-    resume_dir: (  # Bootstrap a new run from existing run dir (e.g., training_runs/v37)
+    resume_dir: (  # Bootstrap a new run from existing run dir (e.g.,  Path(__file__).parent.parent / "training_runs" / "v44")
         Path | None
-    ) = Path(__file__).parent.parent / "training_runs" / "v44"
+    ) = None
     init_checkpoint: Path | None = None  # Initialize model weights from checkpoint
     no_wandb: bool = False  # Disable WandB logging
 
