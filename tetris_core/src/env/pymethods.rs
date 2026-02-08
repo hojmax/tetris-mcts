@@ -7,10 +7,10 @@ use std::collections::HashSet;
 
 use crate::mcts::HOLD_ACTION_INDEX;
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
-use crate::piece::Piece;
+use crate::piece::{spawn_x, spawn_y, Piece};
 use crate::scoring::AttackResult;
 
-use super::piece_management::{spawn_x, spawn_y_offset};
+use super::state::PlacementCache;
 use super::TetrisEnv;
 
 #[pymethods]
@@ -179,12 +179,7 @@ impl TetrisEnv {
 
     pub fn set_current_piece_type(&mut self, piece_type: usize) {
         if piece_type < 7 && !self.game_over {
-            self.current_piece = Some(Piece {
-                piece_type,
-                x: spawn_x(self.width),
-                y: spawn_y_offset(piece_type),
-                rotation: 0,
-            });
+            self.current_piece = Some(Piece::spawn(piece_type, self.width));
             self.clear_lock_delay();
             self.last_move_was_rotation = false;
             self.last_kick_index = 0;
@@ -368,7 +363,7 @@ impl TetrisEnv {
     pub fn get_possible_placements(&self) -> Vec<Placement> {
         // Check cache first
         if let Some(ref cached) = *self.placements_cache.borrow() {
-            return cached.clone();
+            return cached.placements.clone();
         }
 
         // Cache miss - compute placements
@@ -379,8 +374,17 @@ impl TetrisEnv {
             Vec::new()
         };
 
+        let mut action_to_placement_idx = vec![None; crate::mcts::NUM_ACTIONS];
+        for (placement_idx, placement) in placements.iter().enumerate() {
+            debug_assert!(placement.action_index < action_to_placement_idx.len());
+            action_to_placement_idx[placement.action_index] = Some(placement_idx);
+        }
+
         // Store in cache and return
-        *self.placements_cache.borrow_mut() = Some(placements.clone());
+        *self.placements_cache.borrow_mut() = Some(PlacementCache {
+            placements: placements.clone(),
+            action_to_placement_idx,
+        });
         placements
     }
 
@@ -390,12 +394,7 @@ impl TetrisEnv {
         }
 
         let board = Board::new(self.width, self.height, &self.board);
-        find_all_placements(
-            &board,
-            piece_type,
-            spawn_x(self.width),
-            spawn_y_offset(piece_type),
-        )
+        find_all_placements(&board, piece_type, spawn_x(self.width), spawn_y(piece_type))
     }
 
     pub fn get_possible_placements_with_hold(&self) -> (Vec<Placement>, Vec<Placement>) {
@@ -434,10 +433,23 @@ impl TetrisEnv {
             return if self.hold() { Some(0) } else { None };
         }
 
-        let placements = self.get_possible_placements();
-        if let Some(placement) = placements.iter().find(|p| p.action_index == action_idx) {
-            return Some(self.execute_placement(placement));
+        if self.placements_cache.borrow().is_none() {
+            self.get_possible_placements();
         }
-        None
+
+        let placement = {
+            let cache_ref = self.placements_cache.borrow();
+            let cache = cache_ref
+                .as_ref()
+                .expect("placements cache should exist after get_possible_placements");
+            let placement_idx = cache
+                .action_to_placement_idx
+                .get(action_idx)
+                .copied()
+                .flatten()?;
+            cache.placements[placement_idx].clone()
+        };
+
+        Some(self.execute_placement(&placement))
     }
 }

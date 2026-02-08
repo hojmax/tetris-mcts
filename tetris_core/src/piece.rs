@@ -1,3 +1,4 @@
+use crate::constants::{BOARD_WIDTH, I_PIECE, O_PIECE};
 use pyo3::prelude::*;
 
 /// Rotation states: 0=spawn, 1=R (CW from spawn), 2=180°, 3=L (CCW from spawn)
@@ -140,6 +141,20 @@ pub const NUM_PIECE_TYPES: usize = 7;
 /// Maximum number of cells in a tetromino (always 4)
 pub const MAX_PIECE_CELLS: usize = 4;
 
+#[inline]
+pub fn spawn_x(width: usize) -> i32 {
+    (width as i32 - 4) / 2
+}
+
+#[inline]
+pub fn spawn_y(piece_type: usize) -> i32 {
+    if piece_type == I_PIECE || piece_type == O_PIECE {
+        -1
+    } else {
+        0
+    }
+}
+
 /// Get the cells occupied by a piece at a given position using precomputed offsets.
 /// Returns a fixed-size array of exactly 4 cells (all tetrominos have 4 cells).
 #[inline]
@@ -175,10 +190,16 @@ pub struct Piece {
 impl Piece {
     #[new]
     pub fn new(piece_type: usize) -> Self {
+        Piece::spawn(piece_type, BOARD_WIDTH)
+    }
+}
+
+impl Piece {
+    pub fn spawn(piece_type: usize, board_width: usize) -> Self {
         Piece {
             piece_type,
-            x: 3,
-            y: 0,
+            x: spawn_x(board_width),
+            y: spawn_y(piece_type),
             rotation: 0,
         }
     }
@@ -214,7 +235,7 @@ mod tests {
         let piece = Piece::new(0); // I piece
         assert_eq!(piece.piece_type, 0);
         assert_eq!(piece.x, 3);
-        assert_eq!(piece.y, 0);
+        assert_eq!(piece.y, -1);
         assert_eq!(piece.rotation, 0);
     }
 
@@ -250,12 +271,11 @@ mod tests {
         let piece = Piece::new(0); // I piece, spawn state
         let cells = piece.get_cells();
         assert_eq!(cells.len(), 4);
-        // I piece in spawn state is horizontal on row 1
-        // With x=3, y=0, cells should be at (3,1), (4,1), (5,1), (6,1)
-        assert!(cells.contains(&(3, 1)));
-        assert!(cells.contains(&(4, 1)));
-        assert!(cells.contains(&(5, 1)));
-        assert!(cells.contains(&(6, 1)));
+        // I piece spawns with y=-1, so occupied cells land on visible row 0.
+        assert!(cells.contains(&(3, 0)));
+        assert!(cells.contains(&(4, 0)));
+        assert!(cells.contains(&(5, 0)));
+        assert!(cells.contains(&(6, 0)));
     }
 
     #[test]

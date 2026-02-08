@@ -7,6 +7,11 @@ use crate::piece::{get_cells, Piece};
 use super::TetrisEnv;
 
 impl TetrisEnv {
+    #[inline]
+    pub(crate) fn board_cells(&self) -> &[Vec<u8>] {
+        &self.board
+    }
+
     /// Compute how far a piece can drop using column_heights for O(1) per cell.
     /// Returns the drop distance (0 if already at bottom).
     pub(crate) fn compute_drop_distance(&self, piece: &Piece) -> i32 {

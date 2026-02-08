@@ -27,7 +27,7 @@ pub(super) fn export_decision_node(
         value_sum: node.value_sum,
         mean_value,
         nn_value: node.nn_value,
-        prior: node.prior,
+        prior: 0.0,
         is_terminal: node.is_terminal,
         move_number: node.move_number,
         attack: 0,

@@ -194,7 +194,7 @@ impl MCTSAgent {
 
             // Convert board to binary (1 = filled, 0 = empty)
             let board: Vec<u8> = state
-                .get_board()
+                .board_cells()
                 .iter()
                 .flat_map(|row| row.iter().map(|&cell| if cell != 0 { 1 } else { 0 }))
                 .collect();
