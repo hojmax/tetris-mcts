@@ -19,7 +19,7 @@ INFO_HEIGHT_EXTENDED = 110
 
 def render_board(
     board: np.ndarray,
-    board_colors: Optional[list[list[Optional[int]]]] = None,
+    board_piece_types: Optional[list[list[Optional[int]]]] = None,
     current_piece_cells: Optional[list[tuple[int, int]]] = None,
     current_piece_type: Optional[int] = None,
     ghost_cells: Optional[list[tuple[int, int]]] = None,
@@ -37,7 +37,7 @@ def render_board(
 
     Args:
         board: 2D array (20x10) of cell occupancy (0=empty, 1=filled)
-        board_colors: 2D array of piece type indices for coloring locked pieces
+        board_piece_types: 2D array of piece type indices for coloring locked pieces
         current_piece_cells: List of (x, y) cells for current piece
         current_piece_type: Piece type index (0-6) for coloring current piece
         ghost_cells: List of (x, y) cells for ghost piece outline
@@ -80,8 +80,8 @@ def render_board(
         for x in range(BOARD_WIDTH):
             if board[y][x] != 0:
                 color = (80, 80, 80)  # Default gray
-                if board_colors is not None:
-                    color_idx = board_colors[y][x]
+                if board_piece_types is not None:
+                    color_idx = board_piece_types[y][x]
                     if color_idx is not None:
                         color = PIECE_COLORS[color_idx]
 

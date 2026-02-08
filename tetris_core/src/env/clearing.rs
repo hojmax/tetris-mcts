@@ -70,7 +70,7 @@ impl TetrisEnv {
 
             for (x, y) in get_cells(piece.piece_type, piece.rotation, piece.x, piece.y) {
                 self.board[y as usize][x as usize] = 1;
-                self.board_colors[y as usize][x as usize] = Some(piece.piece_type);
+                self.board_piece_types[y as usize][x as usize] = Some(piece.piece_type);
                 // Update column height if this cell is higher (lower y) than current
                 if y < self.column_heights[x as usize] {
                     self.column_heights[x as usize] = y;
@@ -94,7 +94,7 @@ impl TetrisEnv {
         // Count cleared lines and build new board in one pass - O(height)
         // Line full check is now O(1) using row_fill_counts
         let mut kept_board = Vec::with_capacity(self.height);
-        let mut kept_colors = Vec::with_capacity(self.height);
+        let mut kept_piece_types = Vec::with_capacity(self.height);
         let mut kept_row_counts = Vec::with_capacity(self.height);
         let mut num_lines = 0u32;
         let width = self.width as u8;
@@ -106,26 +106,26 @@ impl TetrisEnv {
             } else {
                 // Line not full - keep it
                 kept_board.push(std::mem::take(&mut self.board[y]));
-                kept_colors.push(std::mem::take(&mut self.board_colors[y]));
+                kept_piece_types.push(std::mem::take(&mut self.board_piece_types[y]));
                 kept_row_counts.push(self.row_fill_counts[y]);
             }
         }
 
         // Build empty rows, then append kept rows - O(height) total
         let mut new_board = Vec::with_capacity(self.height);
-        let mut new_colors = Vec::with_capacity(self.height);
+        let mut new_piece_types = Vec::with_capacity(self.height);
         let mut new_row_counts = Vec::with_capacity(self.height);
         for _ in 0..num_lines {
             new_board.push(vec![0; self.width]);
-            new_colors.push(vec![None; self.width]);
+            new_piece_types.push(vec![None; self.width]);
             new_row_counts.push(0);
         }
         new_board.append(&mut kept_board);
-        new_colors.append(&mut kept_colors);
+        new_piece_types.append(&mut kept_piece_types);
         new_row_counts.append(&mut kept_row_counts);
 
         self.board = new_board;
-        self.board_colors = new_colors;
+        self.board_piece_types = new_piece_types;
         self.row_fill_counts = new_row_counts;
 
         // Update optimization fields

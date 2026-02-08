@@ -83,7 +83,7 @@ def load_and_render_replay(replay_data: dict, output_path: Path):
 def _render_frame(env: TetrisEnv, move_num: int, attack: int, info_text: str):
     """Render a single frame."""
     board = np.array(env.get_board())
-    board_colors = env.get_board_colors()
+    board_piece_types = env.get_board_piece_types()
     piece = env.get_current_piece()
     ghost = env.get_ghost_piece()
     hold_piece = env.get_hold_piece()
@@ -96,7 +96,7 @@ def _render_frame(env: TetrisEnv, move_num: int, attack: int, info_text: str):
 
     return render_board(
         board=board,
-        board_colors=board_colors,
+        board_piece_types=board_piece_types,
         current_piece_cells=piece.get_cells() if piece else None,
         current_piece_type=piece.piece_type if piece else None,
         ghost_cells=ghost.get_cells() if ghost else None,
