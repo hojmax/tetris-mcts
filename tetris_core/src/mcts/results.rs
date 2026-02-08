@@ -151,9 +151,6 @@ pub struct TreeNodeExport {
     /// Raw neural network value estimate (for decision nodes)
     #[pyo3(get)]
     pub nn_value: f32,
-    /// Prior probability (for decision nodes)
-    #[pyo3(get)]
-    pub prior: f32,
     /// Is terminal state (for decision nodes)
     #[pyo3(get)]
     pub is_terminal: bool,
