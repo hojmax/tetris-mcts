@@ -65,12 +65,12 @@ class TrainingConfig:
 
     # Optimizer
     batch_size: int = 256
-    learning_rate: float = 0.0005
+    learning_rate: float = 0.005
     weight_decay: float = 1e-4
     grad_clip_norm: float = 1.0
     lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
     lr_decay_steps: int = 100_000
-    lr_min_factor: float = 0.5  # Minimum LR as fraction of initial (for cosine)
+    lr_min_factor: float = 0.1  # Minimum LR as fraction of initial (for cosine)
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
 
