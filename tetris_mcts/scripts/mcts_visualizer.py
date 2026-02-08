@@ -11,17 +11,23 @@ Uses Dash + Cytoscape for interactive graph exploration with:
 
 import base64
 import io
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import dash
 from dash import html, dcc, callback, Output, Input, State, clientside_callback
 import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
+from simple_parsing import parse
 
 from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
 from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
+    CHECKPOINT_DIRNAME,
+    CONFIG_FILENAME,
+    LATEST_ONNX_FILENAME,
     NUM_PIECE_TYPES,
     PIECE_COLORS,
     PIECE_NAMES,
@@ -30,6 +36,39 @@ from tetris_mcts.config import (
 # Global cache for TetrisEnv states (keyed by node ID)
 # This allows us to clone states and execute actions for visualization
 _env_cache: dict[int, TetrisEnv] = {}
+
+
+@dataclass
+class ScriptArgs:
+    run_dir: Path = Path("training_runs/v3")  # Training run dir (default: training_runs/v3)
+
+
+def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
+    defaults: dict[str, str | int | float] = {
+        "model_path": "training_runs/v3/checkpoints/latest.onnx",
+        "num_simulations": 100,
+        "c_puct": 1.0,
+    }
+    run_dir = args.run_dir
+    config_path = run_dir / CONFIG_FILENAME
+    model_path = run_dir / CHECKPOINT_DIRNAME / LATEST_ONNX_FILENAME
+
+    if not run_dir.exists():
+        raise ValueError(f"Run dir does not exist: {run_dir}")
+    if not config_path.exists():
+        raise ValueError(f"Missing run config: {config_path}")
+    if not model_path.exists():
+        raise ValueError(f"Missing latest ONNX checkpoint: {model_path}")
+
+    config = json.loads(config_path.read_text())
+    defaults["model_path"] = str(model_path)
+    defaults["num_simulations"] = int(config["num_simulations"])
+    defaults["c_puct"] = float(config["c_puct"])
+    return defaults
+
+
+SCRIPT_ARGS = parse(ScriptArgs)
+VIZ_DEFAULTS = load_viz_defaults(SCRIPT_ARGS)
 
 PIECE_TOKEN_TO_INDEX = {
     "I": 0,
@@ -393,7 +432,9 @@ def display_virtual_piece_node(node_data, tree_dict):
     return details, f"data:image/png;base64,{img_b64}", state_info
 
 
-def build_cytoscape_elements(tree, max_nodes: int = 500, show_unvisited: bool = True):
+def build_cytoscape_elements(
+    tree, max_nodes: int = 500, show_unvisited: bool = True, c_puct: float = 1.0
+):
     """Convert MCTSTreeExport to Cytoscape elements."""
     elements = []
 
@@ -497,7 +538,7 @@ def build_cytoscape_elements(tree, max_nodes: int = 500, show_unvisited: bool = 
 
                 prior = action_to_prior.get(action_idx, 0.0)
                 # U = c_puct * P * sqrt(N_parent) / (1 + 0) for unvisited
-                u_value = prior * sqrt_parent  # c_puct=1.0 assumed
+                u_value = c_puct * prior * sqrt_parent
                 virtual_id = f"v_{node.id}_{action_idx}"
 
                 elements.append(
@@ -694,17 +735,25 @@ app.layout = html.Div(
                     id="model-path",
                     type="text",
                     placeholder="Path to ONNX model",
-                    value="training_runs/v3/checkpoints/latest.onnx",
+                    value=VIZ_DEFAULTS["model_path"],
                     style={"width": "250px", "marginRight": "15px"},
                 ),
                 html.Label("Sims:", style={"marginRight": "5px"}),
                 dcc.Input(
                     id="num-simulations",
                     type="number",
-                    value=100,
+                    value=VIZ_DEFAULTS["num_simulations"],
                     min=1,
                     max=1000,
                     style={"width": "60px", "marginRight": "15px"},
+                ),
+                html.Label("c_puct:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="c-puct",
+                    type="number",
+                    value=VIZ_DEFAULTS["c_puct"],
+                    step=0.1,
+                    style={"width": "70px", "marginRight": "15px"},
                 ),
                 html.Label("Seed:", style={"marginRight": "5px"}),
                 dcc.Input(
@@ -906,6 +955,7 @@ app.layout = html.Div(
     Input("show-unvisited", "value"),
     State("model-path", "value"),
     State("num-simulations", "value"),
+    State("c-puct", "value"),
     State("seed", "value"),
     State("current-piece", "value"),
     State("hold-piece", "value"),
@@ -924,6 +974,7 @@ def run_mcts(
     show_unvisited_value,
     model_path,
     num_sims,
+    c_puct,
     seed,
     current_piece_text,
     hold_piece_text,
@@ -953,7 +1004,7 @@ def run_mcts(
     # Create config with current number of simulations
     config = MCTSConfig()
     config.num_simulations = sims_to_run
-    config.c_puct = 1.0
+    config.c_puct = c_puct if c_puct is not None else float(VIZ_DEFAULTS["c_puct"])
     config.temperature = 0.0
     config.dirichlet_alpha = 0.3
     config.dirichlet_epsilon = 0.25
@@ -1043,7 +1094,9 @@ def run_mcts(
 
     # Build elements
     show_unvisited = "show" in (show_unvisited_value or [])
-    elements = build_cytoscape_elements(tree, max_nodes or 200, show_unvisited)
+    elements = build_cytoscape_elements(
+        tree, max_nodes or 200, show_unvisited, config.c_puct
+    )
 
     # Cache TetrisEnv states for computing resulting boards of virtual nodes
     global _env_cache

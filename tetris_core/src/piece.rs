@@ -223,6 +223,7 @@ impl Piece {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::NUM_PIECE_TYPES;
 
     #[test]
     fn test_piece_creation() {

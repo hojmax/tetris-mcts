@@ -30,8 +30,10 @@ play: $(RELEASE_MARKER)
 	$(PYTHON) tetris_mcts/scripts/tetris_game.py
 
 # Run the MCTS visualizer (builds first if needed)
+# Usage: make viz RUN_DIR=training_runs/v3
+RUN_DIR ?=
 viz: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/mcts_visualizer.py
+	$(PYTHON) tetris_mcts/scripts/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),)
 
 # Force rebuild (clean first to avoid caching issues)
 rebuild:

@@ -4,6 +4,9 @@
 
 # Deep Review
 
+Done: ✅
+In progress: 🟨
+
 ## tetris_core/src/scoring.rs ✅
 
 ## tetris_core/src/piece.rs ✅
@@ -16,10 +19,13 @@
 
 ## tetris_core/src/constants.rs ✅
 
-## tetris_core/src/env/board.rs 🟨
+## tetris_core/src/env/board.rs ✅
+
+## tetris_core/src/env/clearing.rs 🟨
 
 # Backlog
 
+- [ ] We might want to scale cpuct to average value head precition magnitude?
 - [ ] Visualizing MCTS search and verifying correctness
 - [ ] Reading through and validating all code
 - [ ] Proper network split caching. Caching board CNN head, and optimizing such that we only run last part of network.

@@ -5,8 +5,7 @@
 //! planning and move evaluation.
 
 use pyo3::prelude::*;
-use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::mcts::get_action_space;
@@ -36,6 +35,14 @@ struct PieceState {
     y: i32,
     rotation: usize,
 }
+
+const X_MIN: i32 = -3;
+const X_STATES: usize = 16; // x in [-3, 12]
+const Y_MIN: i32 = -3;
+const Y_STATES: usize = 26; // y in [-3, 22]
+const ROT_STATES: usize = 4;
+const NUM_STATE_INDICES: usize = X_STATES * Y_STATES * ROT_STATES; // 1,664
+const VISITED_WORDS: usize = (NUM_STATE_INDICES + 63) / 64; // 26
 
 /// A possible placement for a piece, including the move sequence to reach it
 #[pyclass]
@@ -153,27 +160,29 @@ fn try_rotate(
     None
 }
 
-/// Information tracked during BFS for each path
-#[derive(Clone)]
-struct PathInfo {
-    // Use SmallVec to avoid heap allocations for short move sequences
-    // 32 bytes can hold 32 moves, which covers most cases
-    moves: SmallVec<[u8; 32]>,
-    /// Kick index of the last rotation (if any)
-    last_kick_index: usize,
-    /// Whether the last move was a rotation
-    last_move_was_rotation: bool,
-}
-
 /// Convert piece state to bitset index
-/// Board bounds: x in [-3, 12], y in [-3, 22], rotation in [0, 3]
-/// Total states: 16 * 26 * 4 = 1,664
 #[inline]
 fn state_to_index(state: &PieceState) -> usize {
-    let x_offset = (state.x + 3) as usize; // 0..16
-    let y_offset = (state.y + 3) as usize; // 0..26
-    let rot = state.rotation; // 0..4
-    x_offset * 104 + y_offset * 4 + rot
+    debug_assert!((X_MIN..(X_MIN + X_STATES as i32)).contains(&state.x));
+    debug_assert!((Y_MIN..(Y_MIN + Y_STATES as i32)).contains(&state.y));
+    debug_assert!(state.rotation < ROT_STATES);
+
+    let x_offset = (state.x - X_MIN) as usize;
+    let y_offset = (state.y - Y_MIN) as usize;
+    x_offset * (Y_STATES * ROT_STATES) + y_offset * ROT_STATES + state.rotation
+}
+
+#[inline]
+fn index_to_state(idx: usize) -> PieceState {
+    let x_offset = idx / (Y_STATES * ROT_STATES);
+    let rem = idx % (Y_STATES * ROT_STATES);
+    let y_offset = rem / ROT_STATES;
+    let rotation = rem % ROT_STATES;
+    PieceState {
+        x: X_MIN + x_offset as i32,
+        y: Y_MIN + y_offset as i32,
+        rotation,
+    }
 }
 
 /// Find all possible placements for a piece on the given board
@@ -198,59 +207,60 @@ pub fn find_all_placements(
         return Vec::new();
     }
 
-    // Use bitset instead of HashSet for visited states (much faster)
-    // 1,664 states / 64 = 26 u64s needed
-    let mut visited = [0u64; 26];
-    let mut queue: VecDeque<(PieceState, PathInfo)> = VecDeque::with_capacity(128);
+    let mut visited = [0u64; VISITED_WORDS];
+    let mut queue: VecDeque<PieceState> = VecDeque::with_capacity(128);
 
-    // Track final positions (after hard drop) -> path info
-    // Key: (final_x, final_y, rotation)
-    let mut final_positions: HashMap<(i32, i32, usize), PathInfo> = HashMap::new();
+    // Parent-pointer BFS metadata per reachable state.
+    // This avoids cloning move sequences at each edge expansion.
+    let mut parents = [usize::MAX; NUM_STATE_INDICES];
+    let mut action_from_parent = [0u8; NUM_STATE_INDICES];
+    let mut depth = [u16::MAX; NUM_STATE_INDICES];
+    let mut last_kick_index = [0u8; NUM_STATE_INDICES];
+    let mut last_move_was_rotation = [false; NUM_STATE_INDICES];
 
-    let start_info = PathInfo {
-        moves: SmallVec::new(),
-        last_kick_index: 0,
-        last_move_was_rotation: false,
-    };
+    // For each final dropped state index, track the source BFS state index
+    // that reaches it with the shortest path.
+    let mut final_best_source = [None; NUM_STATE_INDICES];
+    let mut final_best_depth = [u16::MAX; NUM_STATE_INDICES];
 
     // Mark start state as visited
     let start_idx = state_to_index(&start_state);
     visited[start_idx / 64] |= 1u64 << (start_idx % 64);
-    queue.push_back((start_state, start_info));
+    parents[start_idx] = start_idx;
+    depth[start_idx] = 0;
+    queue.push_back(start_state);
 
-    while let Some((state, path_info)) = queue.pop_front() {
-        // Record this state's final position (after hard drop)
+    let transitions = [
+        (Action::Left, -1, 0, None),
+        (Action::Right, 1, 0, None),
+        (Action::Down, 0, 1, None),
+        (Action::RotateCW, 0, 0, Some(true)),
+        (Action::RotateCCW, 0, 0, Some(false)),
+    ];
+
+    while let Some(state) = queue.pop_front() {
+        let state_idx = state_to_index(&state);
+
+        // Record this state's final position (after hard drop), keeping shortest source path.
         let final_y = board.get_drop_y(piece_type, &state);
-        let final_key = (state.x, final_y, state.rotation);
-
-        // Only keep the shortest path to each final position
-        use std::collections::hash_map::Entry;
-        match final_positions.entry(final_key) {
-            Entry::Vacant(e) => {
-                e.insert(path_info.clone());
-            }
-            Entry::Occupied(mut e) => {
-                if path_info.moves.len() < e.get().moves.len() {
-                    e.insert(path_info.clone());
-                }
-            }
+        let final_state = PieceState {
+            x: state.x,
+            y: final_y,
+            rotation: state.rotation,
+        };
+        let final_idx = state_to_index(&final_state);
+        if depth[state_idx] < final_best_depth[final_idx] {
+            final_best_depth[final_idx] = depth[state_idx];
+            final_best_source[final_idx] = Some(state_idx);
         }
 
         // Try all possible moves
-        let transitions = [
-            (Action::Left, -1, 0, None),
-            (Action::Right, 1, 0, None),
-            (Action::Down, 0, 1, None),
-            (Action::RotateCW, 0, 0, Some(true)),
-            (Action::RotateCCW, 0, 0, Some(false)),
-        ];
-
-        for (action, dx, dy, rotate) in transitions.iter() {
-            let (new_state, kick_index) = if let Some(clockwise) = rotate {
+        for &(action, dx, dy, rotate) in &transitions {
+            let (new_state, kick_index, is_rotation) = if let Some(clockwise) = rotate {
                 // Rotation with wall kicks - returns state and kick index
-                match try_rotate(board, piece_type, &state, *clockwise) {
-                    Some((state, kick)) => (Some(state), kick),
-                    None => (None, 0),
+                match try_rotate(board, piece_type, &state, clockwise) {
+                    Some((state, kick)) => (Some(state), kick as u8, true),
+                    None => (None, 0, false),
                 }
             } else {
                 // Simple translation - no kick
@@ -260,39 +270,35 @@ pub fn find_all_placements(
                     rotation: state.rotation,
                 };
                 if board.is_valid_position(piece_type, &candidate) {
-                    (Some(candidate), 0)
+                    (Some(candidate), 0, false)
                 } else {
-                    (None, 0)
+                    (None, 0, false)
                 }
             };
 
-            if let Some(new_state) = new_state {
-                // Check visited using bitset
-                let idx = state_to_index(&new_state);
-                let word = idx / 64;
-                let bit = idx % 64;
-                let is_visited = (visited[word] & (1u64 << bit)) != 0;
+            let Some(new_state) = new_state else {
+                continue;
+            };
 
-                if !is_visited {
-                    // Mark as visited
-                    visited[word] |= 1u64 << bit;
+            // Check visited using bitset
+            let idx = state_to_index(&new_state);
+            let word = idx / 64;
+            let bit = idx % 64;
+            let is_visited = (visited[word] & (1u64 << bit)) != 0;
 
-                    // Clone and push to moves
-                    let mut new_moves = path_info.moves.clone();
-                    new_moves.push(action.to_u8());
-
-                    let is_rotation = rotate.is_some();
-                    let new_info = PathInfo {
-                        moves: new_moves,
-                        last_kick_index: if is_rotation {
-                            kick_index
-                        } else {
-                            path_info.last_kick_index
-                        },
-                        last_move_was_rotation: is_rotation,
-                    };
-                    queue.push_back((new_state, new_info));
-                }
+            if !is_visited {
+                // Mark as visited and record BFS metadata
+                visited[word] |= 1u64 << bit;
+                parents[idx] = state_idx;
+                action_from_parent[idx] = action.to_u8();
+                depth[idx] = depth[state_idx] + 1;
+                last_kick_index[idx] = if is_rotation {
+                    kick_index
+                } else {
+                    last_kick_index[state_idx]
+                };
+                last_move_was_rotation[idx] = is_rotation;
+                queue.push_back(new_state);
             }
         }
     }
@@ -304,25 +310,43 @@ pub fn find_all_placements(
     let mut placements: Vec<Placement> = Vec::new();
     let action_space = get_action_space();
 
-    let mut final_entries: Vec<((i32, i32, usize), PathInfo)> =
-        final_positions.into_iter().collect();
+    let mut final_entries: Vec<(PieceState, usize)> = final_best_source
+        .into_iter()
+        .enumerate()
+        .filter_map(|(final_idx, source_idx)| {
+            source_idx.map(|source| (index_to_state(final_idx), source))
+        })
+        .collect();
     final_entries.sort_unstable_by(|a, b| {
-        let (ax, ay, arot) = a.0;
-        let (bx, by, brot) = b.0;
+        let a_state = a.0;
+        let b_state = b.0;
+        let (ax, ay, arot) = (a_state.x, a_state.y, a_state.rotation);
+        let (bx, by, brot) = (b_state.x, b_state.y, b_state.rotation);
         arot.cmp(&brot)
             .then_with(|| ax.cmp(&bx))
             .then_with(|| ay.cmp(&by))
     });
 
-    for ((x, y, rotation), mut path_info) in final_entries {
+    for (final_state, source_idx) in final_entries {
+        let x = final_state.x;
+        let y = final_state.y;
+        let rotation = final_state.rotation;
+
         let mut cells = get_cells(piece_type, rotation, x, y);
         debug_assert_eq!(cells.len(), 4, "Tetromino should have exactly 4 cells");
         cells.sort_unstable();
         let cell_key = [cells[0], cells[1], cells[2], cells[3]];
 
         if seen_cells.insert(cell_key) {
-            // Add hard drop to complete the move sequence
-            path_info.moves.push(Action::HardDrop.to_u8());
+            // Reconstruct shortest path from BFS parent pointers.
+            let mut moves = Vec::with_capacity(depth[source_idx] as usize + 1);
+            let mut cursor = source_idx;
+            while cursor != start_idx {
+                moves.push(action_from_parent[cursor]);
+                cursor = parents[cursor];
+            }
+            moves.reverse();
+            moves.push(Action::HardDrop.to_u8());
 
             // Pre-compute action index
             let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
@@ -336,11 +360,11 @@ pub fn find_all_placements(
 
             placements.push(Placement {
                 piece: Piece::with_position(piece_type, x, y, rotation),
-                moves: path_info.moves.to_vec(),
+                moves,
                 column: x,
                 rotation,
-                last_kick_index: path_info.last_kick_index,
-                last_move_was_rotation: path_info.last_move_was_rotation,
+                last_kick_index: last_kick_index[source_idx] as usize,
+                last_move_was_rotation: last_move_was_rotation[source_idx],
                 action_index,
             });
         }
