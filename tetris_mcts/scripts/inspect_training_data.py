@@ -75,6 +75,7 @@ def print_game_buffer_vectors(data: np.lib.npyio.NpzFile, start: int, end: int) 
         "boards",
         "current_pieces",
         "hold_pieces",
+        "hold_available",
         "next_queue",
         "value_targets",
         "policy_targets",
@@ -150,6 +151,7 @@ def main(args: ScriptArgs) -> None:
             next_queue = [
                 get_piece_type(data["next_queue"][i][j]) for j in range(QUEUE_SIZE)
             ]
+            can_hold = bool(data["hold_available"][i])
             move_number = frame_idx  # Use frame index as move number
             value_target = float(data["value_targets"][i])
 
@@ -164,6 +166,7 @@ def main(args: ScriptArgs) -> None:
                 board=board,
                 move_number=move_number,
                 attack=int(value_target),
+                info_text=f"Can hold: {'yes' if can_hold else 'no'}",
                 show_piece_info=True,
                 current_piece_name=current_name,
                 hold_piece_name=hold_name,
