@@ -91,18 +91,28 @@ impl TetrisEnv {
     }
 
     pub(crate) fn clear_lines_internal(&mut self, is_tspin: bool, is_mini: bool) {
+        let width = self.width as u8;
+        let num_lines = self
+            .row_fill_counts
+            .iter()
+            .filter(|&&count| count == width)
+            .count() as u32;
+
+        if num_lines == 0 {
+            self.combo = 0;
+            self.last_attack_result = None;
+            return;
+        }
+
         // Count cleared lines and build new board in one pass - O(height)
         // Line full check is now O(1) using row_fill_counts
         let mut kept_board = Vec::with_capacity(self.height);
         let mut kept_colors = Vec::with_capacity(self.height);
         let mut kept_row_counts = Vec::with_capacity(self.height);
-        let mut num_lines = 0u32;
-        let width = self.width as u8;
 
         for y in 0..self.height {
             if self.row_fill_counts[y] == width {
                 // Line is full - count it but don't add to new board
-                num_lines += 1;
             } else {
                 // Line not full - keep it
                 kept_board.push(std::mem::take(&mut self.board[y]));
@@ -128,56 +138,47 @@ impl TetrisEnv {
         self.board_colors = new_colors;
         self.row_fill_counts = new_row_counts;
 
-        // Update optimization fields
-        if num_lines > 0 {
-            // Each cleared line removes width blocks
-            self.total_blocks -= self.width as u32 * num_lines;
+        // Each cleared line removes width blocks
+        self.total_blocks -= self.width as u32 * num_lines;
 
-            // Recompute column heights from scratch.
-            // The simple `+= num_lines` adjustment is wrong when a column's
-            // topmost cell was in a cleared row (the cell is removed, not shifted).
-            for x in 0..self.width {
-                self.column_heights[x] = self.height as i32; // Default: empty column
-                for y in 0..self.height {
-                    if self.board[y][x] != 0 {
-                        self.column_heights[x] = y as i32;
-                        break;
-                    }
+        // Recompute column heights from scratch.
+        // The simple `+= num_lines` adjustment is wrong when a column's
+        // topmost cell was in a cleared row (the cell is removed, not shifted).
+        for x in 0..self.width {
+            self.column_heights[x] = self.height as i32; // Default: empty column
+            for y in 0..self.height {
+                if self.board[y][x] != 0 {
+                    self.column_heights[x] = y as i32;
+                    break;
                 }
             }
         }
 
-        if num_lines > 0 {
-            let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);
-            let is_pc = self.is_perfect_clear();
-            let (attack_value, new_b2b) =
-                calculate_attack(clear_type, self.combo, self.back_to_back, is_pc);
+        let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);
+        let is_pc = self.is_perfect_clear();
+        let (attack_value, new_b2b) =
+            calculate_attack(clear_type, self.combo, self.back_to_back, is_pc);
 
-            let mut result = AttackResult::new();
-            result.lines_cleared = num_lines;
-            result.base_attack = clear_type.base_attack();
-            result.combo_attack = combo_attack(self.combo);
-            result.back_to_back_attack = if self.back_to_back && clear_type.is_difficult() {
-                BACK_TO_BACK_BONUS
-            } else {
-                0
-            };
-            result.perfect_clear_attack = if is_pc { PERFECT_CLEAR_ATTACK } else { 0 };
-            result.total_attack = attack_value;
-            result.combo = self.combo + 1;
-            result.back_to_back_active = new_b2b;
-            result.is_tspin = is_tspin;
-            result.is_perfect_clear = is_pc;
-
-            self.attack += attack_value;
-            self.combo += 1;
-            self.back_to_back = new_b2b;
-            self.last_attack_result = Some(result);
+        let mut result = AttackResult::new();
+        result.lines_cleared = num_lines;
+        result.base_attack = clear_type.base_attack();
+        result.combo_attack = combo_attack(self.combo);
+        result.back_to_back_attack = if self.back_to_back && clear_type.is_difficult() {
+            BACK_TO_BACK_BONUS
         } else {
-            self.combo = 0;
-            self.last_attack_result = None;
-        }
+            0
+        };
+        result.perfect_clear_attack = if is_pc { PERFECT_CLEAR_ATTACK } else { 0 };
+        result.total_attack = attack_value;
+        result.combo = self.combo + 1;
+        result.back_to_back_active = new_b2b;
+        result.is_tspin = is_tspin;
+        result.is_perfect_clear = is_pc;
 
+        self.attack += attack_value;
+        self.combo += 1;
+        self.back_to_back = new_b2b;
+        self.last_attack_result = Some(result);
         self.lines_cleared += num_lines;
     }
 }

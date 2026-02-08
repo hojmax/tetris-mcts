@@ -12,6 +12,12 @@ use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES};
 use crate::moves::Placement;
 use crate::scoring::AttackResult;
 
+#[derive(Clone)]
+pub(crate) struct PlacementCache {
+    pub placements: Vec<Placement>,
+    pub action_to_placement_idx: Vec<Option<usize>>,
+}
+
 #[pyclass]
 #[derive(Clone)]
 pub struct TetrisEnv {
@@ -57,7 +63,7 @@ pub struct TetrisEnv {
     pub(crate) row_fill_counts: Vec<u8>,
     /// Cached placements for current piece (invalidated when piece or board changes)
     /// Using RefCell for interior mutability to cache with &self
-    pub(crate) placements_cache: RefCell<Option<Vec<Placement>>>,
+    pub(crate) placements_cache: RefCell<Option<PlacementCache>>,
 }
 
 impl TetrisEnv {

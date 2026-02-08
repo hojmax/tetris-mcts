@@ -62,8 +62,6 @@ pub struct DecisionNode {
     pub visit_count: u32,
     /// Sum of values from all visits
     pub value_sum: f32,
-    /// Prior probability from neural network
-    pub prior: f32,
     /// Children: action index -> child node (ChanceNode after action)
     pub children: HashMap<usize, MCTSNode>,
     /// Valid action indices for this state
@@ -93,7 +91,6 @@ impl DecisionNode {
             state,
             visit_count: 0,
             value_sum: 0.0,
-            prior: 1.0,
             children: HashMap::new(),
             valid_actions,
             action_priors: Vec::new(),
@@ -263,7 +260,6 @@ mod tests {
 
         assert_eq!(node.visit_count, 0);
         assert_eq!(node.value_sum, 0.0);
-        assert_eq!(node.prior, 1.0);
         assert!(node.children.is_empty());
         assert!(!node.valid_actions.is_empty());
         assert!(!node.is_terminal);

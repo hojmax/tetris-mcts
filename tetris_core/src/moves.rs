@@ -65,16 +65,6 @@ pub struct Placement {
     pub action_index: usize,
 }
 
-#[pymethods]
-impl Placement {
-    fn __repr__(&self) -> String {
-        format!(
-            "Placement(col={}, rot={}, moves={:?})",
-            self.column, self.rotation, self.moves
-        )
-    }
-}
-
 /// Board representation for collision checking (borrows cells to avoid cloning)
 pub struct Board<'a> {
     width: usize,

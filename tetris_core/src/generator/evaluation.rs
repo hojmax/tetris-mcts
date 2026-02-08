@@ -72,19 +72,6 @@ pub struct EvalResult {
 
 #[pymethods]
 impl EvalResult {
-    fn __repr__(&self) -> String {
-        format!(
-            "EvalResult(games={}, avg_attack={:.1}, avg_lines={:.1}, max_attack={}, max_lines={}, attack_per_piece={:.3}, lines_per_piece={:.3})",
-            self.num_games,
-            self.avg_attack,
-            self.avg_lines,
-            self.max_attack,
-            self.max_lines,
-            self.attack_per_piece,
-            self.lines_per_piece
-        )
-    }
-
     /// Convert to dictionary for logging.
     pub fn to_dict(&self) -> HashMap<String, f32> {
         let mut d = HashMap::new();

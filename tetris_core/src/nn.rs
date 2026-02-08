@@ -38,14 +38,7 @@ impl TetrisNN {
         action_mask: &[bool],
         max_moves: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (board_tensor, aux_tensor) = encode_state(env, move_number, max_moves);
-
-        let board =
-            tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
-                .into_tensor();
-
-        let aux =
-            tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor)?.into_tensor();
+        let (board, aux) = encode_state(env, move_number, max_moves)?;
 
         let outputs = self.model.run(tvec!(board.into(), aux.into()))?;
 
@@ -85,10 +78,14 @@ impl Clone for TetrisNN {
 }
 
 /// Encode a TetrisEnv state into neural network input tensors
-fn encode_state(env: &TetrisEnv, move_number: usize, max_moves: usize) -> (Vec<f32>, Vec<f32>) {
+fn encode_state(
+    env: &TetrisEnv,
+    move_number: usize,
+    max_moves: usize,
+) -> TractResult<(Tensor, Tensor)> {
     // Board tensor: binary (1 = filled, 0 = empty) - flatten to 200 values (will be reshaped to 1x20x10)
-    let board = env.get_board();
-    let board_tensor: Vec<f32> = board
+    let board_tensor: Vec<f32> = env
+        .board_cells()
         .iter()
         .flat_map(|row| row.iter().map(|&cell| if cell != 0 { 1.0 } else { 0.0 }))
         .collect();
@@ -125,7 +122,12 @@ fn encode_state(env: &TetrisEnv, move_number: usize, max_moves: usize) -> (Vec<f
     let normalized_denominator = max_moves as f32;
     aux.push(move_number as f32 / normalized_denominator);
 
-    (board_tensor, aux)
+    let board =
+        tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
+            .into_tensor();
+    let aux = tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux)?.into_tensor();
+
+    Ok((board, aux))
 }
 
 /// Softmax with mask (invalid actions get 0 probability)
@@ -191,13 +193,17 @@ mod tests {
         env.hard_drop();
         env.hard_drop();
 
-        let (board_tensor, _) = encode_state(&env, 0, 100);
+        let (board_tensor, _) = encode_state(&env, 0, 100).expect("encoding failed");
+        let board_array = board_tensor
+            .to_array_view::<f32>()
+            .expect("board tensor should contain f32");
+        let board_values: Vec<f32> = board_array.iter().copied().collect();
 
         // Verify size
-        assert_eq!(board_tensor.len(), BOARD_HEIGHT * BOARD_WIDTH);
+        assert_eq!(board_values.len(), BOARD_HEIGHT * BOARD_WIDTH);
 
         // Verify all values are 0.0 or 1.0
-        for &val in &board_tensor {
+        for &val in &board_values {
             assert!(
                 val == 0.0 || val == 1.0,
                 "Board tensor should be binary, got value: {}",
@@ -206,12 +212,12 @@ mod tests {
         }
 
         // Verify encoding matches board state
-        let board = env.get_board();
+        let board = env.board_cells();
         for y in 0..BOARD_HEIGHT {
             for x in 0..BOARD_WIDTH {
                 let idx = y * BOARD_WIDTH + x;
                 let expected = if board[y][x] != 0 { 1.0 } else { 0.0 };
-                let actual = board_tensor[idx];
+                let actual = board_values[idx];
                 assert_eq!(
                     actual, expected,
                     "Board[{},{}] with value {} should encode to {}, got {}",
@@ -224,7 +230,11 @@ mod tests {
     #[test]
     fn test_auxiliary_features_format() {
         let env = TetrisEnv::new(10, 20);
-        let (_, aux) = encode_state(&env, 42, 100);
+        let (_, aux) = encode_state(&env, 42, 100).expect("encoding failed");
+        let aux_array = aux
+            .to_array_view::<f32>()
+            .expect("aux tensor should contain f32");
+        let aux: Vec<f32> = aux_array.iter().copied().collect();
 
         // Total size: 7 + 8 + 1 + 35 + 1 = 52
         assert_eq!(aux.len(), AUX_FEATURES);
@@ -325,7 +335,15 @@ mod tests {
         // | Move number    | 1          | Normalized: move_idx / 100      |
 
         let env = TetrisEnv::new(10, 20);
-        let (board, aux) = encode_state(&env, 50, 100);
+        let (board, aux) = encode_state(&env, 50, 100).expect("encoding failed");
+        let board_array = board
+            .to_array_view::<f32>()
+            .expect("board tensor should contain f32");
+        let aux_array = aux
+            .to_array_view::<f32>()
+            .expect("aux tensor should contain f32");
+        let board: Vec<f32> = board_array.iter().copied().collect();
+        let aux: Vec<f32> = aux_array.iter().copied().collect();
 
         assert_eq!(board.len(), 20 * 10, "Board should be 20x10 = 200 values");
         assert_eq!(

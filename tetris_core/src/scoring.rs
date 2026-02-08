@@ -135,20 +135,6 @@ impl Default for AttackResult {
     }
 }
 
-#[pymethods]
-impl AttackResult {
-    fn __repr__(&self) -> String {
-        format!(
-            "AttackResult(lines={}, attack={}, combo={}, b2b={}, tspin={})",
-            self.lines_cleared,
-            self.total_attack,
-            self.combo,
-            self.back_to_back_active,
-            self.is_tspin
-        )
-    }
-}
-
 /// Calculate the total attack for a line clear
 pub fn calculate_attack(
     clear_type: ClearType,

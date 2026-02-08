@@ -24,16 +24,6 @@ pub struct MCTSResult {
     pub num_simulations: u32,
 }
 
-#[pymethods]
-impl MCTSResult {
-    fn __repr__(&self) -> String {
-        format!(
-            "MCTSResult(action={}, value={:.3}, simulations={})",
-            self.action, self.value, self.num_simulations
-        )
-    }
-}
-
 /// Training example returned from self-play
 #[pyclass]
 #[derive(Clone)]
@@ -193,16 +183,6 @@ pub struct TreeNodeExport {
     pub action_priors: Vec<f32>,
 }
 
-#[pymethods]
-impl TreeNodeExport {
-    fn __repr__(&self) -> String {
-        format!(
-            "TreeNode(id={}, type={}, visits={}, value={:.3})",
-            self.id, self.node_type, self.visit_count, self.mean_value
-        )
-    }
-}
-
 /// Exported MCTS tree for visualization
 #[pyclass]
 #[derive(Clone)]
@@ -226,15 +206,6 @@ pub struct MCTSTreeExport {
 
 #[pymethods]
 impl MCTSTreeExport {
-    fn __repr__(&self) -> String {
-        format!(
-            "MCTSTree(nodes={}, simulations={}, action={})",
-            self.nodes.len(),
-            self.num_simulations,
-            self.selected_action
-        )
-    }
-
     /// Get the root node
     fn get_root(&self) -> TreeNodeExport {
         self.nodes[self.root_id].clone()
@@ -330,21 +301,6 @@ mod tests {
         assert!((result.value - 0.75).abs() < 0.001);
         assert_eq!(result.num_simulations, 800);
         assert_eq!(result.policy.len(), NUM_ACTIONS);
-    }
-
-    #[test]
-    fn test_mcts_result_repr() {
-        let result = MCTSResult {
-            policy: vec![0.0; NUM_ACTIONS],
-            action: 100,
-            value: 1.5,
-            num_simulations: 1000,
-        };
-
-        let repr = result.__repr__();
-        assert!(repr.contains("action=100"));
-        assert!(repr.contains("simulations=1000"));
-        assert!(repr.contains("1.500"));
     }
 
     #[test]
