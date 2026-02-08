@@ -870,6 +870,12 @@ app.layout = html.Div(
                     n_clicks=0,
                     style={"marginLeft": "10px"},
                 ),
+                html.Button(
+                    "Step (-1)",
+                    id="step-back-button",
+                    n_clicks=0,
+                    style={"marginLeft": "8px"},
+                ),
                 html.Span(
                     id="sim-counter",
                     children="Sims: 0",
@@ -1016,6 +1022,7 @@ app.layout = html.Div(
     Output("cytoscape-tree", "elements"),
     Output("sim-counter", "children"),
     Input("step-button", "n_clicks"),
+    Input("step-back-button", "n_clicks"),
     Input("show-unvisited", "value"),
     State("model-path", "value"),
     State("num-simulations", "value"),
@@ -1040,6 +1047,7 @@ app.layout = html.Div(
 )
 def run_mcts(
     step_clicks,
+    step_back_clicks,
     show_unvisited_value,
     model_path,
     num_sims,
@@ -1074,6 +1082,8 @@ def run_mcts(
             dash.no_update,
         )
 
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
     if num_sims is None:
         raise ValueError("num_simulations is required")
     if c_puct is None:
@@ -1088,9 +1098,27 @@ def run_mcts(
         raise ValueError("max_moves is required")
 
     max_sims = num_sims
+    current_sims = sims_done or 0
 
-    # Step - add one more simulation
-    sims_to_run = min((sims_done or 0) + 1, max_sims)
+    if triggered_id == "step-button":
+        sims_to_run = min(current_sims + 1, max_sims)
+    elif triggered_id == "step-back-button":
+        sims_to_run = max(current_sims - 1, 0)
+    elif triggered_id == "show-unvisited":
+        sims_to_run = current_sims
+    else:
+        sims_to_run = current_sims
+
+    if sims_to_run == 0:
+        return (
+            None,
+            {"seed": seed, "move_number": int(move_number) if move_number is not None else 0},
+            0,
+            None,
+            [],
+            [],
+            f"Sims: 0/{max_sims}",
+        )
 
     # Create config with current number of simulations
     config = MCTSConfig()

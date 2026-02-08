@@ -475,7 +475,7 @@ config = TrainingConfig(
     # MCTS / Self-play
     num_simulations=400,  # MCTS simulations per move
     temperature=1.0,
-    dirichlet_alpha=0.15,
+    dirichlet_alpha=0.05,
     dirichlet_epsilon=0.25,
     num_workers=5,  # Parallel game generation threads
 

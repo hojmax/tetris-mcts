@@ -78,7 +78,7 @@ class TrainingConfig:
     num_simulations: int = 1000
     c_puct: float = 0.5  # PUCT exploration constant
     temperature: float = 1.0
-    dirichlet_alpha: float = 0.15
+    dirichlet_alpha: float = 0.05
     dirichlet_epsilon: float = 0.25
     num_workers: int = 7  # Parallel game generation threads
 
