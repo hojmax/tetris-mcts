@@ -13,9 +13,11 @@ Controls:
 """
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import numpy as np
+import torch
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -24,7 +26,18 @@ from rich.table import Table
 from rich.text import Text
 from simple_parsing import parse
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, PIECE_NAMES, QUEUE_SIZE
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    CONFIG_FILENAME,
+    LATEST_CHECKPOINT_FILENAME,
+    PIECE_NAMES,
+    QUEUE_SIZE,
+    CHECKPOINT_DIRNAME,
+    TrainingConfig,
+)
+from tetris_mcts.ml.network import TetrisNet
+from tetris_mcts.ml.weights import load_checkpoint
 
 PIECE_CHARS = PIECE_NAMES
 PIECE_COLORS = ["cyan", "yellow", "magenta", "green", "red", "blue", "bright_red"]
@@ -50,13 +63,72 @@ def find_game_boundaries(move_numbers: np.ndarray) -> list[tuple[int, int]]:
     return games
 
 
+def load_training_config(config_path: Path) -> TrainingConfig:
+    config_data = json.loads(config_path.read_text())
+    return TrainingConfig(**config_data)
+
+
+class ValuePredictor:
+    def __init__(self, checkpoint_path: Path, config_path: Path):
+        self.model = self._load_model(checkpoint_path, config_path)
+        self.value_cache: dict[int, float] = {}
+
+    def _load_model(self, checkpoint_path: Path, config_path: Path) -> TetrisNet:
+        config = load_training_config(config_path)
+        model = TetrisNet(
+            conv_filters=config.conv_filters,
+            fc_hidden=config.fc_hidden,
+            conv_kernel_size=config.conv_kernel_size,
+            conv_padding=config.conv_padding,
+        )
+        load_checkpoint(checkpoint_path, model=model)
+        model.eval()
+        return model
+
+    def predict_value(
+        self,
+        index: int,
+        board: np.ndarray,
+        current_piece: np.ndarray,
+        hold_piece: np.ndarray,
+        hold_available: float,
+        next_queue: np.ndarray,
+        move_number: float,
+    ) -> float:
+        if index in self.value_cache:
+            return self.value_cache[index]
+
+        board_tensor = torch.from_numpy(board.astype(np.float32)).reshape(
+            1, 1, BOARD_HEIGHT, BOARD_WIDTH
+        )
+        hold_available_feature = np.array([hold_available], dtype=np.float32)
+        move_number_feature = np.array([move_number], dtype=np.float32)
+        aux = np.concatenate(
+            [
+                current_piece.astype(np.float32),
+                hold_piece.astype(np.float32),
+                hold_available_feature,
+                next_queue.astype(np.float32).reshape(-1),
+                move_number_feature,
+            ]
+        )
+        aux_tensor = torch.from_numpy(aux).reshape(1, -1)
+
+        with torch.inference_mode():
+            _, value = self.model(board_tensor, aux_tensor)
+        value_pred = float(value.item())
+        self.value_cache[index] = value_pred
+        return value_pred
+
+
 class BufferViewer:
-    def __init__(self, data_path: Path):
+    def __init__(self, data_path: Path, value_predictor: ValuePredictor | None):
         self.data = np.load(data_path)
         self.n_examples = len(self.data["boards"])
         self.move_numbers = self.data["move_numbers"]
         self.games = find_game_boundaries(self.move_numbers)
         self.n_games = len(self.games)
+        self.value_predictor = value_predictor
 
         # Current position
         self.game_idx = 0
@@ -77,6 +149,12 @@ class BufferViewer:
     def get_frame_data(self) -> dict:
         i = self.global_idx
         board = self.data["boards"][i].reshape(BOARD_HEIGHT, BOARD_WIDTH)
+        board_flat = self.data["boards"][i]
+        current_piece_raw = self.data["current_pieces"][i]
+        hold_piece_raw = self.data["hold_pieces"][i]
+        hold_available_raw = float(self.data["hold_available"][i])
+        next_queue_raw = self.data["next_queue"][i]
+        move_number_raw = float(self.data["move_numbers"][i])
         current_piece = get_piece_type(self.data["current_pieces"][i])
         hold_piece = get_piece_type(self.data["hold_pieces"][i])
         next_queue = [
@@ -85,6 +163,17 @@ class BufferViewer:
         value_target = float(self.data["value_targets"][i])
         policy = self.data["policy_targets"][i]
         action_mask = self.data["action_masks"][i]
+        value_prediction = None
+        if self.value_predictor is not None:
+            value_prediction = self.value_predictor.predict_value(
+                index=i,
+                board=board_flat,
+                current_piece=current_piece_raw,
+                hold_piece=hold_piece_raw,
+                hold_available=hold_available_raw,
+                next_queue=next_queue_raw,
+                move_number=move_number_raw,
+            )
 
         return {
             "board": board,
@@ -92,6 +181,7 @@ class BufferViewer:
             "hold_piece": hold_piece,
             "next_queue": next_queue,
             "value_target": value_target,
+            "value_prediction": value_prediction,
             "policy": policy,
             "action_mask": action_mask,
             "n_valid_actions": int(np.sum(action_mask)),
@@ -141,6 +231,14 @@ class BufferViewer:
 
         # Value and policy info
         table.add_row("Value Target", f"{data['value_target']:.1f}")
+        value_prediction = data["value_prediction"]
+        if value_prediction is None:
+            table.add_row("Value Pred", "-")
+            table.add_row("Value Error", "-")
+        else:
+            value_error = value_prediction - data["value_target"]
+            table.add_row("Value Pred", f"{value_prediction:.2f}")
+            table.add_row("Value Error", f"{value_error:+.2f}")
         table.add_row("Valid Actions", str(data["n_valid_actions"]))
 
         # Top policy actions
@@ -322,6 +420,17 @@ class ScriptArgs:
 
     data_path: Path  # Path to training_data.npz file
     game: int = 0  # Starting game index (0-based)
+    checkpoint_path: Path | None = None  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
+    config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
+
+    def __post_init__(self) -> None:
+        run_dir = self.data_path.parent
+        if self.checkpoint_path is None:
+            self.checkpoint_path = (
+                run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
+            )
+        if self.config_path is None:
+            self.config_path = run_dir / CONFIG_FILENAME
 
 
 def main(args: ScriptArgs) -> None:
@@ -329,7 +438,20 @@ def main(args: ScriptArgs) -> None:
         print(f"Error: File not found: {args.data_path}")
         return
 
-    viewer = BufferViewer(args.data_path)
+    value_predictor: ValuePredictor | None = None
+    if args.checkpoint_path.exists() and args.config_path.exists():
+        value_predictor = ValuePredictor(args.checkpoint_path, args.config_path)
+        print(
+            f"Loaded model predictions from {args.checkpoint_path} "
+            f"(config: {args.config_path})"
+        )
+    else:
+        print(
+            "Model predictions disabled: checkpoint/config not found "
+            f"({args.checkpoint_path}, {args.config_path})"
+        )
+
+    viewer = BufferViewer(args.data_path, value_predictor)
 
     if args.game > 0:
         viewer.goto_game(args.game)
