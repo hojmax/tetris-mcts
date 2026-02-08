@@ -54,9 +54,9 @@ def compute_loss(
         model: TetrisNet model
         boards: (batch, 1, 20, 10)
         aux_features: (batch, 52)
-        policy_targets: (batch, 734) - MCTS policy targets
+        policy_targets: (batch, 735) - MCTS policy targets
         value_targets: (batch,) - discounted attack targets
-        action_masks: (batch, 734) - valid action masks
+        action_masks: (batch, 735) - valid action masks
 
     Returns:
         total_loss, policy_loss, value_loss

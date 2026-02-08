@@ -12,7 +12,7 @@ Input Representation:
 Total input: 200 + 7 + 8 + 1 + 35 + 1 = 252 features
 
 Output:
-- Policy head: 734 outputs (softmax over actions)
+- Policy head: 735 outputs (softmax over actions: 734 placements + hold)
 - Value head: 1 output (predicted cumulative attack)
 """
 
@@ -113,7 +113,7 @@ class TetrisNet(nn.Module):
             aux_features: Shape (batch, 52) - auxiliary features
 
         Returns:
-            policy_logits: Shape (batch, 734) - raw logits (caller should apply
+            policy_logits: Shape (batch, 735) - raw logits (caller should apply
                 action mask before softmax to mask invalid actions)
             value: Shape (batch, 1) - predicted cumulative attack
         """

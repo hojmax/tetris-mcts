@@ -53,7 +53,7 @@ Auxiliary Input (52 features: current + hold + hold_avail + next_queue + move_nu
               ├──────────────────┐
               ▼                  ▼
          Policy Head        Value Head
-         FC(128, 734)       FC(128, 1)
+         FC(128, 735)       FC(128, 1)
          Softmax            (linear)
               │                  │
               ▼                  ▼
@@ -65,7 +65,7 @@ Auxiliary Input (52 features: current + hold + hold_avail + next_queue + move_nu
 
 ### Output Space
 
-- **Policy head**: 734 outputs (all valid piece placements)
+- **Policy head**: 735 outputs (734 valid piece placements + hold)
   - Each output corresponds to a unique (x, y, rotation) position
   - Invalid moves are masked before softmax
 - **Value head**: 1 output (linear, no activation)
@@ -95,16 +95,16 @@ for rot in range(4):
 
 ## 2. Move Masking
 
-Not all 734 actions are valid for every game state. We must mask invalid moves.
+Not all 735 actions are valid for every game state. We must mask invalid moves.
 
 ### Masking Logic
 
-For each state, generate a **mask tensor** of shape (734,):
+For each state, generate a **mask tensor** of shape (735,):
 
 ```python
 def get_action_mask(board, current_piece):
     """Returns binary mask: 1 = valid, 0 = invalid"""
-    mask = torch.zeros(734)
+    mask = torch.zeros(735)
 
     for action_idx, (x, y, rot) in enumerate(ACTION_TO_PLACEMENT):
         if piece_can_be_placed(board, current_piece, x, y, rot):
@@ -340,7 +340,7 @@ fn sample_dirichlet(alpha: f32, n: usize) -> Vec<f32> {
 }
 
 fn get_mcts_policy(root: &MCTSNode, temperature: f32) -> Vec<f32> {
-    let mut policy = vec![0.0; 734];
+    let mut policy = vec![0.0; 735];
     let total_visits: u32 = root.children.iter().map(|c| c.visit_count).sum();
 
     for (action, child) in &root.children {
@@ -419,9 +419,9 @@ fn compute_training_examples(game: &Game) -> Vec<TrainingExample> {
     'hold_available': np.array of shape (N,), dtype=bool,
     'next_queue': np.array of shape (N, 5, 7), dtype=float32,   # one-hot
     'move_numbers': np.array of shape (N,), dtype=float32,      # normalized by 100
-    'policy_targets': np.array of shape (N, 734), dtype=float32,
+    'policy_targets': np.array of shape (N, 735), dtype=float32,
     'value_targets': np.array of shape (N,), dtype=float32,
-    'action_masks': np.array of shape (N, 734), dtype=bool,
+    'action_masks': np.array of shape (N, 735), dtype=bool,
 }
 ```
 
@@ -802,7 +802,7 @@ fn add_dirichlet_noise(priors: &mut [f32], alpha: f32, epsilon: f32) {
 }
 
 // AlphaZero uses alpha=0.3 for chess, epsilon=0.25
-// For Tetris with 734 actions, try alpha=0.15, epsilon=0.25
+// For Tetris with 735 actions (734 placements + hold), try alpha=0.15, epsilon=0.25
 ```
 
 ---
@@ -877,7 +877,7 @@ fn evaluate(model: &Model) -> EvalMetrics {
 
 1. **Single-player**: No adversarial opponent, value predicts attack not win/loss
 2. **Stochastic**: Must handle random piece spawns with chance nodes
-3. **Action space**: 734 valid placements (vs 4672 for chess)
+3. **Action space**: 735 actions total (734 valid placements + hold; vs 4672 for chess)
 4. **Tiny network**: Optimized for CPU inference in Rust
 5. **7-bag randomizer**: Not uniform distribution, must track bag state
 6. **No game symmetry**: Unlike chess/Go, limited board symmetries to exploit

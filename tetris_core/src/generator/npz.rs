@@ -26,9 +26,9 @@ const TRAINING_DATA_NUMPY_QUEUE_SIZE: usize = 5;
 /// - hold_available: (N,) bool
 /// - next_queue: (N, 5, 7) float32 one-hot
 /// - move_numbers: (N,) float32 normalized
-/// - policy_targets: (N, 734) float32
+/// - policy_targets: (N, 735) float32
 /// - value_targets: (N,) float32
-/// - action_masks: (N, 734) bool
+/// - action_masks: (N, 735) bool
 pub fn write_examples_to_npz(
     filepath: &PathBuf,
     examples: &[TrainingExample],

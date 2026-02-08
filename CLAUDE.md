@@ -129,7 +129,7 @@ tetris_core/src/             # Rust game engine
 │   ├── export.rs            # Tree visualization export
 │   ├── nodes.rs             # DecisionNode & ChanceNode
 │   ├── config.rs            # MCTSConfig hyperparameters
-│   ├── action_space.rs      # 734-action mapping
+│   ├── action_space.rs      # 735-action mapping (734 placements + hold)
 │   ├── results.rs           # TrainingExample, GameResult, GameStats
 │   └── utils.rs             # PUCT scoring, Dirichlet noise
 ├── nn.rs                    # ONNX inference via tract-onnx
@@ -160,7 +160,7 @@ tetris_mcts/                 # Python package
 
 ## Key Concepts
 
-### Action Space (734 actions)
+### Action Space (735 actions)
 
 All valid (x, y, rotation) placements are enumerated. The `ActionSpace` struct maps between action indices and placements.
 
@@ -174,8 +174,8 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 ### Neural Network (TetrisNet)
 
 - **Input**: 252 features (200 board cells + 52 auxiliary: current piece, hold, queue, move number)
-- **Architecture**: Conv2d(1→4→8) + FC(1652→128) + policy head (734) + value head (1)
-- **Output**: Policy probabilities over 734 actions, value (predicted cumulative attack)
+- **Architecture**: Conv2d(1→4→8) + FC(1652→128) + policy head (735) + value head (1)
+- **Output**: Policy probabilities over 735 actions (734 placements + hold), value (predicted cumulative attack)
 
 ### 7-Bag Randomizer
 
@@ -212,7 +212,7 @@ From `config.py` TrainingConfig defaults:
 
 - **MCTS**: 600 simulations, c_puct=1.5, temperature=1.0
 - **Training**: batch_size=256, lr=0.0005, cosine schedule, weight_decay=1e-4
-- **Architecture**: Conv(1→4→8), FC(1652→128), 734 policy outputs, 1 value output
+- **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
 - **Buffer**: 100K examples (ring buffer), 6 parallel workers
 - **Exploration**: Dirichlet alpha=0.15, epsilon=0.25
 
