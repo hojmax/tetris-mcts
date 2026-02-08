@@ -4,7 +4,13 @@ import numpy as np
 import torch
 
 import tetris_core
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, NUM_PIECE_TYPES, QUEUE_SIZE
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_ACTIONS,
+    NUM_PIECE_TYPES,
+    QUEUE_SIZE,
+)
 from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import export_onnx
 
@@ -15,11 +21,7 @@ def _encode_state_python(
     max_moves: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     board = np.array(
-        [
-            1.0 if cell != 0 else 0.0
-            for row in env.get_board()
-            for cell in row
-        ],
+        [1.0 if cell != 0 else 0.0 for row in env.get_board() for cell in row],
         dtype=np.float32,
     )
 
@@ -81,10 +83,14 @@ def _build_env_variants() -> list[tuple[tetris_core.TetrisEnv, int, int]]:
 
 def test_encode_state_matches_between_rust_inference_and_python_training_view() -> None:
     for env, move_number, max_moves in _build_env_variants():
-        rust_board, rust_aux = tetris_core.debug_encode_state(env, move_number, max_moves)
+        rust_board, rust_aux = tetris_core.debug_encode_state(
+            env, move_number, max_moves
+        )
         py_board, py_aux = _encode_state_python(env, move_number, max_moves)
 
-        np.testing.assert_array_equal(np.asarray(rust_board, dtype=np.float32), py_board)
+        np.testing.assert_array_equal(
+            np.asarray(rust_board, dtype=np.float32), py_board
+        )
         np.testing.assert_array_equal(np.asarray(rust_aux, dtype=np.float32), py_aux)
 
 
@@ -145,4 +151,6 @@ def test_pytorch_and_rust_tract_inference_match_on_same_onnx(tmp_path: Path) -> 
             rtol=1e-4,
             atol=1e-5,
         )
-        np.testing.assert_allclose(float(rust_value), float(expected_value), rtol=1e-4, atol=1e-5)
+        np.testing.assert_allclose(
+            float(rust_value), float(expected_value), rtol=1e-4, atol=1e-5
+        )

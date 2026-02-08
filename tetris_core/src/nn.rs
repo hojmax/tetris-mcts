@@ -121,11 +121,9 @@ pub fn encode_state_features(
     max_moves: usize,
 ) -> TractResult<(Vec<f32>, Vec<f32>)> {
     if max_moves == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "max_moves must be > 0",
-        )
-        .into());
+        return Err(
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "max_moves must be > 0").into(),
+        );
     }
 
     // Board tensor: binary (1 = filled, 0 = empty) - flatten to 200 values (will be reshaped to 1x20x10)

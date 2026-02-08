@@ -91,6 +91,9 @@ pub struct GameStats {
     /// Total lines cleared
     #[pyo3(get)]
     pub total_lines: u32,
+    /// Number of times hold action was used
+    #[pyo3(get)]
+    pub holds: u32,
 }
 
 #[pymethods]

@@ -60,7 +60,9 @@ class ScriptArgs:
     print_buffer_vectors: bool = (
         True  # Print full literal vectors/matrices for selected game
     )
-    checkpoint_path: Path | None = None  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
+    checkpoint_path: (  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
+        Path | None
+    ) = None
     config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
 
     def __post_init__(self) -> None:

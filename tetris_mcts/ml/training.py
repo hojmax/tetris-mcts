@@ -276,7 +276,6 @@ class Trainer:
             config=str(self.config),
         )
 
-        last_logged_game = 0  # Track which game we last logged
         train_start_time = time.time()
 
         interrupted = False
@@ -325,16 +324,15 @@ class Trainer:
                     )
                     if log_to_wandb:
                         wandb.log(metrics, step=self.step)
-                        # Log per-game stats with game_number as x-axis
-                        last_game = generator.get_last_game_stats()
-                        if last_game is not None:
-                            game_number, game_stats = last_game
-                            if game_number != last_logged_game:
-                                game_metrics = {"game_number": game_number}
-                                for key, value in game_stats.items():
-                                    game_metrics[f"game/{key}"] = value
-                                wandb.log(game_metrics, step=self.step)
-                                last_logged_game = game_number
+                        # Log all completed games since the last logging tick.
+                        for (
+                            game_number,
+                            game_stats,
+                        ) in generator.drain_completed_game_stats():
+                            game_metrics = {"game_number": game_number}
+                            for key, value in game_stats.items():
+                                game_metrics[f"game/{key}"] = value
+                            wandb.log(game_metrics, step=self.step)
                     logger.info(
                         "Training progress",
                         step=self.step,

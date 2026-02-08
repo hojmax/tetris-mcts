@@ -14,8 +14,8 @@
 //! - `generator`: Background game generation and evaluation
 #![allow(non_local_definitions)] // PyO3 #[pymethods] triggers this warning with current toolchain.
 
-use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 
 pub mod constants;
 pub mod env;

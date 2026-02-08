@@ -41,6 +41,7 @@ struct SharedStats {
     max_combo: AtomicU32,
     total_lines: AtomicU32,
     total_attack: AtomicU32,
+    holds: AtomicU32,
 }
 
 impl SharedStats {
@@ -75,6 +76,7 @@ impl SharedStats {
         self.total_lines
             .fetch_add(stats.total_lines, Ordering::Relaxed);
         self.total_attack.fetch_add(attack, Ordering::Relaxed);
+        self.holds.fetch_add(stats.holds, Ordering::Relaxed);
         // Update max combo (atomic max)
         let mut current = self.max_combo.load(Ordering::Relaxed);
         while stats.max_combo > current {
@@ -144,6 +146,7 @@ impl SharedStats {
             "total_attack".to_string(),
             self.total_attack.load(Ordering::Relaxed),
         );
+        d.insert("holds".to_string(), self.holds.load(Ordering::Relaxed));
         d
     }
 }
@@ -220,8 +223,8 @@ pub struct GameGenerator {
     examples_generated: Arc<AtomicU64>,
     /// Aggregate game statistics
     game_stats: Arc<SharedStats>,
-    /// Last completed game's stats (for per-game logging)
-    last_game: Arc<RwLock<Option<LastGameInfo>>>,
+    /// Completed game stats queue for per-game logging
+    completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
     /// Thread handles (for joining on stop)
     thread_handles: Vec<JoinHandle<()>>,
 }
@@ -272,7 +275,7 @@ impl GameGenerator {
             games_generated: Arc::new(AtomicU64::new(0)),
             examples_generated: Arc::new(AtomicU64::new(0)),
             game_stats: Arc::new(SharedStats::new()),
-            last_game: Arc::new(RwLock::new(None)),
+            completed_games: Arc::new(RwLock::new(VecDeque::new())),
             thread_handles: Vec::new(),
         })
     }
@@ -351,7 +354,7 @@ impl GameGenerator {
             let games_generated = Arc::clone(&self.games_generated);
             let examples_generated = Arc::clone(&self.examples_generated);
             let game_stats = Arc::clone(&self.game_stats);
-            let last_game = Arc::clone(&self.last_game);
+            let completed_games = Arc::clone(&self.completed_games);
 
             let handle = thread::spawn(move || {
                 Self::worker_loop(
@@ -368,7 +371,7 @@ impl GameGenerator {
                     games_generated,
                     examples_generated,
                     game_stats,
-                    last_game,
+                    completed_games,
                 );
             });
 
@@ -429,11 +432,11 @@ impl GameGenerator {
         self.game_stats.to_dict()
     }
 
-    /// Get the last completed game's stats for per-game logging.
-    /// Returns (game_number, stats_dict) or None if no games completed yet.
-    pub fn get_last_game_stats(&self) -> Option<(u64, HashMap<String, f32>)> {
-        let guard = self.last_game.read().unwrap();
-        guard.as_ref().map(|info| {
+    /// Drain all completed game stats in generation order.
+    pub fn drain_completed_game_stats(&self) -> Vec<(u64, HashMap<String, f32>)> {
+        let mut queue = self.completed_games.write().unwrap();
+        let mut drained = Vec::with_capacity(queue.len());
+        while let Some(info) = queue.pop_front() {
             let mut d = HashMap::new();
             d.insert("singles".to_string(), info.stats.singles as f32);
             d.insert("doubles".to_string(), info.stats.doubles as f32);
@@ -450,12 +453,14 @@ impl GameGenerator {
             d.insert("back_to_backs".to_string(), info.stats.back_to_backs as f32);
             d.insert("max_combo".to_string(), info.stats.max_combo as f32);
             d.insert("total_lines".to_string(), info.stats.total_lines as f32);
+            d.insert("holds".to_string(), info.stats.holds as f32);
             d.insert("total_attack".to_string(), info.total_attack as f32);
             d.insert("episode_length".to_string(), info.num_moves as f32);
             d.insert("avg_moves".to_string(), info.avg_moves);
             d.insert("max_moves".to_string(), info.max_moves as f32);
-            (info.game_number, d)
-        })
+            drained.push((info.game_number, d));
+        }
+        drained
     }
 
     /// Get the current number of examples in the replay buffer.
@@ -602,7 +607,7 @@ impl GameGenerator {
         games_generated: Arc<AtomicU64>,
         examples_generated: Arc<AtomicU64>,
         game_stats: Arc<SharedStats>,
-        last_game: Arc<RwLock<Option<LastGameInfo>>>,
+        completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
     ) {
         let mut agent = MCTSAgent::new(config);
         let mut current_mtime: u128 = 0;
@@ -664,9 +669,9 @@ impl GameGenerator {
                 // Accumulate game stats
                 game_stats.add(&result.stats, result.total_attack);
 
-                // Store last game info for per-game logging
+                // Enqueue completed game info for per-game logging
                 let game_number = games_generated.load(Ordering::SeqCst);
-                *last_game.write().unwrap() = Some(LastGameInfo {
+                completed_games.write().unwrap().push_back(LastGameInfo {
                     game_number,
                     stats: result.stats,
                     total_attack: result.total_attack,
@@ -817,6 +822,7 @@ mod tests {
             back_to_backs: 1,
             max_combo: 2,
             total_lines: 1,
+            holds: 3,
         };
         let game_b = GameStats {
             singles: 0,
@@ -831,6 +837,7 @@ mod tests {
             back_to_backs: 0,
             max_combo: 5,
             total_lines: 6,
+            holds: 4,
         };
 
         stats.add(&game_a, 0);
@@ -848,6 +855,7 @@ mod tests {
         assert_eq!(d["max_combo"], 5);
         assert_eq!(d["total_lines"], 7);
         assert_eq!(d["total_attack"], 7);
+        assert_eq!(d["holds"], 7);
     }
 
     #[test]

@@ -358,7 +358,9 @@ class ScriptArgs:
 
     data_path: Path  # Path to training_data.npz file
     game: int = 0  # Starting game index (0-based)
-    checkpoint_path: Path | None = None  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
+    checkpoint_path: Path | None = (
+        None  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
+    )
     config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
 
     def __post_init__(self) -> None:

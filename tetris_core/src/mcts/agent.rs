@@ -13,6 +13,7 @@ use super::results::{
     GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
 };
 use super::search::search_internal;
+use crate::mcts::action_space::HOLD_ACTION_INDEX;
 
 /// MCTS Agent for Tetris
 #[pyclass]
@@ -112,6 +113,9 @@ impl MCTSAgent {
 
             // Run MCTS search
             let result = self.search(&env, policy, nn_value, add_noise, move_idx);
+            if result.action == HOLD_ACTION_INDEX {
+                stats.holds += 1;
+            }
 
             // Execute the selected action
             let attack = env
