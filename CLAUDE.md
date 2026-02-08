@@ -97,7 +97,12 @@ Rust Core (tetris_core/)     ← Fast game logic + MCTS
 ONNX Export                  ← Model exported for Rust inference
 ```
 
-**Key design**: Game logic and MCTS run entirely in Rust for speed. Neural network training happens in Python. Models are exported as ONNX for Rust inference.
+**Key design**: Game logic and MCTS run entirely in Rust for speed. Neural network training and all visualization/presentation concerns run in Python. Models are exported as ONNX for Rust inference.
+
+**Ownership boundary (strict):**
+- Rust (`tetris_core/`) = environment logic, move generation, scoring, MCTS, inference/runtime state.
+- Python (`tetris_mcts/`) = training, evaluation UX, and visualization/rendering.
+- Color palettes and UI styling are Python-owned. Rust should expose piece identity/state (for example `piece_type`), not display colors.
 
 ## Project Structure
 
@@ -105,7 +110,7 @@ ONNX Export                  ← Model exported for Rust inference
 tetris_core/src/             # Rust game engine
 ├── lib.rs                   # PyO3 module exports
 ├── constants.rs             # Board size (10x20), piece indices
-├── piece.rs                 # Tetromino shapes, rotations, colors
+├── piece.rs                 # Tetromino shapes and rotations
 ├── kicks.rs                 # SRS wall kick data
 ├── scoring.rs               # Attack calculation (lines, T-spins, combos)
 ├── moves.rs                 # Move generation/pathfinding
@@ -249,7 +254,7 @@ cargo test -p tetris_core  # Equivalent
 
 Tests are in:
 
-- `tetris_core/src/piece.rs` - Piece creation, colors, rotation states
+- `tetris_core/src/piece.rs` - Piece creation and rotation states
 - `tetris_core/src/env/tests.rs` - Game logic, line clearing, scoring
 
 ## Common Workflows
@@ -257,7 +262,7 @@ Tests are in:
 ### Adding new game logic
 
 1. Modify Rust code in `tetris_core/src/env/`
-2. Export to Python in `pymethods.rs`
+2. Export state/logic to Python in `pymethods.rs` (without presentation concerns)
 3. Run `make build` to recompile
 4. Test with `make test` and `make play`
 

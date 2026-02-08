@@ -134,17 +134,6 @@ pub const TETROMINO_CELLS: [[[(i8, i8); 4]; 4]; 7] = [
     ],
 ];
 
-/// Colors for each tetromino (RGB) - matching Jstris style
-pub const COLORS: [(u8, u8, u8); 7] = [
-    (93, 173, 212), // I - Light blue/Cyan
-    (219, 174, 63), // O - Golden yellow
-    (178, 74, 156), // T - Magenta
-    (114, 184, 65), // S - Green
-    (204, 65, 65),  // Z - Red
-    (59, 84, 165),  // J - Blue
-    (227, 127, 59), // L - Orange
-];
-
 /// Number of piece types (tetromino variants)
 pub const NUM_PIECE_TYPES: usize = 7;
 
@@ -194,10 +183,6 @@ impl Piece {
         }
     }
 
-    pub fn get_color(&self) -> (u8, u8, u8) {
-        COLORS[self.piece_type]
-    }
-
     pub fn get_cells(&self) -> Vec<(i32, i32)> {
         get_cells(self.piece_type, self.rotation, self.x, self.y).to_vec()
     }
@@ -240,23 +225,6 @@ mod tests {
         assert_eq!(piece.x, 5);
         assert_eq!(piece.y, 10);
         assert_eq!(piece.rotation, 1);
-    }
-
-    #[test]
-    fn test_piece_colors() {
-        // Piece color lookup should succeed for each piece type.
-        for i in 0..NUM_PIECE_TYPES {
-            let piece = Piece::new(i);
-            let _color = piece.get_color();
-        }
-    }
-
-    #[test]
-    fn test_colors_are_unique() {
-        let mut colors = COLORS.to_vec();
-        colors.sort();
-        colors.dedup();
-        assert_eq!(colors.len(), NUM_PIECE_TYPES);
     }
 
     #[test]
@@ -388,7 +356,6 @@ mod tests {
     fn test_num_piece_types_constant() {
         assert_eq!(NUM_PIECE_TYPES, 7);
         assert_eq!(TETROMINOS.len(), NUM_PIECE_TYPES);
-        assert_eq!(COLORS.len(), NUM_PIECE_TYPES);
     }
 
     #[test]

@@ -6,7 +6,7 @@ Implements proper SRS rotation and DAS/ARR for responsive controls.
 import pygame
 
 from tetris_core import TetrisEnv
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, PIECE_COLORS
 
 # Constants
 CELL_SIZE = 30
@@ -58,6 +58,9 @@ class TetrisGame:
         self.inspect_mode = False
         self.placements = []
         self.placement_index = 0
+
+    def _piece_color(self, piece_type: int) -> tuple[int, int, int]:
+        return PIECE_COLORS[piece_type]
 
     def get_fall_speed(self):
         """Get fall speed in milliseconds (constant gravity)."""
@@ -269,14 +272,14 @@ class TetrisGame:
 
         # Draw locked pieces
         board = self.env.get_board()
-        board_colors = self.env.get_board_colors()
+        board_piece_types = self.env.get_board_piece_types()
 
         for y in range(BOARD_HEIGHT):
             for x in range(BOARD_WIDTH):
                 if board[y][x] != 0:
-                    color_idx = board_colors[y][x]
+                    color_idx = board_piece_types[y][x]
                     if color_idx is not None:
-                        color = self.env.get_color_for_type(color_idx)
+                        color = self._piece_color(color_idx)
                     else:
                         color = GRAY
 
@@ -289,7 +292,7 @@ class TetrisGame:
             if self.placements:
                 placement = self.placements[self.placement_index]
                 piece = placement.piece
-                color = piece.get_color()
+                color = self._piece_color(piece.piece_type)
                 for x, y in piece.get_cells():
                     if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                         rect = pygame.Rect(
@@ -303,7 +306,7 @@ class TetrisGame:
             # Draw ghost piece (outline only)
             ghost = self.env.get_ghost_piece()
             if ghost:
-                color = ghost.get_color()
+                color = self._piece_color(ghost.piece_type)
                 for x, y in ghost.get_cells():
                     if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                         rect = pygame.Rect(
@@ -317,7 +320,7 @@ class TetrisGame:
             # Draw current piece
             piece = self.env.get_current_piece()
             if piece:
-                color = piece.get_color()
+                color = self._piece_color(piece.piece_type)
                 for x, y in piece.get_cells():
                     if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                         self.draw_cell(
@@ -332,7 +335,7 @@ class TetrisGame:
     def draw_mini_piece(self, piece, center_x, center_y):
         """Draw a mini piece centered at the given position."""
         shape = piece.get_shape()
-        color = piece.get_color()
+        color = self._piece_color(piece.piece_type)
 
         # Find bounding box of the piece
         min_x, max_x = 4, -1
@@ -373,7 +376,7 @@ class TetrisGame:
             center_y = TOP_PADDING + 50
             if hold_used:
                 # Dim the color if hold was used this turn
-                original_color = hold_piece.get_color()
+                original_color = self._piece_color(hold_piece.piece_type)
                 dimmed = tuple(c // 2 for c in original_color)
                 # Temporarily modify for drawing
                 shape = hold_piece.get_shape()

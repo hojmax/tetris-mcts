@@ -65,7 +65,7 @@ env = TetrisEnv(width=10, height=20)
 reward, game_over = env.step(action)
 
 board = env.get_board()
-colors = env.get_board_colors()
+piece_types = env.get_board_piece_types()
 current_piece = env.get_current_piece()
 next_piece = env.get_next_piece()
 ghost_piece = env.get_ghost_piece()

@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use std::collections::HashSet;
 
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
-use crate::piece::{Piece, COLORS};
+use crate::piece::Piece;
 use crate::scoring::AttackResult;
 
 use super::piece_management::{spawn_x, spawn_y_offset};
@@ -49,8 +49,8 @@ impl TetrisEnv {
         self.board.clone()
     }
 
-    pub fn get_board_colors(&self) -> Vec<Vec<Option<usize>>> {
-        self.board_colors.clone()
+    pub fn get_board_piece_types(&self) -> Vec<Vec<Option<usize>>> {
+        self.board_piece_types.clone()
     }
 
     // === Piece Management (piece_management.rs) ===
@@ -174,10 +174,6 @@ impl TetrisEnv {
             return true;
         }
         false
-    }
-
-    pub fn get_color_for_type(&self, piece_type: usize) -> (u8, u8, u8) {
-        COLORS[piece_type]
     }
 
     pub fn set_current_piece_type(&mut self, piece_type: usize) {

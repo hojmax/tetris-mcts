@@ -242,10 +242,10 @@ mod tests {
     }
 
     #[test]
-    fn test_board_colors_initially_none() {
+    fn test_board_piece_types_initially_none() {
         let env = TetrisEnv::new(10, 20);
-        let colors = env.get_board_colors();
-        for row in colors {
+        let piece_types = env.get_board_piece_types();
+        for row in piece_types {
             for cell in row {
                 assert!(cell.is_none());
             }
@@ -318,14 +318,6 @@ mod tests {
         if moved {
             let new_y = env.current_piece.as_ref().unwrap().y;
             assert_eq!(new_y, initial_y + 1);
-        }
-    }
-
-    #[test]
-    fn test_get_color_for_type() {
-        let env = TetrisEnv::new(10, 20);
-        for i in 0..7 {
-            let _color = env.get_color_for_type(i);
         }
     }
 
@@ -905,24 +897,27 @@ mod tests {
     }
 
     #[test]
-    fn test_board_colors_after_lock() {
+    fn test_board_piece_types_after_lock() {
         let mut env = TetrisEnv::new(10, 20);
         let piece_type = env.current_piece.as_ref().unwrap().piece_type;
 
         // Hard drop to lock piece
         env.hard_drop();
 
-        // Check that board_colors has the piece type
-        let mut found_color = false;
-        for row in &env.board_colors {
+        // Check that board_piece_types has the piece type
+        let mut found_piece_type = false;
+        for row in &env.board_piece_types {
             for cell in row {
                 if *cell == Some(piece_type) {
-                    found_color = true;
+                    found_piece_type = true;
                     break;
                 }
             }
         }
-        assert!(found_color, "Board colors should contain locked piece type");
+        assert!(
+            found_piece_type,
+            "Board piece types should contain locked piece type"
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //!
 //! # Modules
 //!
-//! - `piece`: Tetromino pieces, shapes, and colors
+//! - `piece`: Tetromino pieces and geometry
 //! - `kicks`: SRS (Super Rotation System) wall kick data
 //! - `env`: The main Tetris game environment
 //! - `scoring`: Attack scoring system (T-spins, combos, back-to-back, perfect clears)
@@ -34,7 +34,7 @@ pub use mcts::{
     GameResult, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
 };
 pub use moves::{find_all_placements, Action, Board, Placement};
-pub use piece::{get_cells, Piece, COLORS, NUM_PIECE_TYPES, TETROMINOS, TETROMINO_CELLS};
+pub use piece::{get_cells, Piece, NUM_PIECE_TYPES, TETROMINOS, TETROMINO_CELLS};
 pub use scoring::{
     calculate_attack, combo_attack, determine_clear_type, AttackResult, ClearType,
     BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,

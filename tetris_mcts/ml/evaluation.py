@@ -154,7 +154,7 @@ class Evaluator:
 
             # Get current state for rendering
             board = np.array(env.get_board())
-            board_colors = env.get_board_colors()
+            board_piece_types = env.get_board_piece_types()
 
             piece = env.get_current_piece()
             piece_cells = None
@@ -170,7 +170,7 @@ class Evaluator:
 
             frame = render_board(
                 board=board,
-                board_colors=board_colors,
+                board_piece_types=board_piece_types,
                 current_piece_cells=piece_cells,
                 current_piece_type=piece_type,
                 ghost_cells=ghost_cells,
@@ -187,10 +187,10 @@ class Evaluator:
 
         if len(frames) < max_frames:
             board = np.array(env.get_board())
-            board_colors = env.get_board_colors()
+            board_piece_types = env.get_board_piece_types()
             frame = render_board(
                 board=board,
-                board_colors=board_colors,
+                board_piece_types=board_piece_types,
                 move_number=len(frames),
                 attack=total_attack,
                 info_text="Final" if env.game_over else "",

@@ -76,7 +76,7 @@ def display_virtual_node(node_data, tree_dict, c_puct):
     # Render the resulting board if we were able to compute it
     if attack is not None and env_copy is not None:
         board = env_copy.get_board()
-        board_colors = env_copy.get_board_colors()
+        board_piece_types = env_copy.get_board_piece_types()
         details.append(html.Hr())
         details.append(
             html.P(
@@ -87,7 +87,7 @@ def display_virtual_node(node_data, tree_dict, c_puct):
     else:
         # Fall back to parent's board
         board = parent["board"]
-        board_colors = parent["board_colors"]
+        board_piece_types = parent["board_piece_types"]
         details.append(html.Hr())
         details.append(
             html.P(
@@ -106,7 +106,7 @@ def display_virtual_node(node_data, tree_dict, c_puct):
     for y in range(height):
         for x in range(width):
             if board[y][x] != 0:
-                color_idx = board_colors[y][x]
+                color_idx = board_piece_types[y][x]
                 if color_idx is not None and color_idx < len(PIECE_COLORS):
                     color = PIECE_COLORS[color_idx]
                 else:
@@ -201,7 +201,7 @@ def display_virtual_piece_node(node_data, tree_dict):
 
     # Render the chance node's board (state after action, before piece spawn)
     board = parent["board"]
-    board_colors = parent["board_colors"]
+    board_piece_types = parent["board_piece_types"]
 
     cell_size = 12
     height = len(board)
@@ -213,7 +213,7 @@ def display_virtual_piece_node(node_data, tree_dict):
     for y in range(height):
         for x in range(width):
             if board[y][x] != 0:
-                color_idx = board_colors[y][x]
+                color_idx = board_piece_types[y][x]
                 if color_idx is not None and color_idx < len(PIECE_COLORS):
                     color = PIECE_COLORS[color_idx]
                 else:
@@ -841,7 +841,7 @@ def run_mcts(
                 "parent_id": n.parent_id,
                 "edge_from_parent": n.edge_from_parent,
                 "board": list(n.state.get_board()),
-                "board_colors": list(n.state.get_board_colors()),
+                "board_piece_types": list(n.state.get_board_piece_types()),
                 "current_piece": n.state.get_current_piece().piece_type
                 if n.state.get_current_piece()
                 else None,
@@ -1121,7 +1121,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
 
     # Render board
     board = node["board"]
-    board_colors = node["board_colors"]
+    board_piece_types = node["board_piece_types"]
 
     cell_size = 12
     height = len(board)
@@ -1133,7 +1133,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
     for y in range(height):
         for x in range(width):
             if board[y][x] != 0:
-                color_idx = board_colors[y][x]
+                color_idx = board_piece_types[y][x]
                 if color_idx is not None and color_idx < len(PIECE_COLORS):
                     color = PIECE_COLORS[color_idx]
                 else:
