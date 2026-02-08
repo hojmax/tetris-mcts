@@ -25,11 +25,12 @@ impl Default for AttackResult {
 }
 ```
 
-## tetris_core/src/piece.rs
+## tetris_core/src/piece.rs ✅
 
 Is tetris_core/src/piece.rs efficient? The look ups and all that?
 
 Why the heck do we have colors in .rs code?:
+
 ```
 
 /// Colors for each tetromino (RGB) - matching Jstris style
@@ -43,6 +44,7 @@ pub const COLORS: [(u8, u8, u8); 7] = [
     (227, 127, 59), // L - Orange
 ];
 ```
+
 All visualization sort of stuff should go into the python code. Only environment logic, and mcts in rust.
 
 Please update CLAUDE.md to make this clear:
@@ -50,6 +52,159 @@ Rust = Env logic, MCTS
 Python = Training, Visualization
 
 Like there should not be getting any colors from rust and all that. get_color_for_type is definitely a mistake and all other color related stuff in rust.
+
+Why does this default to x position?:
+
+```
+
+#[pymethods]
+impl Piece {
+    #[new]
+    pub fn new(piece_type: usize) -> Self {
+        Piece {
+            piece_type,
+            x: 3,
+            y: 0,
+            rotation: 0,
+        }
+    }
+
+    pub fn get_color(&self) -> (u8, u8, u8) {
+        COLORS[self.piece_type]
+    }
+
+    pub fn get_cells(&self) -> Vec<(i32, i32)> {
+        get_cells(self.piece_type, self.rotation, self.x, self.y).to_vec()
+    }
+}
+```
+
+Is this not dependent on whether it is an I or a O or any of the other pieces? Maybe we should move that logic into piece .rs, to not have to do overrides and just being able to build one.
+
+## tetris_core/src/nn.rs ✅
+
+Why can't encode_state return the correct formatting and typing like:
+
+```
+
+        let board =
+            tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
+                .into_tensor();
+
+        let aux =
+            tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor)?.into_tensor();
+
+```
+
+IT could just return tensors right instead of formatting back and forth?
+
+Is this correct softmax?:
+
+```
+
+    for (i, (&logit, &valid)) in logits.iter().zip(mask.iter()).enumerate() {
+        if valid {
+            let exp_val = (logit - max_logit).exp();
+            result[i] = exp_val;
+            sum += exp_val;
+        }
+    }
+
+    if sum > 0.0 {
+        for x in &mut result {
+            *x /= sum;
+        }
+    }
+
+```
+
+This is totally wrong:
+
+```
+
+/// Get action mask from environment
+pub fn get_action_mask(env: &TetrisEnv) -> Vec<bool> {
+    use crate::mcts::{get_action_space, NUM_ACTIONS};
+
+    let action_space = get_action_space();
+    let placements = env.get_possible_placements();
+
+    let mut mask = vec![false; NUM_ACTIONS];
+
+    for p in placements {
+        if let Some(idx) = action_space.placement_to_index(p.piece.x, p.piece.y, p.piece.rotation) {
+            mask[idx] = true;
+        }
+    }
+
+    mask
+}
+```
+
+We should not be passing around x, y and rotation. We should only be passing around a move index, and so you could just directly index based on that. This is NOT just for nn.rs, but in general in the code base. Like we should just have a function (we already have right?) for index to x,y,rotation, and then use that when we actually need the x,y,rotation, and maybe a function for x,y,rotation to index.
+
+# tetris_core/src/moves.rs
+
+Why is the action not an to_u8 in the first place?:
+
+```
+
+impl Action {
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+```
+
+Why is this not an u8:
+
+```
+
+    /// The column where the piece lands (leftmost cell x coordinate)
+    #[pyo3(get)]
+    pub column: i32,
+```
+
+In general, why are we not using u8 way more all over the place? like most things in the program are binary, or board state, that can be encoded in 8 states (7 different types of pieces, and 1 empty state). I guess this is actually 3 bits, so we could also just do it with a 4 bit type. Not sure if this is a useful optimization, maybe tiny speedup / memory decrease usage? Maybe nice for huge mcts trees.
+
+I don't full understand this, explain:
+
+```
+
+    /// The kick index used for the final rotation (0 = no kick, 1-4 = kick used)
+    /// This is needed for proper T-spin detection (kick 4 = always full T-spin)
+    #[pyo3(get)]
+    pub last_kick_index: usize,
+```
+
+Maybe we can get rid of this:
+
+```
+
+    /// Pre-computed action index for fast lookup (0-733)
+    #[pyo3(get)]
+    pub action_index: usize,
+}
+```
+
+When we just encode everything as indeces instead of x and y and rotation anyways. not sure.
+
+Do we literally ever use this?:
+
+```
+
+#[pymethods]
+impl Placement {
+    fn __repr__(&self) -> String {
+        format!(
+            "Placement(col={}, rot={}, moves={:?})",
+            self.column, self.rotation, self.moves
+        )
+    }
+}
+```
+
+Or can we delete all the **repr** stuff in .rs.
 
 # Next Steps
 
@@ -62,6 +217,7 @@ Like there should not be getting any colors from rust and all that. get_color_fo
 - [ ] tetris_mcts/scripts/inspect_training_data.py not showing can hold?
 - [ ] game/avg_moves, game/max_moves and not eval/...
 - [ ] I don't think the eval/trajectory matches the eval/max_attack?? Is the replay correct?
+- [ ] Verify that the inference and training netwroks are tacking the exavt same inputs in the exavt same ordering and the exavt same scaling and values and all that. Make unit tests for this as well. Also the masked softmax and all that. We need tests that compare the two netwrok files and check equal outputs. Might need to be a pytest? Add pytest for this that runs both and compares inputs and outputs that are written to files or something like that.
 
 # Backlog
 
