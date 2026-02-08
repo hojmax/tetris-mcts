@@ -3,7 +3,7 @@
 //! All #[pymethods] consolidated in one file due to PyO3 limitation.
 
 use pyo3::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use crate::mcts::HOLD_ACTION_INDEX;
 use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
@@ -42,6 +42,119 @@ impl TetrisEnv {
 
     pub fn clone_state(&self) -> TetrisEnv {
         self.clone()
+    }
+
+    pub fn set_board(&mut self, board: Vec<Vec<u8>>) -> PyResult<()> {
+        if board.len() != self.height {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Board height mismatch: got {}, expected {}",
+                board.len(),
+                self.height
+            )));
+        }
+        for (y, row) in board.iter().enumerate() {
+            if row.len() != self.width {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Board width mismatch at row {}: got {}, expected {}",
+                    y,
+                    row.len(),
+                    self.width
+                )));
+            }
+            for (x, &cell) in row.iter().enumerate() {
+                if cell != 0 && cell != 1 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid board value at ({}, {}): {} (expected 0 or 1)",
+                        x, y, cell
+                    )));
+                }
+            }
+        }
+
+        self.board = board;
+        self.board_piece_types = vec![vec![None; self.width]; self.height];
+        self.sync_board_stats();
+        self.invalidate_placement_cache();
+        Ok(())
+    }
+
+    pub fn set_board_piece_types(
+        &mut self,
+        board_piece_types: Vec<Vec<Option<usize>>>,
+    ) -> PyResult<()> {
+        if board_piece_types.len() != self.height {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "board_piece_types height mismatch: got {}, expected {}",
+                board_piece_types.len(),
+                self.height
+            )));
+        }
+        for (y, row) in board_piece_types.iter().enumerate() {
+            if row.len() != self.width {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "board_piece_types width mismatch at row {}: got {}, expected {}",
+                    y,
+                    row.len(),
+                    self.width
+                )));
+            }
+            for (x, &piece_type) in row.iter().enumerate() {
+                if let Some(pt) = piece_type {
+                    if pt >= 7 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Invalid piece type at ({}, {}): {} (expected 0-6)",
+                            x, y, pt
+                        )));
+                    }
+                    if self.board[y][x] == 0 {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Piece type set for empty board cell at ({}, {})",
+                            x, y
+                        )));
+                    }
+                } else if self.board[y][x] != 0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Missing piece type for filled board cell at ({}, {})",
+                        x, y
+                    )));
+                }
+            }
+        }
+
+        self.board_piece_types = board_piece_types;
+        Ok(())
+    }
+
+    pub fn set_queue(&mut self, queue: Vec<usize>) -> PyResult<()> {
+        for (idx, piece_type) in queue.iter().enumerate() {
+            if *piece_type >= 7 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid queue piece type at index {}: {} (expected 0-6)",
+                    idx, piece_type
+                )));
+            }
+        }
+
+        self.piece_queue = VecDeque::from(queue);
+        Ok(())
+    }
+
+    pub fn set_hold_piece_type(&mut self, hold_piece_type: Option<usize>) -> PyResult<()> {
+        if let Some(pt) = hold_piece_type {
+            if pt >= 7 {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid hold piece type: {} (expected 0-6)",
+                    pt
+                )));
+            }
+        }
+        self.hold_piece = hold_piece_type;
+        self.hold_piece_bag_position = hold_piece_type.map(|_| 0);
+        Ok(())
+    }
+
+    pub fn set_hold_used(&mut self, hold_used: bool) {
+        self.hold_used = hold_used;
     }
 
     // === Board (board.rs) ===

@@ -31,6 +31,145 @@ from tetris_mcts.config import (
 # This allows us to clone states and execute actions for visualization
 _env_cache: dict[int, TetrisEnv] = {}
 
+PIECE_TOKEN_TO_INDEX = {
+    "I": 0,
+    "O": 1,
+    "T": 2,
+    "S": 3,
+    "Z": 4,
+    "J": 5,
+    "L": 6,
+}
+
+
+def parse_piece_token(token: str) -> int:
+    value = token.strip().upper()
+    if value == "":
+        raise ValueError("Piece token is empty")
+    if value.isdigit():
+        piece_idx = int(value)
+        if piece_idx < 0 or piece_idx >= NUM_PIECE_TYPES:
+            raise ValueError(f"Invalid piece index '{value}' (expected 0-6)")
+        return piece_idx
+    if value not in PIECE_TOKEN_TO_INDEX:
+        raise ValueError(
+            f"Invalid piece token '{token}' (expected I,O,T,S,Z,J,L or 0-6)"
+        )
+    return PIECE_TOKEN_TO_INDEX[value]
+
+
+def parse_optional_piece(piece_text: str | None) -> int | None:
+    if piece_text is None or piece_text.strip() == "":
+        return None
+    if piece_text.strip().lower() in {"none", "null", "-"}:
+        return None
+    return parse_piece_token(piece_text)
+
+
+def parse_optional_hold_used(hold_used_text: str | None) -> bool | None:
+    if hold_used_text is None or hold_used_text.strip() == "":
+        return None
+    normalized = hold_used_text.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n"}:
+        return False
+    raise ValueError(
+        f"Invalid hold-used value '{hold_used_text}' (expected true/false)"
+    )
+
+
+def parse_optional_queue(queue_text: str | None) -> list[int] | None:
+    if queue_text is None or queue_text.strip() == "":
+        return None
+    raw_tokens = [token.strip() for token in queue_text.replace("|", ",").split(",")]
+    tokens = [token for token in raw_tokens if token != ""]
+    if len(tokens) == 0:
+        return None
+    return [parse_piece_token(token) for token in tokens]
+
+
+def parse_optional_board(
+    board_text: str | None,
+) -> tuple[list[list[int]], list[list[int | None]]] | None:
+    if board_text is None or board_text.strip() == "":
+        return None
+
+    board_rows: list[list[int]] = []
+    piece_rows: list[list[int | None]] = []
+    lines = [line.strip() for line in board_text.splitlines() if line.strip() != ""]
+    if len(lines) != BOARD_HEIGHT:
+        raise ValueError(
+            f"Board must have exactly {BOARD_HEIGHT} non-empty rows, got {len(lines)}"
+        )
+
+    for row_idx, line in enumerate(lines):
+        compact = line.replace(" ", "")
+        if len(compact) != BOARD_WIDTH:
+            raise ValueError(
+                f"Board row {row_idx + 1} must have {BOARD_WIDTH} cells, got {len(compact)}"
+            )
+
+        board_row: list[int] = []
+        piece_row: list[int | None] = []
+        for char in compact:
+            upper_char = char.upper()
+            if upper_char in {".", "_", "0"}:
+                board_row.append(0)
+                piece_row.append(None)
+            elif upper_char in PIECE_TOKEN_TO_INDEX:
+                board_row.append(1)
+                piece_row.append(PIECE_TOKEN_TO_INDEX[upper_char])
+            elif upper_char in {"1", "2", "3", "4", "5", "6", "7"}:
+                board_row.append(1)
+                piece_row.append(int(upper_char) - 1)
+            else:
+                raise ValueError(
+                    f"Invalid board character '{char}' (expected .,0,I,O,T,S,Z,J,L,1-7)"
+                )
+        board_rows.append(board_row)
+        piece_rows.append(piece_row)
+
+    return board_rows, piece_rows
+
+
+def apply_custom_state(
+    env: TetrisEnv,
+    current_piece_text: str | None,
+    hold_piece_text: str | None,
+    hold_used_text: str | None,
+    queue_text: str | None,
+    board_text: str | None,
+) -> str | None:
+    try:
+        board_data = parse_optional_board(board_text)
+        if board_data is not None:
+            board_rows, piece_rows = board_data
+            env.set_board(board_rows)
+            env.set_board_piece_types(piece_rows)
+
+        queue = parse_optional_queue(queue_text)
+        if queue is not None:
+            env.set_queue(queue)
+
+        current_piece = parse_optional_piece(current_piece_text)
+        if current_piece is not None:
+            env.set_current_piece_type(current_piece)
+
+        hold_piece = parse_optional_piece(hold_piece_text)
+        if hold_piece_text is not None and hold_piece_text.strip() != "":
+            env.set_hold_piece_type(hold_piece)
+
+        hold_used = parse_optional_hold_used(hold_used_text)
+        if hold_used is not None:
+            env.set_hold_used(hold_used)
+    except ValueError as e:
+        return str(e)
+    except Exception as e:
+        return f"Failed to apply custom state: {e}"
+
+    return None
+
 
 def display_virtual_node(node_data, tree_dict, c_puct):
     """Display details for a virtual (unvisited) node."""
@@ -574,6 +713,34 @@ app.layout = html.Div(
                     value=42,
                     style={"width": "60px", "marginRight": "15px"},
                 ),
+                html.Label("Current:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="current-piece",
+                    type="text",
+                    placeholder="I/O/T/S/Z/J/L or 0-6",
+                    style={"width": "150px", "marginRight": "10px"},
+                ),
+                html.Label("Hold:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="hold-piece",
+                    type="text",
+                    placeholder="optional piece",
+                    style={"width": "110px", "marginRight": "10px"},
+                ),
+                html.Label("Hold Used:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="hold-used",
+                    type="text",
+                    placeholder="true/false",
+                    style={"width": "90px", "marginRight": "10px"},
+                ),
+                html.Label("Queue:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="queue-input",
+                    type="text",
+                    placeholder="comma-separated, e.g. I,T,L,S,O",
+                    style={"width": "230px", "marginRight": "10px"},
+                ),
                 html.Label("Max Nodes:", style={"marginRight": "5px"}),
                 dcc.Input(
                     id="max-nodes-slider",
@@ -584,7 +751,7 @@ app.layout = html.Div(
                     step=50,
                     style={"width": "60px", "marginRight": "15px"},
                 ),
-                html.Button("Run MCTS", id="run-button", n_clicks=0),
+                html.Button("Run (All Sims)", id="run-button", n_clicks=0),
                 html.Button(
                     "Step (+1)",
                     id="step-button",
@@ -601,6 +768,20 @@ app.layout = html.Div(
                     options=[{"label": " Show unvisited", "value": "show"}],
                     value=["show"],  # Default to checked
                     style={"marginLeft": "20px"},
+                ),
+                dcc.Textarea(
+                    id="board-input",
+                    placeholder=(
+                        "Optional board override: 20 rows x 10 cols.\n"
+                        "Use '.' or '0' for empty, I/O/T/S/Z/J/L or 1-7 for filled."
+                    ),
+                    style={
+                        "width": "420px",
+                        "height": "130px",
+                        "marginLeft": "10px",
+                        "fontFamily": "monospace",
+                        "fontSize": "11px",
+                    },
                 ),
             ],
             style={
@@ -719,6 +900,11 @@ app.layout = html.Div(
     State("model-path", "value"),
     State("num-simulations", "value"),
     State("seed", "value"),
+    State("current-piece", "value"),
+    State("hold-piece", "value"),
+    State("hold-used", "value"),
+    State("queue-input", "value"),
+    State("board-input", "value"),
     State("max-nodes-slider", "value"),
     State("tree-store", "data"),
     State("env-store", "data"),
@@ -732,6 +918,11 @@ def run_mcts(
     model_path,
     num_sims,
     seed,
+    current_piece_text,
+    hold_piece_text,
+    hold_used_text,
+    queue_text,
+    board_text,
     max_nodes,
     tree_data,
     env_data,
@@ -746,8 +937,8 @@ def run_mcts(
     max_sims = num_sims or 100
 
     if triggered_id == "run-button":
-        # Fresh start - reset to 1 simulation
-        sims_to_run = 1
+        # Run full search to configured simulation count
+        sims_to_run = max_sims
     else:
         # Step - add one more simulation
         sims_to_run = min((sims_done or 0) + 1, max_sims)
@@ -777,21 +968,53 @@ def run_mcts(
         )
 
     if not agent.load_model(model_path):
+        model_suffix = Path(model_path).suffix.lower()
+        if model_suffix == ".pt":
+            error_label = (
+                "Failed to load model: .pt checkpoint provided. "
+                "Use an ONNX file (e.g., training_runs/.../checkpoints/latest.onnx)."
+            )
+        else:
+            error_label = "Failed to load model: expected an ONNX file"
         return (
             None,
             None,
             0,
             [
                 {
-                    "data": {"id": "error", "label": "Failed to load model"},
+                    "data": {"id": "error", "label": error_label},
                     "classes": "decision",
                 }
             ],
-            "Error: Failed to load model",
+            error_label,
         )
 
-    # Create env (same seed for consistency)
+    # Create env from seed, then apply optional custom overrides
     env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed or 42)
+    custom_state_error = apply_custom_state(
+        env=env,
+        current_piece_text=current_piece_text,
+        hold_piece_text=hold_piece_text,
+        hold_used_text=hold_used_text,
+        queue_text=queue_text,
+        board_text=board_text,
+    )
+    if custom_state_error is not None:
+        return (
+            None,
+            None,
+            0,
+            [
+                {
+                    "data": {
+                        "id": "error",
+                        "label": f"Invalid custom state: {custom_state_error}",
+                    },
+                    "classes": "decision",
+                }
+            ],
+            f"Error: {custom_state_error}",
+        )
 
     # Run MCTS with current number of simulations
     result = agent.search_with_tree(env, add_noise=False, move_number=0)

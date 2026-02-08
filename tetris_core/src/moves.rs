@@ -88,6 +88,10 @@ impl<'a> Board<'a> {
 
     /// Get the final y position after hard dropping from a state
     fn get_drop_y(&self, piece_type: usize, state: &PieceState) -> i32 {
+        // Intentionally step downward with exact collision checks.
+        // In move-generation BFS we evaluate arbitrary intermediate states
+        // (including kick/slide positions under overhangs), where a simple
+        // column-height profile shortcut is not always correct.
         let mut y = state.y;
         while self.is_valid_position_at(piece_type, state.rotation, state.x, y + 1) {
             y += 1;
