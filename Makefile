@@ -43,6 +43,7 @@ rebuild:
 # Run tests
 test:
 	cd tetris_core && $(CARGO_ENV) && cargo test
+	uv run pytest
 
 # Clean build artifacts
 clean:
