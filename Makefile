@@ -42,7 +42,9 @@ rebuild:
 
 # Run tests
 test:
+	$(MAKE) build-dev
 	cd tetris_core && $(CARGO_ENV) && cargo test
+	$(PYTHON) -m pytest
 
 # Clean build artifacts
 clean:

@@ -39,7 +39,31 @@ impl TetrisNN {
         max_moves: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
         let (board, aux) = encode_state(env, move_number, max_moves)?;
+        self.predict_masked_from_encoded_tensors(board, aux, action_mask)
+    }
 
+    pub fn predict_masked_from_tensors(
+        &self,
+        board_tensor: &[f32],
+        aux_tensor: &[f32],
+        action_mask: &[bool],
+    ) -> TractResult<(Vec<f32>, f32)> {
+        let board = tract_ndarray::Array4::from_shape_vec(
+            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
+            board_tensor.to_vec(),
+        )?
+        .into_tensor();
+        let aux = tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor.to_vec())?
+            .into_tensor();
+        self.predict_masked_from_encoded_tensors(board, aux, action_mask)
+    }
+
+    fn predict_masked_from_encoded_tensors(
+        &self,
+        board: Tensor,
+        aux: Tensor,
+        action_mask: &[bool],
+    ) -> TractResult<(Vec<f32>, f32)> {
         let outputs = self.model.run(tvec!(board.into(), aux.into()))?;
 
         let policy_logits: Vec<f32> = outputs[0].to_array_view::<f32>()?.iter().copied().collect();
@@ -83,6 +107,27 @@ fn encode_state(
     move_number: usize,
     max_moves: usize,
 ) -> TractResult<(Tensor, Tensor)> {
+    let (board_tensor, aux_tensor) = encode_state_features(env, move_number, max_moves)?;
+    let board =
+        tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
+            .into_tensor();
+    let aux = tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor)?.into_tensor();
+    Ok((board, aux))
+}
+
+pub fn encode_state_features(
+    env: &TetrisEnv,
+    move_number: usize,
+    max_moves: usize,
+) -> TractResult<(Vec<f32>, Vec<f32>)> {
+    if max_moves == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "max_moves must be > 0",
+        )
+        .into());
+    }
+
     // Board tensor: binary (1 = filled, 0 = empty) - flatten to 200 values (will be reshaped to 1x20x10)
     let board_tensor: Vec<f32> = env
         .board_cells()
@@ -122,16 +167,11 @@ fn encode_state(
     let normalized_denominator = max_moves as f32;
     aux.push(move_number as f32 / normalized_denominator);
 
-    let board =
-        tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
-            .into_tensor();
-    let aux = tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux)?.into_tensor();
-
-    Ok((board, aux))
+    Ok((board_tensor, aux))
 }
 
 /// Softmax with mask (invalid actions get 0 probability)
-fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
+pub fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
     let max_logit = logits
         .iter()
         .zip(mask.iter())

@@ -23,6 +23,7 @@ dependencies = [
     "pillow",
     "onnxruntime>=1.23.2",
     "rich",
+    "pytest",
 ]
 
 [tool.uv.sources]

@@ -15,6 +15,7 @@
 #![allow(non_local_definitions)] // PyO3 #[pymethods] triggers this warning with current toolchain.
 
 use pyo3::prelude::*;
+use pyo3::exceptions::PyValueError;
 
 pub mod constants;
 pub mod env;
@@ -40,6 +41,78 @@ pub use scoring::{
     BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,
 };
 
+#[pyfunction]
+fn debug_encode_state(
+    env: &TetrisEnv,
+    move_number: usize,
+    max_moves: usize,
+) -> PyResult<(Vec<f32>, Vec<f32>)> {
+    nn::encode_state_features(env, move_number, max_moves)
+        .map_err(|e| PyValueError::new_err(format!("Failed to encode state: {e}")))
+}
+
+#[pyfunction]
+fn debug_get_action_mask(env: &TetrisEnv) -> Vec<bool> {
+    nn::get_action_mask(env)
+}
+
+#[pyfunction]
+fn debug_masked_softmax(logits: Vec<f32>, mask: Vec<bool>) -> PyResult<Vec<f32>> {
+    if logits.len() != mask.len() {
+        return Err(PyValueError::new_err(format!(
+            "logits and mask length mismatch: logits={}, mask={}",
+            logits.len(),
+            mask.len()
+        )));
+    }
+    if !mask.iter().any(|&valid| valid) {
+        return Err(PyValueError::new_err(
+            "mask must contain at least one valid action",
+        ));
+    }
+    Ok(nn::masked_softmax(&logits, &mask))
+}
+
+#[pyfunction]
+fn debug_predict_masked_from_tensors(
+    model_path: &str,
+    board_tensor: Vec<f32>,
+    aux_tensor: Vec<f32>,
+    action_mask: Vec<bool>,
+) -> PyResult<(Vec<f32>, f32)> {
+    let expected_board = constants::BOARD_HEIGHT * constants::BOARD_WIDTH;
+    if board_tensor.len() != expected_board {
+        return Err(PyValueError::new_err(format!(
+            "board tensor length mismatch: got {}, expected {}",
+            board_tensor.len(),
+            expected_board
+        )));
+    }
+    if aux_tensor.len() != 52 {
+        return Err(PyValueError::new_err(format!(
+            "aux tensor length mismatch: got {}, expected 52",
+            aux_tensor.len()
+        )));
+    }
+    if action_mask.len() != mcts::NUM_ACTIONS {
+        return Err(PyValueError::new_err(format!(
+            "action mask length mismatch: got {}, expected {}",
+            action_mask.len(),
+            mcts::NUM_ACTIONS
+        )));
+    }
+    if !action_mask.iter().any(|&valid| valid) {
+        return Err(PyValueError::new_err(
+            "action mask must contain at least one valid action",
+        ));
+    }
+
+    let nn = nn::TetrisNN::load(model_path)
+        .map_err(|e| PyValueError::new_err(format!("Failed to load model: {e}")))?;
+    nn.predict_masked_from_tensors(&board_tensor, &aux_tensor, &action_mask)
+        .map_err(|e| PyValueError::new_err(format!("Failed to run inference: {e}")))
+}
+
 #[pymodule]
 fn tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<TetrisEnv>()?;
@@ -56,5 +129,9 @@ fn tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<GameGenerator>()?;
     m.add_class::<EvalResult>()?;
     m.add_function(wrap_pyfunction!(evaluate_model, m)?)?;
+    m.add_function(wrap_pyfunction!(debug_encode_state, m)?)?;
+    m.add_function(wrap_pyfunction!(debug_get_action_mask, m)?)?;
+    m.add_function(wrap_pyfunction!(debug_masked_softmax, m)?)?;
+    m.add_function(wrap_pyfunction!(debug_predict_masked_from_tensors, m)?)?;
     Ok(())
 }
