@@ -124,8 +124,7 @@ mod tests {
         root.value_sum = 10.0;
 
         let chance_high = ChanceNode::new(env.clone(), 3, 0, vec![1, 2], 0.0, vec![0.5, 0.5]);
-        let mut chance_low =
-            ChanceNode::new(env.clone(), 1, 0, vec![4, 5], 0.0, vec![0.5, 0.5]);
+        let mut chance_low = ChanceNode::new(env.clone(), 1, 0, vec![4, 5], 0.0, vec![0.5, 0.5]);
 
         // Insert out of order to verify deterministic sorting in export.
         let mut decision_piece_5 = DecisionNode::new(env.clone(), 1);

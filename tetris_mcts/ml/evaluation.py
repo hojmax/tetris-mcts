@@ -106,13 +106,10 @@ class Evaluator:
         # Optionally render one trajectory from saved replay (always first seed).
         trajectory_frames = None
         if render_trajectory and self.eval_seeds:
-            try:
-                trajectory_frames = self.render_first_replay(
-                    replay_path=replay_path,
-                    max_frames=DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
-                )
-            except Exception as e:
-                logger.warning("Failed to render evaluation trajectory", error=str(e))
+            trajectory_frames = self.render_first_replay(
+                replay_path=replay_path,
+                max_frames=DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
+            )
 
         return result, trajectory_frames
 

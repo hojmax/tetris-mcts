@@ -175,6 +175,10 @@ def main(args: ScriptArgs) -> None:
             name=config.run_name,
             config=wandb_config,
         )
+        wandb.define_metric("trainer_step")
+        wandb.define_metric("train/*", step_metric="trainer_step")
+        wandb.define_metric("batch/*", step_metric="trainer_step")
+        wandb.define_metric("eval/*", step_metric="trainer_step")
         # Use game_number as x-axis for per-game metrics
         wandb.define_metric("game_number")
         wandb.define_metric("game/*", step_metric="game_number")

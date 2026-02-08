@@ -77,7 +77,7 @@ class TrainingConfig:
     # MCTS / Self-play
     num_simulations: int = 1000
     c_puct: float = 0.5  # PUCT exploration constant
-    temperature: float = 1.0
+    temperature: float = 1.5
     dirichlet_alpha: float = 0.01
     dirichlet_epsilon: float = 0.25
     num_workers: int = 7  # Parallel game generation threads

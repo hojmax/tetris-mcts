@@ -366,13 +366,17 @@ class Trainer:
                         session_step / elapsed if elapsed > 0 else 0
                     )
                     if log_to_wandb:
-                        wandb.log(metrics, step=self.step)
+                        metrics["trainer_step"] = self.step
+                        wandb.log(metrics)
                         # Log all completed games since the last logging tick.
                         for (
                             game_number,
                             game_stats,
                         ) in generator.drain_completed_game_stats():
-                            game_metrics = {"game_number": game_number}
+                            game_metrics = {
+                                "game_number": game_number,
+                                "trainer_step": self.step,
+                            }
                             for key, value in game_stats.items():
                                 game_metrics[f"game/{key}"] = value
                             episode_length = game_stats["episode_length"]
@@ -435,6 +439,7 @@ class Trainer:
                             "eval/lines_per_piece": eval_result.lines_per_piece,
                             "eval/attack_std": statistics.pstdev(attacks),
                             "eval/moves_std": statistics.pstdev(moves),
+                            "trainer_step": self.step,
                         }
                         # Log trajectory as animated GIF
                         if trajectory_frames:
@@ -443,7 +448,7 @@ class Trainer:
                             )
                             if eval_video is not None:
                                 log_data["eval/trajectory"] = eval_video
-                        wandb.log(log_data, step=self.step)
+                        wandb.log(log_data)
 
                 # Checkpoint
                 if self.step % self.config.checkpoint_interval == 0:

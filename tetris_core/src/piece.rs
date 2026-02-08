@@ -186,6 +186,10 @@ impl Piece {
     pub fn new(piece_type: usize) -> Self {
         Piece::spawn(piece_type, BOARD_WIDTH)
     }
+
+    pub fn get_cells(&self) -> Vec<(i32, i32)> {
+        get_cells(self.piece_type, self.rotation, self.x, self.y).to_vec()
+    }
 }
 
 impl Piece {
@@ -196,10 +200,6 @@ impl Piece {
             y: spawn_y(piece_type),
             rotation: 0,
         }
-    }
-
-    pub fn get_cells(&self) -> Vec<(i32, i32)> {
-        get_cells(self.piece_type, self.rotation, self.x, self.y).to_vec()
     }
 }
 
