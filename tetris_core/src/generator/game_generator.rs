@@ -456,8 +456,8 @@ impl GameGenerator {
             d.insert("holds".to_string(), info.stats.holds as f32);
             d.insert("total_attack".to_string(), info.total_attack as f32);
             d.insert("episode_length".to_string(), info.num_moves as f32);
-            d.insert("avg_moves".to_string(), info.avg_moves);
-            d.insert("max_moves".to_string(), info.max_moves as f32);
+            d.insert("avg_valid_actions".to_string(), info.avg_moves);
+            d.insert("max_valid_actions".to_string(), info.max_moves as f32);
             drained.push((info.game_number, d));
         }
         drained
