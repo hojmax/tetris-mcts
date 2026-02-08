@@ -53,7 +53,7 @@ class TrainingConfig:
     """Training hyperparameters - all configurable via CLI."""
 
     # Training
-    total_steps: int = 100_000_000
+    total_steps: int = 100_000_000_000
     model_sync_interval: int = 2000  # Steps between ONNX exports
 
     # Network architecture
@@ -70,12 +70,12 @@ class TrainingConfig:
     grad_clip_norm: float = 1.0
     lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
     lr_decay_steps: int = 100_000
-    lr_min_factor: float = 0.01  # Minimum LR as fraction of initial (for cosine)
+    lr_min_factor: float = 0.5  # Minimum LR as fraction of initial (for cosine)
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
 
     # MCTS / Self-play
-    num_simulations: int = 600
+    num_simulations: int = 1000
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15
@@ -88,8 +88,8 @@ class TrainingConfig:
     games_per_save: int = 2000  # Games between disk saves (0 to disable)
 
     # Intervals
-    checkpoint_interval: int = 2000  # Steps between checkpoints
-    eval_interval: int = 10000  # Steps between evaluations
+    checkpoint_interval: int = 80000  # Steps between checkpoints
+    eval_interval: int = 30000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
 
     # Evaluation
