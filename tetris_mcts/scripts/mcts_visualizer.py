@@ -864,7 +864,6 @@ app.layout = html.Div(
                     step=50,
                     style={"width": "60px", "marginRight": "15px"},
                 ),
-                html.Button("Run (All Sims)", id="run-button", n_clicks=0),
                 html.Button(
                     "Step (+1)",
                     id="step-button",
@@ -1012,9 +1011,10 @@ app.layout = html.Div(
     Output("tree-store", "data"),
     Output("env-store", "data"),
     Output("sims-done-store", "data"),
+    Output("selected-node-store", "data", allow_duplicate=True),
+    Output("siblings-store", "data", allow_duplicate=True),
     Output("cytoscape-tree", "elements"),
     Output("sim-counter", "children"),
-    Input("run-button", "n_clicks"),
     Input("step-button", "n_clicks"),
     Input("show-unvisited", "value"),
     State("model-path", "value"),
@@ -1039,7 +1039,6 @@ app.layout = html.Div(
     prevent_initial_call=True,
 )
 def run_mcts(
-    run_clicks,
     step_clicks,
     show_unvisited_value,
     model_path,
@@ -1065,9 +1064,16 @@ def run_mcts(
     """Run MCTS search and update the tree."""
     ctx = dash.callback_context
     if not ctx.triggered:
-        return dash.no_update, dash.no_update, dash.no_update, [], dash.no_update
+        return (
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            [],
+            dash.no_update,
+        )
 
-    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
     if num_sims is None:
         raise ValueError("num_simulations is required")
     if c_puct is None:
@@ -1083,12 +1089,8 @@ def run_mcts(
 
     max_sims = num_sims
 
-    if triggered_id == "run-button":
-        # Run full search to configured simulation count
-        sims_to_run = max_sims
-    else:
-        # Step - add one more simulation
-        sims_to_run = min((sims_done or 0) + 1, max_sims)
+    # Step - add one more simulation
+    sims_to_run = min((sims_done or 0) + 1, max_sims)
 
     # Create config with current number of simulations
     config = MCTSConfig()
@@ -1098,6 +1100,7 @@ def run_mcts(
     config.dirichlet_alpha = dirichlet_alpha
     config.dirichlet_epsilon = dirichlet_epsilon
     config.max_moves = max_moves
+    config.seed = int(seed) if seed is not None else None
     config.track_value_history = True
     agent = MCTSAgent(config)
 
@@ -1107,6 +1110,8 @@ def run_mcts(
             None,
             None,
             0,
+            None,
+            [],
             [
                 {
                     "data": {"id": "error", "label": f"Model not found: {model_path}"},
@@ -1129,6 +1134,8 @@ def run_mcts(
             None,
             None,
             0,
+            None,
+            [],
             [
                 {
                     "data": {"id": "error", "label": error_label},
@@ -1153,6 +1160,8 @@ def run_mcts(
             None,
             None,
             0,
+            None,
+            [],
             [
                 {
                     "data": {
@@ -1178,6 +1187,8 @@ def run_mcts(
             None,
             None,
             0,
+            None,
+            [],
             [
                 {
                     "data": {"id": "error", "label": "MCTS failed (game over?)"},
@@ -1242,6 +1253,8 @@ def run_mcts(
         tree_dict,
         {"seed": seed, "move_number": move_number_int},
         sims_to_run,
+        None,
+        [],
         elements,
         f"Sims: {sims_to_run}/{max_sims}",
     )

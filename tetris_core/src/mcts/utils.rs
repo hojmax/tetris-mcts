@@ -1,6 +1,5 @@
 //! MCTS Utility Functions
 
-use rand::thread_rng;
 use rand_distr::{Distribution, Gamma};
 
 /// Sample from Dirichlet distribution.
@@ -11,7 +10,7 @@ use rand_distr::{Distribution, Gamma};
 ///
 /// # Panics
 /// Panics if alpha <= 0
-pub fn sample_dirichlet(alpha: f32, n: usize) -> Vec<f32> {
+pub fn sample_dirichlet<R: rand::Rng + ?Sized>(alpha: f32, n: usize, rng: &mut R) -> Vec<f32> {
     debug_assert!(
         alpha > 0.0,
         "Dirichlet alpha must be positive, got {}",
@@ -19,12 +18,11 @@ pub fn sample_dirichlet(alpha: f32, n: usize) -> Vec<f32> {
     );
     debug_assert!(n > 0, "Dirichlet n must be positive");
 
-    let mut rng = thread_rng();
     // Gamma::new only fails if alpha <= 0 or scale <= 0
     let gamma =
         Gamma::new(alpha as f64, 1.0).expect("Invalid Dirichlet alpha parameter (must be > 0)");
 
-    let samples: Vec<f64> = (0..n).map(|_| gamma.sample(&mut rng)).collect();
+    let samples: Vec<f64> = (0..n).map(|_| gamma.sample(rng)).collect();
     let sum: f64 = samples.iter().sum();
 
     if sum == 0.0 {
@@ -43,10 +41,12 @@ pub fn sample_dirichlet(alpha: f32, n: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::thread_rng;
 
     #[test]
     fn test_dirichlet() {
-        let noise = sample_dirichlet(0.15, 10);
+        let mut rng = thread_rng();
+        let noise = sample_dirichlet(0.15, 10, &mut rng);
         assert_eq!(noise.len(), 10);
 
         let sum: f32 = noise.iter().sum();

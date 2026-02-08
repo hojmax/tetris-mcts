@@ -311,10 +311,6 @@ pub(super) fn search_internal(
     let mut root = DecisionNode::new(env.clone(), move_number);
     root.set_nn_output(&policy, nn_value);
 
-    if add_noise {
-        root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon);
-    }
-
     // Create RNG (seeded if config.seed is Some, otherwise thread_rng)
     // Combine MCTS seed with env seed and move number for unique RNG per (game, move)
     let mut rng = if let Some(mcts_seed) = config.seed {
@@ -325,6 +321,10 @@ pub(super) fn search_internal(
     } else {
         StdRng::from_rng(thread_rng()).expect("Failed to create RNG from thread_rng")
     };
+
+    if add_noise {
+        root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
+    }
 
     // Run simulations
     for _ in 0..config.num_simulations {

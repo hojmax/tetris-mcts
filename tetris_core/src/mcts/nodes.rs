@@ -119,8 +119,8 @@ impl DecisionNode {
     }
 
     /// Add Dirichlet noise to priors (for root exploration)
-    pub fn add_dirichlet_noise(&mut self, alpha: f32, epsilon: f32) {
-        let noise = sample_dirichlet(alpha, self.action_priors.len());
+    pub fn add_dirichlet_noise(&mut self, alpha: f32, epsilon: f32, rng: &mut StdRng) {
+        let noise = sample_dirichlet(alpha, self.action_priors.len(), rng);
         for (prior, n) in self.action_priors.iter_mut().zip(noise.iter()) {
             *prior = (1.0 - epsilon) * *prior + epsilon * n;
         }
@@ -313,8 +313,10 @@ mod tests {
 
     #[test]
     fn test_decision_node_add_dirichlet_noise() {
+        use rand::SeedableRng;
         let env = TetrisEnv::new(10, 20);
         let mut node = DecisionNode::new(env, 0);
+        let mut rng = StdRng::seed_from_u64(42);
 
         // Set uniform priors
         let policy = vec![1.0; NUM_ACTIONS];
@@ -323,7 +325,7 @@ mod tests {
         let priors_before: Vec<f32> = node.action_priors.clone();
 
         // Add Dirichlet noise
-        node.add_dirichlet_noise(0.3, 0.25);
+        node.add_dirichlet_noise(0.3, 0.25, &mut rng);
 
         // Priors should still sum to approximately 1
         let sum: f32 = node.action_priors.iter().sum();

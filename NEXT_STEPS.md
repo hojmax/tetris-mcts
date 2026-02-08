@@ -21,7 +21,7 @@ In progress: 🟨
 
 ## tetris_core/src/env/board.rs ✅
 
-## tetris_core/src/env/clearing.rs 🟨
+## tetris_core/src/env/clearing.rs ✅
 
 # Backlog
 
