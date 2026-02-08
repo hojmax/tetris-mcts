@@ -15,7 +15,7 @@ console = Console()
 
 @dataclass
 class ScriptArgs:
-    dirichlet_alpha: float = 0.05  # Dirichlet concentration alpha for each action
+    dirichlet_alpha: float = 0.01  # Dirichlet concentration alpha for each action
     dirichlet_epsilon: float = 0.25  # Root noise mixing weight epsilon
     num_actions: int = NUM_ACTIONS  # Action space size
     num_draws: int = 15  # Number of Dirichlet samples to print

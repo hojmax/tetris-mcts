@@ -60,7 +60,7 @@ class ScriptArgs:
     checkpoint_path: (  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
         Path | None
     ) = None
-    game_index: int = 134  # Which game to render (-1 for last)
+    game_index: int = 133  # Which game to render (-1 for last)
     save_path: Path | None = (
         None  # Output path (default: script outputs/game_{index}.gif)
     )
