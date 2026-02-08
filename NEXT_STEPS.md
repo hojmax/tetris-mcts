@@ -16,6 +16,8 @@
 
 ## tetris_core/src/constants.rs ✅
 
+## tetris_core/src/env/board.rs 🟨
+
 # Backlog
 
 - [ ] Visualizing MCTS search and verifying correctness
