@@ -1,7 +1,11 @@
 # Next Steps
 
+- [ ] game/avg_moves, game/max_moves and not eval/...
+- [ ] Fix hold move bug in mcts
+- [ ] tetris_mcts/scripts/inspect_training_data.py not showing can hold?
 - [ ] Looking at training data
 - [ ] How many training data generation workers?
+- [ ] I don't think the eval/trajectory matches the eval/max_attack?? Is the replay correct?
 
 - [ ] Performance profiler on 10 games generated.
 - [ ] is_valid_position_at: 6.5% on 85 calls??
