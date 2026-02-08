@@ -662,15 +662,15 @@ impl GameGenerator {
 
                 local_games_count += 1;
 
-                // Update counters
-                games_generated.fetch_add(1, Ordering::SeqCst);
+                // Update counters. Use the fetch_add return value to get a unique
+                // monotonic game number across workers (avoids duplicate IDs).
+                let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
                 examples_generated.fetch_add(num_examples, Ordering::SeqCst);
 
                 // Accumulate game stats
                 game_stats.add(&result.stats, result.total_attack);
 
                 // Enqueue completed game info for per-game logging
-                let game_number = games_generated.load(Ordering::SeqCst);
                 completed_games.write().unwrap().push_back(LastGameInfo {
                     game_number,
                     stats: result.stats,
