@@ -390,7 +390,10 @@ class Trainer:
                             game_metrics["game/hold_rate"] = (
                                 game_stats["holds"] / episode_length
                             )
-                            wandb.log(game_metrics, step=self.step)
+                            # Don't pin per-game logs to the training step: multiple
+                            # games can complete between train ticks, and reusing the
+                            # same step causes only a subset to appear in history.
+                            wandb.log(game_metrics)
                     logger.info(
                         "Training progress",
                         step=self.step,

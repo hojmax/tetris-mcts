@@ -41,7 +41,7 @@ _env_cache: dict[int, TetrisEnv] = {}
 @dataclass
 class ScriptArgs:
     run_dir: Path = Path(
-        "training_runs/v3"
+        "training_runs/v0"
     )  # Training run dir (default: training_runs/v3)
 
 
@@ -449,13 +449,17 @@ def display_virtual_piece_node(node_data, tree_dict):
 
 
 def build_cytoscape_elements(
-    tree, max_nodes: int = 500, show_unvisited: bool = True, c_puct: float = 1.0
+    tree, max_nodes: int | None = None, show_unvisited: bool = True, c_puct: float = 1.0
 ):
     """Convert MCTSTreeExport to Cytoscape elements."""
     elements = []
 
-    # Limit nodes for performance
-    nodes_to_show = min(len(tree.nodes), max_nodes)
+    # Limit nodes only if explicitly requested
+    nodes_to_show = (
+        len(tree.nodes)
+        if max_nodes is None or max_nodes <= 0
+        else min(len(tree.nodes), max_nodes)
+    )
 
     # Sort nodes by visit count to show most important ones
     indexed_nodes = [(i, node.visit_count) for i, node in enumerate(tree.nodes)]
@@ -858,17 +862,22 @@ app.layout = html.Div(
                 dcc.Input(
                     id="max-nodes-slider",
                     type="number",
-                    value=200,
-                    min=50,
-                    max=1000,
-                    step=50,
-                    style={"width": "60px", "marginRight": "15px"},
+                    value=0,
+                    min=0,
+                    step=100,
+                    style={"width": "80px", "marginRight": "15px"},
                 ),
                 html.Button(
                     "Step (+1)",
                     id="step-button",
                     n_clicks=0,
                     style={"marginLeft": "10px"},
+                ),
+                html.Button(
+                    "Step (+100)",
+                    id="step-100-button",
+                    n_clicks=0,
+                    style={"marginLeft": "8px"},
                 ),
                 html.Button(
                     "Step (-1)",
@@ -1022,6 +1031,7 @@ app.layout = html.Div(
     Output("cytoscape-tree", "elements"),
     Output("sim-counter", "children"),
     Input("step-button", "n_clicks"),
+    Input("step-100-button", "n_clicks"),
     Input("step-back-button", "n_clicks"),
     Input("show-unvisited", "value"),
     State("model-path", "value"),
@@ -1047,6 +1057,7 @@ app.layout = html.Div(
 )
 def run_mcts(
     step_clicks,
+    step_100_clicks,
     step_back_clicks,
     show_unvisited_value,
     model_path,
@@ -1102,6 +1113,8 @@ def run_mcts(
 
     if triggered_id == "step-button":
         sims_to_run = min(current_sims + 1, max_sims)
+    elif triggered_id == "step-100-button":
+        sims_to_run = min(current_sims + 100, max_sims)
     elif triggered_id == "step-back-button":
         sims_to_run = max(current_sims - 1, 0)
     elif triggered_id == "show-unvisited":
@@ -1112,7 +1125,10 @@ def run_mcts(
     if sims_to_run == 0:
         return (
             None,
-            {"seed": seed, "move_number": int(move_number) if move_number is not None else 0},
+            {
+                "seed": seed,
+                "move_number": int(move_number) if move_number is not None else 0,
+            },
             0,
             None,
             [],
@@ -1230,8 +1246,9 @@ def run_mcts(
 
     # Build elements
     show_unvisited = "show" in (show_unvisited_value or [])
+    max_nodes_limit = None if max_nodes is None or max_nodes <= 0 else int(max_nodes)
     elements = build_cytoscape_elements(
-        tree, max_nodes or 200, show_unvisited, config.c_puct
+        tree, max_nodes_limit, show_unvisited, config.c_puct
     )
 
     # Cache TetrisEnv states for computing resulting boards of virtual nodes

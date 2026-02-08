@@ -51,11 +51,16 @@ def find_game_boundaries(move_numbers: np.ndarray) -> list[tuple[int, int]]:
 class ScriptArgs:
     """Inspect training data by rendering games as GIFs."""
 
-    data_path: Path  # Path to training_data.npz file
+    data_path: Path = (
+        Path(__file__).parent.parent.parent
+        / "training_runs"
+        / "v0"
+        / "training_data.npz"
+    )  # Path to training_data.npz file
     checkpoint_path: (  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
         Path | None
     ) = None
-    game_index: int = -1  # Which game to render (-1 for last)
+    game_index: int = 134  # Which game to render (-1 for last)
     save_path: Path | None = (
         None  # Output path (default: script outputs/game_{index}.gif)
     )
