@@ -52,18 +52,14 @@ PIECE_COLORS = [
 class TrainingConfig:
     """Training hyperparameters - all configurable via CLI."""
 
-    # Training
-    total_steps: int = 100_000_000_000
-    model_sync_interval: int = 2000  # Steps between ONNX exports
-
     # Network architecture
     conv_filters: list[int] = field(default_factory=lambda: [4, 8])
     fc_hidden: int = 128
     conv_kernel_size: int = 3
     conv_padding: int = 1
-    max_moves: int = 100  # Maximum moves for move number normalization
 
-    # Optimizer
+    # Training
+    total_steps: int = 100_000_000_000
     batch_size: int = 256
     learning_rate: float = 0.005
     weight_decay: float = 1e-4
@@ -73,6 +69,7 @@ class TrainingConfig:
     lr_min_factor: float = 0.1  # Minimum LR as fraction of initial (for cosine)
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
+    value_loss_weight: float = 70.0  # Scale factor for value loss in total loss
 
     # MCTS / Self-play
     num_simulations: int = 1000
@@ -81,6 +78,7 @@ class TrainingConfig:
     dirichlet_alpha: float = 0.01
     dirichlet_epsilon: float = 0.25
     num_workers: int = 7  # Parallel game generation threads
+    max_moves: int = 100  # Maximum moves for move number normalization
 
     # Replay buffer
     buffer_size: int = 100_000
@@ -88,6 +86,7 @@ class TrainingConfig:
     games_per_save: int = 2000  # Games between disk saves (0 to disable)
 
     # Intervals
+    model_sync_interval: int = 2000  # Steps between ONNX exports
     checkpoint_interval: int = 80000  # Steps between checkpoints
     eval_interval: int = 30000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
@@ -135,6 +134,8 @@ class TrainingConfig:
             raise ValueError("lr_decay_steps must be > 0")
         if self.lr_step_divisor <= 0:
             raise ValueError("lr_step_divisor must be > 0")
+        if self.value_loss_weight <= 0:
+            raise ValueError("value_loss_weight must be > 0")
         if self.lr_schedule == "step":
             step_size = self.lr_decay_steps // self.lr_step_divisor
             if step_size <= 0:

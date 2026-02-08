@@ -46,6 +46,7 @@ def compute_loss(
     policy_targets: torch.Tensor,
     value_targets: torch.Tensor,
     action_masks: torch.Tensor,
+    value_loss_weight: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute combined policy and value loss.
@@ -57,6 +58,7 @@ def compute_loss(
         policy_targets: (batch, 735) - MCTS policy targets
         value_targets: (batch,) - discounted attack targets
         action_masks: (batch, 735) - valid action masks
+        value_loss_weight: Scale factor applied to value loss in total loss
 
     Returns:
         total_loss, policy_loss, value_loss
@@ -81,8 +83,8 @@ def compute_loss(
     # Value loss: MSE
     value_loss = F.mse_loss(value_pred.squeeze(-1), value_targets)
 
-    # Total loss (AlphaZero uses equal weighting)
-    total_loss = policy_loss + value_loss
+    # Total loss with configurable value-loss scaling.
+    total_loss = policy_loss + (value_loss_weight * value_loss)
 
     return total_loss, policy_loss, value_loss
 

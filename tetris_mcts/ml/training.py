@@ -165,7 +165,13 @@ class Trainer:
         # Forward + backward
         self.optimizer.zero_grad()
         total_loss, policy_loss, value_loss = compute_loss(
-            self.model, boards, aux, policy_targets, value_targets, masks
+            self.model,
+            boards,
+            aux,
+            policy_targets,
+            value_targets,
+            masks,
+            self.config.value_loss_weight,
         )
         total_loss.backward()
 
