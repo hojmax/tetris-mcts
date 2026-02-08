@@ -294,6 +294,9 @@ pub(super) fn search_internal(
     // Create root node (keep full queue - truncation breaks 7-bag tracking)
     let mut root = DecisionNode::new(env.clone(), move_number);
     root.set_nn_output(&policy, nn_value);
+    // Start root with one virtual visit so first selection uses priors (U > 0)
+    // instead of an all-zero tie that falls back to action-index ordering.
+    root.visit_count = 1;
 
     if add_noise {
         root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon);

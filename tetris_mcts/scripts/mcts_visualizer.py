@@ -694,7 +694,7 @@ app.layout = html.Div(
                     id="model-path",
                     type="text",
                     placeholder="Path to ONNX model",
-                    value="outputs/checkpoints/selfplay.onnx",
+                    value="training_runs/v3/checkpoints/latest.onnx",
                     style={"width": "250px", "marginRight": "15px"},
                 ),
                 html.Label("Sims:", style={"marginRight": "5px"}),
@@ -766,7 +766,7 @@ app.layout = html.Div(
                 dcc.Checklist(
                     id="show-unvisited",
                     options=[{"label": " Show unvisited", "value": "show"}],
-                    value=["show"],  # Default to checked
+                    value=[],  # Default to unchecked
                     style={"marginLeft": "20px"},
                 ),
                 dcc.Textarea(
@@ -803,7 +803,7 @@ app.layout = html.Div(
                             elements=[],
                             style={
                                 "width": "100%",
-                                "height": "calc(100vh - 36px)",
+                                "height": "100%",
                             },
                             layout={
                                 "name": "dagre",
@@ -858,14 +858,19 @@ app.layout = html.Div(
                         "padding": "10px",
                         "backgroundColor": "#f8f8f8",
                         "marginLeft": "5px",
-                        "height": "calc(100vh - 36px)",
+                        "height": "100%",
                         "display": "flex",
                         "flexDirection": "column",
                         "overflow": "hidden",
                     },
                 ),
             ],
-            style={"display": "flex", "flexDirection": "row"},
+            style={
+                "display": "flex",
+                "flexDirection": "row",
+                "flex": "1",
+                "minHeight": "0",
+            },
         ),
         # Hidden storage for tree data
         dcc.Store(id="tree-store"),
@@ -882,7 +887,9 @@ app.layout = html.Div(
         "fontFamily": "Arial, sans-serif",
         "padding": "0",
         "margin": "0",
-        "overflow": "hidden",
+        "display": "flex",
+        "flexDirection": "column",
+        "overflowY": "auto",
         "height": "100vh",
     },
 )
@@ -1054,7 +1061,6 @@ def run_mcts(
                 "mean_value": n.mean_value,
                 "value_sum": n.value_sum,
                 "nn_value": n.nn_value,  # Now stored in Rust tree export
-                "prior": n.prior,
                 "attack": n.attack,
                 "is_terminal": n.is_terminal,
                 "move_number": n.move_number,
@@ -1162,6 +1168,109 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                 html.P(f"Valid Actions: {len(node['valid_actions'])}"),
             ]
         )
+
+        if node["action_priors"]:
+            details.append(html.Hr())
+            details.append(
+                html.H4(
+                    "Top 5 by Prior (with current PUCT score)",
+                    style={"marginBottom": "10px"},
+                )
+            )
+
+            action_to_prior = dict(zip(node["valid_actions"], node["action_priors"]))
+            child_by_action: dict[int, dict] = {}
+            for child_id in node["children"]:
+                child = tree_dict["nodes"][child_id]
+                action_idx = child.get("edge_from_parent")
+                if action_idx is not None:
+                    child_by_action[action_idx] = child
+
+            sqrt_parent = node["visit_count"] ** 0.5 if node["visit_count"] > 0 else 0.0
+            top_prior_rows = []
+            for action_idx, prior in action_to_prior.items():
+                child = child_by_action.get(action_idx)
+                n_child = child["visit_count"] if child is not None else 0
+                q_value = child["mean_value"] if child is not None else 0.0
+                u_value = c_puct * prior * sqrt_parent / (1 + n_child)
+                puct_total = q_value + u_value
+                top_prior_rows.append(
+                    {
+                        "action": action_idx,
+                        "prior": prior,
+                        "q": q_value,
+                        "u": u_value,
+                        "puct": puct_total,
+                        "visits": n_child,
+                    }
+                )
+
+            top_prior_rows.sort(key=lambda row: row["prior"], reverse=True)
+            top_prior_rows = top_prior_rows[:5]
+
+            top_prior_header = html.Tr(
+                [
+                    html.Th("Action", style={"padding": "4px", "textAlign": "left"}),
+                    html.Th("P", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("Q", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("U", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th(
+                        "Q+U", style={"padding": "4px", "textAlign": "right"}
+                    ),
+                    html.Th("N", style={"padding": "4px", "textAlign": "right"}),
+                ]
+            )
+            top_prior_table_rows = [top_prior_header]
+            for row in top_prior_rows:
+                top_prior_table_rows.append(
+                    html.Tr(
+                        [
+                            html.Td(
+                                f"a{row['action']}",
+                                style={"padding": "4px"},
+                            ),
+                            html.Td(
+                                f"{row['prior']:.4f}",
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                            html.Td(
+                                f"{row['q']:.4f}",
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                            html.Td(
+                                f"{row['u']:.4f}",
+                                style={
+                                    "padding": "4px",
+                                    "textAlign": "right",
+                                    "color": "#0066cc",
+                                },
+                            ),
+                            html.Td(
+                                f"{row['puct']:.4f}",
+                                style={
+                                    "padding": "4px",
+                                    "textAlign": "right",
+                                    "fontWeight": "bold",
+                                },
+                            ),
+                            html.Td(
+                                str(row["visits"]),
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                        ]
+                    )
+                )
+
+            details.append(
+                html.Table(
+                    top_prior_table_rows,
+                    style={
+                        "width": "100%",
+                        "borderCollapse": "collapse",
+                        "fontSize": "12px",
+                    },
+                )
+            )
 
         # Compute PUCT breakdown for each child action
         if node["children"] and node["visit_count"] > 0:
@@ -1325,10 +1434,20 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                 details.append(html.Hr())
                 details.append(html.H4("Selection Info"))
                 details.append(html.P(f"Prior (P): {prior:.4f}"))
-                details.append(html.P(f"Parent visits: {parent['visit_count']}"))
+                details.append(html.P(f"Parent visits (N_parent): {parent['visit_count']}"))
+                details.append(html.P(f"Child visits (N_child): {node['visit_count']}"))
                 if parent["visit_count"] > 0:
+                    q_value = node["mean_value"]
+                    n_parent = parent["visit_count"]
+                    n_child = node["visit_count"]
                     sqrt_parent = parent["visit_count"] ** 0.5
-                    u_value = c_puct * prior * sqrt_parent / (1 + node["visit_count"])
+                    u_value = c_puct * prior * sqrt_parent / (1 + n_child)
+                    puct_total = q_value + u_value
+                    details.append(
+                        html.P(
+                            f"Q: {q_value:.6f}",
+                        )
+                    )
                     details.append(
                         html.P(
                             f"Exploration (U): {u_value:.3f}",
@@ -1337,7 +1456,23 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                     )
                     details.append(
                         html.P(
-                            f"PUCT Total: {node['mean_value'] + u_value:.3f}",
+                            (
+                                "U = c_puct * P * sqrt(N_parent) / (1 + N_child) = "
+                                f"{c_puct:.3f} * {prior:.6f} * sqrt({n_parent}) / (1 + {n_child}) = "
+                                f"{u_value:.6f}"
+                            ),
+                            style={"fontFamily": "monospace", "fontSize": "12px"},
+                        )
+                    )
+                    details.append(
+                        html.P(
+                            f"PUCT = Q + U = {q_value:.6f} + {u_value:.6f} = {puct_total:.6f}",
+                            style={"fontFamily": "monospace", "fontSize": "12px"},
+                        )
+                    )
+                    details.append(
+                        html.P(
+                            f"Argmax score used at parent: {puct_total:.6f}",
                             style={"fontWeight": "bold"},
                         )
                     )
