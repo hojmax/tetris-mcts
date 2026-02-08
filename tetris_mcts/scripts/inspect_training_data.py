@@ -164,7 +164,6 @@ def main(args: ScriptArgs) -> None:
                 board=board,
                 move_number=move_number,
                 attack=int(value_target),
-                info_text=f"Value: {value_target:.1f}",
                 show_piece_info=True,
                 current_piece_name=current_name,
                 hold_piece_name=hold_name,
