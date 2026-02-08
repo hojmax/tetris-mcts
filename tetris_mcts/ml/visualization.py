@@ -13,8 +13,8 @@ from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, PIECE_COLORS
 # Board rendering constants
 CELL_SIZE = 20
 PADDING = 10
-INFO_HEIGHT_BASIC = 40
-INFO_HEIGHT_EXTENDED = 110
+INFO_HEIGHT_BASIC = 36
+INFO_HEIGHT_EXTENDED = 106
 
 
 def render_board(
@@ -53,7 +53,7 @@ def render_board(
     # Calculate image dimensions
     info_height = INFO_HEIGHT_EXTENDED if show_piece_info else INFO_HEIGHT_BASIC
     img_width = BOARD_WIDTH * CELL_SIZE + 2 * PADDING
-    img_height = BOARD_HEIGHT * CELL_SIZE + 2 * PADDING + info_height
+    img_height = BOARD_HEIGHT * CELL_SIZE + PADDING + info_height
 
     # Create image with dark background
     img = Image.new("RGB", (img_width, img_height), color=(20, 20, 20))
@@ -152,7 +152,7 @@ def render_board(
         )
 
     if show_piece_info:
-        # 4 lines: Move/Attack, Value, Piece/Hold, Queue
+        # 4 lines: Move/Attack, Piece/Hold, Queue, Can hold/Vpred
         current = current_piece_name or "?"
         hold = hold_piece_name or "-"
         queue = " ".join(queue_pieces) if queue_pieces else ""
@@ -162,25 +162,21 @@ def render_board(
             fill=(200, 200, 200),
             font=font,
         )
-        second_line = (
-            f"Vpred: {resolved_value_pred:.2f}"
-            if resolved_value_pred is not None
-            else ""
-        )
-        if info_text:
-            if second_line == "":
-                second_line = info_text
+        second_line = info_text or ""
+        if resolved_value_pred is not None:
+            if second_line:
+                second_line += f"  Vpred: {resolved_value_pred:.2f}"
             else:
-                second_line += f"  {info_text}"
-        if second_line:
-            draw.text((PADDING, 30), second_line, fill=(200, 200, 200), font=font)
+                second_line = f"Vpred: {resolved_value_pred:.2f}"
         draw.text(
-            (PADDING, 50),
+            (PADDING, 30),
             f"Piece: {current}  Hold: {hold}",
             fill=(200, 200, 200),
             font=font,
         )
-        draw.text((PADDING, 70), f"Queue: {queue}", fill=(200, 200, 200), font=font)
+        draw.text((PADDING, 50), f"Queue: {queue}", fill=(200, 200, 200), font=font)
+        if second_line:
+            draw.text((PADDING, 70), second_line, fill=(200, 200, 200), font=font)
     else:
         # Single line
         text = f"Move: {move_number}  Attack: {attack}"

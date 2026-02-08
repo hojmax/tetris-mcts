@@ -52,6 +52,9 @@ class ScriptArgs:
     """Inspect training data by rendering games as GIFs."""
 
     data_path: Path  # Path to training_data.npz file
+    checkpoint_path: (  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
+        Path | None
+    ) = None
     game_index: int = -1  # Which game to render (-1 for last)
     save_path: Path | None = (
         None  # Output path (default: script outputs/game_{index}.gif)
@@ -60,9 +63,6 @@ class ScriptArgs:
     print_buffer_vectors: bool = (
         True  # Print full literal vectors/matrices for selected game
     )
-    checkpoint_path: (  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
-        Path | None
-    ) = None
     config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
 
     def __post_init__(self) -> None:
@@ -210,7 +210,7 @@ def main(args: ScriptArgs) -> None:
                 move_number=move_number,
                 attack=int(value_target),
                 value_pred=value_pred,
-                info_text=f"Can hold: {'yes' if can_hold else 'no'}",
+                info_text=f"Can hold: {'y' if can_hold else 'n'}",
                 show_piece_info=True,
                 current_piece_name=current_name,
                 hold_piece_name=hold_name,
