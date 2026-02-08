@@ -460,6 +460,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent  # Import instead!
 
 Let it fail; avoid defensive programming when you control the code/data.
 
+Never use silent fallbacks for invalid internal states. If code reaches an impossible or invalid branch, raise an error immediately instead of returning placeholder values.
+
 ```python
 # ❌ BAD: Silent fallback hides bugs
 company = MAPPING.get(key, "default")

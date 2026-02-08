@@ -197,7 +197,7 @@ pub fn determine_clear_type(lines_cleared: u32, is_tspin: bool, is_mini_tspin: b
         (3, false, _) => ClearType::Triple,
         (3, true, _) => ClearType::TSpinTriple,
         (4, _, _) => ClearType::Tetris,
-        _ => ClearType::None, // Invalid
+        _ => panic!("Invalid lines_cleared for determine_clear_type: {lines_cleared}"),
     }
 }
 
