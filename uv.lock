@@ -1207,11 +1207,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tetris-core"
-version = "0.1.0"
-source = { directory = "tetris_core" }
-
-[[package]]
 name = "tetris-mcts"
 version = "0.1.0"
 source = { editable = "." }
@@ -1232,7 +1227,6 @@ dependencies = [
     { name = "ruff" },
     { name = "simple-parsing" },
     { name = "structlog" },
-    { name = "tetris-core" },
     { name = "torch" },
     { name = "wandb" },
 ]
@@ -1255,7 +1249,6 @@ requires-dist = [
     { name = "ruff" },
     { name = "simple-parsing" },
     { name = "structlog" },
-    { name = "tetris-core", directory = "tetris_core" },
     { name = "torch" },
     { name = "wandb" },
 ]

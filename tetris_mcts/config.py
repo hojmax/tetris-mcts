@@ -89,7 +89,7 @@ class TrainingConfig:
 
     # Intervals
     checkpoint_interval: int = 80000  # Steps between checkpoints
-    eval_interval: int = 100  # Steps between evaluations
+    eval_interval: int = 30000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
 
     # Evaluation
