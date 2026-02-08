@@ -570,5 +570,4 @@ mod tests {
         let rotations: HashSet<usize> = placements.iter().map(|p| p.rotation).collect();
         assert_eq!(rotations.len(), 4, "T piece should have all 4 rotations");
     }
-
 }

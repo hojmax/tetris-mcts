@@ -6,8 +6,8 @@ use rand::prelude::*;
 use rand::rngs::StdRng;
 use std::collections::HashMap;
 
+use crate::constants::NUM_PIECE_TYPES;
 use crate::env::TetrisEnv;
-use crate::piece::NUM_PIECE_TYPES;
 
 use super::action_space::{HOLD_ACTION_INDEX, NUM_ACTIONS};
 use super::utils::sample_dirichlet;

@@ -7,10 +7,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tract_onnx::prelude::*;
 
-use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, QUEUE_SIZE};
+use crate::constants::{AUX_FEATURES, BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::env::TetrisEnv;
-use crate::piece::NUM_PIECE_TYPES;
-const AUX_FEATURES: usize = 52; // 7 + 8 + 1 + 35 + 1
 
 /// Neural network model wrapper
 pub struct TetrisNN {

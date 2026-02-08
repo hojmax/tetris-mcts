@@ -5,8 +5,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
-use crate::piece::NUM_PIECE_TYPES;
+use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
 
 /// Global cached ActionSpace (initialized once on first use)
 static ACTION_SPACE: OnceLock<ActionSpace> = OnceLock::new();

@@ -28,6 +28,7 @@ pub mod piece;
 pub mod scoring;
 
 // Re-export main types for convenience
+pub use constants::NUM_PIECE_TYPES;
 pub use env::TetrisEnv;
 pub use generator::{evaluate_model, EvalResult, GameGenerator};
 pub use kicks::{get_i_kicks, get_jlstz_kicks, get_kicks_for_piece};
@@ -35,7 +36,7 @@ pub use mcts::{
     GameResult, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
 };
 pub use moves::{find_all_placements, Action, Board, Placement};
-pub use piece::{get_cells, Piece, NUM_PIECE_TYPES, TETROMINOS, TETROMINO_CELLS};
+pub use piece::{get_cells, Piece, TETROMINOS, TETROMINO_CELLS};
 pub use scoring::{
     calculate_attack, combo_attack, determine_clear_type, AttackResult, ClearType,
     BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,
@@ -88,10 +89,11 @@ fn debug_predict_masked_from_tensors(
             expected_board
         )));
     }
-    if aux_tensor.len() != 52 {
+    if aux_tensor.len() != constants::AUX_FEATURES {
         return Err(PyValueError::new_err(format!(
-            "aux tensor length mismatch: got {}, expected 52",
-            aux_tensor.len()
+            "aux tensor length mismatch: got {}, expected {}",
+            aux_tensor.len(),
+            constants::AUX_FEATURES
         )));
     }
     if action_mask.len() != mcts::NUM_ACTIONS {

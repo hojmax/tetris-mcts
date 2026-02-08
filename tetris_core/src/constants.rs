@@ -11,6 +11,15 @@ pub const BOARD_HEIGHT: usize = 20;
 /// Number of pieces visible in the preview queue
 pub const QUEUE_SIZE: usize = 5;
 
+/// Number of tetromino piece types
+pub const NUM_PIECE_TYPES: usize = 7;
+
+/// Number of occupied cells in any tetromino
+pub const MAX_PIECE_CELLS: usize = 4;
+
+/// Auxiliary feature vector size for NN input (7 + 8 + 1 + 35 + 1)
+pub const AUX_FEATURES: usize = 52;
+
 /// Default lock delay in milliseconds
 pub const DEFAULT_LOCK_DELAY_MS: u32 = 500;
 

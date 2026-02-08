@@ -123,11 +123,18 @@ class Trainer:
         self.scheduler.last_epoch = step
 
         if self.config.lr_schedule == "cosine":
-            assert isinstance(self.scheduler, torch.optim.lr_scheduler.CosineAnnealingLR)
+            assert isinstance(
+                self.scheduler, torch.optim.lr_scheduler.CosineAnnealingLR
+            )
             t_max = self.config.lr_decay_steps
             eta_min = self.config.learning_rate * self.config.lr_min_factor
-            cosine_factor = (1 + torch.cos(torch.tensor(torch.pi * step / t_max))).item() / 2
-            lrs = [eta_min + (base_lr - eta_min) * cosine_factor for base_lr in self.scheduler.base_lrs]
+            cosine_factor = (
+                1 + torch.cos(torch.tensor(torch.pi * step / t_max))
+            ).item() / 2
+            lrs = [
+                eta_min + (base_lr - eta_min) * cosine_factor
+                for base_lr in self.scheduler.base_lrs
+            ]
         elif self.config.lr_schedule == "step":
             assert isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR)
             step_size = self.config.lr_decay_steps // self.config.lr_step_divisor

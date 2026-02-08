@@ -31,8 +31,10 @@ pub fn get_jlstz_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
         (3, 0) => [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
         // 0->L (counter-clockwise from spawn)
         (0, 3) => [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
-        // Fallback for invalid transitions
-        _ => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+        _ => panic!(
+            "Invalid JLSTZ kick transition: {} -> {}. Expected adjacent CW/CCW rotation states.",
+            from_state, to_state
+        ),
     }
 }
 
@@ -56,8 +58,10 @@ pub fn get_i_kicks(from_state: usize, to_state: usize) -> [(i32, i32); 5] {
         (3, 0) => [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],
         // 0->L
         (0, 3) => [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
-        // Fallback for invalid transitions
-        _ => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+        _ => panic!(
+            "Invalid I kick transition: {} -> {}. Expected adjacent CW/CCW rotation states.",
+            from_state, to_state
+        ),
     }
 }
 
@@ -71,7 +75,11 @@ pub fn get_kicks_for_piece(
     match piece_type {
         0 => get_i_kicks(from_state, to_state),
         1 => [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0)], // O piece: no kicks needed
-        _ => get_jlstz_kicks(from_state, to_state),
+        2..=6 => get_jlstz_kicks(from_state, to_state),
+        _ => panic!(
+            "Invalid piece_type for kicks: {}. Expected 0..=6.",
+            piece_type
+        ),
     }
 }
 
@@ -168,17 +176,27 @@ mod tests {
     }
 
     #[test]
-    fn test_jlstz_invalid_transition_returns_identity() {
-        // Invalid transitions should return all identity kicks
-        let kicks = get_jlstz_kicks(0, 0); // Same state
-        for kick in kicks.iter() {
-            assert_eq!(*kick, (0, 0));
-        }
+    #[should_panic(expected = "Invalid JLSTZ kick transition")]
+    fn test_jlstz_invalid_transition_panics_same_state() {
+        let _ = get_jlstz_kicks(0, 0);
+    }
 
-        let kicks = get_jlstz_kicks(0, 2); // Skip a state (invalid)
-        for kick in kicks.iter() {
-            assert_eq!(*kick, (0, 0));
-        }
+    #[test]
+    #[should_panic(expected = "Invalid JLSTZ kick transition")]
+    fn test_jlstz_invalid_transition_panics_skipped_state() {
+        let _ = get_jlstz_kicks(0, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid I kick transition")]
+    fn test_i_invalid_transition_panics() {
+        let _ = get_i_kicks(3, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid piece_type for kicks")]
+    fn test_get_kicks_for_piece_invalid_piece_type_panics() {
+        let _ = get_kicks_for_piece(7, 0, 1);
     }
 
     #[test]

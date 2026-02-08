@@ -11,11 +11,8 @@ use zip::read::ZipArchive;
 use zip::write::{FileOptions, ZipWriter};
 use zip::CompressionMethod;
 
-use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
+use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::mcts::{TrainingExample, NUM_ACTIONS};
-use crate::piece::NUM_PIECE_TYPES;
-
-const TRAINING_DATA_NUMPY_QUEUE_SIZE: usize = 5;
 
 /// Write training examples to NPZ format (compatible with Python numpy).
 ///
@@ -44,7 +41,7 @@ pub fn write_examples_to_npz(
     let mut current_pieces: Vec<f32> = vec![0.0; n * NUM_PIECE_TYPES];
     let mut hold_pieces: Vec<f32> = vec![0.0; n * (NUM_PIECE_TYPES + 1)];
     let mut hold_available: Vec<u8> = Vec::with_capacity(n);
-    let mut next_queue: Vec<f32> = vec![0.0; n * TRAINING_DATA_NUMPY_QUEUE_SIZE * NUM_PIECE_TYPES];
+    let mut next_queue: Vec<f32> = vec![0.0; n * QUEUE_SIZE * NUM_PIECE_TYPES];
     let mut move_numbers: Vec<f32> = Vec::with_capacity(n);
     let mut policy_targets: Vec<f32> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut value_targets: Vec<f32> = Vec::with_capacity(n);
@@ -70,15 +67,8 @@ pub fn write_examples_to_npz(
         hold_available.push(ex.hold_available as u8);
 
         // Next queue one-hot (5 slots x 7 piece types)
-        for (j, &piece) in ex
-            .next_queue
-            .iter()
-            .take(TRAINING_DATA_NUMPY_QUEUE_SIZE)
-            .enumerate()
-        {
-            next_queue[i * TRAINING_DATA_NUMPY_QUEUE_SIZE * NUM_PIECE_TYPES
-                + j * NUM_PIECE_TYPES
-                + piece] = 1.0;
+        for (j, &piece) in ex.next_queue.iter().take(QUEUE_SIZE).enumerate() {
+            next_queue[i * QUEUE_SIZE * NUM_PIECE_TYPES + j * NUM_PIECE_TYPES + piece] = 1.0;
         }
 
         // Move number (normalized)
@@ -132,11 +122,7 @@ pub fn write_examples_to_npz(
         &mut zip,
         options,
         "next_queue.npy",
-        &[
-            n as u64,
-            TRAINING_DATA_NUMPY_QUEUE_SIZE as u64,
-            NUM_PIECE_TYPES as u64,
-        ],
+        &[n as u64, QUEUE_SIZE as u64, NUM_PIECE_TYPES as u64],
         &next_queue,
     )?;
     write_npy_to_zip(
@@ -212,11 +198,7 @@ pub fn read_examples_from_npz(
     validate_shape(
         "next_queue",
         &next_queue_shape,
-        &[
-            n as u64,
-            TRAINING_DATA_NUMPY_QUEUE_SIZE as u64,
-            NUM_PIECE_TYPES as u64,
-        ],
+        &[n as u64, QUEUE_SIZE as u64, NUM_PIECE_TYPES as u64],
     )?;
     validate_shape("move_numbers", &move_numbers_shape, &[n as u64])?;
     validate_shape(
@@ -235,7 +217,7 @@ pub fn read_examples_from_npz(
     let move_norm_denominator = max_moves as f32;
     let board_size = BOARD_HEIGHT * BOARD_WIDTH;
     let hold_size = NUM_PIECE_TYPES + 1;
-    let next_queue_size = TRAINING_DATA_NUMPY_QUEUE_SIZE * NUM_PIECE_TYPES;
+    let next_queue_size = QUEUE_SIZE * NUM_PIECE_TYPES;
 
     for i in 0..n {
         let board_start = i * board_size;
@@ -255,8 +237,8 @@ pub fn read_examples_from_npz(
         };
 
         let next_queue_start = i * next_queue_size;
-        let mut next_queue_pieces = Vec::with_capacity(TRAINING_DATA_NUMPY_QUEUE_SIZE);
-        for slot in 0..TRAINING_DATA_NUMPY_QUEUE_SIZE {
+        let mut next_queue_pieces = Vec::with_capacity(QUEUE_SIZE);
+        for slot in 0..QUEUE_SIZE {
             let slot_start = next_queue_start + slot * NUM_PIECE_TYPES;
             let slot_end = slot_start + NUM_PIECE_TYPES;
             next_queue_pieces.push(argmax_index(&next_queue[slot_start..slot_end]));

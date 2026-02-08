@@ -1,4 +1,3 @@
-
 # Next Steps
 
 - [ ] Take an interestnig state like tetris_mcts/scripts/outputs/game_3194.gif at step 14 (oppurtinity for t spin), and see how the model evaluates that state? Is it not reached or something?
@@ -11,7 +10,11 @@
 
 ## tetris_core/src/nn.rs ✅
 
-## tetris_core/src/moves.rs 🟨
+## tetris_core/src/moves.rs ✅
+
+## tetris_core/src/kicks.rs ✅
+
+## tetris_core/src/constants.rs ✅
 
 # Backlog
 

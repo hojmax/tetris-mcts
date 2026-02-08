@@ -1,4 +1,4 @@
-use crate::constants::{BOARD_WIDTH, I_PIECE, O_PIECE};
+use crate::constants::{BOARD_WIDTH, I_PIECE, MAX_PIECE_CELLS, O_PIECE};
 use pyo3::prelude::*;
 
 /// Rotation states: 0=spawn, 1=R (CW from spawn), 2=180°, 3=L (CCW from spawn)
@@ -134,12 +134,6 @@ pub const TETROMINO_CELLS: [[[(i8, i8); 4]; 4]; 7] = [
         [(0, 0), (1, 0), (1, 1), (1, 2)], // State L
     ],
 ];
-
-/// Number of piece types (tetromino variants)
-pub const NUM_PIECE_TYPES: usize = 7;
-
-/// Maximum number of cells in a tetromino (always 4)
-pub const MAX_PIECE_CELLS: usize = 4;
 
 #[inline]
 pub fn spawn_x(width: usize) -> i32 {
