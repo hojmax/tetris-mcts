@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use std::collections::{HashSet, VecDeque};
 
 use crate::mcts::HOLD_ACTION_INDEX;
-use crate::moves::{find_all_placements, find_all_placements_with_hold, Board, Placement};
+use crate::moves::{find_all_placements, Board, Placement};
 use crate::piece::{spawn_x, spawn_y, Piece};
 use crate::scoring::AttackResult;
 
@@ -508,27 +508,6 @@ impl TetrisEnv {
 
         let board = Board::new(self.width, self.height, &self.board);
         find_all_placements(&board, piece_type, spawn_x(self.width), spawn_y(piece_type))
-    }
-
-    pub fn get_possible_placements_with_hold(&self) -> (Vec<Placement>, Vec<Placement>) {
-        if self.hold_used {
-            return (self.get_possible_placements(), Vec::new());
-        }
-
-        if let Some(ref piece) = self.current_piece {
-            let board = Board::new(self.width, self.height, &self.board);
-            let next_piece = self.piece_queue.front().copied().unwrap_or(0);
-            find_all_placements_with_hold(
-                &board,
-                piece.piece_type,
-                self.hold_piece,
-                next_piece,
-                piece.x,
-                piece.y,
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        }
     }
 
     /// Execute an action by its index in the action space.

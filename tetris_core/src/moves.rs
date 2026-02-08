@@ -357,29 +357,6 @@ pub fn find_all_placements(
     placements
 }
 
-/// Find all placements including hold piece option
-/// Returns (current_piece_placements, hold_piece_placements)
-pub fn find_all_placements_with_hold(
-    board: &Board<'_>,
-    current_piece_type: usize,
-    hold_piece_type: Option<usize>,
-    next_piece_type: usize,
-    spawn_x: i32,
-    spawn_y: i32,
-) -> (Vec<Placement>, Vec<Placement>) {
-    let current_placements = find_all_placements(board, current_piece_type, spawn_x, spawn_y);
-
-    let hold_placements = if let Some(hold_type) = hold_piece_type {
-        // If we have a held piece, using hold gives us that piece
-        find_all_placements(board, hold_type, spawn_x, spawn_y)
-    } else {
-        // If no held piece, using hold gives us the next piece
-        find_all_placements(board, next_piece_type, spawn_x, spawn_y)
-    };
-
-    (current_placements, hold_placements)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,33 +571,4 @@ mod tests {
         assert_eq!(rotations.len(), 4, "T piece should have all 4 rotations");
     }
 
-    #[test]
-    fn test_find_placements_with_hold() {
-        let cells = empty_cells(10, 20);
-        let board = Board::new(10, 20, &cells);
-
-        // With no hold piece, hold gives next piece
-        let (current, hold) = find_all_placements_with_hold(&board, 0, None, 2, 3, 0);
-        assert!(!current.is_empty());
-        assert!(!hold.is_empty());
-
-        // Current should be I piece (type 0) placements
-        assert!(current.iter().all(|p| p.piece.piece_type == 0));
-        // Hold should be T piece (type 2) placements (next piece)
-        assert!(hold.iter().all(|p| p.piece.piece_type == 2));
-    }
-
-    #[test]
-    fn test_find_placements_with_existing_hold() {
-        let cells = empty_cells(10, 20);
-        let board = Board::new(10, 20, &cells);
-
-        // With existing hold piece, hold gives that piece
-        let (current, hold) = find_all_placements_with_hold(&board, 0, Some(5), 2, 3, 0);
-
-        // Current should be I piece (type 0) placements
-        assert!(current.iter().all(|p| p.piece.piece_type == 0));
-        // Hold should be J piece (type 5) placements (held piece)
-        assert!(hold.iter().all(|p| p.piece.piece_type == 5));
-    }
 }
