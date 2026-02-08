@@ -136,7 +136,10 @@ def main(args: ScriptArgs) -> None:
         if checkpoint_step is None:
             raise ValueError(f"Checkpoint is missing step: {resume_checkpoint}")
         trainer.step = int(checkpoint_step)
-        if trainer.scheduler is not None and not args.resume_restore_optimizer_scheduler:
+        if (
+            trainer.scheduler is not None
+            and not args.resume_restore_optimizer_scheduler
+        ):
             trainer.align_scheduler_to_step(trainer.step)
         logger.info(
             "Initialized new run from checkpoint",

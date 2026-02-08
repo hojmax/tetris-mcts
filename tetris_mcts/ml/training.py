@@ -434,8 +434,6 @@ class Trainer:
                             if eval_video is not None:
                                 log_data["eval/trajectory"] = eval_video
                         wandb.log(log_data, step=self.step)
-                        if eval_gif_path is not None:
-                            eval_gif_path.unlink(missing_ok=True)
 
                 # Checkpoint
                 if self.step % self.config.checkpoint_interval == 0:
