@@ -1,30 +1,82 @@
+# Deep Review
+
+## tetris_core/src/scoring.rs ✅
+
+Are we throwing an error on "\_ => ClearType::None, // Invalid"? in determine_clear_type
+
+I don't understand this distinction?:
+
+```
+        (1, true, true) => ClearType::TSpinMiniSingle,
+        (1, true, false) => ClearType::TSpinSingle,
+```
+
+What is a mini t spin?
+
+What is this for?:
+
+```
+
+
+impl Default for AttackResult {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+```
+
+## tetris_core/src/piece.rs
+
+Is tetris_core/src/piece.rs efficient? The look ups and all that?
+
+Why the heck do we have colors in .rs code?:
+```
+
+/// Colors for each tetromino (RGB) - matching Jstris style
+pub const COLORS: [(u8, u8, u8); 7] = [
+    (93, 173, 212), // I - Light blue/Cyan
+    (219, 174, 63), // O - Golden yellow
+    (178, 74, 156), // T - Magenta
+    (114, 184, 65), // S - Green
+    (204, 65, 65),  // Z - Red
+    (59, 84, 165),  // J - Blue
+    (227, 127, 59), // L - Orange
+];
+```
+All visualization sort of stuff should go into the python code. Only environment logic, and mcts in rust.
+
+Please update CLAUDE.md to make this clear:
+Rust = Env logic, MCTS
+Python = Training, Visualization
+
+Like there should not be getting any colors from rust and all that. get_color_for_type is definitely a mistake and all other color related stuff in rust.
+
 # Next Steps
 
-- [ ] game/avg_moves, game/max_moves and not eval/...
-- [ ] Fix hold move bug in mcts
+- [ ] Fix hold move bug in mcts. Like why are we tracking x and y and rotation, and just raw move indices? Why are we not passing a single int around corresponding to a specific move? We have the lookup for this. And hold should be a move.
+- [ ] Take an interestnig state like tetris_mcts/scripts/outputs/game_3194.gif at step 14 (oppurtinity for t spin), and see how the model evaluates that state? Is it not reached or something?
+- [ ] No need to show Value and attack in tetris_mcts/scripts/outputs/game_3194.gif? They are the same? Just skip the value one, and show the attack. They are reading from the same field right? Or where is the attack ocming from?
+- [ ] When inspecting games, with the training viewer, I need to see network predictions. At least value predictions.
+- [ ] What happened with the LR lol? Why did it go so low, even though we trained with 0.5 lr min?
+- [ ] Do we have a mismatch between the action somewhere? Like training on one set of indeces and taking actions with another? This would shift all the agents agents / randomize it? Need to check for this.
 - [ ] tetris_mcts/scripts/inspect_training_data.py not showing can hold?
-- [ ] Looking at training data
-- [ ] How many training data generation workers?
+- [ ] game/avg_moves, game/max_moves and not eval/...
 - [ ] I don't think the eval/trajectory matches the eval/max_attack?? Is the replay correct?
 
-- [ ] Performance profiler on 10 games generated.
-- [ ] is_valid_position_at: 6.5% on 85 calls??
-- [ ] find_all_placements: Optimize find all placements (63% of runtime?)
-- [ ] predict_masked: 17% of runtime
-- [ ] load_model: Load model called 32 times??
+# Backlog
 
-- [ ] More tests?
-- [ ] Continue training with more steps
-- [ ] Look at tetris_mcts/scripts/buffer_viewer.py
+- [ ] Proper network split caching. Caching board CNN head, and optimizing such that we only run last part of network.
+- [ ] Do we need a larger network?
+- [ ] What alternative hardware could we run on?
+- [ ] Would an instance with a GPU be better? What is the major bottleneck, CPU or GPU? Like maybe AWS instance with a ton of CPUs for deep tree search.
+- [ ] Looking at training data
 - [ ] Caching board representation from network in inference.
-
 - [ ] Optimize int4 and int8 everywhere.
+- [ ] More rust profiling
+- [ ] Better splitting up of rust between the environment and the MCTS. Two different packages / folders.
 - [ ] Visualizing MCTS search and verifying correctness
-- [ ] Looking at evaluation data on wandb
-- [ ] Code for visualizing trajectories
 - [ ] Play the tetris game to ensure the environment is working correctly
 - [ ] Save a full rollout tree from during training and inspect it with `make viz` tool
-- [ ] Look at training rollouts
 - [ ] Reading through and validating all code
 - [ ] Stress test next possible pieces with unit tests, like that it can do wild twists and stuff and that it correctly decides those possible locations
 - [ ] Benchmarking and improving speed of MCTS search

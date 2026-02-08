@@ -9,3 +9,4 @@ outputs/
 .build_marker_release
 .build_marker_dev
 .build_marker
+.DS_store
