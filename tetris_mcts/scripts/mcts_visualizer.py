@@ -27,7 +27,7 @@ from tetris_mcts.config import (
     BOARD_WIDTH,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
-    LATEST_ONNX_FILENAME,
+    PARALLEL_ONNX_FILENAME,
     NUM_PIECE_TYPES,
     PIECE_COLORS,
     PIECE_NAMES,
@@ -40,18 +40,15 @@ _env_cache: dict[int, TetrisEnv] = {}
 
 @dataclass
 class ScriptArgs:
-    run_dir: Path = Path("training_runs/v3")  # Training run dir (default: training_runs/v3)
+    run_dir: Path = Path(
+        "training_runs/v3"
+    )  # Training run dir (default: training_runs/v3)
 
 
 def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
-    defaults: dict[str, str | int | float] = {
-        "model_path": "training_runs/v3/checkpoints/latest.onnx",
-        "num_simulations": 100,
-        "c_puct": 1.0,
-    }
     run_dir = args.run_dir
     config_path = run_dir / CONFIG_FILENAME
-    model_path = run_dir / CHECKPOINT_DIRNAME / LATEST_ONNX_FILENAME
+    model_path = run_dir / CHECKPOINT_DIRNAME / PARALLEL_ONNX_FILENAME
 
     if not run_dir.exists():
         raise ValueError(f"Run dir does not exist: {run_dir}")
@@ -61,10 +58,29 @@ def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
         raise ValueError(f"Missing latest ONNX checkpoint: {model_path}")
 
     config = json.loads(config_path.read_text())
-    defaults["model_path"] = str(model_path)
-    defaults["num_simulations"] = int(config["num_simulations"])
-    defaults["c_puct"] = float(config["c_puct"])
-    return defaults
+    required_keys = [
+        "num_simulations",
+        "c_puct",
+        "temperature",
+        "dirichlet_alpha",
+        "dirichlet_epsilon",
+        "max_moves",
+    ]
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        raise ValueError(
+            f"Run config missing required keys: {', '.join(sorted(missing_keys))}"
+        )
+
+    return {
+        "model_path": str(model_path),
+        "num_simulations": int(config["num_simulations"]),
+        "c_puct": float(config["c_puct"]),
+        "temperature": float(config["temperature"]),
+        "dirichlet_alpha": float(config["dirichlet_alpha"]),
+        "dirichlet_epsilon": float(config["dirichlet_epsilon"]),
+        "max_moves": int(config["max_moves"]),
+    }
 
 
 SCRIPT_ARGS = parse(ScriptArgs)
@@ -762,6 +778,54 @@ app.layout = html.Div(
                     value=42,
                     style={"width": "60px", "marginRight": "15px"},
                 ),
+                html.Label("Move #:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="move-number",
+                    type="number",
+                    value=0,
+                    min=0,
+                    step=1,
+                    style={"width": "70px", "marginRight": "15px"},
+                ),
+                dcc.Checklist(
+                    id="add-noise",
+                    options=[{"label": " Root noise", "value": "noise"}],
+                    value=["noise"],
+                    style={"marginRight": "15px"},
+                ),
+                html.Label("Temp:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="temperature",
+                    type="number",
+                    value=VIZ_DEFAULTS["temperature"],
+                    step=0.1,
+                    style={"width": "70px", "marginRight": "15px"},
+                ),
+                html.Label("Dir α:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="dirichlet-alpha",
+                    type="number",
+                    value=VIZ_DEFAULTS["dirichlet_alpha"],
+                    step=0.01,
+                    style={"width": "70px", "marginRight": "15px"},
+                ),
+                html.Label("Dir ε:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="dirichlet-epsilon",
+                    type="number",
+                    value=VIZ_DEFAULTS["dirichlet_epsilon"],
+                    step=0.01,
+                    style={"width": "70px", "marginRight": "15px"},
+                ),
+                html.Label("Max Moves:", style={"marginRight": "5px"}),
+                dcc.Input(
+                    id="max-moves",
+                    type="number",
+                    value=VIZ_DEFAULTS["max_moves"],
+                    min=1,
+                    step=1,
+                    style={"width": "80px", "marginRight": "15px"},
+                ),
                 html.Label("Current:", style={"marginRight": "5px"}),
                 dcc.Input(
                     id="current-piece",
@@ -957,6 +1021,12 @@ app.layout = html.Div(
     State("num-simulations", "value"),
     State("c-puct", "value"),
     State("seed", "value"),
+    State("move-number", "value"),
+    State("add-noise", "value"),
+    State("temperature", "value"),
+    State("dirichlet-alpha", "value"),
+    State("dirichlet-epsilon", "value"),
+    State("max-moves", "value"),
     State("current-piece", "value"),
     State("hold-piece", "value"),
     State("hold-used", "value"),
@@ -976,6 +1046,12 @@ def run_mcts(
     num_sims,
     c_puct,
     seed,
+    move_number,
+    add_noise_value,
+    temperature,
+    dirichlet_alpha,
+    dirichlet_epsilon,
+    max_moves,
     current_piece_text,
     hold_piece_text,
     hold_used_text,
@@ -992,7 +1068,20 @@ def run_mcts(
         return dash.no_update, dash.no_update, dash.no_update, [], dash.no_update
 
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
-    max_sims = num_sims or 100
+    if num_sims is None:
+        raise ValueError("num_simulations is required")
+    if c_puct is None:
+        raise ValueError("c_puct is required")
+    if temperature is None:
+        raise ValueError("temperature is required")
+    if dirichlet_alpha is None:
+        raise ValueError("dirichlet_alpha is required")
+    if dirichlet_epsilon is None:
+        raise ValueError("dirichlet_epsilon is required")
+    if max_moves is None:
+        raise ValueError("max_moves is required")
+
+    max_sims = num_sims
 
     if triggered_id == "run-button":
         # Run full search to configured simulation count
@@ -1004,10 +1093,12 @@ def run_mcts(
     # Create config with current number of simulations
     config = MCTSConfig()
     config.num_simulations = sims_to_run
-    config.c_puct = c_puct if c_puct is not None else float(VIZ_DEFAULTS["c_puct"])
-    config.temperature = 0.0
-    config.dirichlet_alpha = 0.3
-    config.dirichlet_epsilon = 0.25
+    config.c_puct = c_puct
+    config.temperature = temperature
+    config.dirichlet_alpha = dirichlet_alpha
+    config.dirichlet_epsilon = dirichlet_epsilon
+    config.max_moves = max_moves
+    config.track_value_history = True
     agent = MCTSAgent(config)
 
     # Load model
@@ -1030,7 +1121,7 @@ def run_mcts(
         if model_suffix == ".pt":
             error_label = (
                 "Failed to load model: .pt checkpoint provided. "
-                "Use an ONNX file (e.g., training_runs/.../checkpoints/latest.onnx)."
+                "Use an ONNX file (e.g., training_runs/.../checkpoints/parallel.onnx)."
             )
         else:
             error_label = "Failed to load model: expected an ONNX file"
@@ -1075,7 +1166,13 @@ def run_mcts(
         )
 
     # Run MCTS with current number of simulations
-    result = agent.search_with_tree(env, add_noise=False, move_number=0)
+    add_noise = "noise" in (add_noise_value or [])
+    move_number_int = int(move_number) if move_number is not None else 0
+    result = agent.search_with_tree(
+        env,
+        add_noise=add_noise,
+        move_number=move_number_int,
+    )
     if result is None:
         return (
             None,
@@ -1113,6 +1210,7 @@ def run_mcts(
                 "visit_count": n.visit_count,
                 "mean_value": n.mean_value,
                 "value_sum": n.value_sum,
+                "value_history": list(n.value_history),
                 "nn_value": n.nn_value,  # Now stored in Rust tree export
                 "attack": n.attack,
                 "is_terminal": n.is_terminal,
@@ -1142,7 +1240,7 @@ def run_mcts(
 
     return (
         tree_dict,
-        {"seed": seed},
+        {"seed": seed, "move_number": move_number_int},
         sims_to_run,
         elements,
         f"Sims: {sims_to_run}/{max_sims}",
@@ -1212,6 +1310,19 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
         html.P(f"MCTS Q-Value: {node['mean_value']:.3f}"),
         html.P(f"Value Sum: {node['value_sum']:.3f}"),
     ]
+    value_history = node.get("value_history", [])
+    if value_history:
+        terms = " + ".join(f"{value:.6f}" for value in value_history)
+        details.append(
+            html.P(
+                f"Q = ({terms}) / {len(value_history)} = {node['mean_value']:.6f}",
+                style={
+                    "fontFamily": "monospace",
+                    "fontSize": "11px",
+                    "overflowWrap": "anywhere",
+                },
+            )
+        )
 
     if node["node_type"] == "decision":
         details.extend(
@@ -1267,9 +1378,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                     html.Th("P", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("Q", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("U", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th(
-                        "Q+U", style={"padding": "4px", "textAlign": "right"}
-                    ),
+                    html.Th("Q+U", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("N", style={"padding": "4px", "textAlign": "right"}),
                 ]
             )
@@ -1473,6 +1582,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
     else:
         # Chance node
         details.append(html.P(f"Attack: {node['attack']}"))
+        details.append(html.P(f"Move Number: {node['move_number']}"))
 
         # Show parent info if available
         parent_id = node.get("parent_id")
@@ -1487,7 +1597,9 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                 details.append(html.Hr())
                 details.append(html.H4("Selection Info"))
                 details.append(html.P(f"Prior (P): {prior:.4f}"))
-                details.append(html.P(f"Parent visits (N_parent): {parent['visit_count']}"))
+                details.append(
+                    html.P(f"Parent visits (N_parent): {parent['visit_count']}")
+                )
                 details.append(html.P(f"Child visits (N_child): {node['visit_count']}"))
                 if parent["visit_count"] > 0:
                     q_value = node["mean_value"]

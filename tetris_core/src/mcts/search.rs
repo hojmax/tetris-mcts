@@ -43,15 +43,16 @@ pub(super) fn simulate(
         // The tree structure doesn't change during simulation, so the pointer
         // remains valid. We only hold one mutable reference at a time.
         let node = unsafe { &mut *current };
+        node.visit_count += 1;
 
         if node.is_terminal {
             // Terminal - backpropagate with 0 future value (game over)
-            backup_with_value(&path, 0.0);
+            backup_with_value(&path, 0.0, config.track_value_history);
             return;
         }
 
         if node.valid_actions.is_empty() {
-            backup_with_value(&path, 0.0);
+            backup_with_value(&path, 0.0, config.track_value_history);
             return;
         }
 
@@ -79,23 +80,26 @@ pub(super) fn simulate(
                         "BUG: expand_action failed for action {} - action mask is inconsistent",
                         action_idx
                     );
-                    backup_with_value(&path, 0.0);
+                    backup_with_value(&path, 0.0, config.track_value_history);
                     return;
                 }
             };
             node.children.insert(action_idx, child);
+            if let Some(MCTSNode::Chance(chance_node)) = node.children.get_mut(&action_idx) {
+                chance_node.visit_count += 1;
+            }
 
             // Get attack and nn_value from the new node
             let chance_node = match node.children.get(&action_idx) {
                 Some(MCTSNode::Chance(cn)) => cn,
                 Some(MCTSNode::Decision(_)) => {
                     debug_assert!(false, "BUG: expand_action should create ChanceNode");
-                    backup_with_value(&path, 0.0);
+                    backup_with_value(&path, 0.0, config.track_value_history);
                     return;
                 }
                 None => {
                     debug_assert!(false, "BUG: just inserted child but it's missing");
-                    backup_with_value(&path, 0.0);
+                    backup_with_value(&path, 0.0, config.track_value_history);
                     return;
                 }
             };
@@ -106,7 +110,7 @@ pub(super) fn simulate(
             path.push((current, action_idx, leaf_attack));
 
             // Backpropagate: total = attack_along_path + leaf_value
-            backup_with_value(&path, leaf_value);
+            backup_with_value(&path, leaf_value, config.track_value_history);
             return;
         }
 
@@ -115,15 +119,16 @@ pub(super) fn simulate(
             Some(MCTSNode::Chance(cn)) => cn,
             Some(MCTSNode::Decision(_)) => {
                 debug_assert!(false, "BUG: Decision node child should be ChanceNode");
-                backup_with_value(&path, 0.0);
+                backup_with_value(&path, 0.0, config.track_value_history);
                 return;
             }
             None => {
                 debug_assert!(false, "BUG: child should exist after contains_key check");
-                backup_with_value(&path, 0.0);
+                backup_with_value(&path, 0.0, config.track_value_history);
                 return;
             }
         };
+        chance_node.visit_count += 1;
         let step_attack = chance_node.attack as f32;
         path.push((current, action_idx, step_attack));
         depth += 1;
@@ -143,12 +148,12 @@ pub(super) fn simulate(
             }
             Some(MCTSNode::Chance(_)) => {
                 debug_assert!(false, "BUG: ChanceNode child should be DecisionNode");
-                backup_with_value(&path, 0.0);
+                backup_with_value(&path, 0.0, config.track_value_history);
                 return;
             }
             None => {
                 debug_assert!(false, "BUG: child should exist after insertion");
-                backup_with_value(&path, 0.0);
+                backup_with_value(&path, 0.0, config.track_value_history);
                 return;
             }
         }
@@ -206,6 +211,7 @@ fn expand_action(
     Some(MCTSNode::Chance(ChanceNode::new(
         new_state,
         attack,
+        move_number,
         bag_remaining,
         nn_value,
         policy,
@@ -245,7 +251,11 @@ fn expand_chance(parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNod
 /// attack collected along the path to the leaf's NN value, we get the total
 /// expected episode return. This same total is backed up to all nodes so that
 /// Q values represent "expected total return when passing through this node".
-fn backup_with_value(path: &[(*mut DecisionNode, usize, f32)], leaf_value: f32) {
+fn backup_with_value(
+    path: &[(*mut DecisionNode, usize, f32)],
+    leaf_value: f32,
+    track_value_history: bool,
+) {
     if path.is_empty() {
         return;
     }
@@ -265,19 +275,25 @@ fn backup_with_value(path: &[(*mut DecisionNode, usize, f32)], leaf_value: f32) 
         if let Some(child) = node.children.get_mut(&action_idx) {
             match child {
                 MCTSNode::Decision(d) => {
-                    d.visit_count += 1;
                     d.value_sum += total_value;
+                    if track_value_history {
+                        d.value_history.push(total_value);
+                    }
                 }
                 MCTSNode::Chance(c) => {
-                    c.visit_count += 1;
                     c.value_sum += total_value;
+                    if track_value_history {
+                        c.value_history.push(total_value);
+                    }
                 }
             }
         }
 
         // Update the DecisionNode itself
-        node.visit_count += 1;
         node.value_sum += total_value;
+        if track_value_history {
+            node.value_history.push(total_value);
+        }
     }
 }
 
@@ -294,9 +310,6 @@ pub(super) fn search_internal(
     // Create root node (keep full queue - truncation breaks 7-bag tracking)
     let mut root = DecisionNode::new(env.clone(), move_number);
     root.set_nn_output(&policy, nn_value);
-    // Start root with one virtual visit so first selection uses priors (U > 0)
-    // instead of an all-zero tie that falls back to action-index ordering.
-    root.visit_count = 1;
 
     if add_noise {
         root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon);

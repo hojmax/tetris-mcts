@@ -27,6 +27,9 @@ pub struct MCTSConfig {
     /// Maximum moves per episode. Used for move-number normalization in NN features
     #[pyo3(get, set)]
     pub max_moves: u32,
+    /// Whether to store per-visit backed-up values for visualization/debugging
+    #[pyo3(get, set)]
+    pub track_value_history: bool,
 }
 
 #[pymethods]
@@ -41,6 +44,7 @@ impl MCTSConfig {
             dirichlet_epsilon: 0.25,
             seed: None,
             max_moves: 100,
+            track_value_history: false,
         }
     }
 }
@@ -65,5 +69,6 @@ mod tests {
         assert_eq!(config.dirichlet_epsilon, 0.25);
         assert_eq!(config.seed, None);
         assert_eq!(config.max_moves, 100);
+        assert!(!config.track_value_history);
     }
 }
