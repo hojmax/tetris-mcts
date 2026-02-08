@@ -12,6 +12,7 @@ from typing import Optional
 import time
 from pathlib import Path
 import tempfile
+import statistics
 
 import wandb
 import structlog
@@ -111,6 +112,38 @@ class Trainer:
         else:
             return None
 
+    def align_scheduler_to_step(self, step: int) -> None:
+        if step < 0:
+            raise ValueError(f"step must be >= 0 (got {step})")
+        if self.scheduler is None:
+            return
+
+        # Rebuild scheduler state from current config so resumed runs use the new
+        # LR settings while keeping global step alignment.
+        self.scheduler.last_epoch = step
+
+        if self.config.lr_schedule == "cosine":
+            assert isinstance(self.scheduler, torch.optim.lr_scheduler.CosineAnnealingLR)
+            t_max = self.config.lr_decay_steps
+            eta_min = self.config.learning_rate * self.config.lr_min_factor
+            cosine_factor = (1 + torch.cos(torch.tensor(torch.pi * step / t_max))).item() / 2
+            lrs = [eta_min + (base_lr - eta_min) * cosine_factor for base_lr in self.scheduler.base_lrs]
+        elif self.config.lr_schedule == "step":
+            assert isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR)
+            step_size = self.config.lr_decay_steps // self.config.lr_step_divisor
+            decay = self.config.lr_step_gamma ** (step // step_size)
+            lrs = [base_lr * decay for base_lr in self.scheduler.base_lrs]
+        else:
+            raise ValueError(f"Unsupported lr_schedule: {self.config.lr_schedule}")
+
+        if len(self.optimizer.param_groups) != len(lrs):
+            raise ValueError(
+                "Optimizer param group count does not match computed LR count"
+            )
+        for param_group, lr in zip(self.optimizer.param_groups, lrs):
+            param_group["lr"] = lr
+        self.scheduler._last_lr = lrs
+
     def train_step(self, batch: tuple) -> dict:
         """Execute one training step."""
         self.model.train()
@@ -139,11 +172,14 @@ class Trainer:
             self.scheduler.step()
 
         metrics = {
-            "loss": total_loss.item(),
-            "policy_loss": policy_loss.item(),
-            "value_loss": value_loss.item(),
-            "grad_norm": grad_norm.item(),
-            "learning_rate": self.optimizer.param_groups[0]["lr"],
+            "train/loss": total_loss.item(),
+            "train/policy_loss": policy_loss.item(),
+            "train/value_loss": value_loss.item(),
+            "train/grad_norm": grad_norm.item(),
+            "train/learning_rate": self.optimizer.param_groups[0]["lr"],
+            "batch/value_target_mean": value_targets.mean().item(),
+            "batch/value_target_std": value_targets.std(unbiased=False).item(),
+            "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         }
 
         # Compute additional metrics periodically
@@ -332,12 +368,27 @@ class Trainer:
                             game_metrics = {"game_number": game_number}
                             for key, value in game_stats.items():
                                 game_metrics[f"game/{key}"] = value
+                            episode_length = game_stats["episode_length"]
+                            if episode_length <= 0:
+                                raise ValueError(
+                                    f"Invalid episode_length for game {game_number}: "
+                                    f"{episode_length}"
+                                )
+                            game_metrics["game/attack_per_move"] = (
+                                game_stats["total_attack"] / episode_length
+                            )
+                            game_metrics["game/lines_per_move"] = (
+                                game_stats["total_lines"] / episode_length
+                            )
+                            game_metrics["game/hold_rate"] = (
+                                game_stats["holds"] / episode_length
+                            )
                             wandb.log(game_metrics, step=self.step)
                     logger.info(
                         "Training progress",
                         step=self.step,
-                        loss=metrics["loss"],
-                        learning_rate=metrics["learning_rate"],
+                        loss=metrics["train/loss"],
+                        learning_rate=metrics["train/learning_rate"],
                         buffer_size=generator.buffer_size(),
                         games_generated=games,
                         games_per_second=metrics["games_per_second"],
@@ -361,11 +412,19 @@ class Trainer:
                     )
                     if log_to_wandb:
                         eval_gif_path: Optional[Path] = None
+                        attacks = [attack for attack, _ in eval_result.game_results]
+                        moves = [moves for _, moves in eval_result.game_results]
                         log_data = {
+                            "eval/num_games": eval_result.num_games,
                             "eval/avg_attack": eval_result.avg_attack,
                             "eval/max_attack": eval_result.max_attack,
+                            "eval/avg_lines": eval_result.avg_lines,
+                            "eval/max_lines": eval_result.max_lines,
                             "eval/avg_moves": eval_result.avg_moves,
                             "eval/attack_per_piece": eval_result.attack_per_piece,
+                            "eval/lines_per_piece": eval_result.lines_per_piece,
+                            "eval/attack_std": statistics.pstdev(attacks),
+                            "eval/moves_std": statistics.pstdev(moves),
                         }
                         # Log trajectory as animated GIF
                         if trajectory_frames:

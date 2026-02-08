@@ -42,7 +42,8 @@ class ScriptArgs:
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
     resume_dir: (  # Bootstrap a new run from existing run dir (e.g.,  Path(__file__).parent.parent / "training_runs" / "v44")
         Path | None
-    ) = None
+    ) = Path(__file__).parent.parent / "training_runs" / "v0"
+    resume_restore_optimizer_scheduler: bool = False  # If True, restore optimizer and scheduler from checkpoint when using resume_dir; if False, restore optimizer only and rebuild scheduler from current config
     init_checkpoint: Path | None = None  # Initialize model weights from checkpoint
     no_wandb: bool = False  # Disable WandB logging
 
@@ -121,20 +122,29 @@ def main(args: ScriptArgs) -> None:
     )
 
     if resume_checkpoint is not None:
+        load_optimizer = trainer.optimizer
+        load_scheduler = (
+            trainer.scheduler if args.resume_restore_optimizer_scheduler else None
+        )
         state = load_checkpoint(
             resume_checkpoint,
             model=trainer.model,
-            optimizer=trainer.optimizer,
-            scheduler=trainer.scheduler,
+            optimizer=load_optimizer,
+            scheduler=load_scheduler,
         )
         checkpoint_step = state.get("step")
         if checkpoint_step is None:
             raise ValueError(f"Checkpoint is missing step: {resume_checkpoint}")
         trainer.step = int(checkpoint_step)
+        if trainer.scheduler is not None and not args.resume_restore_optimizer_scheduler:
+            trainer.align_scheduler_to_step(trainer.step)
         logger.info(
             "Initialized new run from checkpoint",
             checkpoint=str(resume_checkpoint),
             step=trainer.step,
+            learning_rate=trainer.optimizer.param_groups[0]["lr"],
+            lr_schedule=config.lr_schedule,
+            restored_optimizer_scheduler=args.resume_restore_optimizer_scheduler,
         )
     elif args.init_checkpoint:
         if not args.init_checkpoint.exists():
