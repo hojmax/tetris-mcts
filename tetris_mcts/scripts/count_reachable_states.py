@@ -61,6 +61,7 @@ TETROMINOS = [
     ],
 ]
 
+
 def get_cells(piece_type, rotation, x, y):
     """Get the cells occupied by a piece at position (x, y) with given rotation."""
     shape = TETROMINOS[piece_type][rotation]

@@ -19,7 +19,13 @@ import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
 
 from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, PIECE_COLORS, PIECE_NAMES
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_PIECE_TYPES,
+    PIECE_COLORS,
+    PIECE_NAMES,
+)
 
 # Global cache for TetrisEnv states (keyed by node ID)
 # This allows us to clone states and execute actions for visualization

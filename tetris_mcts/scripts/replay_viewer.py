@@ -18,6 +18,8 @@ from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     DEFAULT_GIF_FRAME_DURATION_MS,
+    PIECE_NAMES,
+    QUEUE_SIZE,
 )
 from tetris_mcts.ml.visualization import render_board
 
@@ -33,16 +35,37 @@ def load_and_render_replay(replay_data: dict, output_path: Path):
     total_attack = 0
 
     # Render initial state
-    frames.append(_render_frame(env, 0, total_attack))
+    frames.append(
+        _render_frame(
+            env,
+            0,
+            total_attack,
+            info_text="",
+        )
+    )
 
     # Execute each move and render
     for i, move in enumerate(moves):
         action = int(move["action"])
-        attack = env.execute_action_index(action)
-        if attack is None:
+        attack_from_env = env.execute_action_index(action)
+        if attack_from_env is None:
             raise ValueError(f"Invalid replay action index: {action}")
-        total_attack += int(move["attack"])
-        frames.append(_render_frame(env, i + 1, total_attack))
+        attack_from_replay = int(move["attack"])
+        if int(attack_from_env) != attack_from_replay:
+            raise ValueError(
+                "Replay attack mismatch: "
+                f"move={i} env_attack={int(attack_from_env)} "
+                f"replay_attack={attack_from_replay}"
+            )
+        total_attack += int(attack_from_env)
+        frames.append(
+            _render_frame(
+                env,
+                i + 1,
+                total_attack,
+                info_text="Final" if i + 1 == len(moves) else "",
+            )
+        )
 
     # Save as GIF
     if frames:
@@ -57,12 +80,19 @@ def load_and_render_replay(replay_data: dict, output_path: Path):
     return len(frames), total_attack
 
 
-def _render_frame(env: TetrisEnv, move_num: int, attack: int):
+def _render_frame(env: TetrisEnv, move_num: int, attack: int, info_text: str):
     """Render a single frame."""
     board = np.array(env.get_board())
     board_colors = env.get_board_colors()
     piece = env.get_current_piece()
     ghost = env.get_ghost_piece()
+    hold_piece = env.get_hold_piece()
+
+    current_piece_name = PIECE_NAMES[piece.piece_type] if piece is not None else "?"
+    hold_piece_name = (
+        PIECE_NAMES[hold_piece.piece_type] if hold_piece is not None else "-"
+    )
+    queue_pieces = [PIECE_NAMES[piece] for piece in env.get_queue(QUEUE_SIZE)]
 
     return render_board(
         board=board,
@@ -72,6 +102,11 @@ def _render_frame(env: TetrisEnv, move_num: int, attack: int):
         ghost_cells=ghost.get_cells() if ghost else None,
         move_number=move_num,
         attack=attack,
+        info_text=info_text,
+        show_piece_info=True,
+        current_piece_name=current_piece_name,
+        hold_piece_name=hold_piece_name,
+        queue_pieces=queue_pieces,
     )
 
 

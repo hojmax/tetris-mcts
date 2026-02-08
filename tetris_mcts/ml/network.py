@@ -45,6 +45,7 @@ AUX_FEATURES = (
     + MOVE_NUMBER_FEATURES
 )  # 52
 
+
 class TetrisNet(nn.Module):
     """
     AlphaZero-style network for Tetris.

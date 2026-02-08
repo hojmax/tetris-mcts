@@ -49,9 +49,13 @@ class ScriptArgs:
 
     data_path: Path  # Path to training_data.npz file
     game_index: int = -1  # Which game to render (-1 for last)
-    save_path: Path | None = None  # Output path (default: script outputs/game_{index}.gif)
+    save_path: Path | None = (
+        None  # Output path (default: script outputs/game_{index}.gif)
+    )
     frame_duration: int = DEFAULT_GIF_FRAME_DURATION_MS  # Milliseconds per frame
-    print_buffer_vectors: bool = True  # Print full literal vectors/matrices for selected game
+    print_buffer_vectors: bool = (
+        True  # Print full literal vectors/matrices for selected game
+    )
 
 
 def format_array(arr: np.ndarray) -> str:
@@ -93,7 +97,9 @@ def main(args: ScriptArgs) -> None:
         logger.error("File not found", path=str(args.data_path))
         return
     if args.data_path.suffix != ".npz":
-        logger.error("Expected .npz file", path=str(args.data_path), suffix=args.data_path.suffix)
+        logger.error(
+            "Expected .npz file", path=str(args.data_path), suffix=args.data_path.suffix
+        )
         return
 
     # Load data
@@ -106,7 +112,9 @@ def main(args: ScriptArgs) -> None:
         n_games = len(games)
 
         # Handle negative game index
-        game_idx = args.game_index if args.game_index >= 0 else n_games + args.game_index
+        game_idx = (
+            args.game_index if args.game_index >= 0 else n_games + args.game_index
+        )
         if game_idx < 0 or game_idx >= n_games:
             logger.error(
                 "Game index out of range",
@@ -146,7 +154,9 @@ def main(args: ScriptArgs) -> None:
             value_target = float(data["value_targets"][i])
 
             # Build piece info
-            current_name = PIECE_NAMES[current_piece] if current_piece is not None else "?"
+            current_name = (
+                PIECE_NAMES[current_piece] if current_piece is not None else "?"
+            )
             hold_name = PIECE_NAMES[hold_piece] if hold_piece is not None else "-"
             queue_names = [PIECE_NAMES[p] if p is not None else "?" for p in next_queue]
 

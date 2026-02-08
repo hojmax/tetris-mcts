@@ -154,6 +154,8 @@ struct LastGameInfo {
     stats: GameStats,
     total_attack: u32,
     num_moves: u32,
+    avg_moves: f32,
+    max_moves: u32,
 }
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
@@ -429,24 +431,29 @@ impl GameGenerator {
 
     /// Get the last completed game's stats for per-game logging.
     /// Returns (game_number, stats_dict) or None if no games completed yet.
-    pub fn get_last_game_stats(&self) -> Option<(u64, HashMap<String, u32>)> {
+    pub fn get_last_game_stats(&self) -> Option<(u64, HashMap<String, f32>)> {
         let guard = self.last_game.read().unwrap();
         guard.as_ref().map(|info| {
             let mut d = HashMap::new();
-            d.insert("singles".to_string(), info.stats.singles);
-            d.insert("doubles".to_string(), info.stats.doubles);
-            d.insert("triples".to_string(), info.stats.triples);
-            d.insert("tetrises".to_string(), info.stats.tetrises);
-            d.insert("tspin_minis".to_string(), info.stats.tspin_minis);
-            d.insert("tspin_singles".to_string(), info.stats.tspin_singles);
-            d.insert("tspin_doubles".to_string(), info.stats.tspin_doubles);
-            d.insert("tspin_triples".to_string(), info.stats.tspin_triples);
-            d.insert("perfect_clears".to_string(), info.stats.perfect_clears);
-            d.insert("back_to_backs".to_string(), info.stats.back_to_backs);
-            d.insert("max_combo".to_string(), info.stats.max_combo);
-            d.insert("total_lines".to_string(), info.stats.total_lines);
-            d.insert("total_attack".to_string(), info.total_attack);
-            d.insert("episode_length".to_string(), info.num_moves);
+            d.insert("singles".to_string(), info.stats.singles as f32);
+            d.insert("doubles".to_string(), info.stats.doubles as f32);
+            d.insert("triples".to_string(), info.stats.triples as f32);
+            d.insert("tetrises".to_string(), info.stats.tetrises as f32);
+            d.insert("tspin_minis".to_string(), info.stats.tspin_minis as f32);
+            d.insert("tspin_singles".to_string(), info.stats.tspin_singles as f32);
+            d.insert("tspin_doubles".to_string(), info.stats.tspin_doubles as f32);
+            d.insert("tspin_triples".to_string(), info.stats.tspin_triples as f32);
+            d.insert(
+                "perfect_clears".to_string(),
+                info.stats.perfect_clears as f32,
+            );
+            d.insert("back_to_backs".to_string(), info.stats.back_to_backs as f32);
+            d.insert("max_combo".to_string(), info.stats.max_combo as f32);
+            d.insert("total_lines".to_string(), info.stats.total_lines as f32);
+            d.insert("total_attack".to_string(), info.total_attack as f32);
+            d.insert("episode_length".to_string(), info.num_moves as f32);
+            d.insert("avg_moves".to_string(), info.avg_moves);
+            d.insert("max_moves".to_string(), info.max_moves as f32);
             (info.game_number, d)
         })
     }
@@ -664,6 +671,8 @@ impl GameGenerator {
                     stats: result.stats,
                     total_attack: result.total_attack,
                     num_moves: result.num_moves,
+                    avg_moves: result.avg_moves,
+                    max_moves: result.max_moves,
                 });
 
                 // Periodically save to disk for resume capability (only worker 0)

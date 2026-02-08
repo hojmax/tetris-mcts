@@ -73,6 +73,8 @@ impl MCTSAgent {
         let mut states: Vec<(TetrisEnv, u32, Vec<f32>, Vec<bool>)> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
         let mut stats = GameStats::default();
+        let mut valid_moves_sum: u32 = 0;
+        let mut max_valid_moves: u32 = 0;
 
         for move_idx in 0..max_moves {
             if env.game_over {
@@ -89,6 +91,9 @@ impl MCTSAgent {
                 );
                 break;
             }
+            let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
+            valid_moves_sum += valid_moves;
+            max_valid_moves = max_valid_moves.max(valid_moves);
 
             // Get NN policy and value for root
             let (policy, nn_value) =
@@ -223,11 +228,18 @@ impl MCTSAgent {
 
         let total_attack: u32 = attacks.iter().sum();
         let num_moves = states.len() as u32;
+        let avg_valid_moves = if num_moves > 0 {
+            valid_moves_sum as f32 / num_moves as f32
+        } else {
+            0.0
+        };
 
         Some(GameResult {
             examples,
             total_attack,
             num_moves,
+            avg_moves: avg_valid_moves,
+            max_moves: max_valid_moves,
             stats,
         })
     }

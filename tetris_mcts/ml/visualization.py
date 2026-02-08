@@ -172,6 +172,7 @@ def render_board(
 
     return img
 
+
 def create_trajectory_gif(
     frames: list[Image.Image],
     output_path: str,

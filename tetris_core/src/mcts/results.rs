@@ -124,6 +124,12 @@ pub struct GameResult {
     /// Number of moves played
     #[pyo3(get)]
     pub num_moves: u32,
+    /// Average number of valid actions per move in this game
+    #[pyo3(get)]
+    pub avg_moves: f32,
+    /// Maximum number of valid actions at any move in this game
+    #[pyo3(get)]
+    pub max_moves: u32,
     /// Detailed game statistics
     #[pyo3(get)]
     pub stats: GameStats,

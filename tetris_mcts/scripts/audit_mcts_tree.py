@@ -1131,9 +1131,13 @@ class ScriptArgs:
     num_simulations: int = 400  # MCTS simulations per audited move
     c_puct: float = DEFAULT_TRAINING_CONFIG.c_puct  # PUCT exploration constant
     temperature: float = 0.0  # Action selection temperature (0 = argmax)
-    dirichlet_alpha: float = DEFAULT_TRAINING_CONFIG.dirichlet_alpha  # Dirichlet alpha (unused with epsilon=0)
+    dirichlet_alpha: float = (
+        DEFAULT_TRAINING_CONFIG.dirichlet_alpha
+    )  # Dirichlet alpha (unused with epsilon=0)
     dirichlet_epsilon: float = 0.0  # Dirichlet epsilon (0 for deterministic audits)
-    mcts_seed: int = DEFAULT_TRAINING_CONFIG.eval_mcts_seed  # MCTS RNG seed for reproducibility
+    mcts_seed: int = (
+        DEFAULT_TRAINING_CONFIG.eval_mcts_seed
+    )  # MCTS RNG seed for reproducibility
     top_k_actions: int = 8  # Number of top root actions logged per move
     dump_full_tree: bool = True  # If true, write full tree JSON for each move
     check_all_valid_actions: bool = (
