@@ -76,7 +76,7 @@ class TrainingConfig:
 
     # MCTS / Self-play
     num_simulations: int = 1000
-    c_puct: float = 1.5  # PUCT exploration constant
+    c_puct: float = 0.5  # PUCT exploration constant
     temperature: float = 1.0
     dirichlet_alpha: float = 0.15
     dirichlet_epsilon: float = 0.25
