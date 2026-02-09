@@ -302,6 +302,7 @@ fn load_fc_binary(path: &Path) -> TractResult<(Array2<f32>, Array1<f32>)> {
 }
 
 /// Encode a TetrisEnv state into neural network input tensors
+#[cfg(test)]
 fn encode_state(
     env: &TetrisEnv,
     move_number: usize,
