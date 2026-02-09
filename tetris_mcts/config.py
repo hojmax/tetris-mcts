@@ -81,7 +81,7 @@ class TrainingConfig:
     max_moves: int = 100  # Maximum moves for move number normalization
 
     # Replay buffer
-    buffer_size: int = 300_000
+    buffer_size: int = 500_000
     min_buffer_size: int = 100
     games_per_save: int = 2000  # Games between disk saves (0 to disable)
 
