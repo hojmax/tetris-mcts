@@ -23,6 +23,7 @@ pub use agent::MCTSAgent;
 pub use config::MCTSConfig;
 pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode, NodeStats};
 pub use results::{
-    GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
+    GameResult, GameStats, GameTreeStats, MCTSResult, MCTSTreeExport, TrainingExample,
+    TreeNodeExport,
 };
 pub use utils::sample_dirichlet;

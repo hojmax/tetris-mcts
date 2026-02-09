@@ -57,6 +57,74 @@ pub struct TrainingExample {
     pub action_mask: Vec<bool>,
 }
 
+/// Statistics about the MCTS tree structure after a single search.
+#[derive(Clone, Debug, Default)]
+pub struct TreeStats {
+    /// Average number of children per non-leaf node
+    pub branching_factor: f32,
+    /// Number of leaf nodes (nodes with no children)
+    pub num_leaves: u32,
+    /// Total number of nodes in the tree
+    pub total_nodes: u32,
+    /// Maximum depth from root
+    pub max_depth: u32,
+    /// Maximum actual attack value seen in any ChanceNode
+    pub max_attack: u32,
+}
+
+/// Aggregated tree statistics across all moves in a game.
+#[derive(Clone, Debug, Default)]
+pub struct GameTreeStats {
+    pub avg_branching_factor: f32,
+    pub avg_leaves: f32,
+    pub avg_total_nodes: f32,
+    pub avg_max_depth: f32,
+    pub max_tree_attack: u32,
+}
+
+/// Accumulator for building GameTreeStats from per-move TreeStats.
+pub struct TreeStatsAccumulator {
+    branching_factors: Vec<f32>,
+    leaves: Vec<u32>,
+    total_nodes: Vec<u32>,
+    max_depths: Vec<u32>,
+    max_attack: u32,
+}
+
+impl TreeStatsAccumulator {
+    pub fn new() -> Self {
+        Self {
+            branching_factors: Vec::new(),
+            leaves: Vec::new(),
+            total_nodes: Vec::new(),
+            max_depths: Vec::new(),
+            max_attack: 0,
+        }
+    }
+
+    pub fn add(&mut self, stats: TreeStats) {
+        self.branching_factors.push(stats.branching_factor);
+        self.leaves.push(stats.num_leaves);
+        self.total_nodes.push(stats.total_nodes);
+        self.max_depths.push(stats.max_depth);
+        self.max_attack = self.max_attack.max(stats.max_attack);
+    }
+
+    pub fn finalize(self) -> GameTreeStats {
+        let n = self.branching_factors.len() as f32;
+        if n == 0.0 {
+            return GameTreeStats::default();
+        }
+        GameTreeStats {
+            avg_branching_factor: self.branching_factors.iter().sum::<f32>() / n,
+            avg_leaves: self.leaves.iter().sum::<u32>() as f32 / n,
+            avg_total_nodes: self.total_nodes.iter().sum::<u32>() as f32 / n,
+            avg_max_depth: self.max_depths.iter().sum::<u32>() as f32 / n,
+            max_tree_attack: self.max_attack,
+        }
+    }
+}
+
 /// Detailed game statistics for training logging
 #[pyclass]
 #[derive(Clone, Default)]
@@ -126,6 +194,8 @@ pub struct GameResult {
     /// Detailed game statistics
     #[pyo3(get)]
     pub stats: GameStats,
+    /// MCTS tree statistics aggregated across all moves
+    pub tree_stats: GameTreeStats,
 }
 
 // =============================================================================
@@ -432,6 +502,7 @@ mod tests {
             avg_moves: 0.0,
             max_moves: 0,
             stats: GameStats::default(),
+            tree_stats: GameTreeStats::default(),
         };
 
         assert!(result.examples.is_empty());
@@ -472,6 +543,7 @@ mod tests {
             avg_moves: 0.0,
             max_moves: 0,
             stats: GameStats::default(),
+            tree_stats: GameTreeStats::default(),
         };
 
         assert_eq!(result.examples.len(), 2);
@@ -490,6 +562,7 @@ mod tests {
             avg_moves: 0.0,
             max_moves: 0,
             stats: GameStats::default(),
+            tree_stats: GameTreeStats::default(),
         };
 
         let cloned = result.clone();

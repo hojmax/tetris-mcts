@@ -185,7 +185,8 @@ pub fn evaluate_model(
                 })?;
 
             // Run MCTS search (no noise, argmax via config.temperature=0)
-            let result = agent.search(&env, policy, nn_value, false, move_idx as u32);
+            let (result, _tree_stats) =
+                agent.search(&env, policy, nn_value, false, move_idx as u32);
 
             let attack = env.execute_action_index(result.action).ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(

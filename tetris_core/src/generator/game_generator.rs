@@ -16,7 +16,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::mcts::GameStats;
-use crate::mcts::{MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
+use crate::mcts::{GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
 use super::npz::{read_examples_from_npz, write_examples_to_npz};
 
@@ -159,6 +159,7 @@ struct LastGameInfo {
     num_moves: u32,
     avg_moves: f32,
     max_moves: u32,
+    tree_stats: GameTreeStats,
 }
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
@@ -458,6 +459,12 @@ impl GameGenerator {
             d.insert("episode_length".to_string(), info.num_moves as f32);
             d.insert("avg_valid_actions".to_string(), info.avg_moves);
             d.insert("max_valid_actions".to_string(), info.max_moves as f32);
+            // Tree statistics
+            d.insert("tree_avg_branching_factor".to_string(), info.tree_stats.avg_branching_factor);
+            d.insert("tree_avg_leaves".to_string(), info.tree_stats.avg_leaves);
+            d.insert("tree_avg_total_nodes".to_string(), info.tree_stats.avg_total_nodes);
+            d.insert("tree_avg_max_depth".to_string(), info.tree_stats.avg_max_depth);
+            d.insert("tree_max_attack".to_string(), info.tree_stats.max_tree_attack as f32);
             drained.push((info.game_number, d));
         }
         drained
@@ -678,6 +685,7 @@ impl GameGenerator {
                     num_moves: result.num_moves,
                     avg_moves: result.avg_moves,
                     max_moves: result.max_moves,
+                    tree_stats: result.tree_stats,
                 });
 
                 // Periodically save to disk for resume capability (only worker 0)

@@ -11,7 +11,7 @@ use crate::nn::TetrisNN;
 use super::action_space::NUM_ACTIONS;
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
-use super::results::MCTSResult;
+use super::results::{MCTSResult, TreeStats};
 
 /// Run a single MCTS simulation
 ///
@@ -297,7 +297,73 @@ fn backup_with_value(
     }
 }
 
-/// Run MCTS search and return both the result and root node.
+/// Compute statistics about the MCTS tree structure.
+pub(super) fn compute_tree_stats(root: &DecisionNode) -> TreeStats {
+    let mut total_nodes: u32 = 0;
+    let mut num_leaves: u32 = 0;
+    let mut children_sum: u32 = 0;
+    let mut non_leaf_count: u32 = 0;
+    let mut max_attack: u32 = 0;
+    let mut max_depth: u32 = 0;
+
+    enum NodeRef<'a> {
+        Decision(&'a DecisionNode),
+        Chance(&'a ChanceNode),
+    }
+
+    let mut stack: Vec<(NodeRef, u32)> = vec![(NodeRef::Decision(root), 0)];
+
+    while let Some((node, depth)) = stack.pop() {
+        total_nodes += 1;
+        max_depth = max_depth.max(depth);
+
+        match node {
+            NodeRef::Decision(d) => {
+                if d.children.is_empty() {
+                    num_leaves += 1;
+                } else {
+                    non_leaf_count += 1;
+                    children_sum += d.children.len() as u32;
+                    for child in d.children.values() {
+                        if let MCTSNode::Chance(cn) = child {
+                            stack.push((NodeRef::Chance(cn), depth + 1));
+                        }
+                    }
+                }
+            }
+            NodeRef::Chance(c) => {
+                max_attack = max_attack.max(c.attack);
+                if c.children.is_empty() {
+                    num_leaves += 1;
+                } else {
+                    non_leaf_count += 1;
+                    children_sum += c.children.len() as u32;
+                    for child in c.children.values() {
+                        if let MCTSNode::Decision(dn) = child {
+                            stack.push((NodeRef::Decision(dn), depth + 1));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let branching_factor = if non_leaf_count > 0 {
+        children_sum as f32 / non_leaf_count as f32
+    } else {
+        0.0
+    };
+
+    TreeStats {
+        branching_factor,
+        num_leaves,
+        total_nodes,
+        max_depth,
+        max_attack,
+    }
+}
+
+/// Run MCTS search and return the result, root node, and tree statistics.
 pub(super) fn search_internal(
     config: &MCTSConfig,
     nn: &TetrisNN,
@@ -306,7 +372,7 @@ pub(super) fn search_internal(
     nn_value: f32,
     add_noise: bool,
     move_number: u32,
-) -> (MCTSResult, DecisionNode) {
+) -> (MCTSResult, DecisionNode, TreeStats) {
     // Create root node (keep full queue - truncation breaks 7-bag tracking)
     let mut root = DecisionNode::new(env.clone(), move_number);
     root.set_nn_output(&policy, nn_value);
@@ -379,5 +445,7 @@ pub(super) fn search_internal(
         num_simulations: config.num_simulations,
     };
 
-    (mcts_result, root)
+    let tree_stats = compute_tree_stats(&root);
+
+    (mcts_result, root, tree_stats)
 }

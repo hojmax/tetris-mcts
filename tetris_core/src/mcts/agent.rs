@@ -10,7 +10,8 @@ use crate::env::TetrisEnv;
 use super::config::MCTSConfig;
 use super::export::export_decision_node;
 use super::results::{
-    GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
+    GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport, TreeStats,
+    TreeStatsAccumulator,
 };
 use super::search::search_internal;
 use crate::mcts::action_space::HOLD_ACTION_INDEX;
@@ -75,6 +76,7 @@ impl MCTSAgent {
         let mut stats = GameStats::default();
         let mut valid_moves_sum: u32 = 0;
         let mut max_valid_moves: u32 = 0;
+        let mut tree_stats_acc = TreeStatsAccumulator::new();
 
         for move_idx in 0..max_moves {
             if env.game_over {
@@ -112,7 +114,9 @@ impl MCTSAgent {
             states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
 
             // Run MCTS search
-            let result = self.search(&env, policy, nn_value, add_noise, move_idx);
+            let (result, move_tree_stats) =
+                self.search(&env, policy, nn_value, add_noise, move_idx);
+            tree_stats_acc.add(move_tree_stats);
             if result.action == HOLD_ACTION_INDEX {
                 stats.holds += 1;
             }
@@ -231,6 +235,8 @@ impl MCTSAgent {
             0.0
         };
 
+        let tree_stats = tree_stats_acc.finalize();
+
         Some(GameResult {
             examples,
             total_attack,
@@ -238,6 +244,7 @@ impl MCTSAgent {
             avg_moves: avg_valid_moves,
             max_moves: max_valid_moves,
             stats,
+            tree_stats,
         })
     }
 
@@ -303,7 +310,7 @@ impl MCTSAgent {
             )
             .expect("Neural network prediction failed");
 
-        let (mcts_result, root) = search_internal(
+        let (mcts_result, root, _tree_stats) = search_internal(
             &self.config,
             nn,
             env,
@@ -364,7 +371,7 @@ impl MCTSAgent {
             )
             .expect("Neural network prediction failed");
 
-        let (mcts_result, _root) = search_internal(
+        let (mcts_result, _root, _tree_stats) = search_internal(
             &self.config,
             nn,
             env,
@@ -391,12 +398,12 @@ impl MCTSAgent {
         nn_value: f32,
         add_noise: bool,
         move_number: u32,
-    ) -> MCTSResult {
+    ) -> (MCTSResult, TreeStats) {
         let nn = self
             .nn
             .as_ref()
             .expect("Neural network required for search");
-        let (result, _root) = search_internal(
+        let (result, _root, tree_stats) = search_internal(
             &self.config,
             nn,
             env,
@@ -405,7 +412,7 @@ impl MCTSAgent {
             add_noise,
             move_number,
         );
-        result
+        (result, tree_stats)
     }
 }
 
@@ -444,7 +451,7 @@ mod tests {
         let nn = agent.nn.as_ref().unwrap();
         let (nn_policy, nn_value) = nn.predict_masked(&env, 0, &mask, 100).unwrap();
 
-        let (_result, root_after) =
+        let (_result, root_after, _tree_stats) =
             search_internal(&agent.config, nn, &env, nn_policy, nn_value, false, 0);
 
         // The root should have children after search
