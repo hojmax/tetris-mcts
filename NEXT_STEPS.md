@@ -9,6 +9,7 @@
 - [ ] All the steps setttings depend on batch size which is kind of annoying.
 - Value loss weight of 70.0 is maybe a tad too high. Changing to 30.0.
 - [ ] Autoscale loss weight to be roughly 1:1 and log the scaling constant.
+- [ ] Higher death penalty?
 
 # Confusion
 

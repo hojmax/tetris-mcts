@@ -22,7 +22,7 @@ from tetris_mcts.config import (
     QUEUE_SIZE,
 )
 from tetris_mcts.ml.network import TetrisNet
-from tetris_mcts.ml.weights import export_onnx
+from tetris_mcts.ml.weights import export_onnx, export_split_models
 
 from tetris_core import (
     MCTSConfig,
@@ -67,9 +67,10 @@ class Evaluator:
         """
         self.model.eval()
 
-        # Export model to ONNX for Rust evaluation
+        # Export model to ONNX for Rust evaluation (full + split for cached inference)
         onnx_path = self.checkpoint_dir / EVAL_ONNX_FILENAME
         export_onnx(self.model, onnx_path)
+        export_split_models(self.model, onnx_path)
 
         if not onnx_path.exists():
             raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
