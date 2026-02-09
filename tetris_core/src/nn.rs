@@ -1,34 +1,82 @@
 //! Neural Network Inference using tract-onnx
 //!
-//! Loads an ONNX model exported from PyTorch and provides
-//! inference for Tetris policy and value prediction.
+//! Loads split ONNX models (conv backbone + heads) and FC weights from binary.
+//! Caches board embeddings to skip conv + board FC on repeated board states.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
+
+use ndarray::{Array1, Array2};
 use tract_onnx::prelude::*;
 
 use crate::constants::{AUX_FEATURES, BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::env::TetrisEnv;
 
-/// Neural network model wrapper
+/// Number of conv output features (BOARD_HEIGHT * BOARD_WIDTH * conv_filters[-1])
+const CONV_OUT_SIZE: usize = BOARD_HEIGHT * BOARD_WIDTH * 8; // 1600
+
+/// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
-    model: Arc<TypedRunnableModel<TypedModel>>,
+    conv_model: Arc<TypedRunnableModel<TypedModel>>,
+    heads_model: Arc<TypedRunnableModel<TypedModel>>,
+    fc_weight_board: Arc<Array2<f32>>, // (fc_hidden, CONV_OUT_SIZE)
+    fc_weight_aux: Arc<Array2<f32>>,   // (fc_hidden, AUX_FEATURES)
+    fc_bias: Arc<Array1<f32>>,         // (fc_hidden,)
+    fc_hidden: usize,
+    board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
 }
 
 impl TetrisNN {
-    /// Load an ONNX model from file
+    /// Load split models from file.
+    /// Given a base path like "latest.onnx", loads:
+    /// - "latest.conv.onnx" (conv backbone)
+    /// - "latest.heads.onnx" (heads model)
+    /// - "latest.fc.bin" (FC weight + bias)
     pub fn load<P: AsRef<Path>>(path: P) -> TractResult<Self> {
-        let model = tract_onnx::onnx()
-            .model_for_path(path)?
+        let base = path.as_ref().with_extension("");
+        let conv_path = base.with_extension("conv.onnx");
+        let heads_path = base.with_extension("heads.onnx");
+        let fc_path = base.with_extension("fc.bin");
+
+        let conv_model = tract_onnx::onnx()
+            .model_for_path(&conv_path)?
             .into_optimized()?
             .into_runnable()?;
 
+        let heads_model = tract_onnx::onnx()
+            .model_for_path(&heads_path)?
+            .into_optimized()?
+            .into_runnable()?;
+
+        let (fc_weight, fc_bias) = load_fc_binary(&fc_path)?;
+        let fc_hidden = fc_weight.nrows();
+        let total_cols = fc_weight.ncols();
+
+        // Split FC weight into board part and aux part
+        let fc_weight_board = fc_weight.slice(ndarray::s![.., ..CONV_OUT_SIZE]).to_owned();
+        let fc_weight_aux = fc_weight
+            .slice(ndarray::s![.., CONV_OUT_SIZE..total_cols])
+            .to_owned();
+
+        debug_assert_eq!(fc_weight_board.ncols(), CONV_OUT_SIZE);
+        debug_assert_eq!(fc_weight_aux.ncols(), AUX_FEATURES);
+
         Ok(TetrisNN {
-            model: Arc::new(model),
+            conv_model: Arc::new(conv_model),
+            heads_model: Arc::new(heads_model),
+            fc_weight_board: Arc::new(fc_weight_board),
+            fc_weight_aux: Arc::new(fc_weight_aux),
+            fc_bias: Arc::new(fc_bias),
+            fc_hidden,
+            board_cache: RefCell::new(HashMap::new()),
         })
     }
 
-    /// Run inference with action mask applied
+    /// Run inference with action mask applied, using board embedding cache.
     pub fn predict_masked(
         &self,
         env: &TetrisEnv,
@@ -36,35 +84,63 @@ impl TetrisNN {
         action_mask: &[bool],
         max_moves: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (board, aux) = encode_state(env, move_number, max_moves)?;
-        self.predict_masked_from_encoded_tensors(board, aux, action_mask)
-    }
+        let (board_f32, aux_vec) = encode_state_features(env, move_number, max_moves)?;
 
-    pub fn predict_masked_from_tensors(
-        &self,
-        board_tensor: &[f32],
-        aux_tensor: &[f32],
-        action_mask: &[bool],
-    ) -> TractResult<(Vec<f32>, f32)> {
-        let board = tract_ndarray::Array4::from_shape_vec(
-            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
-            board_tensor.to_vec(),
+        // Pack board into cache key
+        let board_key = pack_board(env);
+
+        // Check cache for board embedding
+        let board_embed = {
+            let cache = self.board_cache.borrow();
+            cache.get(&board_key).cloned()
+        };
+
+        let board_embed = match board_embed {
+            Some(embed) => embed,
+            None => {
+                // Cache miss: run conv model
+                let board_tensor = tract_ndarray::Array4::from_shape_vec(
+                    (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
+                    board_f32,
+                )?
+                .into_tensor();
+
+                let conv_output = self.conv_model.run(tvec!(board_tensor.into()))?;
+                let conv_out: Vec<f32> = conv_output[0]
+                    .to_array_view::<f32>()?
+                    .iter()
+                    .copied()
+                    .collect();
+
+                let conv_arr = Array1::from_vec(conv_out);
+
+                // board_embed = W_board @ conv_out + bias
+                let embed = self.fc_weight_board.dot(&conv_arr) + self.fc_bias.as_ref();
+
+                self.board_cache.borrow_mut().insert(board_key, embed.clone());
+                embed
+            }
+        };
+
+        // fc_out = board_embed + W_aux @ aux
+        let aux_arr = Array1::from_vec(aux_vec);
+        let fc_out = &board_embed + &self.fc_weight_aux.dot(&aux_arr);
+
+        // Run heads model
+        let fc_pre_tensor = tract_ndarray::Array2::from_shape_vec(
+            (1, self.fc_hidden),
+            fc_out.to_vec(),
         )?
         .into_tensor();
-        let aux = tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor.to_vec())?
-            .into_tensor();
-        self.predict_masked_from_encoded_tensors(board, aux, action_mask)
-    }
 
-    fn predict_masked_from_encoded_tensors(
-        &self,
-        board: Tensor,
-        aux: Tensor,
-        action_mask: &[bool],
-    ) -> TractResult<(Vec<f32>, f32)> {
-        let outputs = self.model.run(tvec!(board.into(), aux.into()))?;
+        let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
 
-        let policy_logits: Vec<f32> = outputs[0].to_array_view::<f32>()?.iter().copied().collect();
+        let policy_logits: Vec<f32> = heads_output[0]
+            .to_array_view::<f32>()?
+            .iter()
+            .copied()
+            .collect();
+
         if policy_logits.len() != action_mask.len() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -77,14 +153,78 @@ impl TetrisNN {
             .into());
         }
 
-        let value = outputs[1]
+        let value = heads_output[1]
             .to_array_view::<f32>()?
             .iter()
             .next()
             .copied()
             .expect("NN value output tensor is empty - model is malformed");
 
-        // Apply mask and softmax
+        let policy = masked_softmax(&policy_logits, action_mask);
+
+        Ok((policy, value))
+    }
+
+    pub fn predict_masked_from_tensors(
+        &self,
+        board_tensor: &[f32],
+        aux_tensor: &[f32],
+        action_mask: &[bool],
+    ) -> TractResult<(Vec<f32>, f32)> {
+        // No caching for raw tensor inputs (used only by debug functions)
+        let board = tract_ndarray::Array4::from_shape_vec(
+            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
+            board_tensor.to_vec(),
+        )?
+        .into_tensor();
+
+        let conv_output = self.conv_model.run(tvec!(board.into()))?;
+        let conv_out: Vec<f32> = conv_output[0]
+            .to_array_view::<f32>()?
+            .iter()
+            .copied()
+            .collect();
+
+        let conv_arr = Array1::from_vec(conv_out);
+        let aux_arr = Array1::from_vec(aux_tensor.to_vec());
+
+        let fc_out = self.fc_weight_board.dot(&conv_arr)
+            + &self.fc_weight_aux.dot(&aux_arr)
+            + self.fc_bias.as_ref();
+
+        let fc_pre_tensor = tract_ndarray::Array2::from_shape_vec(
+            (1, self.fc_hidden),
+            fc_out.to_vec(),
+        )?
+        .into_tensor();
+
+        let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
+
+        let policy_logits: Vec<f32> = heads_output[0]
+            .to_array_view::<f32>()?
+            .iter()
+            .copied()
+            .collect();
+
+        if policy_logits.len() != action_mask.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "NN policy output size mismatch: model={}, expected={} (action space changed; re-export ONNX)",
+                    policy_logits.len(),
+                    action_mask.len()
+                ),
+            )
+            .into());
+        }
+
+        let value = heads_output[1]
+            .to_array_view::<f32>()?
+            .iter()
+            .next()
+            .copied()
+            .expect("NN value output tensor is empty - model is malformed");
+
         let policy = masked_softmax(&policy_logits, action_mask);
 
         Ok((policy, value))
@@ -93,10 +233,72 @@ impl TetrisNN {
 
 impl Clone for TetrisNN {
     fn clone(&self) -> Self {
+        // Share Arc-wrapped models/weights, create fresh empty cache
         TetrisNN {
-            model: Arc::clone(&self.model),
+            conv_model: Arc::clone(&self.conv_model),
+            heads_model: Arc::clone(&self.heads_model),
+            fc_weight_board: Arc::clone(&self.fc_weight_board),
+            fc_weight_aux: Arc::clone(&self.fc_weight_aux),
+            fc_bias: Arc::clone(&self.fc_bias),
+            fc_hidden: self.fc_hidden,
+            board_cache: RefCell::new(HashMap::new()),
         }
     }
+}
+
+/// Pack 200 binary board cells into [u64; 4] for use as a hash key.
+/// Zero-collision: each unique board maps to a unique key.
+fn pack_board(env: &TetrisEnv) -> [u64; 4] {
+    let cells = env.board_cells();
+    let mut key = [0u64; 4];
+    for (i, &cell) in cells.iter().enumerate() {
+        if cell != 0 {
+            key[i / 64] |= 1u64 << (i % 64);
+        }
+    }
+    key
+}
+
+/// Load FC weight matrix and bias from binary file.
+/// Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
+fn load_fc_binary(path: &Path) -> TractResult<(Array2<f32>, Array1<f32>)> {
+    let mut file = File::open(path).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("FC binary not found at {}: {}", path.display(), e),
+        )
+    })?;
+
+    let mut header = [0u8; 8];
+    file.read_exact(&mut header)?;
+    let rows = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
+    let cols = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+
+    let weight_bytes = rows * cols * 4;
+    let bias_bytes = rows * 4;
+    let mut data = vec![0u8; weight_bytes + bias_bytes];
+    file.read_exact(&mut data)?;
+
+    let weight_f32: Vec<f32> = data[..weight_bytes]
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+
+    let bias_f32: Vec<f32> = data[weight_bytes..]
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+
+    let weight = Array2::from_shape_vec((rows, cols), weight_f32).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("FC weight shape mismatch: {}", e),
+        )
+    })?;
+
+    let bias = Array1::from_vec(bias_f32);
+
+    Ok((weight, bias))
 }
 
 /// Encode a TetrisEnv state into neural network input tensors
@@ -446,5 +648,86 @@ mod tests {
         assert!((probs[0] + probs[2] - 1.0).abs() < 1e-5);
         assert_eq!(probs[1], 0.0);
         assert_eq!(probs[3], 0.0);
+    }
+
+    #[test]
+    fn test_pack_board_empty() {
+        let env = TetrisEnv::new(10, 20);
+        // Empty board should pack to all zeros (new board has no placed blocks)
+        // Note: env may have a current piece but board_cells only contains placed blocks
+        let key = pack_board(&env);
+        assert_eq!(key, [0u64; 4], "Empty board should pack to all zeros");
+    }
+
+    #[test]
+    fn test_pack_board_deterministic() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.hard_drop();
+        let key1 = pack_board(&env);
+        let key2 = pack_board(&env);
+        assert_eq!(key1, key2, "Same board should produce same key");
+    }
+
+    #[test]
+    fn test_pack_board_different_boards() {
+        let mut env1 = TetrisEnv::new(10, 20);
+        env1.hard_drop();
+        let key1 = pack_board(&env1);
+
+        let mut env2 = TetrisEnv::new(10, 20);
+        env2.hard_drop();
+        env2.hard_drop();
+        let key2 = pack_board(&env2);
+
+        assert_ne!(key1, key2, "Different boards should produce different keys");
+    }
+
+    #[test]
+    fn test_load_and_predict_split_model() {
+        let model_path = "/tmp/tetris_split_test/test.onnx";
+        if !std::path::Path::new("/tmp/tetris_split_test/test.conv.onnx").exists() {
+            eprintln!("Skipping test - split model files not found (run Python export first)");
+            return;
+        }
+
+        let nn = TetrisNN::load(model_path).expect("Failed to load split model");
+        let env = TetrisEnv::new(10, 20);
+        let mask = get_action_mask(&env);
+
+        // First call - cache miss
+        let (policy1, value1) = nn
+            .predict_masked(&env, 0, &mask, 100)
+            .expect("First inference failed");
+        assert_eq!(policy1.len(), mask.len());
+        let policy_sum: f32 = policy1.iter().sum();
+        assert!(
+            (policy_sum - 1.0).abs() < 1e-4,
+            "Policy should sum to ~1.0, got {}",
+            policy_sum
+        );
+
+        // Second call with same board - cache hit, should produce identical results
+        let (policy2, value2) = nn
+            .predict_masked(&env, 0, &mask, 100)
+            .expect("Second inference (cache hit) failed");
+        assert_eq!(policy1, policy2, "Cache hit should produce same policy");
+        assert_eq!(value1, value2, "Cache hit should produce same value");
+
+        // Different aux (different move_number) with same board - different output
+        let (_policy3, value3) = nn
+            .predict_masked(&env, 50, &mask, 100)
+            .expect("Third inference (different aux) failed");
+        // Values should differ because aux features changed
+        assert_ne!(
+            value1, value3,
+            "Different move numbers should produce different values"
+        );
+
+        // Verify cache has exactly 1 entry (same board both times)
+        assert_eq!(
+            nn.board_cache.borrow().len(),
+            1,
+            "Cache should have 1 entry for the single board state"
+        );
     }
 }

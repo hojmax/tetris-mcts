@@ -136,3 +136,33 @@ class TetrisNet(nn.Module):
         value = self.value_head(x)
 
         return policy_logits, value
+
+
+class ConvBackbone(nn.Module):
+    """Extracts the conv layers from TetrisNet: board (1,1,20,10) → (1, 1600)."""
+
+    def __init__(self, parent: TetrisNet):
+        super().__init__()
+        self.conv1 = parent.conv1
+        self.bn1 = parent.bn1
+        self.conv2 = parent.conv2
+        self.bn2 = parent.bn2
+
+    def forward(self, board: torch.Tensor) -> torch.Tensor:
+        x = F.relu(self.bn1(self.conv1(board)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        return x.view(x.size(0), -1)
+
+
+class HeadsModel(nn.Module):
+    """Extracts the heads from TetrisNet: fc_pre (1, 128) → policy + value."""
+
+    def __init__(self, parent: TetrisNet):
+        super().__init__()
+        self.ln1 = parent.ln1
+        self.policy_head = parent.policy_head
+        self.value_head = parent.value_head
+
+    def forward(self, fc_pre: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        x = F.relu(self.ln1(fc_pre))
+        return self.policy_head(x), self.value_head(x)

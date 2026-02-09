@@ -10,10 +10,12 @@ import contextlib
 import io
 import json
 import logging
+import struct
 import warnings
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 import structlog
 
@@ -25,7 +27,7 @@ from tetris_mcts.config import (
     LATEST_METADATA_FILENAME,
     LATEST_ONNX_FILENAME,
 )
-from tetris_mcts.ml.network import TetrisNet, AUX_FEATURES
+from tetris_mcts.ml.network import AUX_FEATURES, ConvBackbone, HeadsModel, TetrisNet
 
 logger = structlog.get_logger()
 
@@ -151,6 +153,85 @@ def export_onnx(
         model.to(original_device)
 
 
+def _split_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
+    """Derive split model paths from the base ONNX path."""
+    base = Path(onnx_path).with_suffix("")
+    return (
+        base.with_suffix(".conv.onnx"),
+        base.with_suffix(".heads.onnx"),
+        base.with_suffix(".fc.bin"),
+    )
+
+
+def export_split_models(
+    model: TetrisNet,
+    onnx_path: str | Path,
+    opset_version: int = 18,
+) -> bool:
+    """Export split models (conv.onnx, heads.onnx, fc.bin) for cached Rust inference."""
+    conv_path, heads_path, fc_path = _split_paths(onnx_path)
+    original_device = next(model.parameters()).device
+    onnx_logger = logging.getLogger("torch.onnx")
+    old_level = onnx_logger.level
+    try:
+        model.cpu()
+        model.eval()
+        onnx_logger.setLevel(logging.ERROR)
+
+        conv_backbone = ConvBackbone(model)
+        conv_backbone.eval()
+        dummy_board = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
+        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+            warnings.filterwarnings("ignore")
+            torch.onnx.export(
+                conv_backbone,
+                (dummy_board,),
+                str(conv_path),
+                export_params=True,
+                opset_version=opset_version,
+                do_constant_folding=True,
+                input_names=["board"],
+                output_names=["conv_out"],
+                verbose=False,
+            )
+
+        heads_model = HeadsModel(model)
+        heads_model.eval()
+        fc_hidden = model.fc1.out_features
+        dummy_fc_pre = torch.zeros(1, fc_hidden)
+        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+            warnings.filterwarnings("ignore")
+            torch.onnx.export(
+                heads_model,
+                (dummy_fc_pre,),
+                str(heads_path),
+                export_params=True,
+                opset_version=opset_version,
+                do_constant_folding=True,
+                input_names=["fc_pre"],
+                output_names=["policy_logits", "value"],
+                verbose=False,
+            )
+
+        # Export FC weight and bias as raw f32 binary
+        # Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
+        weight = model.fc1.weight.detach().numpy()  # (fc_hidden, conv_flat + aux)
+        bias = model.fc1.bias.detach().numpy()  # (fc_hidden,)
+        rows, cols = weight.shape
+        with open(fc_path, "wb") as f:
+            f.write(struct.pack("<II", rows, cols))
+            f.write(weight.astype(np.float32).tobytes())
+            f.write(bias.astype(np.float32).tobytes())
+
+        return True
+    except (ImportError, ModuleNotFoundError) as e:
+        logger.warning("Split model export skipped; missing dependencies", error=str(e))
+        return False
+    finally:
+        onnx_logger.setLevel(old_level)
+        model.to(original_device)
+
+
 def export_metadata(
     filepath: str | Path,
     step: int,
@@ -212,10 +293,13 @@ class WeightManager:
         paths["checkpoint"] = ckpt_path
 
         if export_for_rust:
-            # Export ONNX
+            # Export ONNX (full model — used as watch sentinel for hot-swap)
             onnx_path = self.checkpoint_dir / LATEST_ONNX_FILENAME
             export_onnx(model, onnx_path)
             paths["onnx"] = onnx_path
+
+            # Export split models for cached inference
+            export_split_models(model, onnx_path)
 
         # Save metadata
         meta_path = self.checkpoint_dir / LATEST_METADATA_FILENAME
