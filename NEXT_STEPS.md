@@ -6,6 +6,7 @@
 - [ ] Maybe larger buffer to avoid catastrophic forgetting?
 - [ ] Larger batch sizes? Seems like low GPU utilization?
 - [ ] I need tree stats. Branchning factor (avg. children), number of leafs, total nodes, max depth, max attack seen in the tree (like a move causing attack, not the model prediction).
+- [ ] All the steps setttings depend on batch size which is kind of annoying.
 
 # Confusion
 
