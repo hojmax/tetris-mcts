@@ -69,7 +69,7 @@ class TrainingConfig:
     lr_min_factor: float = 0.5  # Minimum LR as fraction of initial (for cosine)
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
-    value_loss_weight: float = 70.0  # Scale factor for value loss in total loss
+    value_loss_weight: float = 30.0  # Scale factor for value loss in total loss
 
     # MCTS / Self-play
     num_simulations: int = 1000

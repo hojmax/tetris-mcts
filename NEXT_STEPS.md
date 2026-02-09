@@ -7,6 +7,7 @@
 - [ ] Larger batch sizes? Seems like low GPU utilization?
 - [ ] I need tree stats. Branchning factor (avg. children), number of leafs, total nodes, max depth, max attack seen in the tree (like a move causing attack, not the model prediction).
 - [ ] All the steps setttings depend on batch size which is kind of annoying.
+- Value loss weight of 70.0 is maybe a tad too high. Changing to 30.0.
 
 # Confusion
 
@@ -14,7 +15,7 @@
 - Valid actions steadily increasing whilst attack is decreasing.
 - Why did we see a big drop in attack mid training?
 - I think the learning rate is too high, but the model was actually at its peak right at the highest LR.
-- Hold rate is steadily increasing. Why is it so good to hold that much? I hold alot, but not every 0.375 moves.
+- Hold rate is steadily increasing. Why is it so good to hold that much? I hold alot, but not every 0.375 moves. Is that not almost all the time, when you can only hold 50% of the time?
 
 # Deep Review
 
