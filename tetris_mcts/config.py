@@ -60,7 +60,7 @@ class TrainingConfig:
 
     # Training
     total_steps: int = 100_000_000_000
-    batch_size: int = 512
+    batch_size: int = 1024
     learning_rate: float = 0.0005
     weight_decay: float = 1e-4
     grad_clip_norm: float = 1.0

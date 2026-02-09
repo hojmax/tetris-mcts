@@ -41,7 +41,7 @@ _env_cache: dict[int, TetrisEnv] = {}
 @dataclass
 class ScriptArgs:
     run_dir: Path = Path(
-        "training_runs/v0"
+        "training_runs/v6"
     )  # Training run dir (default: training_runs/v3)
 
 
