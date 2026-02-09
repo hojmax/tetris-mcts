@@ -24,7 +24,9 @@ logger = structlog.get_logger()
 class ScriptArgs:
     """Batch size benchmark arguments."""
 
-    batch_sizes: list[int] = field(default_factory=lambda: [32, 64, 128, 256, 512, 1024, 2048, 4096])
+    batch_sizes: list[int] = field(
+        default_factory=lambda: [32, 64, 128, 256, 512, 1024, 2048, 4096]
+    )
     warmup_steps: int = 20  # Steps to discard before timing
     bench_steps: int = 100  # Steps to time
     device: str = "auto"  # auto/cpu/cuda/mps
@@ -42,7 +44,13 @@ def get_best_device() -> str:
 def make_synthetic_batch(
     batch_size: int, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    boards = torch.randint(0, 2, (batch_size, 1, BOARD_HEIGHT, BOARD_WIDTH), dtype=torch.float32, device=device)
+    boards = torch.randint(
+        0,
+        2,
+        (batch_size, 1, BOARD_HEIGHT, BOARD_WIDTH),
+        dtype=torch.float32,
+        device=device,
+    )
     aux = torch.randn(batch_size, AUX_FEATURES, device=device)
     # Create a valid policy target: random sparse distribution over a subset of actions
     masks = torch.zeros(batch_size, NUM_ACTIONS, device=device)
@@ -51,7 +59,9 @@ def make_synthetic_batch(
         valid_indices = torch.randperm(NUM_ACTIONS)[:num_valid]
         masks[i, valid_indices] = 1.0
     policy_targets = torch.rand(batch_size, NUM_ACTIONS, device=device) * masks
-    policy_targets = policy_targets / policy_targets.sum(dim=1, keepdim=True).clamp(min=1e-8)
+    policy_targets = policy_targets / policy_targets.sum(dim=1, keepdim=True).clamp(
+        min=1e-8
+    )
     value_targets = torch.rand(batch_size, device=device) * 10.0
     return boards, aux, policy_targets, value_targets, masks
 
@@ -78,7 +88,9 @@ def benchmark_batch_size(
             return None
         raise
 
-    model = TetrisNet(conv_filters=[4, 8], fc_hidden=128, conv_kernel_size=3, conv_padding=1).to(device)
+    model = TetrisNet(
+        conv_filters=[4, 8], fc_hidden=128, conv_kernel_size=3, conv_padding=1
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-4)
     model.train()
 
@@ -88,11 +100,22 @@ def benchmark_batch_size(
     for _ in range(warmup_steps):
         optimizer.zero_grad()
         try:
-            total_loss, _, _ = compute_loss(model, boards, aux, policy_targets, value_targets, masks, value_loss_weight)
+            total_loss, _, _ = compute_loss(
+                model,
+                boards,
+                aux,
+                policy_targets,
+                value_targets,
+                masks,
+                value_loss_weight,
+            )
             total_loss.backward()
             optimizer.step()
         except RuntimeError as e:
-            if "out of memory" in str(e).lower() or "not enough memory" in str(e).lower():
+            if (
+                "out of memory" in str(e).lower()
+                or "not enough memory" in str(e).lower()
+            ):
                 logger.warning("OOM during warmup", batch_size=batch_size)
                 return None
             raise
@@ -144,7 +167,9 @@ def main(args: ScriptArgs) -> None:
 
     for bs in args.batch_sizes:
         logger.info("Benchmarking", batch_size=bs)
-        result = benchmark_batch_size(bs, device, args.warmup_steps, args.bench_steps, args.value_loss_weight)
+        result = benchmark_batch_size(
+            bs, device, args.warmup_steps, args.bench_steps, args.value_loss_weight
+        )
         if result is None:
             logger.warning("Skipped (OOM)", batch_size=bs)
             continue
@@ -162,7 +187,9 @@ def main(args: ScriptArgs) -> None:
 
     # Print summary table
     print("\n" + "=" * 72)
-    print(f"{'Batch Size':>12} {'Avg (ms)':>10} {'Median (ms)':>12} {'P95 (ms)':>10} {'Examples/s':>12}")
+    print(
+        f"{'Batch Size':>12} {'Avg (ms)':>10} {'Median (ms)':>12} {'P95 (ms)':>10} {'Examples/s':>12}"
+    )
     print("-" * 72)
     for r in results:
         print(
@@ -175,7 +202,9 @@ def main(args: ScriptArgs) -> None:
     print("=" * 72)
 
     best = max(results, key=lambda r: r["examples_per_sec"])
-    print(f"\nBest throughput: batch_size={best['batch_size']} ({best['examples_per_sec']:.0f} examples/sec)")
+    print(
+        f"\nBest throughput: batch_size={best['batch_size']} ({best['examples_per_sec']:.0f} examples/sec)"
+    )
 
 
 if __name__ == "__main__":

@@ -123,7 +123,7 @@ def main() -> None:
 
     # Show top-5 policy actions
     top5 = np.argsort(policy_logits)[-5:][::-1]
-    print(f"\nTop 5 raw logits:")
+    print("\nTop 5 raw logits:")
     for i, idx in enumerate(top5):
         print(f"  action {idx}: {policy_logits[idx]:.4f}")
 

@@ -277,13 +277,17 @@ fn backup_with_value(
                 MCTSNode::Decision(d) => {
                     d.value_sum += total_value;
                     if track_value_history {
-                        d.value_history.push(total_value);
+                        d.value_history
+                            .get_or_insert_with(Vec::new)
+                            .push(total_value);
                     }
                 }
                 MCTSNode::Chance(c) => {
                     c.value_sum += total_value;
                     if track_value_history {
-                        c.value_history.push(total_value);
+                        c.value_history
+                            .get_or_insert_with(Vec::new)
+                            .push(total_value);
                     }
                 }
             }
@@ -292,7 +296,9 @@ fn backup_with_value(
         // Update the DecisionNode itself
         node.value_sum += total_value;
         if track_value_history {
-            node.value_history.push(total_value);
+            node.value_history
+                .get_or_insert_with(Vec::new)
+                .push(total_value);
         }
     }
 }

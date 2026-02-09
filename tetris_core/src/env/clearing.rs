@@ -69,8 +69,9 @@ impl TetrisEnv {
             let (is_tspin, is_mini) = self.check_tspin(&piece);
 
             for (x, y) in get_cells(piece.piece_type, piece.rotation, piece.x, piece.y) {
-                self.board[y as usize][x as usize] = 1;
-                self.board_piece_types[y as usize][x as usize] = Some(piece.piece_type);
+                self.board[y as usize * self.width + x as usize] = 1;
+                self.board_piece_types[y as usize * self.width + x as usize] =
+                    Some(piece.piece_type);
                 // Update column height if this cell is higher (lower y) than current
                 if y < self.column_heights[x as usize] {
                     self.column_heights[x as usize] = y;
@@ -104,39 +105,26 @@ impl TetrisEnv {
             return;
         }
 
-        // Count cleared lines and build new board in one pass - O(height)
-        // Line full check is now O(1) using row_fill_counts
-        let mut kept_board = Vec::with_capacity(self.height);
-        let mut kept_piece_types = Vec::with_capacity(self.height);
-        let mut kept_row_counts = Vec::with_capacity(self.height);
-
-        for y in 0..self.height {
-            if self.row_fill_counts[y] == width {
-                // Line is full - count it but don't add to new board
-            } else {
-                // Line not full - keep it
-                kept_board.push(std::mem::take(&mut self.board[y]));
-                kept_piece_types.push(std::mem::take(&mut self.board_piece_types[y]));
-                kept_row_counts.push(self.row_fill_counts[y]);
+        // Compact non-cleared rows downward using in-place copy_within (zero allocations)
+        let w = self.width;
+        let mut write_row = self.height;
+        for read_row in (0..self.height).rev() {
+            if self.row_fill_counts[read_row] < width {
+                write_row -= 1;
+                if write_row != read_row {
+                    let src = read_row * w;
+                    let dst = write_row * w;
+                    self.board.copy_within(src..src + w, dst);
+                    self.board_piece_types.copy_within(src..src + w, dst);
+                    self.row_fill_counts[write_row] = self.row_fill_counts[read_row];
+                }
             }
         }
-
-        // Build empty rows, then append kept rows - O(height) total
-        let mut new_board = Vec::with_capacity(self.height);
-        let mut new_piece_types = Vec::with_capacity(self.height);
-        let mut new_row_counts = Vec::with_capacity(self.height);
-        for _ in 0..num_lines {
-            new_board.push(vec![0; self.width]);
-            new_piece_types.push(vec![None; self.width]);
-            new_row_counts.push(0);
-        }
-        new_board.append(&mut kept_board);
-        new_piece_types.append(&mut kept_piece_types);
-        new_row_counts.append(&mut kept_row_counts);
-
-        self.board = new_board;
-        self.board_piece_types = new_piece_types;
-        self.row_fill_counts = new_row_counts;
+        // Zero out top rows
+        let n = num_lines as usize;
+        self.board[..n * w].fill(0);
+        self.board_piece_types[..n * w].fill(None);
+        self.row_fill_counts[..n].fill(0);
 
         // Each cleared line removes width blocks
         self.total_blocks -= self.width as u32 * num_lines;
@@ -147,7 +135,7 @@ impl TetrisEnv {
         for x in 0..self.width {
             self.column_heights[x] = self.height as i32; // Default: empty column
             for y in 0..self.height {
-                if self.board[y][x] != 0 {
+                if self.board[y * self.width + x] != 0 {
                     self.column_heights[x] = y as i32;
                     break;
                 }

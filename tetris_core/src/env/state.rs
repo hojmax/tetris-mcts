@@ -35,8 +35,8 @@ pub struct TetrisEnv {
     pub combo: u32,
     #[pyo3(get)]
     pub back_to_back: bool,
-    pub(crate) board: Vec<Vec<u8>>,
-    pub(crate) board_piece_types: Vec<Vec<Option<usize>>>,
+    pub(crate) board: Vec<u8>,
+    pub(crate) board_piece_types: Vec<Option<usize>>,
     pub(crate) current_piece: Option<crate::piece::Piece>,
     pub(crate) piece_queue: VecDeque<usize>,
     pub(crate) hold_piece: Option<usize>,
@@ -77,8 +77,8 @@ impl TetrisEnv {
             game_over: false,
             combo: 0,
             back_to_back: false,
-            board: vec![vec![0; width]; height],
-            board_piece_types: vec![vec![None; width]; height],
+            board: vec![0u8; width * height],
+            board_piece_types: vec![None; width * height],
             current_piece: None,
             piece_queue: VecDeque::new(),
             hold_piece: None,
@@ -105,8 +105,8 @@ impl TetrisEnv {
 
     /// Reset the game with a specific random seed for reproducibility.
     pub fn reset_internal(&mut self, seed: u64) {
-        self.board = vec![vec![0; self.width]; self.height];
-        self.board_piece_types = vec![vec![None; self.width]; self.height];
+        self.board = vec![0u8; self.width * self.height];
+        self.board_piece_types = vec![None; self.width * self.height];
         self.attack = 0;
         self.lines_cleared = 0;
         self.game_over = false;

@@ -76,11 +76,11 @@ pub struct Placement {
 pub struct Board<'a> {
     width: usize,
     height: usize,
-    cells: &'a [Vec<u8>],
+    cells: &'a [u8],
 }
 
 impl<'a> Board<'a> {
-    pub fn new(width: usize, height: usize, cells: &'a [Vec<u8>]) -> Self {
+    pub fn new(width: usize, height: usize, cells: &'a [u8]) -> Self {
         Board {
             width,
             height,
@@ -111,7 +111,7 @@ impl<'a> Board<'a> {
             if cx < 0 || cx >= self.width as i32 || cy < 0 || cy >= self.height as i32 {
                 return false;
             }
-            if self.cells[cy as usize][cx as usize] != 0 {
+            if self.cells[cy as usize * self.width + cx as usize] != 0 {
                 return false;
             }
         }
@@ -386,8 +386,8 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    fn empty_cells(width: usize, height: usize) -> Vec<Vec<u8>> {
-        vec![vec![0; width]; height]
+    fn empty_cells(width: usize, height: usize) -> Vec<u8> {
+        vec![0u8; width * height]
     }
 
     #[test]
@@ -503,11 +503,11 @@ mod tests {
     #[test]
     fn test_blocked_board() {
         // Create a board with a wall blocking most positions
-        let mut cells = vec![vec![0; 10]; 20];
+        let mut cells = vec![0u8; 10 * 20];
         // Fill rows 10-19 except column 0
         for y in 10..20 {
             for x in 1..10 {
-                cells[y][x] = 1;
+                cells[y * 10 + x] = 1;
             }
         }
         let board = Board::new(10, 20, &cells);
@@ -523,10 +523,10 @@ mod tests {
     #[test]
     fn test_spawn_blocked() {
         // Create a board where spawn is blocked
-        let mut cells = vec![vec![0; 10]; 20];
+        let mut cells = vec![0u8; 10 * 20];
         for x in 0..10 {
-            cells[0][x] = 1;
-            cells[1][x] = 1;
+            cells[0 * 10 + x] = 1;
+            cells[1 * 10 + x] = 1;
         }
         let board = Board::new(10, 20, &cells);
 

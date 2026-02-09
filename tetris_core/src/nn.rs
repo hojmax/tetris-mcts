@@ -124,11 +124,11 @@ pub fn encode_state_features(
         );
     }
 
-    // Board tensor: binary (1 = filled, 0 = empty) - flatten to 200 values (will be reshaped to 1x20x10)
+    // Board tensor: binary (1 = filled, 0 = empty) - 200 values (will be reshaped to 1x20x10)
     let board_tensor: Vec<f32> = env
         .board_cells()
         .iter()
-        .flat_map(|row| row.iter().map(|&cell| if cell != 0 { 1.0 } else { 0.0 }))
+        .map(|&cell| if cell != 0 { 1.0 } else { 0.0 })
         .collect();
 
     // Auxiliary features
@@ -252,12 +252,12 @@ mod tests {
         for y in 0..BOARD_HEIGHT {
             for x in 0..BOARD_WIDTH {
                 let idx = y * BOARD_WIDTH + x;
-                let expected = if board[y][x] != 0 { 1.0 } else { 0.0 };
+                let expected = if board[idx] != 0 { 1.0 } else { 0.0 };
                 let actual = board_values[idx];
                 assert_eq!(
                     actual, expected,
                     "Board[{},{}] with value {} should encode to {}, got {}",
-                    y, x, board[y][x], expected, actual
+                    y, x, board[idx], expected, actual
                 );
             }
         }

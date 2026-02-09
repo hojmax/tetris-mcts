@@ -12,20 +12,6 @@ use crate::env::TetrisEnv;
 use super::action_space::{HOLD_ACTION_INDEX, NUM_ACTIONS};
 use super::utils::sample_dirichlet;
 
-/// Trait for common node statistics (visit count, value sum, mean value)
-pub trait NodeStats {
-    fn visit_count(&self) -> u32;
-    fn value_sum(&self) -> f32;
-
-    fn mean_value(&self) -> f32 {
-        if self.visit_count() > 0 {
-            self.value_sum() / self.visit_count() as f32
-        } else {
-            0.0
-        }
-    }
-}
-
 /// MCTS Node types
 #[derive(Clone)]
 pub enum MCTSNode {
@@ -36,15 +22,13 @@ pub enum MCTSNode {
 }
 
 impl MCTSNode {
-    /// Get visit count (delegates to inner node via NodeStats trait)
     pub fn visit_count(&self) -> u32 {
         match self {
-            MCTSNode::Decision(n) => n.visit_count(),
-            MCTSNode::Chance(n) => n.visit_count(),
+            MCTSNode::Decision(n) => n.visit_count,
+            MCTSNode::Chance(n) => n.visit_count,
         }
     }
 
-    /// Get mean value (delegates to inner node via NodeStats trait)
     pub fn mean_value(&self) -> f32 {
         match self {
             MCTSNode::Decision(n) => n.mean_value(),
@@ -74,8 +58,8 @@ pub struct DecisionNode {
     pub move_number: u32,
     /// Raw neural network value estimate (stored when node is expanded)
     pub nn_value: f32,
-    /// All backed-up total values that contributed to value_sum
-    pub value_history: Vec<f32>,
+    /// All backed-up total values that contributed to value_sum (only when track_value_history=true)
+    pub value_history: Option<Vec<f32>>,
 }
 
 impl DecisionNode {
@@ -99,7 +83,7 @@ impl DecisionNode {
             is_terminal,
             move_number,
             nn_value: 0.0,
-            value_history: Vec::new(),
+            value_history: None,
         }
     }
 
@@ -156,13 +140,13 @@ impl DecisionNode {
     }
 }
 
-impl NodeStats for DecisionNode {
-    fn visit_count(&self) -> u32 {
-        self.visit_count
-    }
-
-    fn value_sum(&self) -> f32 {
-        self.value_sum
+impl DecisionNode {
+    pub fn mean_value(&self) -> f32 {
+        if self.visit_count > 0 {
+            self.value_sum / self.visit_count as f32
+        } else {
+            0.0
+        }
     }
 }
 
@@ -187,8 +171,8 @@ pub struct ChanceNode {
     pub nn_value: f32,
     /// Cached policy from NN (shared by all DecisionNode children)
     pub cached_policy: Vec<f32>,
-    /// All backed-up total values that contributed to value_sum
-    pub value_history: Vec<f32>,
+    /// All backed-up total values that contributed to value_sum (only when track_value_history=true)
+    pub value_history: Option<Vec<f32>>,
 }
 
 impl ChanceNode {
@@ -210,7 +194,7 @@ impl ChanceNode {
             bag_remaining,
             nn_value,
             cached_policy,
-            value_history: Vec::new(),
+            value_history: None,
         }
     }
 
@@ -226,13 +210,13 @@ impl ChanceNode {
     }
 }
 
-impl NodeStats for ChanceNode {
-    fn visit_count(&self) -> u32 {
-        self.visit_count
-    }
-
-    fn value_sum(&self) -> f32 {
-        self.value_sum
+impl ChanceNode {
+    pub fn mean_value(&self) -> f32 {
+        if self.visit_count > 0 {
+            self.value_sum / self.visit_count as f32
+        } else {
+            0.0
+        }
     }
 }
 

@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn test_perfect_clear_with_cells() {
         let mut env = TetrisEnv::new(10, 20);
-        env.board[19][0] = 1;
+        env.board[19 * env.width + 0] = 1;
         env.sync_board_stats();
         assert!(!env.is_perfect_clear());
     }
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn test_is_cell_filled_with_piece() {
         let mut env = TetrisEnv::new(10, 20);
-        env.board[19][5] = 1;
+        env.board[19 * env.width + 5] = 1;
         assert!(env.is_cell_filled(5, 19));
         assert!(!env.is_cell_filled(4, 19));
     }
@@ -510,7 +510,7 @@ mod tests {
     fn test_is_valid_position_piece_collision() {
         let mut env = TetrisEnv::new(10, 20);
         // Place a block and try to overlap
-        env.board[19][5] = 1;
+        env.board[19 * env.width + 5] = 1;
         let piece = Piece::with_position(T_PIECE, 4, 18, 0); // T piece that overlaps
         assert!(!env.is_valid_position_for(&piece));
     }
@@ -530,9 +530,9 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // Create a T-spin pocket: fill 3 corners around where T piece will land
         // T piece center at (4, 18) with rotation 0 has center at (5, 19)
-        env.board[18][4] = 1; // top-left corner
-        env.board[18][6] = 1; // top-right corner
-        env.board[19][4] = 1; // bottom-left corner (front corner for rotation 0)
+        env.board[18 * env.width + 4] = 1; // top-left corner
+        env.board[18 * env.width + 6] = 1; // top-right corner
+        env.board[19 * env.width + 4] = 1; // bottom-left corner (front corner for rotation 0)
 
         let piece = Piece::with_position(T_PIECE, 4, 18, 0);
         env.current_piece = Some(piece.clone());
@@ -549,9 +549,9 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // T piece center at (5, 19) rotation 0 - front corners are top-left and top-right
         // Fill 3 corners but only 1 front corner
-        env.board[18][4] = 1; // top-left corner (front)
-        env.board[19][4] = 1; // bottom-left corner (back)
-        env.board[19][6] = 1; // bottom-right corner (back)
+        env.board[18 * env.width + 4] = 1; // top-left corner (front)
+        env.board[19 * env.width + 4] = 1; // bottom-left corner (back)
+        env.board[19 * env.width + 6] = 1; // bottom-right corner (back)
 
         let piece = Piece::with_position(T_PIECE, 4, 18, 0);
         env.current_piece = Some(piece.clone());
@@ -567,9 +567,9 @@ mod tests {
     fn test_tspin_kick_4_makes_full_tspin() {
         let mut env = TetrisEnv::new(10, 20);
         // With kick index 4 (the special SRS kick), even mini becomes full
-        env.board[18][4] = 1;
-        env.board[19][4] = 1;
-        env.board[19][6] = 1;
+        env.board[18 * env.width + 4] = 1;
+        env.board[19 * env.width + 4] = 1;
+        env.board[19 * env.width + 6] = 1;
 
         let piece = Piece::with_position(T_PIECE, 4, 18, 0);
         env.current_piece = Some(piece.clone());
@@ -587,9 +587,9 @@ mod tests {
         // T piece at (4, 10) with rotation 0 has center at (5, 11)
         // Corners are at: (4,10), (6,10), (4,12), (6,12)
         // Only fill 2 corners - not enough for T-spin
-        env.board[10][4] = 1; // top-left corner
-        env.board[10][6] = 1; // top-right corner
-                              // Leave bottom corners empty
+        env.board[10 * env.width + 4] = 1; // top-left corner
+        env.board[10 * env.width + 6] = 1; // top-right corner
+                                           // Leave bottom corners empty
 
         let piece = Piece::with_position(T_PIECE, 4, 10, 0);
         env.current_piece = Some(piece.clone());
@@ -605,9 +605,9 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // T piece rotation 1 (CW) - front corners are top-right and bottom-right
         // Center is at (piece.x + 1, piece.y + 1) = (5, 19)
-        env.board[18][6] = 1; // top-right (front)
-        env.board[18][4] = 1; // top-left (back)
-        env.board[19][6] = 1; // bottom-right (front)
+        env.board[18 * env.width + 6] = 1; // top-right (front)
+        env.board[18 * env.width + 4] = 1; // top-left (back)
+        env.board[19 * env.width + 6] = 1; // bottom-right (front)
 
         let piece = Piece::with_position(T_PIECE, 4, 18, 1);
         env.current_piece = Some(piece.clone());
@@ -626,7 +626,7 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // Fill the bottom row
         for x in 0..10 {
-            env.board[19][x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         env.sync_board_stats();
         env.clear_lines_internal(false, false);
@@ -640,7 +640,7 @@ mod tests {
         // Fill bottom 4 rows
         for y in 16..20 {
             for x in 0..10 {
-                env.board[y][x] = 1;
+                env.board[y * env.width + x] = 1;
             }
         }
         env.sync_board_stats();
@@ -656,7 +656,7 @@ mod tests {
         // Fill bottom 4 rows for Tetris (difficult clear)
         for y in 16..20 {
             for x in 0..10 {
-                env.board[y][x] = 1;
+                env.board[y * env.width + x] = 1;
             }
         }
         env.sync_board_stats();
@@ -675,7 +675,7 @@ mod tests {
 
         // Fill bottom 1 row (not a difficult clear)
         for x in 0..10 {
-            env.board[19][x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         env.sync_board_stats();
         env.clear_lines_internal(false, false);
@@ -691,7 +691,7 @@ mod tests {
 
         // Fill one row
         for x in 0..10 {
-            env.board[19][x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         env.sync_board_stats();
         env.clear_lines_internal(false, false);
@@ -705,7 +705,7 @@ mod tests {
 
         // Fill one row
         for x in 0..10 {
-            env.board[19][x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         env.sync_board_stats();
         env.clear_lines_internal(true, false); // T-spin single
@@ -721,7 +721,7 @@ mod tests {
 
         // Fill one row
         for x in 0..10 {
-            env.board[19][x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         env.sync_board_stats();
         env.clear_lines_internal(true, true); // T-spin mini single
@@ -752,8 +752,8 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // Place wall of pieces on the left
         for y in 0..20 {
-            env.board[y][0] = 1;
-            env.board[y][1] = 1;
+            env.board[y * env.width + 0] = 1;
+            env.board[y * env.width + 1] = 1;
         }
 
         // Move current piece down a bit
@@ -857,8 +857,8 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // Fill top rows where pieces spawn
         for x in 0..10 {
-            env.board[0][x] = 1;
-            env.board[1][x] = 1;
+            env.board[0 * env.width + x] = 1;
+            env.board[1 * env.width + x] = 1;
         }
 
         // Spawning should trigger game over
@@ -906,12 +906,10 @@ mod tests {
 
         // Check that board_piece_types has the piece type
         let mut found_piece_type = false;
-        for row in &env.board_piece_types {
-            for cell in row {
-                if *cell == Some(piece_type) {
-                    found_piece_type = true;
-                    break;
-                }
+        for cell in &env.board_piece_types {
+            if *cell == Some(piece_type) {
+                found_piece_type = true;
+                break;
             }
         }
         assert!(
@@ -936,7 +934,7 @@ mod tests {
         // Fill bottom 2 rows
         for y in 18..20 {
             for x in 0..10 {
-                env.board[y][x] = 1;
+                env.board[y * env.width + x] = 1;
             }
         }
         env.sync_board_stats();
@@ -950,7 +948,7 @@ mod tests {
         // Fill bottom 3 rows
         for y in 17..20 {
             for x in 0..10 {
-                env.board[y][x] = 1;
+                env.board[y * env.width + x] = 1;
             }
         }
         env.sync_board_stats();
@@ -963,12 +961,12 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // Fill rows 15 and 19 (not contiguous)
         for x in 0..10 {
-            env.board[15][x] = 1;
-            env.board[19][x] = 1;
+            env.board[15 * env.width + x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         // Leave row 17 partial
         for x in 0..5 {
-            env.board[17][x] = 1;
+            env.board[17 * env.width + x] = 1;
         }
         env.sync_board_stats();
 
@@ -998,7 +996,7 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         // Create a stack in the middle
         for x in 0..10 {
-            env.board[15][x] = 1;
+            env.board[15 * env.width + x] = 1;
         }
         env.sync_board_stats();
 
@@ -1123,13 +1121,7 @@ mod tests {
         // Piece should be locked, new piece spawned
         assert!(env.current_piece.is_some());
         // Board should have the piece
-        let mut has_piece = false;
-        for row in &env.board {
-            if row.iter().any(|&c| c != 0) {
-                has_piece = true;
-                break;
-            }
-        }
+        let has_piece = env.board.iter().any(|&c| c != 0);
         assert!(has_piece, "Board should have locked piece");
     }
 
@@ -1178,9 +1170,9 @@ mod tests {
         env.spawn_piece_from_type(T_PIECE);
 
         // Set up a scenario where kick_index matters for T-spin
-        env.board[18][4] = 1;
-        env.board[19][4] = 1;
-        env.board[19][6] = 1;
+        env.board[18 * env.width + 4] = 1;
+        env.board[19 * env.width + 4] = 1;
+        env.board[19 * env.width + 6] = 1;
         env.sync_board_stats();
 
         // Place with kick_index = 4 (special T-spin kick)
@@ -1198,7 +1190,7 @@ mod tests {
 
         // Set up almost-complete row
         for x in 0..6 {
-            env.board[19][x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         env.sync_board_stats();
 
@@ -1207,7 +1199,13 @@ mod tests {
         let attack = env.place_piece_internal_with_kick(6, 18, 0, false, 0);
 
         // Should have cleared a line and gotten attack
-        assert!(env.lines_cleared > 0 || attack > 0 || env.board[19].iter().all(|&c| c == 0));
+        assert!(
+            env.lines_cleared > 0
+                || attack > 0
+                || env.board[19 * env.width..(19 + 1) * env.width]
+                    .iter()
+                    .all(|&c| c == 0)
+        );
     }
 
     #[test]
@@ -1217,7 +1215,7 @@ mod tests {
         // Create a stack
         for y in 15..20 {
             for x in 0..10 {
-                env.board[y][x] = 1;
+                env.board[y * env.width + x] = 1;
             }
         }
         env.sync_board_stats();
@@ -1266,7 +1264,7 @@ mod tests {
         // Set up Tetris (4 almost-complete rows), leaving column 9 empty
         for y in 16..20 {
             for x in 0..9 {
-                env.board[y][x] = 1;
+                env.board[y * env.width + x] = 1;
             }
         }
         env.sync_board_stats();
@@ -1342,16 +1340,18 @@ mod tests {
     // (column_heights, total_blocks, row_fill_counts) match ground truth.
 
     /// Helper to compute expected tracking fields from board state
-    fn compute_expected_stats(board: &[Vec<u8>]) -> (Vec<i32>, u32, Vec<u8>) {
-        let height = board.len();
-        let width = board[0].len();
+    fn compute_expected_stats(
+        board: &[u8],
+        width: usize,
+        height: usize,
+    ) -> (Vec<i32>, u32, Vec<u8>) {
         let mut column_heights = vec![height as i32; width];
         let mut total_blocks = 0u32;
         let mut row_fill_counts = vec![0u8; height];
 
         for x in 0..width {
             for y in 0..height {
-                if board[y][x] != 0 {
+                if board[y * width + x] != 0 {
                     total_blocks += 1;
                     row_fill_counts[y] += 1;
                     if (y as i32) < column_heights[x] {
@@ -1372,7 +1372,7 @@ mod tests {
 
         // Compute expected values from actual board state
         let (expected_heights, expected_blocks, expected_row_counts) =
-            compute_expected_stats(&env.board);
+            compute_expected_stats(&env.board, env.width, env.height);
 
         assert_eq!(
             env.column_heights, expected_heights,
@@ -1401,7 +1401,7 @@ mod tests {
         }
 
         let (expected_heights, expected_blocks, expected_row_counts) =
-            compute_expected_stats(&env.board);
+            compute_expected_stats(&env.board, env.width, env.height);
 
         assert_eq!(
             env.column_heights, expected_heights,
@@ -1435,7 +1435,7 @@ mod tests {
         }
 
         let (expected_heights, expected_blocks, expected_row_counts) =
-            compute_expected_stats(&env.board);
+            compute_expected_stats(&env.board, env.width, env.height);
 
         assert_eq!(
             env.column_heights, expected_heights,
@@ -1470,7 +1470,7 @@ mod tests {
         }
 
         let (expected_heights, expected_blocks, expected_row_counts) =
-            compute_expected_stats(&env.board);
+            compute_expected_stats(&env.board, env.width, env.height);
 
         assert_eq!(env.column_heights, expected_heights);
         assert_eq!(env.total_blocks, expected_blocks);
@@ -1488,7 +1488,7 @@ mod tests {
         env.hard_drop();
 
         let (expected_heights, expected_blocks, expected_row_counts) =
-            compute_expected_stats(&env.board);
+            compute_expected_stats(&env.board, env.width, env.height);
 
         assert_eq!(env.column_heights, expected_heights);
         assert_eq!(env.total_blocks, expected_blocks);
@@ -1503,13 +1503,13 @@ mod tests {
         // Manually set up a perfect clear scenario
         // Fill bottom row except one cell, then place I piece to complete
         for x in 0..6 {
-            env.board[19][x] = 1;
+            env.board[19 * env.width + x] = 1;
         }
         env.sync_board_stats();
 
         // Verify sync works correctly
         let (expected_heights, expected_blocks, expected_row_counts) =
-            compute_expected_stats(&env.board);
+            compute_expected_stats(&env.board, env.width, env.height);
         assert_eq!(env.column_heights, expected_heights);
         assert_eq!(env.total_blocks, expected_blocks);
         assert_eq!(env.row_fill_counts, expected_row_counts);
@@ -1521,13 +1521,13 @@ mod tests {
 
         // Set up rows with different fill levels
         for x in 0..3 {
-            env.board[19][x] = 1; // 3 cells in row 19
+            env.board[19 * env.width + x] = 1; // 3 cells in row 19
         }
         for x in 0..7 {
-            env.board[18][x] = 1; // 7 cells in row 18
+            env.board[18 * env.width + x] = 1; // 7 cells in row 18
         }
         for x in 0..10 {
-            env.board[17][x] = 1; // 10 cells in row 17 (full)
+            env.board[17 * env.width + x] = 1; // 10 cells in row 17 (full)
         }
         env.sync_board_stats();
 
@@ -1542,10 +1542,10 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
 
         // Create varied column heights
-        env.board[19][0] = 1; // Column 0: height at y=19
-        env.board[15][1] = 1; // Column 1: height at y=15
-        env.board[10][2] = 1; // Column 2: height at y=10
-        env.board[19][2] = 1; // Also in column 2, but lower
+        env.board[19 * env.width + 0] = 1; // Column 0: height at y=19
+        env.board[15 * env.width + 1] = 1; // Column 1: height at y=15
+        env.board[10 * env.width + 2] = 1; // Column 2: height at y=10
+        env.board[19 * env.width + 2] = 1; // Also in column 2, but lower
         env.sync_board_stats();
 
         assert_eq!(env.column_heights[0], 19);
@@ -1577,7 +1577,7 @@ mod tests {
             (9, 10),
         ];
         for (x, y) in positions {
-            env.board[y][x] = 1;
+            env.board[y * env.width + x] = 1;
         }
         env.sync_board_stats();
 
@@ -1600,7 +1600,8 @@ mod tests {
             let inc_row_counts = env.row_fill_counts.clone();
 
             // Recalculate from scratch
-            let (sync_heights, sync_blocks, sync_row_counts) = compute_expected_stats(&env.board);
+            let (sync_heights, sync_blocks, sync_row_counts) =
+                compute_expected_stats(&env.board, env.width, env.height);
 
             assert_eq!(
                 inc_heights, sync_heights,
@@ -1632,7 +1633,7 @@ mod tests {
     fn verify_board_invariants(env: &TetrisEnv, context: &str) {
         // Recompute expected values from scratch
         let (expected_heights, expected_blocks, expected_row_counts) =
-            compute_expected_stats(&env.board);
+            compute_expected_stats(&env.board, env.width, env.height);
 
         // 1. Column heights must match actual board state
         assert_eq!(
@@ -1658,23 +1659,15 @@ mod tests {
         // 4. Board dimensions must be consistent
         assert_eq!(
             env.board.len(),
-            env.height,
-            "{}: board height mismatch",
+            env.width * env.height,
+            "{}: board size mismatch",
             context
         );
-        for (y, row) in env.board.iter().enumerate() {
-            assert_eq!(
-                row.len(),
-                env.width,
-                "{}: row {} width mismatch",
-                context,
-                y
-            );
-        }
 
         // 5. All cells must have valid values (0-7)
-        for (y, row) in env.board.iter().enumerate() {
-            for (x, &cell) in row.iter().enumerate() {
+        for y in 0..env.height {
+            for x in 0..env.width {
+                let cell = env.board[y * env.width + x];
                 assert!(
                     cell <= 7,
                     "{}: invalid cell value {} at ({}, {})",
@@ -1709,7 +1702,10 @@ mod tests {
             );
 
             // Verify count matches actual filled cells in row
-            let actual_count = env.board[y].iter().filter(|&&c| c != 0).count() as u8;
+            let actual_count = env.board[y * env.width..(y + 1) * env.width]
+                .iter()
+                .filter(|&&c| c != 0)
+                .count() as u8;
             assert_eq!(
                 count, actual_count,
                 "{}: row {} fill count {} doesn't match actual count {}",
@@ -1718,8 +1714,10 @@ mod tests {
         }
 
         // 8. No row should be completely filled (they should be cleared)
-        for (y, row) in env.board.iter().enumerate() {
-            let filled = row.iter().all(|&c| c != 0);
+        for y in 0..env.height {
+            let filled = env.board[y * env.width..(y + 1) * env.width]
+                .iter()
+                .all(|&c| c != 0);
             assert!(
                 !filled,
                 "{}: row {} is completely filled but not cleared",
@@ -1739,7 +1737,7 @@ mod tests {
         for (x, &height) in env.column_heights.iter().enumerate() {
             if (height as usize) < env.height {
                 let has_cell_at_height =
-                    (height as usize..env.height).any(|y| env.board[y][x] != 0);
+                    (height as usize..env.height).any(|y| env.board[y * env.width + x] != 0);
                 assert!(
                     has_cell_at_height,
                     "{}: column {} has height {} but no cells at or above that row",
@@ -1752,9 +1750,13 @@ mod tests {
         for (x, &height) in env.column_heights.iter().enumerate() {
             for y in 0..height as usize {
                 assert_eq!(
-                    env.board[y][x], 0,
+                    env.board[y * env.width + x],
+                    0,
                     "{}: column {} has height {} but cell at row {} is filled",
-                    context, x, height, y
+                    context,
+                    x,
+                    height,
+                    y
                 );
             }
         }
@@ -1956,7 +1958,7 @@ mod tests {
                     // but we can verify the board is consistent
                     assert_eq!(
                         blocks_after,
-                        env.board.iter().flatten().filter(|&&c| c != 0).count() as u32,
+                        env.board.iter().filter(|&&c| c != 0).count() as u32,
                         "total_blocks doesn't match actual count after line clear"
                     );
                 }
@@ -1979,7 +1981,7 @@ mod tests {
 
                 // Verify each row's fill count
                 for y in 0..env.height {
-                    let actual_count = env.board[y].iter().filter(|&&c| c != 0).count() as u8;
+                    let actual_count = env.board[y * env.width..(y + 1) * env.width].iter().filter(|&&c| c != 0).count() as u8;
                     assert_eq!(
                         env.row_fill_counts[y], actual_count,
                         "Drop {}: row {} fill count {} doesn't match actual {}",
@@ -2153,7 +2155,7 @@ mod tests {
                 let mut found_gap = false;
 
                 for y in (0..env.height).rev() {
-                    let row_has_blocks = env.board[y].iter().any(|&c| c != 0);
+                    let row_has_blocks = env.board[y * env.width..(y + 1) * env.width].iter().any(|&c| c != 0);
 
                     if row_has_blocks {
                         if found_gap {

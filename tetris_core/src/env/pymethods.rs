@@ -71,8 +71,9 @@ impl TetrisEnv {
             }
         }
 
-        self.board = board;
-        self.board_piece_types = vec![vec![None; self.width]; self.height];
+        // Flatten nested Vec into flat Vec
+        self.board = board.into_iter().flatten().collect();
+        self.board_piece_types = vec![None; self.width * self.height];
         self.sync_board_stats();
         self.invalidate_placement_cache();
         Ok(())
@@ -106,13 +107,13 @@ impl TetrisEnv {
                             x, y, pt
                         )));
                     }
-                    if self.board[y][x] == 0 {
+                    if self.board[y * self.width + x] == 0 {
                         return Err(pyo3::exceptions::PyValueError::new_err(format!(
                             "Piece type set for empty board cell at ({}, {})",
                             x, y
                         )));
                     }
-                } else if self.board[y][x] != 0 {
+                } else if self.board[y * self.width + x] != 0 {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "Missing piece type for filled board cell at ({}, {})",
                         x, y
@@ -121,7 +122,8 @@ impl TetrisEnv {
             }
         }
 
-        self.board_piece_types = board_piece_types;
+        // Flatten nested Vec into flat Vec
+        self.board_piece_types = board_piece_types.into_iter().flatten().collect();
         Ok(())
     }
 
@@ -160,11 +162,17 @@ impl TetrisEnv {
     // === Board (board.rs) ===
 
     pub fn get_board(&self) -> Vec<Vec<u8>> {
-        self.board.clone()
+        self.board
+            .chunks(self.width)
+            .map(|row| row.to_vec())
+            .collect()
     }
 
     pub fn get_board_piece_types(&self) -> Vec<Vec<Option<usize>>> {
-        self.board_piece_types.clone()
+        self.board_piece_types
+            .chunks(self.width)
+            .map(|row| row.to_vec())
+            .collect()
     }
 
     // === Piece Management (piece_management.rs) ===
@@ -481,7 +489,7 @@ impl TetrisEnv {
 
         // Cache miss - compute placements
         let placements = if let Some(ref piece) = self.current_piece {
-            let board = Board::new(self.width, self.height, &self.board);
+            let board = Board::new(self.width, self.height, self.board_cells());
             find_all_placements(&board, piece.piece_type, piece.x, piece.y)
         } else {
             Vec::new()
@@ -506,7 +514,7 @@ impl TetrisEnv {
             return Vec::new();
         }
 
-        let board = Board::new(self.width, self.height, &self.board);
+        let board = Board::new(self.width, self.height, self.board_cells());
         find_all_placements(&board, piece_type, spawn_x(self.width), spawn_y(piece_type))
     }
 

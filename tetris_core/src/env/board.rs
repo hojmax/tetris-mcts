@@ -8,7 +8,7 @@ use super::TetrisEnv;
 
 impl TetrisEnv {
     #[inline]
-    pub(crate) fn board_cells(&self) -> &[Vec<u8>] {
+    pub(crate) fn board_cells(&self) -> &[u8] {
         &self.board
     }
 
@@ -45,7 +45,7 @@ impl TetrisEnv {
             if cx < 0 || cx >= self.width as i32 || cy < 0 || cy >= self.height as i32 {
                 return false;
             }
-            if self.board[cy as usize][cx as usize] != 0 {
+            if self.board[cy as usize * self.width + cx as usize] != 0 {
                 return false;
             }
         }
@@ -57,7 +57,7 @@ impl TetrisEnv {
         if x < 0 || x >= self.width as i32 || y < 0 || y >= self.height as i32 {
             return true;
         }
-        self.board[y as usize][x as usize] != 0
+        self.board[y as usize * self.width + x as usize] != 0
     }
 
     /// Check if the board is completely empty (perfect clear)
@@ -74,7 +74,7 @@ impl TetrisEnv {
         for x in 0..self.width {
             self.column_heights[x] = self.height as i32; // Assume empty
             for y in 0..self.height {
-                if self.board[y][x] != 0 {
+                if self.board[y * self.width + x] != 0 {
                     self.total_blocks += 1;
                     self.row_fill_counts[y] += 1;
                     if (y as i32) < self.column_heights[x] {

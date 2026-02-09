@@ -204,7 +204,7 @@ impl MCTSAgent {
             let board: Vec<u8> = state
                 .board_cells()
                 .iter()
-                .flat_map(|row| row.iter().map(|&cell| if cell != 0 { 1 } else { 0 }))
+                .map(|&cell| if cell != 0 { 1 } else { 0 })
                 .collect();
 
             let current_piece = state.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
