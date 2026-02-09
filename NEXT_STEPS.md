@@ -8,6 +8,7 @@
 - [ ] I need tree stats. Branchning factor (avg. children), number of leafs, total nodes, max depth, max attack seen in the tree (like a move causing attack, not the model prediction).
 - [ ] All the steps setttings depend on batch size which is kind of annoying.
 - Value loss weight of 70.0 is maybe a tad too high. Changing to 30.0.
+- [ ] Autoscale loss weight to be roughly 1:1 and log the scaling constant.
 
 # Confusion
 

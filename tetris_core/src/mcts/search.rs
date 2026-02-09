@@ -47,7 +47,7 @@ pub(super) fn simulate(
 
         if node.is_terminal {
             let penalty = super::utils::compute_death_penalty(
-                root_move_number + depth,
+                node.move_number,
                 config.max_moves,
                 config.death_penalty,
             );
