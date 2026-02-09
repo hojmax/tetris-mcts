@@ -27,7 +27,7 @@ from tetris_mcts.config import (
     TrainingConfig,
 )
 from tetris_mcts.ml.network import TetrisNet
-from tetris_mcts.ml.weights import WeightManager, export_onnx
+from tetris_mcts.ml.weights import WeightManager, export_onnx, export_split_models
 from tetris_mcts.ml.loss import compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
 from tetris_mcts.ml.visualization import create_trajectory_gif
@@ -269,8 +269,9 @@ class Trainer:
         assert self.config.data_dir is not None
         onnx_path = self.config.checkpoint_dir / PARALLEL_ONNX_FILENAME
 
-        # Export initial model
+        # Export initial model (full ONNX + split models for cached Rust inference)
         export_onnx(self.model, onnx_path)
+        export_split_models(self.model, onnx_path)
 
         if not onnx_path.exists():
             raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
@@ -419,6 +420,7 @@ class Trainer:
                 # Export updated model for generator
                 if self.step % model_sync_interval == 0:
                     export_onnx(self.model, onnx_path)
+                    export_split_models(self.model, onnx_path)
                     logger.info(
                         "Exported model for generator",
                         step=self.step,
