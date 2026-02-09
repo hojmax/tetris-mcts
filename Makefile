@@ -72,8 +72,8 @@ replay: $(RELEASE_MARKER)
 
 # Profile game generation performance (builds first if needed)
 # Usage: make profile MODEL=benchmarks/models/parallel.onnx SIMS=100 OUTPUT=benchmarks/profile.jsonl
-MODEL_PROFILE ?= benchmarks/models/parallel_small.onnx
-SIMS ?= 100
+MODEL_PROFILE ?= training_runs/v6/checkpoints/latest.onnx
+SIMS ?= 1000
 OUTPUT_PROFILE ?= benchmarks/profile_results.jsonl
 profile: $(RELEASE_MARKER)
 	$(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE)
