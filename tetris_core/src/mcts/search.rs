@@ -46,8 +46,12 @@ pub(super) fn simulate(
         node.visit_count += 1;
 
         if node.is_terminal {
-            // Terminal - backpropagate with negative death penalty (game over)
-            backup_with_value(&path, -config.death_penalty, config.track_value_history);
+            let penalty = super::utils::compute_death_penalty(
+                root_move_number + depth,
+                config.max_moves,
+                config.death_penalty,
+            );
+            backup_with_value(&path, -penalty, config.track_value_history);
             return;
         }
 

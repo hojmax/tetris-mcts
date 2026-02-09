@@ -187,17 +187,15 @@ impl MCTSAgent {
             "States and attacks should have same length"
         );
 
-        // Apply death penalty if game ended in game over (not max_moves truncation)
-        let death_offset = if env.game_over {
-            self.config.death_penalty
-        } else {
-            0.0
-        };
-
         let mut values = vec![0.0f32; num_states];
         let mut cumulative = 0u32;
         for i in (0..num_states).rev() {
             cumulative += attacks[i];
+            let death_offset = if env.game_over {
+                super::utils::compute_death_penalty(i as u32, max_moves, self.config.death_penalty)
+            } else {
+                0.0
+            };
             values[i] = cumulative as f32 - death_offset;
         }
 
