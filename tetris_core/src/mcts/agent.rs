@@ -236,6 +236,7 @@ impl MCTSAgent {
         };
 
         let tree_stats = tree_stats_acc.finalize();
+        let (cache_hits, cache_misses, cache_size) = nn.get_and_reset_cache_stats();
 
         Some(GameResult {
             examples,
@@ -245,6 +246,9 @@ impl MCTSAgent {
             max_moves: max_valid_moves,
             stats,
             tree_stats,
+            cache_hits,
+            cache_misses,
+            cache_size,
         })
     }
 

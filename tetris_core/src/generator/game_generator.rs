@@ -160,6 +160,9 @@ struct LastGameInfo {
     avg_moves: f32,
     max_moves: u32,
     tree_stats: GameTreeStats,
+    cache_hits: u64,
+    cache_misses: u64,
+    cache_size: usize,
 }
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
@@ -477,6 +480,17 @@ impl GameGenerator {
                 "tree_max_attack".to_string(),
                 info.tree_stats.max_tree_attack as f32,
             );
+            // Board embedding cache statistics
+            let total_lookups = info.cache_hits + info.cache_misses;
+            let hit_rate = if total_lookups > 0 {
+                info.cache_hits as f32 / total_lookups as f32
+            } else {
+                0.0
+            };
+            d.insert("cache_hit_rate".to_string(), hit_rate);
+            d.insert("cache_hits".to_string(), info.cache_hits as f32);
+            d.insert("cache_misses".to_string(), info.cache_misses as f32);
+            d.insert("cache_size".to_string(), info.cache_size as f32);
             drained.push((info.game_number, d));
         }
         drained
@@ -698,6 +712,9 @@ impl GameGenerator {
                     avg_moves: result.avg_moves,
                     max_moves: result.max_moves,
                     tree_stats: result.tree_stats,
+                    cache_hits: result.cache_hits,
+                    cache_misses: result.cache_misses,
+                    cache_size: result.cache_size,
                 });
 
                 // Periodically save to disk for resume capability (only worker 0)

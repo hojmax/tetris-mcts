@@ -196,6 +196,15 @@ pub struct GameResult {
     pub stats: GameStats,
     /// MCTS tree statistics aggregated across all moves
     pub tree_stats: GameTreeStats,
+    /// Board embedding cache hits during this game
+    #[pyo3(get)]
+    pub cache_hits: u64,
+    /// Board embedding cache misses during this game
+    #[pyo3(get)]
+    pub cache_misses: u64,
+    /// Board embedding cache size at end of game
+    #[pyo3(get)]
+    pub cache_size: usize,
 }
 
 // =============================================================================
@@ -503,6 +512,9 @@ mod tests {
             max_moves: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
+            cache_hits: 0,
+            cache_misses: 0,
+            cache_size: 0,
         };
 
         assert!(result.examples.is_empty());
@@ -544,6 +556,9 @@ mod tests {
             max_moves: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
+            cache_hits: 0,
+            cache_misses: 0,
+            cache_size: 0,
         };
 
         assert_eq!(result.examples.len(), 2);
@@ -563,6 +578,9 @@ mod tests {
             max_moves: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
+            cache_hits: 0,
+            cache_misses: 0,
+            cache_size: 0,
         };
 
         let cloned = result.clone();

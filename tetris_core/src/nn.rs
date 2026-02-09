@@ -3,7 +3,7 @@
 //! Loads split ONNX models (conv backbone + heads) and FC weights from binary.
 //! Caches board embeddings to skip conv + board FC on repeated board states.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -28,6 +28,8 @@ pub struct TetrisNN {
     fc_bias: Arc<Array1<f32>>,         // (fc_hidden,)
     fc_hidden: usize,
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
+    cache_hits: Cell<u64>,
+    cache_misses: Cell<u64>,
 }
 
 impl TetrisNN {
@@ -73,6 +75,8 @@ impl TetrisNN {
             fc_bias: Arc::new(fc_bias),
             fc_hidden,
             board_cache: RefCell::new(HashMap::new()),
+            cache_hits: Cell::new(0),
+            cache_misses: Cell::new(0),
         })
     }
 
@@ -96,8 +100,12 @@ impl TetrisNN {
         };
 
         let board_embed = match board_embed {
-            Some(embed) => embed,
+            Some(embed) => {
+                self.cache_hits.set(self.cache_hits.get() + 1);
+                embed
+            }
             None => {
+                self.cache_misses.set(self.cache_misses.get() + 1);
                 // Cache miss: run conv model
                 let board_tensor = tract_ndarray::Array4::from_shape_vec(
                     (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
@@ -231,9 +239,19 @@ impl TetrisNN {
     }
 }
 
+impl TetrisNN {
+    /// Read and reset cache hit/miss counters. Returns (hits, misses, cache_size).
+    pub fn get_and_reset_cache_stats(&self) -> (u64, u64, usize) {
+        let hits = self.cache_hits.replace(0);
+        let misses = self.cache_misses.replace(0);
+        let size = self.board_cache.borrow().len();
+        (hits, misses, size)
+    }
+}
+
 impl Clone for TetrisNN {
     fn clone(&self) -> Self {
-        // Share Arc-wrapped models/weights, create fresh empty cache
+        // Share Arc-wrapped models/weights, create fresh empty cache and counters
         TetrisNN {
             conv_model: Arc::clone(&self.conv_model),
             heads_model: Arc::clone(&self.heads_model),
@@ -242,6 +260,8 @@ impl Clone for TetrisNN {
             fc_bias: Arc::clone(&self.fc_bias),
             fc_hidden: self.fc_hidden,
             board_cache: RefCell::new(HashMap::new()),
+            cache_hits: Cell::new(0),
+            cache_misses: Cell::new(0),
         }
     }
 }
