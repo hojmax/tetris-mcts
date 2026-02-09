@@ -79,6 +79,7 @@ class TrainingConfig:
     dirichlet_epsilon: float = 0.25
     num_workers: int = 7  # Parallel game generation threads
     max_moves: int = 100  # Maximum moves for move number normalization
+    death_penalty: float = 5.0  # Penalty subtracted from value when game ends in death
 
     # Replay buffer
     buffer_size: int = 500_000

@@ -30,6 +30,9 @@ pub struct MCTSConfig {
     /// Whether to store per-visit backed-up values for visualization/debugging
     #[pyo3(get, set)]
     pub track_value_history: bool,
+    /// Penalty applied when a simulation reaches game over (backs up as negative value)
+    #[pyo3(get, set)]
+    pub death_penalty: f32,
 }
 
 #[pymethods]
@@ -45,6 +48,7 @@ impl MCTSConfig {
             seed: None,
             max_moves: 100,
             track_value_history: false,
+            death_penalty: 0.0,
         }
     }
 }
@@ -70,5 +74,6 @@ mod tests {
         assert_eq!(config.seed, None);
         assert_eq!(config.max_moves, 100);
         assert!(!config.track_value_history);
+        assert_eq!(config.death_penalty, 0.0);
     }
 }

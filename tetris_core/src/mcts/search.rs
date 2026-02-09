@@ -46,8 +46,8 @@ pub(super) fn simulate(
         node.visit_count += 1;
 
         if node.is_terminal {
-            // Terminal - backpropagate with 0 future value (game over)
-            backup_with_value(&path, 0.0, config.track_value_history);
+            // Terminal - backpropagate with negative death penalty (game over)
+            backup_with_value(&path, -config.death_penalty, config.track_value_history);
             return;
         }
 

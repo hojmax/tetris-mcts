@@ -283,6 +283,7 @@ class Trainer:
         mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
         mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
         mcts_config.max_moves = self.config.max_moves
+        mcts_config.death_penalty = self.config.death_penalty
 
         # Start background game generator
         training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME

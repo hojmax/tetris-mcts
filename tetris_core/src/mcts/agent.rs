@@ -179,7 +179,7 @@ impl MCTSAgent {
             }
         }
 
-        // Compute value targets (cumulative attack from each position)
+        // Compute value targets (cumulative attack from each position, minus death penalty)
         let num_states = states.len();
         debug_assert_eq!(
             states.len(),
@@ -187,11 +187,18 @@ impl MCTSAgent {
             "States and attacks should have same length"
         );
 
+        // Apply death penalty if game ended in game over (not max_moves truncation)
+        let death_offset = if env.game_over {
+            self.config.death_penalty
+        } else {
+            0.0
+        };
+
         let mut values = vec![0.0f32; num_states];
         let mut cumulative = 0u32;
         for i in (0..num_states).rev() {
             cumulative += attacks[i];
-            values[i] = cumulative as f32;
+            values[i] = cumulative as f32 - death_offset;
         }
 
         // Build training examples (use all moves)
