@@ -224,7 +224,7 @@ From `config.py` TrainingConfig defaults:
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
 - **Buffer**: 500K examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.01, epsilon=0.25
-- **Model Promotion Gate**: candidate window=30 games, evaluator noise disabled by default
+- **Model Promotion Gate**: candidate window=30 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`

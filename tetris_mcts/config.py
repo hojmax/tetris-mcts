@@ -91,7 +91,7 @@ class TrainingConfig:
         30  # Candidate games to average before promoting a new self-play model
     )
     model_promotion_eval_add_noise: bool = (
-        False  # Whether evaluator worker adds Dirichlet noise while gating candidates
+        True  # Whether evaluator worker adds Dirichlet noise while gating candidates
     )
     bootstrap_without_network: bool = True  # If True, self-play starts with uniform-prior/zero-value MCTS until first promotion
     bootstrap_num_simulations: int = (

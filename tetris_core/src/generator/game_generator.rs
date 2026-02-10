@@ -997,6 +997,8 @@ impl GameGenerator {
 
             // Play one game
             if let Some(result) = agent.play_game(max_moves, add_noise) {
+                let count_toward_incumbent =
+                    loaded_model_version == incumbent_model_version.load(Ordering::SeqCst);
                 Self::commit_game_result(
                     result,
                     &buffer,
@@ -1006,7 +1008,7 @@ impl GameGenerator {
                     &completed_games,
                     &incumbent_lifetime_games,
                     &incumbent_lifetime_attack,
-                    true,
+                    count_toward_incumbent,
                 );
                 local_games_count += 1;
 

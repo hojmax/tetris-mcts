@@ -150,16 +150,6 @@ impl MCTSAgent {
                 break;
             }
             let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
-            valid_moves_sum += valid_moves;
-            max_valid_moves = max_valid_moves.max(valid_moves);
-
-            // Store state before making move
-            states.push((
-                env.clone(),
-                move_idx,
-                vec![0.0; super::NUM_ACTIONS],
-                mask.clone(),
-            ));
 
             // Run MCTS search (NN-guided when model is loaded, otherwise uniform+zero bootstrap mode)
             let (result, move_tree_stats) = if let Some(nn) = self.nn.as_ref() {
@@ -180,10 +170,16 @@ impl MCTSAgent {
                     search_internal_without_nn(&self.config, &env, add_noise, move_idx);
                 (mcts_result, tree_stats)
             };
+
+            valid_moves_sum += valid_moves;
+            max_valid_moves = max_valid_moves.max(valid_moves);
             tree_stats_acc.add(move_tree_stats);
             if result.action == HOLD_ACTION_INDEX {
                 stats.holds += 1;
             }
+
+            // Store state only after search succeeds so state/reward arrays stay aligned.
+            states.push((env.clone(), move_idx, result.policy.clone(), mask.clone()));
 
             // Execute the selected action
             let attack = env
@@ -236,11 +232,6 @@ impl MCTSAgent {
                         _ => {}
                     }
                 }
-            }
-
-            // Update stored policy with MCTS policy
-            if let Some(last) = states.last_mut() {
-                last.2 = result.policy;
             }
         }
 
