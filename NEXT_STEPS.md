@@ -10,6 +10,8 @@
 - Value loss weight of 70.0 is maybe a tad too high. Changing to 30.0.
 - [ ] Autoscale loss weight to be roughly 1:1 and log the scaling constant.
 - [ ] Higher death penalty?
+- [ ] Maybe the cpuct and value vs. policy is not scaled right in the network? We need some auto scaling here. It might just be primiarly noise in the value network dirving choice of action.
+- [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
 
 # Confusion
 

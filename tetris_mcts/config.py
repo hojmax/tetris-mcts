@@ -70,11 +70,13 @@ class TrainingConfig:
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
     value_loss_weight: float = 30.0  # Scale factor for value loss in total loss
-    value_loss_weight_window: int = 200  # Rolling window size for dynamic value-loss weighting
+    value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
+        200
+    )
 
     # MCTS / Self-play
     num_simulations: int = 1000
-    c_puct: float = 0.5  # PUCT exploration constant
+    c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = 1.5
     dirichlet_alpha: float = 0.01
     dirichlet_epsilon: float = 0.25
