@@ -13,6 +13,22 @@ use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
 use super::results::{MCTSResult, TreeStats};
 
+fn uniform_policy_from_mask(mask: &[bool]) -> Vec<f32> {
+    let mut policy = vec![0.0; NUM_ACTIONS];
+    let valid_count = mask.iter().filter(|&&is_valid| is_valid).count();
+    if valid_count == 0 {
+        return policy;
+    }
+
+    let probability = 1.0 / valid_count as f32;
+    for (action_idx, is_valid) in mask.iter().enumerate() {
+        if *is_valid {
+            policy[action_idx] = probability;
+        }
+    }
+    policy
+}
+
 /// Run a single MCTS simulation
 ///
 /// Uses raw pointers for tree traversal to track the path from root to leaf.
@@ -172,6 +188,135 @@ pub(super) fn simulate(
     }
 }
 
+/// Run a single MCTS simulation without neural network guidance.
+///
+/// Uses uniform priors over valid actions and zero leaf value.
+pub(super) fn simulate_without_nn(
+    config: &MCTSConfig,
+    root: &mut DecisionNode,
+    root_move_number: u32,
+    rng: &mut StdRng,
+) {
+    let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
+    let mut current = root as *mut DecisionNode;
+    let mut depth: u32 = 0;
+
+    loop {
+        // SAFETY: `current` is always derived from a valid &mut DecisionNode.
+        let node = unsafe { &mut *current };
+        node.visit_count += 1;
+
+        if node.is_terminal {
+            let penalty = super::utils::compute_death_penalty(
+                node.move_number,
+                config.max_moves,
+                config.death_penalty,
+            );
+            backup_with_value(&path, -penalty, config.track_value_history);
+            return;
+        }
+
+        if node.valid_actions.is_empty() {
+            backup_with_value(&path, 0.0, config.track_value_history);
+            return;
+        }
+
+        let action_idx = node.select_action(config.c_puct);
+
+        if !node.children.contains_key(&action_idx) {
+            let child =
+                match expand_action_without_nn(node, action_idx, root_move_number + depth + 1) {
+                    Some(c) => c,
+                    None => {
+                        debug_assert!(
+                            false,
+                            "BUG: expand_action_without_nn failed for action {}",
+                            action_idx
+                        );
+                        backup_with_value(&path, 0.0, config.track_value_history);
+                        return;
+                    }
+                };
+            node.children.insert(action_idx, child);
+            if let Some(MCTSNode::Chance(chance_node)) = node.children.get_mut(&action_idx) {
+                chance_node.visit_count += 1;
+            }
+
+            let chance_node = match node.children.get(&action_idx) {
+                Some(MCTSNode::Chance(cn)) => cn,
+                Some(MCTSNode::Decision(_)) => {
+                    debug_assert!(
+                        false,
+                        "BUG: expand_action_without_nn should create ChanceNode"
+                    );
+                    backup_with_value(&path, 0.0, config.track_value_history);
+                    return;
+                }
+                None => {
+                    debug_assert!(false, "BUG: just inserted child but it's missing");
+                    backup_with_value(&path, 0.0, config.track_value_history);
+                    return;
+                }
+            };
+            let leaf_reward = chance_node.attack as f32
+                - super::utils::compute_overhang_penalty(
+                    chance_node.overhang_fields,
+                    config.overhang_penalty_weight,
+                );
+            let leaf_value = chance_node.nn_value;
+
+            path.push((current, action_idx, leaf_reward));
+            backup_with_value(&path, leaf_value, config.track_value_history);
+            return;
+        }
+
+        let chance_node = match node.children.get_mut(&action_idx) {
+            Some(MCTSNode::Chance(cn)) => cn,
+            Some(MCTSNode::Decision(_)) => {
+                debug_assert!(false, "BUG: Decision node child should be ChanceNode");
+                backup_with_value(&path, 0.0, config.track_value_history);
+                return;
+            }
+            None => {
+                debug_assert!(false, "BUG: child should exist after contains_key check");
+                backup_with_value(&path, 0.0, config.track_value_history);
+                return;
+            }
+        };
+        chance_node.visit_count += 1;
+        let step_reward = chance_node.attack as f32
+            - super::utils::compute_overhang_penalty(
+                chance_node.overhang_fields,
+                config.overhang_penalty_weight,
+            );
+        path.push((current, action_idx, step_reward));
+        depth += 1;
+
+        let piece = chance_node.select_piece_random(rng);
+
+        if !chance_node.children.contains_key(&piece) {
+            let decision_child = expand_chance(chance_node, piece, root_move_number + depth);
+            chance_node.children.insert(piece, decision_child);
+        }
+
+        match chance_node.children.get_mut(&piece) {
+            Some(MCTSNode::Decision(decision_node)) => {
+                current = decision_node as *mut DecisionNode;
+            }
+            Some(MCTSNode::Chance(_)) => {
+                debug_assert!(false, "BUG: ChanceNode child should be DecisionNode");
+                backup_with_value(&path, 0.0, config.track_value_history);
+                return;
+            }
+            None => {
+                debug_assert!(false, "BUG: child should exist after insertion");
+                backup_with_value(&path, 0.0, config.track_value_history);
+                return;
+            }
+        }
+    }
+}
+
 /// Expand an action from a decision node (creates chance node)
 ///
 /// Returns None if expansion fails (invalid action, missing placement, or NN error).
@@ -229,6 +374,42 @@ fn expand_action(
         move_number,
         bag_remaining,
         nn_value,
+        policy,
+    )))
+}
+
+fn expand_action_without_nn(
+    parent: &DecisionNode,
+    action_idx: usize,
+    move_number: u32,
+) -> Option<MCTSNode> {
+    let mut new_state = parent.state.clone();
+    let attack = match new_state.execute_action_index(action_idx) {
+        Some(attack) => attack,
+        None => {
+            debug_assert!(
+                false,
+                "BUG: action {} selected by MCTS is not executable",
+                action_idx
+            );
+            return None;
+        }
+    };
+
+    let overhang_fields = super::utils::count_overhang_fields(&new_state);
+    new_state.truncate_queue(QUEUE_SIZE);
+    let bag_remaining = new_state.get_possible_next_pieces();
+
+    let mask = crate::nn::get_action_mask(&new_state);
+    let policy = uniform_policy_from_mask(&mask);
+
+    Some(MCTSNode::Chance(ChanceNode::new(
+        new_state,
+        attack,
+        overhang_fields,
+        move_number,
+        bag_remaining,
+        0.0,
         policy,
     )))
 }
@@ -468,5 +649,77 @@ pub(super) fn search_internal(
 
     let tree_stats = compute_tree_stats(&root);
 
+    (mcts_result, root, tree_stats)
+}
+
+/// Run MCTS search without NN guidance (uniform priors and zero value).
+pub(super) fn search_internal_without_nn(
+    config: &MCTSConfig,
+    env: &crate::env::TetrisEnv,
+    add_noise: bool,
+    move_number: u32,
+) -> (MCTSResult, DecisionNode, TreeStats) {
+    let root_mask = crate::nn::get_action_mask(env);
+    let root_policy = uniform_policy_from_mask(&root_mask);
+
+    let mut root = DecisionNode::new(env.clone(), move_number);
+    root.set_nn_output(&root_policy, 0.0);
+
+    let mut rng = if let Some(mcts_seed) = config.seed {
+        let combined_seed = mcts_seed
+            .wrapping_add(env.seed)
+            .wrapping_add(move_number as u64);
+        StdRng::seed_from_u64(combined_seed)
+    } else {
+        StdRng::from_rng(thread_rng()).expect("Failed to create RNG from thread_rng")
+    };
+
+    if add_noise {
+        root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
+    }
+
+    for _ in 0..config.num_simulations {
+        simulate_without_nn(config, &mut root, move_number, &mut rng);
+    }
+
+    let mut result_policy = vec![0.0; NUM_ACTIONS];
+    debug_assert!(
+        root.children.values().map(|c| c.visit_count()).sum::<u32>() > 0,
+        "MCTS should have visits after simulations"
+    );
+    let action = root
+        .children
+        .iter()
+        .max_by_key(|(&idx, child)| (child.visit_count(), idx))
+        .map(|(&idx, _)| idx)
+        .expect("MCTS root should have children after simulations");
+
+    if config.temperature == 0.0 {
+        result_policy[action] = 1.0;
+    } else {
+        for (&action_idx, child) in &root.children {
+            result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / config.temperature);
+        }
+        let sum: f32 = result_policy.iter().sum();
+        if sum > 0.0 {
+            for p in &mut result_policy {
+                *p /= sum;
+            }
+        }
+    }
+
+    let root_value = if root.visit_count > 0 {
+        root.value_sum / root.visit_count as f32
+    } else {
+        0.0
+    };
+
+    let mcts_result = MCTSResult {
+        policy: result_policy,
+        action,
+        value: root_value,
+        num_simulations: config.num_simulations,
+    };
+    let tree_stats = compute_tree_stats(&root);
     (mcts_result, root, tree_stats)
 }

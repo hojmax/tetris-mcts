@@ -20,6 +20,7 @@ NUM_ACTIONS = 735
 
 # Artifact names
 CHECKPOINT_DIRNAME = "checkpoints"
+MODEL_CANDIDATES_DIRNAME = "model_candidates"
 CONFIG_FILENAME = "config.json"
 PARALLEL_ONNX_FILENAME = "parallel.onnx"
 EVAL_ONNX_FILENAME = "eval.onnx"
@@ -86,6 +87,16 @@ class TrainingConfig:
     overhang_penalty_weight: float = (  # Weight for normalized overhang penalty in value targets
         5.0
     )
+    model_promotion_eval_games: int = (
+        30  # Candidate games to average before promoting a new self-play model
+    )
+    model_promotion_eval_add_noise: bool = (
+        False  # Whether evaluator worker adds Dirichlet noise while gating candidates
+    )
+    bootstrap_without_network: bool = True  # If True, self-play starts with uniform-prior/zero-value MCTS until first promotion
+    bootstrap_num_simulations: int = (
+        4000  # Simulations per move before first promoted NN model
+    )
 
     # Replay buffer
     buffer_size: int = 500_000
@@ -133,6 +144,12 @@ class TrainingConfig:
             )
         if self.games_per_save < 0:
             raise ValueError("games_per_save must be >= 0")
+        if self.model_sync_interval <= 0:
+            raise ValueError("model_sync_interval must be > 0")
+        if self.model_promotion_eval_games <= 0:
+            raise ValueError("model_promotion_eval_games must be > 0")
+        if self.bootstrap_num_simulations <= 0:
+            raise ValueError("bootstrap_num_simulations must be > 0")
         if self.lr_schedule not in {"cosine", "step", "none"}:
             raise ValueError(
                 f"lr_schedule must be one of cosine, step, none (got {self.lr_schedule})"

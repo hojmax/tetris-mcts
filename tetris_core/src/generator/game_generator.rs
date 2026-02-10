@@ -9,14 +9,14 @@ use pyo3::prelude::*;
 use rand::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 use crate::mcts::GameStats;
-use crate::mcts::{GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
+use crate::mcts::{GameResult, GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
 use super::npz::{read_examples_from_npz, write_examples_to_npz};
 
@@ -166,6 +166,24 @@ struct LastGameInfo {
     cache_size: usize,
 }
 
+#[derive(Clone)]
+struct CandidateModelRequest {
+    model_path: PathBuf,
+    model_step: u64,
+}
+
+struct ModelEvalEvent {
+    incumbent_step: u64,
+    incumbent_uses_network: bool,
+    incumbent_games: u64,
+    incumbent_avg_attack: f32,
+    candidate_step: u64,
+    candidate_games: u64,
+    candidate_avg_attack: f32,
+    promoted: bool,
+    auto_promoted: bool,
+}
+
 /// Shared replay buffer for thread-safe access between generator and trainer.
 struct SharedBuffer {
     /// Training examples (circular buffer with FIFO eviction)
@@ -204,8 +222,8 @@ impl SharedBuffer {
 
 #[pyclass]
 pub struct GameGenerator {
-    /// Path to ONNX model file (watched for updates)
-    model_path: PathBuf,
+    /// Initial model path used on startup and protected from cleanup.
+    bootstrap_model_path: PathBuf,
     /// Full path to training_data.npz (for periodic saves and replay preload)
     training_data_path: PathBuf,
     /// MCTS configuration
@@ -218,6 +236,12 @@ pub struct GameGenerator {
     games_per_save: usize,
     /// Number of worker threads
     num_workers: usize,
+    /// Number of games the evaluator worker plays per candidate model.
+    candidate_eval_games: usize,
+    /// Whether to use Dirichlet noise while evaluating candidate models.
+    candidate_eval_add_noise: bool,
+    /// Number of simulations per move before the first promoted NN model.
+    non_network_num_simulations: u32,
     /// Shared replay buffer (accessed by both worker threads and Python)
     buffer: Arc<SharedBuffer>,
     /// Whether the generator is running
@@ -230,6 +254,24 @@ pub struct GameGenerator {
     game_stats: Arc<SharedStats>,
     /// Completed game stats queue for per-game logging
     completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
+    /// Most recent pending candidate model (latest wins, older pending models are dropped).
+    pending_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+    /// Candidate currently under evaluation by the evaluator worker.
+    evaluating_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+    /// Queue of evaluator decisions for Python-side logging.
+    model_eval_events: Arc<RwLock<VecDeque<ModelEvalEvent>>>,
+    /// Shared incumbent model path used by all non-evaluator workers.
+    incumbent_model_path: Arc<RwLock<PathBuf>>,
+    /// Whether the incumbent currently uses NN guidance or no-network bootstrap mode.
+    incumbent_uses_network: Arc<AtomicBool>,
+    /// Training step associated with the incumbent model.
+    incumbent_model_step: Arc<AtomicU64>,
+    /// Incremented whenever a candidate is promoted and workers should reload.
+    incumbent_model_version: Arc<AtomicU64>,
+    /// Lifetime game count for the currently deployed incumbent model.
+    incumbent_lifetime_games: Arc<AtomicU64>,
+    /// Lifetime total attack for the currently deployed incumbent model.
+    incumbent_lifetime_attack: Arc<AtomicU64>,
     /// Thread handles (for joining on stop)
     thread_handles: Vec<JoinHandle<()>>,
 }
@@ -237,7 +279,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=30, candidate_eval_add_noise=false, start_with_network=true, non_network_num_simulations=3000))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -247,6 +289,11 @@ impl GameGenerator {
         max_examples: usize,
         games_per_save: usize,
         num_workers: usize,
+        initial_model_step: u64,
+        candidate_eval_games: usize,
+        candidate_eval_add_noise: bool,
+        start_with_network: bool,
+        non_network_num_simulations: u32,
     ) -> PyResult<Self> {
         if max_moves == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -263,24 +310,47 @@ impl GameGenerator {
                 "num_workers must be > 0",
             ));
         }
+        if candidate_eval_games == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "candidate_eval_games must be > 0",
+            ));
+        }
+        if non_network_num_simulations == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "non_network_num_simulations must be > 0",
+            ));
+        }
 
         let mut resolved_config = config.unwrap_or_default();
         resolved_config.max_moves = max_moves;
+        let bootstrap_model_path = PathBuf::from(model_path);
 
         Ok(GameGenerator {
-            model_path: PathBuf::from(model_path),
+            bootstrap_model_path: bootstrap_model_path.clone(),
             training_data_path: PathBuf::from(training_data_path),
             config: resolved_config,
             max_moves,
             add_noise,
             games_per_save,
             num_workers,
+            candidate_eval_games,
+            candidate_eval_add_noise,
+            non_network_num_simulations,
             buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
             examples_generated: Arc::new(AtomicU64::new(0)),
             game_stats: Arc::new(SharedStats::new()),
             completed_games: Arc::new(RwLock::new(VecDeque::new())),
+            pending_candidate: Arc::new(RwLock::new(None)),
+            evaluating_candidate: Arc::new(RwLock::new(None)),
+            model_eval_events: Arc::new(RwLock::new(VecDeque::new())),
+            incumbent_model_path: Arc::new(RwLock::new(bootstrap_model_path)),
+            incumbent_uses_network: Arc::new(AtomicBool::new(start_with_network)),
+            incumbent_model_step: Arc::new(AtomicU64::new(initial_model_step)),
+            incumbent_model_version: Arc::new(AtomicU64::new(0)),
+            incumbent_lifetime_games: Arc::new(AtomicU64::new(0)),
+            incumbent_lifetime_attack: Arc::new(AtomicU64::new(0)),
             thread_handles: Vec::new(),
         })
     }
@@ -288,8 +358,8 @@ impl GameGenerator {
     /// Start background game generation.
     ///
     /// Spawns worker threads that continuously generate games and write
-    /// them to training_data_path. The threads watch the model file for
-    /// changes and hot-swap when updated.
+    /// them to training_data_path. One worker is dedicated to candidate
+    /// evaluation and promotion decisions.
     pub fn start(&mut self) -> PyResult<()> {
         if self.running.load(Ordering::SeqCst) {
             return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -343,40 +413,67 @@ impl GameGenerator {
 
         // Set running flag
         self.running.store(true, Ordering::SeqCst);
+        let evaluator_worker_id = self.num_workers - 1;
 
         // Spawn worker threads
         for worker_id in 0..self.num_workers {
             // Clone Arc handles for each thread
-            let model_path = self.model_path.clone();
+            let bootstrap_model_path = self.bootstrap_model_path.clone();
             let training_data_path = self.training_data_path.clone();
             let config = self.config.clone();
             let max_moves = self.max_moves;
             let add_noise = self.add_noise;
             let games_per_save = self.games_per_save;
+            let candidate_eval_games = self.candidate_eval_games;
+            let candidate_eval_add_noise = self.candidate_eval_add_noise;
+            let non_network_num_simulations = self.non_network_num_simulations;
             let num_workers = self.num_workers;
+            let is_evaluator_worker = worker_id == evaluator_worker_id;
             let buffer = Arc::clone(&self.buffer);
             let running = Arc::clone(&self.running);
             let games_generated = Arc::clone(&self.games_generated);
             let examples_generated = Arc::clone(&self.examples_generated);
             let game_stats = Arc::clone(&self.game_stats);
             let completed_games = Arc::clone(&self.completed_games);
+            let pending_candidate = Arc::clone(&self.pending_candidate);
+            let evaluating_candidate = Arc::clone(&self.evaluating_candidate);
+            let model_eval_events = Arc::clone(&self.model_eval_events);
+            let incumbent_model_path = Arc::clone(&self.incumbent_model_path);
+            let incumbent_uses_network = Arc::clone(&self.incumbent_uses_network);
+            let incumbent_model_step = Arc::clone(&self.incumbent_model_step);
+            let incumbent_model_version = Arc::clone(&self.incumbent_model_version);
+            let incumbent_lifetime_games = Arc::clone(&self.incumbent_lifetime_games);
+            let incumbent_lifetime_attack = Arc::clone(&self.incumbent_lifetime_attack);
 
             let handle = thread::spawn(move || {
                 Self::worker_loop(
                     worker_id,
                     num_workers,
-                    model_path,
+                    is_evaluator_worker,
+                    bootstrap_model_path,
                     training_data_path,
                     config,
                     max_moves,
                     add_noise,
                     games_per_save,
+                    candidate_eval_games,
+                    candidate_eval_add_noise,
+                    non_network_num_simulations,
                     buffer,
                     running,
                     games_generated,
                     examples_generated,
                     game_stats,
                     completed_games,
+                    pending_candidate,
+                    evaluating_candidate,
+                    model_eval_events,
+                    incumbent_model_path,
+                    incumbent_uses_network,
+                    incumbent_model_step,
+                    incumbent_model_version,
+                    incumbent_lifetime_games,
+                    incumbent_lifetime_attack,
                 );
             });
 
@@ -422,6 +519,78 @@ impl GameGenerator {
         self.examples_generated.load(Ordering::SeqCst)
     }
 
+    pub fn incumbent_model_step(&self) -> u64 {
+        self.incumbent_model_step.load(Ordering::SeqCst)
+    }
+
+    pub fn incumbent_uses_network(&self) -> bool {
+        self.incumbent_uses_network.load(Ordering::SeqCst)
+    }
+
+    pub fn incumbent_lifetime_games(&self) -> u64 {
+        self.incumbent_lifetime_games.load(Ordering::SeqCst)
+    }
+
+    pub fn incumbent_lifetime_avg_attack(&self) -> f32 {
+        let games = self.incumbent_lifetime_games();
+        if games == 0 {
+            return 0.0;
+        }
+        self.incumbent_lifetime_attack.load(Ordering::SeqCst) as f32 / games as f32
+    }
+
+    /// Queue a candidate model for evaluator-worker gating.
+    ///
+    /// If another candidate is already pending, it is dropped in favor of this one.
+    /// Returns True when the candidate is queued, False when ignored as stale.
+    pub fn queue_candidate_model(&self, model_path: String, model_step: u64) -> PyResult<bool> {
+        let candidate_path = PathBuf::from(model_path);
+        if !candidate_path.exists() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Candidate model does not exist: {}",
+                candidate_path.display()
+            )));
+        }
+
+        let incumbent_step = self.incumbent_model_step.load(Ordering::SeqCst);
+        let incumbent_path = self.incumbent_model_path.read().unwrap().clone();
+        if model_step <= incumbent_step || candidate_path == incumbent_path {
+            Self::remove_model_artifacts_if_safe(
+                &candidate_path,
+                &self.bootstrap_model_path,
+                &incumbent_path,
+                None,
+            );
+            return Ok(false);
+        }
+
+        let request = CandidateModelRequest {
+            model_path: candidate_path.clone(),
+            model_step,
+        };
+        let replaced = {
+            let mut pending = self.pending_candidate.write().unwrap();
+            pending.replace(request)
+        };
+        if let Some(old_request) = replaced {
+            if old_request.model_path != candidate_path {
+                let evaluating_path = self
+                    .evaluating_candidate
+                    .read()
+                    .unwrap()
+                    .as_ref()
+                    .map(|r| r.model_path.clone());
+                Self::remove_model_artifacts_if_safe(
+                    &old_request.model_path,
+                    &self.bootstrap_model_path,
+                    &incumbent_path,
+                    evaluating_path.as_ref(),
+                );
+            }
+        }
+        Ok(true)
+    }
+
     /// Get statistics as a dictionary.
     pub fn get_stats(&self) -> HashMap<String, u64> {
         let mut stats = HashMap::new();
@@ -429,6 +598,18 @@ impl GameGenerator {
         stats.insert("examples_generated".to_string(), self.examples_generated());
         stats.insert("is_running".to_string(), self.is_running() as u64);
         stats.insert("buffer_size".to_string(), self.buffer_size() as u64);
+        stats.insert(
+            "incumbent_model_step".to_string(),
+            self.incumbent_model_step.load(Ordering::SeqCst),
+        );
+        stats.insert(
+            "incumbent_uses_network".to_string(),
+            self.incumbent_uses_network() as u64,
+        );
+        stats.insert(
+            "incumbent_lifetime_games".to_string(),
+            self.incumbent_lifetime_games.load(Ordering::SeqCst),
+        );
         stats
     }
 
@@ -494,6 +675,45 @@ impl GameGenerator {
             d.insert("cache_misses".to_string(), info.cache_misses as f32);
             d.insert("cache_size".to_string(), info.cache_size as f32);
             drained.push((info.game_number, d));
+        }
+        drained
+    }
+
+    /// Drain evaluator decision events in generation order.
+    pub fn drain_model_eval_events(&self) -> Vec<HashMap<String, f64>> {
+        let mut queue = self.model_eval_events.write().unwrap();
+        let mut drained = Vec::with_capacity(queue.len());
+        while let Some(event) = queue.pop_front() {
+            let mut d = HashMap::new();
+            d.insert("incumbent_step".to_string(), event.incumbent_step as f64);
+            d.insert(
+                "incumbent_uses_network".to_string(),
+                if event.incumbent_uses_network {
+                    1.0
+                } else {
+                    0.0
+                },
+            );
+            d.insert("incumbent_games".to_string(), event.incumbent_games as f64);
+            d.insert(
+                "incumbent_avg_attack".to_string(),
+                event.incumbent_avg_attack as f64,
+            );
+            d.insert("candidate_step".to_string(), event.candidate_step as f64);
+            d.insert("candidate_games".to_string(), event.candidate_games as f64);
+            d.insert(
+                "candidate_avg_attack".to_string(),
+                event.candidate_avg_attack as f64,
+            );
+            d.insert(
+                "promoted".to_string(),
+                if event.promoted { 1.0 } else { 0.0 },
+            );
+            d.insert(
+                "auto_promoted".to_string(),
+                if event.auto_promoted { 1.0 } else { 0.0 },
+            );
+            drained.push(d);
         }
         drained
     }
@@ -638,39 +858,53 @@ impl GameGenerator {
     fn worker_loop(
         worker_id: usize,
         num_workers: usize,
-        model_path: PathBuf,
+        is_evaluator_worker: bool,
+        bootstrap_model_path: PathBuf,
         training_data_path: PathBuf,
         config: MCTSConfig,
         max_moves: u32,
         add_noise: bool,
         games_per_save: usize,
+        candidate_eval_games: usize,
+        candidate_eval_add_noise: bool,
+        non_network_num_simulations: u32,
         buffer: Arc<SharedBuffer>,
         running: Arc<AtomicBool>,
         games_generated: Arc<AtomicU64>,
         examples_generated: Arc<AtomicU64>,
         game_stats: Arc<SharedStats>,
         completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
+        pending_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+        evaluating_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+        model_eval_events: Arc<RwLock<VecDeque<ModelEvalEvent>>>,
+        incumbent_model_path: Arc<RwLock<PathBuf>>,
+        incumbent_uses_network: Arc<AtomicBool>,
+        incumbent_model_step: Arc<AtomicU64>,
+        incumbent_model_version: Arc<AtomicU64>,
+        incumbent_lifetime_games: Arc<AtomicU64>,
+        incumbent_lifetime_attack: Arc<AtomicU64>,
     ) {
-        let mut agent = MCTSAgent::new(config);
-        let mut current_mtime: u128 = 0;
+        let mut agent = MCTSAgent::new(config.clone());
+        let mut loaded_model_version = u64::MAX;
+        let mut loaded_model_step = 0u64;
+        let mut loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
 
-        // Wait for initial model
-        while running.load(Ordering::SeqCst) {
-            if let Some(mtime) = Self::get_model_mtime(&model_path) {
-                let path_str = model_path
-                    .to_str()
-                    .expect("Model path contains invalid UTF-8");
-                if agent.load_model(path_str) {
-                    current_mtime = mtime;
-                    if worker_id == 0 {
-                        eprintln!(
-                            "[GameGenerator] Loaded initial model ({} workers)",
-                            num_workers
-                        );
-                    }
-                    break;
-                }
-            }
+        while running.load(Ordering::SeqCst)
+            && !Self::sync_incumbent_agent_if_needed(
+                &config,
+                non_network_num_simulations,
+                &mut agent,
+                &incumbent_model_path,
+                &incumbent_uses_network,
+                &incumbent_model_step,
+                &incumbent_model_version,
+                &mut loaded_model_version,
+                &mut loaded_model_step,
+                &mut loaded_with_network,
+                worker_id,
+                num_workers,
+            )
+        {
             thread::sleep(Duration::from_millis(500));
         }
 
@@ -680,61 +914,105 @@ impl GameGenerator {
 
         // Main generation loop
         while running.load(Ordering::SeqCst) {
-            // Check for model updates
-            if let Some(mtime) = Self::get_model_mtime(&model_path) {
-                if mtime > current_mtime {
-                    let path_str = model_path
-                        .to_str()
-                        .expect("Model path contains invalid UTF-8");
-                    if agent.load_model(path_str) {
-                        current_mtime = mtime;
-                        if worker_id == 0 {
-                            eprintln!("[GameGenerator] Reloaded updated model");
-                        }
+            if !Self::sync_incumbent_agent_if_needed(
+                &config,
+                non_network_num_simulations,
+                &mut agent,
+                &incumbent_model_path,
+                &incumbent_uses_network,
+                &incumbent_model_step,
+                &incumbent_model_version,
+                &mut loaded_model_version,
+                &mut loaded_model_step,
+                &mut loaded_with_network,
+                worker_id,
+                num_workers,
+            ) {
+                thread::sleep(Duration::from_millis(200));
+                continue;
+            }
+
+            if is_evaluator_worker {
+                let maybe_candidate = {
+                    let mut pending = pending_candidate.write().unwrap();
+                    pending.take()
+                };
+                if let Some(candidate) = maybe_candidate {
+                    let current_incumbent_step = incumbent_model_step.load(Ordering::SeqCst);
+                    if candidate.model_step <= current_incumbent_step {
+                        let incumbent_path = incumbent_model_path.read().unwrap().clone();
+                        Self::remove_model_artifacts_if_safe(
+                            &candidate.model_path,
+                            &bootstrap_model_path,
+                            &incumbent_path,
+                            None,
+                        );
+                        continue;
                     }
+
+                    {
+                        let mut evaluating = evaluating_candidate.write().unwrap();
+                        *evaluating = Some(candidate.clone());
+                    }
+
+                    let committed_games = Self::run_candidate_evaluation(
+                        worker_id,
+                        candidate,
+                        &config,
+                        &running,
+                        max_moves,
+                        candidate_eval_games,
+                        candidate_eval_add_noise,
+                        &buffer,
+                        &games_generated,
+                        &examples_generated,
+                        &game_stats,
+                        &completed_games,
+                        &model_eval_events,
+                        &bootstrap_model_path,
+                        &incumbent_model_path,
+                        &incumbent_uses_network,
+                        &incumbent_model_step,
+                        &incumbent_model_version,
+                        &incumbent_lifetime_games,
+                        &incumbent_lifetime_attack,
+                    );
+
+                    {
+                        let mut evaluating = evaluating_candidate.write().unwrap();
+                        *evaluating = None;
+                    }
+
+                    local_games_count += committed_games;
+                    loaded_model_version = u64::MAX;
+                    loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
+
+                    if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
+                        Self::persist_buffer_snapshot(&training_data_path, &buffer, max_moves);
+                        local_games_count = 0;
+                    }
+                    continue;
                 }
             }
 
             // Play one game
             if let Some(result) = agent.play_game(max_moves, add_noise) {
-                let num_examples = result.examples.len() as u64;
-
-                // Add to shared buffer (thread-safe, handles FIFO eviction)
-                buffer.add_examples(result.examples);
-
+                Self::commit_game_result(
+                    result,
+                    &buffer,
+                    &games_generated,
+                    &examples_generated,
+                    &game_stats,
+                    &completed_games,
+                    &incumbent_lifetime_games,
+                    &incumbent_lifetime_attack,
+                    true,
+                );
                 local_games_count += 1;
-
-                // Update counters. Use the fetch_add return value to get a unique
-                // monotonic game number across workers (avoids duplicate IDs).
-                let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
-                examples_generated.fetch_add(num_examples, Ordering::SeqCst);
-
-                // Accumulate game stats
-                game_stats.add(&result.stats, result.total_attack);
-
-                // Enqueue completed game info for per-game logging
-                completed_games.write().unwrap().push_back(LastGameInfo {
-                    game_number,
-                    stats: result.stats,
-                    total_attack: result.total_attack,
-                    avg_overhang_fields: result.avg_overhang_fields,
-                    num_moves: result.num_moves,
-                    avg_moves: result.avg_moves,
-                    max_moves: result.max_moves,
-                    tree_stats: result.tree_stats,
-                    cache_hits: result.cache_hits,
-                    cache_misses: result.cache_misses,
-                    cache_size: result.cache_size,
-                });
 
                 // Periodically save to disk for resume capability (only worker 0)
                 if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
-                    let all_examples = buffer.get_all();
-                    if let Err(e) =
-                        write_examples_to_npz(&training_data_path, &all_examples, max_moves)
-                    {
-                        eprintln!("[GameGenerator] Failed to write NPZ: {}", e);
-                    }
+                    Self::persist_buffer_snapshot(&training_data_path, &buffer, max_moves);
                     local_games_count = 0;
                 }
             }
@@ -755,39 +1033,340 @@ impl GameGenerator {
         eprintln!("[GameGenerator] Worker {} exiting", worker_id);
     }
 
-    /// Get the modification time of a file as nanoseconds since UNIX epoch.
-    fn get_model_mtime(path: &PathBuf) -> Option<u128> {
-        match fs::metadata(path) {
-            Ok(meta) => match meta.modified() {
-                Ok(time) => match time.duration_since(UNIX_EPOCH) {
-                    Ok(duration) => Some(duration.as_nanos()),
-                    Err(e) => {
-                        eprintln!(
-                            "[GameGenerator] Failed to convert modification time for {:?}: {}",
-                            path, e
-                        );
-                        None
-                    }
-                },
-                Err(e) => {
-                    eprintln!(
-                        "[GameGenerator] Failed to get modification time for {:?}: {}",
-                        path, e
-                    );
-                    None
-                }
-            },
-            Err(e) => {
-                // Only log if it's not a "file not found" error (which is expected during startup)
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    eprintln!(
-                        "[GameGenerator] Failed to access model file {:?}: {}",
-                        path, e
-                    );
-                }
-                None
+    fn sync_incumbent_agent_if_needed(
+        config: &MCTSConfig,
+        non_network_num_simulations: u32,
+        agent: &mut MCTSAgent,
+        incumbent_model_path: &Arc<RwLock<PathBuf>>,
+        incumbent_uses_network: &Arc<AtomicBool>,
+        incumbent_model_step: &Arc<AtomicU64>,
+        incumbent_model_version: &Arc<AtomicU64>,
+        loaded_model_version: &mut u64,
+        loaded_model_step: &mut u64,
+        loaded_with_network: &mut bool,
+        worker_id: usize,
+        num_workers: usize,
+    ) -> bool {
+        let target_version = incumbent_model_version.load(Ordering::SeqCst);
+        let target_uses_network = incumbent_uses_network.load(Ordering::SeqCst);
+        if *loaded_model_version == target_version && *loaded_with_network == target_uses_network {
+            return true;
+        }
+
+        let mut mode_config = config.clone();
+        mode_config.num_simulations = if target_uses_network {
+            config.num_simulations
+        } else {
+            non_network_num_simulations
+        };
+        let mut new_agent = MCTSAgent::new(mode_config);
+        if target_uses_network {
+            let model_path = incumbent_model_path.read().unwrap().clone();
+            let path_str = model_path
+                .to_str()
+                .expect("Model path contains invalid UTF-8");
+            if !new_agent.load_model(path_str) {
+                eprintln!(
+                    "[GameGenerator] Worker {} failed to load incumbent model {}",
+                    worker_id,
+                    model_path.display()
+                );
+                return false;
             }
         }
+
+        *loaded_model_step = incumbent_model_step.load(Ordering::SeqCst);
+        if worker_id == 0 {
+            if target_uses_network {
+                eprintln!(
+                    "[GameGenerator] Loaded incumbent NN model step {} ({} workers, sims={})",
+                    *loaded_model_step, num_workers, config.num_simulations
+                );
+            } else {
+                eprintln!(
+                    "[GameGenerator] Using no-network incumbent at step {} ({} workers, sims={})",
+                    *loaded_model_step, num_workers, non_network_num_simulations
+                );
+            }
+        }
+
+        *agent = new_agent;
+        *loaded_model_version = target_version;
+        *loaded_with_network = target_uses_network;
+        true
+    }
+
+    fn run_candidate_evaluation(
+        worker_id: usize,
+        candidate: CandidateModelRequest,
+        config: &MCTSConfig,
+        running: &Arc<AtomicBool>,
+        max_moves: u32,
+        candidate_eval_games: usize,
+        candidate_eval_add_noise: bool,
+        buffer: &Arc<SharedBuffer>,
+        games_generated: &Arc<AtomicU64>,
+        examples_generated: &Arc<AtomicU64>,
+        game_stats: &Arc<SharedStats>,
+        completed_games: &Arc<RwLock<VecDeque<LastGameInfo>>>,
+        model_eval_events: &Arc<RwLock<VecDeque<ModelEvalEvent>>>,
+        bootstrap_model_path: &PathBuf,
+        incumbent_model_path: &Arc<RwLock<PathBuf>>,
+        incumbent_uses_network: &Arc<AtomicBool>,
+        incumbent_model_step: &Arc<AtomicU64>,
+        incumbent_model_version: &Arc<AtomicU64>,
+        incumbent_lifetime_games: &Arc<AtomicU64>,
+        incumbent_lifetime_attack: &Arc<AtomicU64>,
+    ) -> usize {
+        let mut candidate_agent = MCTSAgent::new(config.clone());
+        let candidate_path_str = candidate
+            .model_path
+            .to_str()
+            .expect("Model path contains invalid UTF-8");
+        if !candidate_agent.load_model(candidate_path_str) {
+            eprintln!(
+                "[GameGenerator] Worker {} failed to load candidate step {} from {}",
+                worker_id,
+                candidate.model_step,
+                candidate.model_path.display()
+            );
+            let incumbent_path = incumbent_model_path.read().unwrap().clone();
+            Self::remove_model_artifacts_if_safe(
+                &candidate.model_path,
+                bootstrap_model_path,
+                &incumbent_path,
+                None,
+            );
+            return 0;
+        }
+
+        let mut candidate_results: Vec<GameResult> = Vec::with_capacity(candidate_eval_games);
+        for _ in 0..candidate_eval_games {
+            if !running.load(Ordering::SeqCst) {
+                let incumbent_path = incumbent_model_path.read().unwrap().clone();
+                Self::remove_model_artifacts_if_safe(
+                    &candidate.model_path,
+                    bootstrap_model_path,
+                    &incumbent_path,
+                    None,
+                );
+                return 0;
+            }
+            if let Some(result) = candidate_agent.play_game(max_moves, candidate_eval_add_noise) {
+                candidate_results.push(result);
+            }
+        }
+
+        if candidate_results.is_empty() {
+            let incumbent_path = incumbent_model_path.read().unwrap().clone();
+            Self::remove_model_artifacts_if_safe(
+                &candidate.model_path,
+                bootstrap_model_path,
+                &incumbent_path,
+                None,
+            );
+            return 0;
+        }
+
+        let candidate_games = candidate_results.len() as u64;
+        let candidate_total_attack: u64 = candidate_results
+            .iter()
+            .map(|result| result.total_attack as u64)
+            .sum();
+        let candidate_avg_attack = candidate_total_attack as f32 / candidate_games as f32;
+
+        let incumbent_games = incumbent_lifetime_games.load(Ordering::SeqCst);
+        let incumbent_total_attack = incumbent_lifetime_attack.load(Ordering::SeqCst);
+        let incumbent_avg_attack = if incumbent_games > 0 {
+            incumbent_total_attack as f32 / incumbent_games as f32
+        } else {
+            0.0
+        };
+        let incumbent_uses_network_before = incumbent_uses_network.load(Ordering::SeqCst);
+        let incumbent_step_before = incumbent_model_step.load(Ordering::SeqCst);
+        let auto_promoted = incumbent_games == 0;
+        let promoted = auto_promoted || candidate_avg_attack > incumbent_avg_attack;
+
+        let committed_games = if promoted {
+            let previous_incumbent_path = incumbent_model_path.read().unwrap().clone();
+            {
+                let mut incumbent_path = incumbent_model_path.write().unwrap();
+                *incumbent_path = candidate.model_path.clone();
+            }
+            incumbent_uses_network.store(true, Ordering::SeqCst);
+            incumbent_model_step.store(candidate.model_step, Ordering::SeqCst);
+            incumbent_model_version.fetch_add(1, Ordering::SeqCst);
+            incumbent_lifetime_games.store(0, Ordering::SeqCst);
+            incumbent_lifetime_attack.store(0, Ordering::SeqCst);
+
+            let mut committed = 0usize;
+            for result in candidate_results {
+                Self::commit_game_result(
+                    result,
+                    buffer,
+                    games_generated,
+                    examples_generated,
+                    game_stats,
+                    completed_games,
+                    incumbent_lifetime_games,
+                    incumbent_lifetime_attack,
+                    true,
+                );
+                committed += 1;
+            }
+
+            Self::remove_model_artifacts_if_safe(
+                &previous_incumbent_path,
+                bootstrap_model_path,
+                &candidate.model_path,
+                None,
+            );
+
+            eprintln!(
+                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={})",
+                candidate.model_step, candidate_avg_attack, incumbent_avg_attack, candidate_games
+            );
+            committed
+        } else {
+            let incumbent_path = incumbent_model_path.read().unwrap().clone();
+            Self::remove_model_artifacts_if_safe(
+                &candidate.model_path,
+                bootstrap_model_path,
+                &incumbent_path,
+                None,
+            );
+
+            eprintln!(
+                "[GameGenerator] Rejected candidate step {} (avg_attack {:.3} <= incumbent {:.3}, games={})",
+                candidate.model_step, candidate_avg_attack, incumbent_avg_attack, candidate_games
+            );
+            0
+        };
+
+        model_eval_events
+            .write()
+            .unwrap()
+            .push_back(ModelEvalEvent {
+                incumbent_step: incumbent_step_before,
+                incumbent_uses_network: incumbent_uses_network_before,
+                incumbent_games,
+                incumbent_avg_attack,
+                candidate_step: candidate.model_step,
+                candidate_games,
+                candidate_avg_attack,
+                promoted,
+                auto_promoted,
+            });
+
+        committed_games
+    }
+
+    fn commit_game_result(
+        result: GameResult,
+        buffer: &Arc<SharedBuffer>,
+        games_generated: &Arc<AtomicU64>,
+        examples_generated: &Arc<AtomicU64>,
+        game_stats: &Arc<SharedStats>,
+        completed_games: &Arc<RwLock<VecDeque<LastGameInfo>>>,
+        incumbent_lifetime_games: &Arc<AtomicU64>,
+        incumbent_lifetime_attack: &Arc<AtomicU64>,
+        count_toward_incumbent: bool,
+    ) {
+        let GameResult {
+            examples,
+            total_attack,
+            num_moves,
+            avg_moves,
+            max_moves,
+            stats,
+            tree_stats,
+            avg_overhang_fields,
+            cache_hits,
+            cache_misses,
+            cache_size,
+            ..
+        } = result;
+
+        let num_examples = examples.len() as u64;
+        buffer.add_examples(examples);
+
+        let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
+        examples_generated.fetch_add(num_examples, Ordering::SeqCst);
+        game_stats.add(&stats, total_attack);
+
+        completed_games.write().unwrap().push_back(LastGameInfo {
+            game_number,
+            stats,
+            total_attack,
+            avg_overhang_fields,
+            num_moves,
+            avg_moves,
+            max_moves,
+            tree_stats,
+            cache_hits,
+            cache_misses,
+            cache_size,
+        });
+
+        if count_toward_incumbent {
+            incumbent_lifetime_games.fetch_add(1, Ordering::SeqCst);
+            incumbent_lifetime_attack.fetch_add(total_attack as u64, Ordering::SeqCst);
+        }
+    }
+
+    fn persist_buffer_snapshot(
+        training_data_path: &PathBuf,
+        buffer: &Arc<SharedBuffer>,
+        max_moves: u32,
+    ) {
+        let all_examples = buffer.get_all();
+        if let Err(error) = write_examples_to_npz(training_data_path, &all_examples, max_moves) {
+            eprintln!("[GameGenerator] Failed to write NPZ: {}", error);
+        }
+    }
+
+    fn model_artifact_paths(model_path: &Path) -> [PathBuf; 4] {
+        let base_path = model_path.with_extension("");
+        [
+            model_path.to_path_buf(),
+            base_path.with_extension("conv.onnx"),
+            base_path.with_extension("heads.onnx"),
+            base_path.with_extension("fc.bin"),
+        ]
+    }
+
+    fn remove_model_artifacts(model_path: &PathBuf) {
+        for artifact_path in Self::model_artifact_paths(model_path) {
+            if let Err(error) = fs::remove_file(&artifact_path) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "[GameGenerator] Failed to remove model artifact {}: {}",
+                        artifact_path.display(),
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    fn remove_model_artifacts_if_safe(
+        model_path: &PathBuf,
+        bootstrap_model_path: &PathBuf,
+        incumbent_model_path: &PathBuf,
+        evaluating_model_path: Option<&PathBuf>,
+    ) {
+        if model_path == bootstrap_model_path {
+            return;
+        }
+        if model_path == incumbent_model_path {
+            return;
+        }
+        if let Some(path) = evaluating_model_path {
+            if model_path == path {
+                return;
+            }
+        }
+        Self::remove_model_artifacts(model_path);
     }
 }
 
@@ -907,14 +1486,57 @@ mod tests {
     }
 
     #[test]
-    fn test_get_model_mtime_for_missing_and_existing_file() {
-        let missing = unique_temp_path("missing");
-        assert_eq!(GameGenerator::get_model_mtime(&missing), None);
+    fn test_model_artifact_paths_cover_all_split_outputs() {
+        let onnx_path = unique_temp_path("candidate").with_extension("onnx");
+        let artifacts = GameGenerator::model_artifact_paths(&onnx_path);
+        assert_eq!(artifacts[0], onnx_path);
+        assert_eq!(artifacts[1], onnx_path.with_extension("conv.onnx"));
+        assert_eq!(artifacts[2], onnx_path.with_extension("heads.onnx"));
+        assert_eq!(artifacts[3], onnx_path.with_extension("fc.bin"));
+    }
 
-        let existing = unique_temp_path("existing");
-        fs::write(&existing, b"model").expect("temp file write should succeed");
-        let mtime = GameGenerator::get_model_mtime(&existing);
-        fs::remove_file(&existing).expect("temp file cleanup should succeed");
-        assert!(mtime.is_some());
+    #[test]
+    fn test_remove_model_artifacts_if_safe_preserves_bootstrap_and_incumbent() {
+        let model_path = unique_temp_path("cleanup").with_extension("onnx");
+        let artifacts = GameGenerator::model_artifact_paths(&model_path);
+        for artifact in &artifacts {
+            fs::write(artifact, b"model").expect("temp file write should succeed");
+        }
+
+        GameGenerator::remove_model_artifacts_if_safe(
+            &model_path,
+            &model_path,
+            &PathBuf::from("different.onnx"),
+            None,
+        );
+        for artifact in &artifacts {
+            assert!(
+                artifact.exists(),
+                "bootstrap artifacts should not be removed"
+            );
+        }
+
+        GameGenerator::remove_model_artifacts_if_safe(
+            &model_path,
+            &PathBuf::from("bootstrap.onnx"),
+            &model_path,
+            None,
+        );
+        for artifact in &artifacts {
+            assert!(
+                artifact.exists(),
+                "incumbent artifacts should not be removed"
+            );
+        }
+
+        GameGenerator::remove_model_artifacts_if_safe(
+            &model_path,
+            &PathBuf::from("bootstrap.onnx"),
+            &PathBuf::from("incumbent.onnx"),
+            None,
+        );
+        for artifact in &artifacts {
+            assert!(!artifact.exists(), "candidate artifacts should be removed");
+        }
     }
 }
