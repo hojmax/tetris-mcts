@@ -41,7 +41,7 @@ _env_cache: dict[int, TetrisEnv] = {}
 @dataclass
 class ScriptArgs:
     run_dir: Path = Path(
-        "training_runs/v6"
+        "training_runs/v11"
     )  # Training run dir (default: training_runs/v3)
 
 
@@ -95,6 +95,69 @@ PIECE_TOKEN_TO_INDEX = {
     "J": 5,
     "L": 6,
 }
+
+
+Q_NORMALIZATION_EPSILON = 1e-6
+
+
+def normalize_q_value(q: float, q_min: float, q_max: float) -> float:
+    q_range = q_max - q_min
+    if abs(q_range) < Q_NORMALIZATION_EPSILON:
+        return 0.5
+    return (q - q_min) / q_range
+
+
+def build_decision_action_stats(
+    decision_node: dict, tree_dict: dict, c_puct: float
+) -> list[dict]:
+    if not decision_node["valid_actions"]:
+        return []
+
+    action_to_prior = dict(
+        zip(decision_node["valid_actions"], decision_node["action_priors"])
+    )
+    child_by_action: dict[int, dict] = {}
+    for child_id in decision_node["children"]:
+        child = tree_dict["nodes"][child_id]
+        action_idx = child.get("edge_from_parent")
+        if action_idx is not None:
+            child_by_action[action_idx] = child
+
+    raw_q_by_action: dict[int, float] = {}
+    for action_idx in decision_node["valid_actions"]:
+        child = child_by_action.get(action_idx)
+        raw_q_by_action[action_idx] = child["mean_value"] if child is not None else 0.0
+
+    q_min = min(raw_q_by_action.values())
+    q_max = max(raw_q_by_action.values())
+    sqrt_parent = (
+        decision_node["visit_count"] ** 0.5 if decision_node["visit_count"] > 0 else 0.0
+    )
+
+    action_stats: list[dict] = []
+    for action_idx in decision_node["valid_actions"]:
+        prior = action_to_prior[action_idx]
+        child = child_by_action.get(action_idx)
+        visits = child["visit_count"] if child is not None else 0
+        raw_q = raw_q_by_action[action_idx]
+        normalized_q = normalize_q_value(raw_q, q_min, q_max)
+        u_value = c_puct * prior * sqrt_parent / (1 + visits)
+        puct_total = normalized_q + u_value
+
+        action_stats.append(
+            {
+                "action": action_idx,
+                "prior": prior,
+                "visits": visits,
+                "raw_q": raw_q,
+                "q_norm": normalized_q,
+                "u": u_value,
+                "puct": puct_total,
+                "child": child,
+            }
+        )
+
+    return action_stats
 
 
 def parse_piece_token(token: str) -> int:
@@ -240,8 +303,13 @@ def display_virtual_node(node_data, tree_dict, c_puct):
         return "Parent not found", "", ""
 
     parent = tree_dict["nodes"][parent_id]
-    prior = node_data.get("prior", 0.0)
-    u_value = node_data.get("u_value", 0.0)
+    action_stats = build_decision_action_stats(parent, tree_dict, c_puct)
+    stats_by_action = {row["action"]: row for row in action_stats}
+    if action_idx not in stats_by_action:
+        return "Action not found in parent valid actions", "", ""
+    action_row = stats_by_action[action_idx]
+    q_min = min(row["raw_q"] for row in action_stats)
+    q_max = max(row["raw_q"] for row in action_stats)
 
     # Try to compute the resulting board by executing the action
     attack = None
@@ -261,10 +329,22 @@ def display_virtual_node(node_data, tree_dict, c_puct):
         html.P(f"Attack: {attack if attack is not None else '?'}"),
         html.Hr(),
         html.H4("PUCT Components"),
-        html.P(f"Prior (P): {prior:.4f}", style={"fontWeight": "bold"}),
-        html.P("Q-Value: 0.0 (unvisited)"),
-        html.P(f"Exploration (U): {u_value:.3f}", style={"color": "#0066cc"}),
-        html.P(f"PUCT Total: {u_value:.3f}", style={"fontWeight": "bold"}),
+        html.P(f"Prior (P): {action_row['prior']:.4f}", style={"fontWeight": "bold"}),
+        html.P(f"Q (raw): {action_row['raw_q']:.6f}"),
+        html.P(
+            f"Q_norm: {action_row['q_norm']:.6f} (sibling q_min={q_min:.6f}, q_max={q_max:.6f})"
+        ),
+        html.P(
+            f"Exploration (U): {action_row['u']:.3f}",
+            style={"color": "#0066cc"},
+        ),
+        html.P(
+            (
+                "PUCT = Q_norm + U = "
+                f"{action_row['q_norm']:.6f} + {action_row['u']:.6f} = {action_row['puct']:.6f}"
+            ),
+            style={"fontWeight": "bold"},
+        ),
     ]
 
     # Render the resulting board if we were able to compute it
@@ -1390,6 +1470,9 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                 html.P(f"Valid Actions: {len(node['valid_actions'])}"),
             ]
         )
+        action_stats = build_decision_action_stats(node, tree_dict, c_puct)
+        q_min = min(row["raw_q"] for row in action_stats) if action_stats else 0.0
+        q_max = max(row["raw_q"] for row in action_stats) if action_stats else 0.0
 
         if node["action_priors"]:
             details.append(html.Hr())
@@ -1400,43 +1483,22 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                 )
             )
 
-            action_to_prior = dict(zip(node["valid_actions"], node["action_priors"]))
-            child_by_action: dict[int, dict] = {}
-            for child_id in node["children"]:
-                child = tree_dict["nodes"][child_id]
-                action_idx = child.get("edge_from_parent")
-                if action_idx is not None:
-                    child_by_action[action_idx] = child
-
-            sqrt_parent = node["visit_count"] ** 0.5 if node["visit_count"] > 0 else 0.0
-            top_prior_rows = []
-            for action_idx, prior in action_to_prior.items():
-                child = child_by_action.get(action_idx)
-                n_child = child["visit_count"] if child is not None else 0
-                q_value = child["mean_value"] if child is not None else 0.0
-                u_value = c_puct * prior * sqrt_parent / (1 + n_child)
-                puct_total = q_value + u_value
-                top_prior_rows.append(
-                    {
-                        "action": action_idx,
-                        "prior": prior,
-                        "q": q_value,
-                        "u": u_value,
-                        "puct": puct_total,
-                        "visits": n_child,
-                    }
-                )
-
-            top_prior_rows.sort(key=lambda row: row["prior"], reverse=True)
+            top_prior_rows = sorted(
+                action_stats,
+                key=lambda row: (-row["prior"], row["action"]),
+            )
             top_prior_rows = top_prior_rows[:5]
 
             top_prior_header = html.Tr(
                 [
                     html.Th("Action", style={"padding": "4px", "textAlign": "left"}),
                     html.Th("P", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("Q", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("Qnorm", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("Qraw", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("U", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("Q+U", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th(
+                        "Qnorm+U", style={"padding": "4px", "textAlign": "right"}
+                    ),
                     html.Th("N", style={"padding": "4px", "textAlign": "right"}),
                 ]
             )
@@ -1454,7 +1516,11 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                                 style={"padding": "4px", "textAlign": "right"},
                             ),
                             html.Td(
-                                f"{row['q']:.4f}",
+                                f"{row['q_norm']:.4f}",
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                            html.Td(
+                                f"{row['raw_q']:.4f}",
                                 style={"padding": "4px", "textAlign": "right"},
                             ),
                             html.Td(
@@ -1502,46 +1568,19 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
             )
             details.append(
                 html.P(
-                    "PUCT = Q + U, where U = c_puct * P * sqrt(N_parent) / (1 + N_child)",
+                    (
+                        "PUCT = Q_norm + U, where Q_norm is min-max normalized over all valid "
+                        f"actions (q_min={q_min:.4f}, q_max={q_max:.4f}) and "
+                        "U = c_puct * P * sqrt(N_parent) / (1 + N_child)"
+                    ),
                     style={"fontSize": "11px", "color": "#666", "marginBottom": "10px"},
                 )
             )
 
-            # Build action->prior mapping
-            action_to_prior = dict(zip(node["valid_actions"], node["action_priors"]))
-
-            # Gather child info with PUCT terms
-            child_info = []
-            sqrt_parent = node["visit_count"] ** 0.5
-
-            for child_id in node["children"]:
-                child = tree_dict["nodes"][child_id]
-                action_idx = child.get("edge_from_parent")
-                if action_idx is None:
-                    continue
-
-                prior = action_to_prior.get(action_idx, 0.0)
-                n_child = child["visit_count"]
-                q_value = child["mean_value"]
-
-                # Exploration term: U = c_puct * P * sqrt(N_parent) / (1 + N_child)
-                u_value = c_puct * prior * sqrt_parent / (1 + n_child)
-                puct_total = q_value + u_value
-
-                child_info.append(
-                    {
-                        "action": action_idx,
-                        "prior": prior,
-                        "visits": n_child,
-                        "q": q_value,
-                        "u": u_value,
-                        "puct": puct_total,
-                        "attack": child.get("attack", 0),
-                    }
-                )
+            child_info = [row for row in action_stats if row["child"] is not None]
 
             # Sort by PUCT score descending
-            child_info.sort(key=lambda x: x["puct"], reverse=True)
+            child_info.sort(key=lambda row: (-row["puct"], row["action"]))
 
             # Display as a table
             table_header = html.Tr(
@@ -1549,7 +1588,8 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                     html.Th("Action", style={"padding": "4px", "textAlign": "left"}),
                     html.Th("N", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("P", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("Q", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("Qraw", style={"padding": "4px", "textAlign": "right"}),
+                    html.Th("Qnorm", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("U", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("PUCT", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("Atk", style={"padding": "4px", "textAlign": "right"}),
@@ -1579,7 +1619,11 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                                 style={"padding": "4px", "textAlign": "right"},
                             ),
                             html.Td(
-                                f"{info['q']:.2f}",
+                                f"{info['raw_q']:.2f}",
+                                style={"padding": "4px", "textAlign": "right"},
+                            ),
+                            html.Td(
+                                f"{info['q_norm']:.2f}",
                                 style={"padding": "4px", "textAlign": "right"},
                             ),
                             html.Td(
@@ -1599,7 +1643,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                                 },
                             ),
                             html.Td(
-                                str(info["attack"]),
+                                str(info["child"]["attack"]),
                                 style={"padding": "4px", "textAlign": "right"},
                             ),
                         ],
@@ -1648,32 +1692,39 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
             parent = tree_dict["nodes"][parent_id]
             edge = node.get("edge_from_parent")
             if edge is not None and parent["action_priors"]:
-                action_to_prior = dict(
-                    zip(parent["valid_actions"], parent["action_priors"])
+                parent_action_stats = build_decision_action_stats(parent, tree_dict, c_puct)
+                selection_row = next(
+                    (row for row in parent_action_stats if row["action"] == edge), None
                 )
-                prior = action_to_prior.get(edge, 0.0)
-                details.append(html.Hr())
-                details.append(html.H4("Selection Info"))
-                details.append(html.P(f"Prior (P): {prior:.4f}"))
-                details.append(
-                    html.P(f"Parent visits (N_parent): {parent['visit_count']}")
-                )
-                details.append(html.P(f"Child visits (N_child): {node['visit_count']}"))
-                if parent["visit_count"] > 0:
-                    q_value = node["mean_value"]
+                if selection_row is not None:
+                    q_min = min(row["raw_q"] for row in parent_action_stats)
+                    q_max = max(row["raw_q"] for row in parent_action_stats)
                     n_parent = parent["visit_count"]
                     n_child = node["visit_count"]
-                    sqrt_parent = parent["visit_count"] ** 0.5
-                    u_value = c_puct * prior * sqrt_parent / (1 + n_child)
-                    puct_total = q_value + u_value
+                    details.append(html.Hr())
+                    details.append(html.H4("Selection Info"))
                     details.append(
                         html.P(
-                            f"Q: {q_value:.6f}",
+                            f"Prior (P): {selection_row['prior']:.4f}",
+                        )
+                    )
+                    details.append(html.P(f"Parent visits (N_parent): {n_parent}"))
+                    details.append(html.P(f"Child visits (N_child): {n_child}"))
+                    details.append(
+                        html.P(
+                            f"Q (raw): {selection_row['raw_q']:.6f}",
                         )
                     )
                     details.append(
                         html.P(
-                            f"Exploration (U): {u_value:.3f}",
+                            "Q_norm: "
+                            f"{selection_row['q_norm']:.6f} "
+                            f"(sibling q_min={q_min:.6f}, q_max={q_max:.6f})",
+                        )
+                    )
+                    details.append(
+                        html.P(
+                            f"Exploration (U): {selection_row['u']:.3f}",
                             style={"color": "#0066cc"},
                         )
                     )
@@ -1681,21 +1732,25 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                         html.P(
                             (
                                 "U = c_puct * P * sqrt(N_parent) / (1 + N_child) = "
-                                f"{c_puct:.3f} * {prior:.6f} * sqrt({n_parent}) / (1 + {n_child}) = "
-                                f"{u_value:.6f}"
+                                f"{c_puct:.3f} * {selection_row['prior']:.6f} * sqrt({n_parent}) "
+                                f"/ (1 + {n_child}) = {selection_row['u']:.6f}"
                             ),
                             style={"fontFamily": "monospace", "fontSize": "12px"},
                         )
                     )
                     details.append(
                         html.P(
-                            f"PUCT = Q + U = {q_value:.6f} + {u_value:.6f} = {puct_total:.6f}",
+                            (
+                                "PUCT = Q_norm + U = "
+                                f"{selection_row['q_norm']:.6f} + {selection_row['u']:.6f} = "
+                                f"{selection_row['puct']:.6f}"
+                            ),
                             style={"fontFamily": "monospace", "fontSize": "12px"},
                         )
                     )
                     details.append(
                         html.P(
-                            f"Argmax score used at parent: {puct_total:.6f}",
+                            f"Argmax score used at parent: {selection_row['puct']:.6f}",
                             style={"fontWeight": "bold"},
                         )
                     )
