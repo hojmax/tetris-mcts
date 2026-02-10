@@ -30,6 +30,7 @@ pub struct TetrisNN {
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
     cache_hits: Cell<u64>,
     cache_misses: Cell<u64>,
+    cache_enabled: Cell<bool>,
 }
 
 impl TetrisNN {
@@ -77,7 +78,26 @@ impl TetrisNN {
             board_cache: RefCell::new(HashMap::new()),
             cache_hits: Cell::new(0),
             cache_misses: Cell::new(0),
+            cache_enabled: Cell::new(true),
         })
+    }
+
+    fn compute_board_embedding(&self, board_f32: &[f32]) -> TractResult<Array1<f32>> {
+        let board_tensor = tract_ndarray::Array4::from_shape_vec(
+            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
+            board_f32.to_vec(),
+        )?
+        .into_tensor();
+
+        let conv_output = self.conv_model.run(tvec!(board_tensor.into()))?;
+        let conv_out: Vec<f32> = conv_output[0]
+            .to_array_view::<f32>()?
+            .iter()
+            .copied()
+            .collect();
+
+        let conv_arr = Array1::from_vec(conv_out);
+        Ok(self.fc_weight_board.dot(&conv_arr) + self.fc_bias.as_ref())
     }
 
     /// Run inference with action mask applied, using board embedding cache.
@@ -90,44 +110,29 @@ impl TetrisNN {
     ) -> TractResult<(Vec<f32>, f32)> {
         let (board_f32, aux_vec) = encode_state_features(env, move_number, max_moves)?;
 
-        // Pack board into cache key
-        let board_key = pack_board(env);
+        let board_embed = if self.cache_enabled.get() {
+            let board_key = pack_board(env);
+            let board_embed = {
+                let cache = self.board_cache.borrow();
+                cache.get(&board_key).cloned()
+            };
 
-        // Check cache for board embedding
-        let board_embed = {
-            let cache = self.board_cache.borrow();
-            cache.get(&board_key).cloned()
-        };
-
-        let board_embed = match board_embed {
-            Some(embed) => {
-                self.cache_hits.set(self.cache_hits.get() + 1);
-                embed
+            match board_embed {
+                Some(embed) => {
+                    self.cache_hits.set(self.cache_hits.get() + 1);
+                    embed
+                }
+                None => {
+                    self.cache_misses.set(self.cache_misses.get() + 1);
+                    let embed = self.compute_board_embedding(&board_f32)?;
+                    self.board_cache
+                        .borrow_mut()
+                        .insert(board_key, embed.clone());
+                    embed
+                }
             }
-            None => {
-                self.cache_misses.set(self.cache_misses.get() + 1);
-                // Cache miss: run conv model
-                let board_tensor = tract_ndarray::Array4::from_shape_vec(
-                    (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
-                    board_f32,
-                )?
-                .into_tensor();
-
-                let conv_output = self.conv_model.run(tvec!(board_tensor.into()))?;
-                let conv_out: Vec<f32> = conv_output[0]
-                    .to_array_view::<f32>()?
-                    .iter()
-                    .copied()
-                    .collect();
-
-                let conv_arr = Array1::from_vec(conv_out);
-
-                // board_embed = W_board @ conv_out + bias
-                let embed = self.fc_weight_board.dot(&conv_arr) + self.fc_bias.as_ref();
-
-                self.board_cache.borrow_mut().insert(board_key, embed.clone());
-                embed
-            }
+        } else {
+            self.compute_board_embedding(&board_f32)?
         };
 
         // fc_out = board_embed + W_aux @ aux
@@ -135,11 +140,9 @@ impl TetrisNN {
         let fc_out = &board_embed + &self.fc_weight_aux.dot(&aux_arr);
 
         // Run heads model
-        let fc_pre_tensor = tract_ndarray::Array2::from_shape_vec(
-            (1, self.fc_hidden),
-            fc_out.to_vec(),
-        )?
-        .into_tensor();
+        let fc_pre_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, self.fc_hidden), fc_out.to_vec())?
+                .into_tensor();
 
         let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
 
@@ -180,31 +183,13 @@ impl TetrisNN {
         action_mask: &[bool],
     ) -> TractResult<(Vec<f32>, f32)> {
         // No caching for raw tensor inputs (used only by debug functions)
-        let board = tract_ndarray::Array4::from_shape_vec(
-            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
-            board_tensor.to_vec(),
-        )?
-        .into_tensor();
-
-        let conv_output = self.conv_model.run(tvec!(board.into()))?;
-        let conv_out: Vec<f32> = conv_output[0]
-            .to_array_view::<f32>()?
-            .iter()
-            .copied()
-            .collect();
-
-        let conv_arr = Array1::from_vec(conv_out);
+        let board_embed = self.compute_board_embedding(board_tensor)?;
         let aux_arr = Array1::from_vec(aux_tensor.to_vec());
+        let fc_out = &board_embed + &self.fc_weight_aux.dot(&aux_arr);
 
-        let fc_out = self.fc_weight_board.dot(&conv_arr)
-            + &self.fc_weight_aux.dot(&aux_arr)
-            + self.fc_bias.as_ref();
-
-        let fc_pre_tensor = tract_ndarray::Array2::from_shape_vec(
-            (1, self.fc_hidden),
-            fc_out.to_vec(),
-        )?
-        .into_tensor();
+        let fc_pre_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, self.fc_hidden), fc_out.to_vec())?
+                .into_tensor();
 
         let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
 
@@ -240,6 +225,13 @@ impl TetrisNN {
 }
 
 impl TetrisNN {
+    pub fn set_board_cache_enabled(&self, enabled: bool) {
+        self.cache_enabled.set(enabled);
+        if !enabled {
+            self.board_cache.borrow_mut().clear();
+        }
+    }
+
     /// Read and reset cache hit/miss counters. Returns (hits, misses, cache_size).
     pub fn get_and_reset_cache_stats(&self) -> (u64, u64, usize) {
         let hits = self.cache_hits.replace(0);
@@ -262,6 +254,7 @@ impl Clone for TetrisNN {
             board_cache: RefCell::new(HashMap::new()),
             cache_hits: Cell::new(0),
             cache_misses: Cell::new(0),
+            cache_enabled: Cell::new(self.cache_enabled.get()),
         }
     }
 }

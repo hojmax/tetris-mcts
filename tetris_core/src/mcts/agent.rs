@@ -56,6 +56,27 @@ impl MCTSAgent {
         self.nn.is_some()
     }
 
+    /// Enable or disable board-embedding cache inside Rust NN inference.
+    ///
+    /// Returns False if no model is loaded.
+    pub fn set_board_cache_enabled(&self, enabled: bool) -> bool {
+        if let Some(nn) = self.nn.as_ref() {
+            nn.set_board_cache_enabled(enabled);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Read and reset board-embedding cache stats (hits, misses, cache_size).
+    ///
+    /// Returns None if no model is loaded.
+    pub fn get_and_reset_cache_stats(&self) -> Option<(u64, u64, usize)> {
+        self.nn
+            .as_ref()
+            .map(crate::nn::TetrisNN::get_and_reset_cache_stats)
+    }
+
     /// Play a full game using MCTS with the loaded model
     ///
     /// All neural network inference happens in Rust. Returns training data.
