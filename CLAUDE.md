@@ -219,17 +219,18 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 
 From `config.py` TrainingConfig defaults:
 
-- **MCTS**: 600 simulations, c_puct=1.5, temperature=1.0
-- **Training**: batch_size=256, lr=0.0005, cosine schedule, weight_decay=1e-4
+- **MCTS**: 1000 simulations, c_puct=1.5, temperature=1.5
+- **Training**: batch_size=1024, lr=0.0005, cosine schedule, weight_decay=1e-4
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
-- **Buffer**: 100K examples (ring buffer), 6 parallel workers
-- **Exploration**: Dirichlet alpha=0.15, epsilon=0.25
+- **Buffer**: 500K examples (ring buffer), 7 parallel workers
+- **Exploration**: Dirichlet alpha=0.01, epsilon=0.25, visit-sampling epsilon=0.15
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
 
 Temperature behavior:
 - `temperature` shapes the MCTS visit-count policy target used for training.
-- Action execution still uses the best move (argmax / most-visited child) during both training and evaluation.
+- In training self-play, action execution samples from the visit policy with probability `visit_sampling_epsilon` and otherwise uses argmax.
+- In evaluation, action execution is deterministic argmax.
 
 ### Loss Function
 

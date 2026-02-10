@@ -80,6 +80,9 @@ class TrainingConfig:
     temperature: float = 1.5
     dirichlet_alpha: float = 0.01
     dirichlet_epsilon: float = 0.25
+    visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
+        0.15
+    )
     num_workers: int = 7  # Parallel game generation threads
     max_moves: int = 100  # Maximum moves for move number normalization
     death_penalty: float = 5.0  # Penalty subtracted from value when game ends in death
@@ -133,6 +136,11 @@ class TrainingConfig:
             )
         if self.games_per_save < 0:
             raise ValueError("games_per_save must be >= 0")
+        if not 0.0 <= self.visit_sampling_epsilon <= 1.0:
+            raise ValueError(
+                "visit_sampling_epsilon must be in [0, 1] "
+                f"(got {self.visit_sampling_epsilon})"
+            )
         if self.lr_schedule not in {"cosine", "step", "none"}:
             raise ValueError(
                 f"lr_schedule must be one of cosine, step, none (got {self.lr_schedule})"

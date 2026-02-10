@@ -3,7 +3,7 @@
 //! Core search algorithm including simulation, expansion, and backpropagation.
 
 use rand::rngs::StdRng;
-use rand::{thread_rng, SeedableRng};
+use rand::{thread_rng, Rng, SeedableRng};
 
 use crate::constants::QUEUE_SIZE;
 use crate::nn::TetrisNN;
@@ -12,6 +12,30 @@ use super::action_space::NUM_ACTIONS;
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
 use super::results::{MCTSResult, TreeStats};
+
+fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> {
+    let total_mass: f32 = policy.iter().sum();
+    if total_mass <= 0.0 {
+        return None;
+    }
+
+    let mut threshold = rng.gen::<f32>() * total_mass;
+    for (idx, &prob) in policy.iter().enumerate() {
+        if prob <= 0.0 {
+            continue;
+        }
+        threshold -= prob;
+        if threshold <= 0.0 {
+            return Some(idx);
+        }
+    }
+
+    policy
+        .iter()
+        .enumerate()
+        .rfind(|(_, prob)| **prob > 0.0)
+        .map(|(idx, _)| idx)
+}
 
 /// Run a single MCTS simulation
 ///
@@ -426,9 +450,9 @@ pub(super) fn search_internal(
         "MCTS should have visits after simulations"
     );
 
-    // Always use argmax (most visited child) for action selection
+    // Greedy action from highest visit count.
     // Use action index as tiebreaker for deterministic behavior
-    let action = root
+    let greedy_action = root
         .children
         .iter()
         .max_by_key(|(&idx, child)| (child.visit_count(), idx))
@@ -440,7 +464,7 @@ pub(super) fn search_internal(
     // Temperature sharpens (T<1) or softens (T>1) the distribution
     if config.temperature == 0.0 {
         // One-hot policy on the best action (for evaluation)
-        result_policy[action] = 1.0;
+        result_policy[greedy_action] = 1.0;
     } else {
         for (&action_idx, child) in &root.children {
             result_policy[action_idx] = (child.visit_count() as f32).powf(1.0 / config.temperature);
@@ -452,6 +476,14 @@ pub(super) fn search_internal(
             }
         }
     }
+
+    let should_sample_action =
+        config.visit_sampling_epsilon > 0.0 && rng.gen::<f32>() < config.visit_sampling_epsilon;
+    let action = if should_sample_action {
+        sample_action_from_policy(&result_policy, &mut rng).unwrap_or(greedy_action)
+    } else {
+        greedy_action
+    };
 
     let root_value = if root.visit_count > 0 {
         root.value_sum / root.visit_count as f32

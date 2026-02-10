@@ -21,6 +21,9 @@ pub struct MCTSConfig {
     /// Dirichlet noise weight (epsilon)
     #[pyo3(get, set)]
     pub dirichlet_epsilon: f32,
+    /// Epsilon for sampling root action from visit-policy instead of argmax
+    #[pyo3(get, set)]
+    pub visit_sampling_epsilon: f32,
     /// Optional RNG seed for deterministic behavior (None = non-deterministic)
     #[pyo3(get, set)]
     pub seed: Option<u64>,
@@ -48,6 +51,7 @@ impl MCTSConfig {
             temperature: 1.0,
             dirichlet_alpha: 0.15,
             dirichlet_epsilon: 0.25,
+            visit_sampling_epsilon: 0.0,
             seed: None,
             max_moves: 100,
             track_value_history: false,
@@ -75,6 +79,7 @@ mod tests {
         assert_eq!(config.temperature, 1.0);
         assert_eq!(config.dirichlet_alpha, 0.15);
         assert_eq!(config.dirichlet_epsilon, 0.25);
+        assert_eq!(config.visit_sampling_epsilon, 0.0);
         assert_eq!(config.seed, None);
         assert_eq!(config.max_moves, 100);
         assert!(!config.track_value_history);

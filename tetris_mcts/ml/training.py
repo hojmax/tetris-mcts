@@ -299,6 +299,7 @@ class Trainer:
         mcts_config.temperature = self.config.temperature
         mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
         mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
+        mcts_config.visit_sampling_epsilon = self.config.visit_sampling_epsilon
         mcts_config.max_moves = self.config.max_moves
         mcts_config.death_penalty = self.config.death_penalty
         mcts_config.overhang_penalty_weight = self.config.overhang_penalty_weight

@@ -82,6 +82,7 @@ class Evaluator:
         mcts_config.num_simulations = self.num_simulations
         mcts_config.max_moves = self.max_moves
         mcts_config.overhang_penalty_weight = self.overhang_penalty_weight
+        mcts_config.visit_sampling_epsilon = 0.0
         mcts_config.seed = self.eval_mcts_seed
 
         replay_path = self.checkpoint_dir / EVAL_REPLAYS_FILENAME
