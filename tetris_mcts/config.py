@@ -71,7 +71,7 @@ class TrainingConfig:
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
     value_loss_weight: float = 30.0  # Scale factor for value loss in total loss
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
-        200
+        2000
     )
 
     # MCTS / Self-play
