@@ -72,10 +72,6 @@ impl TetrisEnv {
                 self.board[y as usize * self.width + x as usize] = 1;
                 self.board_piece_types[y as usize * self.width + x as usize] =
                     Some(piece.piece_type);
-                // Update column height if this cell is higher (lower y) than current
-                if y < self.column_heights[x as usize] {
-                    self.column_heights[x as usize] = y;
-                }
                 // Update row fill count
                 self.row_fill_counts[y as usize] += 1;
             }
@@ -128,19 +124,6 @@ impl TetrisEnv {
 
         // Each cleared line removes width blocks
         self.total_blocks -= self.width as u32 * num_lines;
-
-        // Recompute column heights from scratch.
-        // The simple `+= num_lines` adjustment is wrong when a column's
-        // topmost cell was in a cleared row (the cell is removed, not shifted).
-        for x in 0..self.width {
-            self.column_heights[x] = self.height as i32; // Default: empty column
-            for y in 0..self.height {
-                if self.board[y * self.width + x] != 0 {
-                    self.column_heights[x] = y as i32;
-                    break;
-                }
-            }
-        }
 
         let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);
         let is_pc = self.is_perfect_clear();

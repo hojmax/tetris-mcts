@@ -42,7 +42,9 @@ class RunningLossBalancer:
         policy_avg = sum(self._policy_losses) / len(self._policy_losses)
         value_avg = sum(self._value_losses) / len(self._value_losses)
         if value_avg <= 0:
-            raise ValueError(f"Running average value_loss must be > 0 (got {value_avg})")
+            raise ValueError(
+                f"Running average value_loss must be > 0 (got {value_avg})"
+            )
         return policy_avg, value_avg
 
     def value_loss_weight(self) -> float:

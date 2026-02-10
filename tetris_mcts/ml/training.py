@@ -365,7 +365,9 @@ class Trainer:
                 session_step = self.step - start_step
 
                 # Convert numpy arrays to torch tensors
-                boards, aux, policy_targets, value_targets, overhang_fields, masks = result
+                boards, aux, policy_targets, value_targets, overhang_fields, masks = (
+                    result
+                )
                 batch = (
                     torch.from_numpy(boards).reshape(
                         -1, 1, BOARD_HEIGHT, BOARD_WIDTH

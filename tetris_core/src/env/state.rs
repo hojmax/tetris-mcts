@@ -53,9 +53,6 @@ pub struct TetrisEnv {
     pub(crate) rng: StdRng,
     /// The seed used to initialize this environment's RNG (for determinism tracking)
     pub(crate) seed: u64,
-    /// Column heights: Y coordinate of topmost filled cell per column, or `height` if empty.
-    /// Maintained during lock/clear/sync board updates for board statistics.
-    pub(crate) column_heights: Vec<i32>,
     /// Total number of filled cells on the board. Used for O(1) perfect clear detection.
     pub(crate) total_blocks: u32,
     /// Number of filled cells per row. Used for O(1) line clear detection.
@@ -94,7 +91,6 @@ impl TetrisEnv {
             current_piece_bag_position: 0,
             rng: StdRng::seed_from_u64(seed),
             seed,
-            column_heights: vec![height as i32; width],
             total_blocks: 0,
             row_fill_counts: vec![0; height],
             placements_cache: RefCell::new(None),
@@ -126,7 +122,6 @@ impl TetrisEnv {
         self.current_piece_bag_position = 0;
         self.rng = StdRng::seed_from_u64(seed);
         self.seed = seed;
-        self.column_heights = vec![self.height as i32; self.width];
         self.total_blocks = 0;
         self.row_fill_counts = vec![0; self.height];
         *self.placements_cache.borrow_mut() = None;

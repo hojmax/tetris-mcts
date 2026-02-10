@@ -1375,31 +1375,23 @@ mod tests {
     }
 
     // ==================== Tracking Fields Verification Tests ====================
-    // These tests verify that incremental updates to optimization fields
-    // (column_heights, total_blocks, row_fill_counts) match ground truth.
+    // These tests verify that incremental updates to tracked board stats
+    // (total_blocks, row_fill_counts) match ground truth.
 
-    /// Helper to compute expected tracking fields from board state
-    fn compute_expected_stats(
-        board: &[u8],
-        width: usize,
-        height: usize,
-    ) -> (Vec<i32>, u32, Vec<u8>) {
-        let mut column_heights = vec![height as i32; width];
+    /// Helper to compute expected tracked board stats from board state.
+    fn compute_expected_stats(board: &[u8], width: usize, height: usize) -> (u32, Vec<u8>) {
         let mut total_blocks = 0u32;
         let mut row_fill_counts = vec![0u8; height];
 
-        for x in 0..width {
-            for y in 0..height {
+        for y in 0..height {
+            for x in 0..width {
                 if board[y * width + x] != 0 {
                     total_blocks += 1;
                     row_fill_counts[y] += 1;
-                    if (y as i32) < column_heights[x] {
-                        column_heights[x] = y as i32;
-                    }
                 }
             }
         }
-        (column_heights, total_blocks, row_fill_counts)
+        (total_blocks, row_fill_counts)
     }
 
     #[test]
@@ -1410,13 +1402,8 @@ mod tests {
         env.hard_drop();
 
         // Compute expected values from actual board state
-        let (expected_heights, expected_blocks, expected_row_counts) =
+        let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
-
-        assert_eq!(
-            env.column_heights, expected_heights,
-            "column_heights mismatch after hard_drop"
-        );
         assert_eq!(
             env.total_blocks, expected_blocks,
             "total_blocks mismatch after hard_drop"
@@ -1439,13 +1426,8 @@ mod tests {
             env.hard_drop();
         }
 
-        let (expected_heights, expected_blocks, expected_row_counts) =
+        let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
-
-        assert_eq!(
-            env.column_heights, expected_heights,
-            "column_heights mismatch after multiple drops"
-        );
         assert_eq!(
             env.total_blocks, expected_blocks,
             "total_blocks mismatch after multiple drops"
@@ -1460,27 +1442,16 @@ mod tests {
     fn test_tracking_fields_after_line_clear() {
         let mut env = TetrisEnv::with_seed(10, 20, 456);
 
-        // Play until we get some line clears
-        let mut total_clears = 0u32;
+        // Play for several moves to exercise line-clear bookkeeping.
         for _ in 0..50 {
             if env.game_over {
                 break;
             }
-            let lines_before = env.lines_cleared;
             env.hard_drop();
-            if env.lines_cleared > lines_before {
-                total_clears += env.lines_cleared - lines_before;
-            }
         }
 
-        let (expected_heights, expected_blocks, expected_row_counts) =
+        let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
-
-        assert_eq!(
-            env.column_heights, expected_heights,
-            "column_heights mismatch after line clears (cleared {} lines)",
-            total_clears
-        );
         assert_eq!(
             env.total_blocks, expected_blocks,
             "total_blocks mismatch after line clears"
@@ -1508,10 +1479,8 @@ mod tests {
             env.hard_drop();
         }
 
-        let (expected_heights, expected_blocks, expected_row_counts) =
+        let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
-
-        assert_eq!(env.column_heights, expected_heights);
         assert_eq!(env.total_blocks, expected_blocks);
         assert_eq!(env.row_fill_counts, expected_row_counts);
     }
@@ -1526,10 +1495,8 @@ mod tests {
         env.hold();
         env.hard_drop();
 
-        let (expected_heights, expected_blocks, expected_row_counts) =
+        let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
-
-        assert_eq!(env.column_heights, expected_heights);
         assert_eq!(env.total_blocks, expected_blocks);
         assert_eq!(env.row_fill_counts, expected_row_counts);
     }
@@ -1547,9 +1514,8 @@ mod tests {
         env.sync_board_stats();
 
         // Verify sync works correctly
-        let (expected_heights, expected_blocks, expected_row_counts) =
+        let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
-        assert_eq!(env.column_heights, expected_heights);
         assert_eq!(env.total_blocks, expected_blocks);
         assert_eq!(env.row_fill_counts, expected_row_counts);
     }
@@ -1574,23 +1540,6 @@ mod tests {
         assert_eq!(env.row_fill_counts[18], 7);
         assert_eq!(env.row_fill_counts[17], 10);
         assert_eq!(env.row_fill_counts[16], 0); // Empty row
-    }
-
-    #[test]
-    fn test_column_heights_varied() {
-        let mut env = TetrisEnv::new(10, 20);
-
-        // Create varied column heights
-        env.board[19 * env.width + 0] = 1; // Column 0: height at y=19
-        env.board[15 * env.width + 1] = 1; // Column 1: height at y=15
-        env.board[10 * env.width + 2] = 1; // Column 2: height at y=10
-        env.board[19 * env.width + 2] = 1; // Also in column 2, but lower
-        env.sync_board_stats();
-
-        assert_eq!(env.column_heights[0], 19);
-        assert_eq!(env.column_heights[1], 15);
-        assert_eq!(env.column_heights[2], 10); // Topmost cell
-        assert_eq!(env.column_heights[3], 20); // Empty column = height
     }
 
     #[test]
@@ -1633,20 +1582,14 @@ mod tests {
                 break;
             }
 
-            // Save current tracking values (from incremental updates)
-            let inc_heights = env.column_heights.clone();
+            // Save current tracked values (from incremental updates).
             let inc_blocks = env.total_blocks;
             let inc_row_counts = env.row_fill_counts.clone();
 
-            // Recalculate from scratch
-            let (sync_heights, sync_blocks, sync_row_counts) =
+            // Recalculate from scratch.
+            let (sync_blocks, sync_row_counts) =
                 compute_expected_stats(&env.board, env.width, env.height);
 
-            assert_eq!(
-                inc_heights, sync_heights,
-                "Iteration {}: column_heights incremental != sync",
-                i
-            );
             assert_eq!(
                 inc_blocks, sync_blocks,
                 "Iteration {}: total_blocks incremental != sync",
@@ -1671,31 +1614,24 @@ mod tests {
     /// Helper to verify all board invariants
     fn verify_board_invariants(env: &TetrisEnv, context: &str) {
         // Recompute expected values from scratch
-        let (expected_heights, expected_blocks, expected_row_counts) =
+        let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
 
-        // 1. Column heights must match actual board state
-        assert_eq!(
-            env.column_heights, expected_heights,
-            "{}: column_heights mismatch. Got {:?}, expected {:?}",
-            context, env.column_heights, expected_heights
-        );
-
-        // 2. Total blocks must match actual board state
+        // 1. Total blocks must match actual board state
         assert_eq!(
             env.total_blocks, expected_blocks,
             "{}: total_blocks mismatch. Got {}, expected {}",
             context, env.total_blocks, expected_blocks
         );
 
-        // 3. Row fill counts must match actual board state
+        // 2. Row fill counts must match actual board state
         assert_eq!(
             env.row_fill_counts, expected_row_counts,
             "{}: row_fill_counts mismatch. Got {:?}, expected {:?}",
             context, env.row_fill_counts, expected_row_counts
         );
 
-        // 4. Board dimensions must be consistent
+        // 3. Board dimensions must be consistent
         assert_eq!(
             env.board.len(),
             env.width * env.height,
@@ -1703,7 +1639,7 @@ mod tests {
             context
         );
 
-        // 5. All cells must have valid values (0-7)
+        // 4. All cells must have valid values (0-7)
         for y in 0..env.height {
             for x in 0..env.width {
                 let cell = env.board[y * env.width + x];
@@ -1718,18 +1654,7 @@ mod tests {
             }
         }
 
-        // 6. Column heights must be in valid range
-        for (x, &height) in env.column_heights.iter().enumerate() {
-            assert!(
-                height >= 0 && height <= env.height as i32,
-                "{}: invalid column height {} for column {}",
-                context,
-                height,
-                x
-            );
-        }
-
-        // 7. Row fill counts must not exceed width
+        // 5. Row fill counts must not exceed width
         for (y, &count) in env.row_fill_counts.iter().enumerate() {
             assert!(
                 count <= env.width as u8,
@@ -1752,7 +1677,7 @@ mod tests {
             );
         }
 
-        // 8. No row should be completely filled (they should be cleared)
+        // 6. No row should be completely filled (they should be cleared)
         for y in 0..env.height {
             let filled = env.board[y * env.width..(y + 1) * env.width]
                 .iter()
@@ -1764,41 +1689,13 @@ mod tests {
             );
         }
 
-        // 9. Total blocks should equal sum of row fill counts
+        // 7. Total blocks should equal sum of row fill counts
         let sum_row_counts: u32 = env.row_fill_counts.iter().map(|&c| c as u32).sum();
         assert_eq!(
             env.total_blocks, sum_row_counts,
             "{}: total_blocks {} doesn't match sum of row_fill_counts {}",
             context, env.total_blocks, sum_row_counts
         );
-
-        // 10. If column height is at row Y, there must be at least one cell at or above Y
-        for (x, &height) in env.column_heights.iter().enumerate() {
-            if (height as usize) < env.height {
-                let has_cell_at_height =
-                    (height as usize..env.height).any(|y| env.board[y * env.width + x] != 0);
-                assert!(
-                    has_cell_at_height,
-                    "{}: column {} has height {} but no cells at or above that row",
-                    context, x, height
-                );
-            }
-        }
-
-        // 11. If column height is at row Y, all rows above Y should be empty in that column
-        for (x, &height) in env.column_heights.iter().enumerate() {
-            for y in 0..height as usize {
-                assert_eq!(
-                    env.board[y * env.width + x],
-                    0,
-                    "{}: column {} has height {} but cell at row {} is filled",
-                    context,
-                    x,
-                    height,
-                    y
-                );
-            }
-        }
     }
 
     proptest! {
@@ -1917,30 +1814,6 @@ mod tests {
 
                 let context = format!("after placement {} (idx {})", i, idx);
                 verify_board_invariants(&env, &context);
-            }
-        }
-
-        #[test]
-        fn prop_column_heights_never_negative(
-            seed in 0u64..1000,
-            actions in prop::collection::vec(0u8..8, 20..50)
-        ) {
-            let mut env = TetrisEnv::with_seed(10, 20, seed);
-
-            for &action in actions.iter() {
-                if env.game_over {
-                    break;
-                }
-
-                env.step(action);
-
-                for (x, &height) in env.column_heights.iter().enumerate() {
-                    assert!(
-                        height >= 0,
-                        "Column {} has negative height {} after action {}",
-                        x, height, action
-                    );
-                }
             }
         }
 
