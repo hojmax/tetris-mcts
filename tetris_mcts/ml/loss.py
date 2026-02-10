@@ -8,10 +8,46 @@ Implements:
 - Training metrics (entropy, accuracy)
 """
 
+from collections import deque
+
 import torch
 import torch.nn.functional as F
 
 from tetris_mcts.ml.network import TetrisNet
+
+
+class RunningLossBalancer:
+    def __init__(self, window_size: int) -> None:
+        if window_size <= 0:
+            raise ValueError(
+                f"window_size must be > 0 for RunningLossBalancer (got {window_size})"
+            )
+        self._policy_losses: deque[float] = deque(maxlen=window_size)
+        self._value_losses: deque[float] = deque(maxlen=window_size)
+
+    def has_history(self) -> bool:
+        return len(self._policy_losses) > 0
+
+    def append(self, policy_loss: float, value_loss: float) -> None:
+        if policy_loss < 0:
+            raise ValueError(f"policy_loss must be >= 0 (got {policy_loss})")
+        if value_loss <= 0:
+            raise ValueError(f"value_loss must be > 0 (got {value_loss})")
+        self._policy_losses.append(policy_loss)
+        self._value_losses.append(value_loss)
+
+    def averages(self) -> tuple[float, float]:
+        if not self.has_history():
+            raise ValueError("Cannot compute running averages without history")
+        policy_avg = sum(self._policy_losses) / len(self._policy_losses)
+        value_avg = sum(self._value_losses) / len(self._value_losses)
+        if value_avg <= 0:
+            raise ValueError(f"Running average value_loss must be > 0 (got {value_avg})")
+        return policy_avg, value_avg
+
+    def value_loss_weight(self) -> float:
+        policy_avg, value_avg = self.averages()
+        return policy_avg / value_avg
 
 
 def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch.Tensor:

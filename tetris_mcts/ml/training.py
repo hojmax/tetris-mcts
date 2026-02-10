@@ -28,7 +28,7 @@ from tetris_mcts.config import (
 )
 from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import WeightManager, export_onnx, export_split_models
-from tetris_mcts.ml.loss import compute_loss, compute_metrics
+from tetris_mcts.ml.loss import RunningLossBalancer, compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
 from tetris_mcts.ml.visualization import create_trajectory_gif
 
@@ -91,6 +91,7 @@ class Trainer:
 
         # Training state
         self.step = 0
+        self.loss_balancer = RunningLossBalancer(config.value_loss_weight_window)
 
         # Create directories
         config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -164,6 +165,10 @@ class Trainer:
 
         # Forward + backward
         self.optimizer.zero_grad()
+        if self.loss_balancer.has_history():
+            value_loss_weight = self.loss_balancer.value_loss_weight()
+        else:
+            value_loss_weight = self.config.value_loss_weight
         total_loss, policy_loss, value_loss = compute_loss(
             self.model,
             boards,
@@ -171,9 +176,14 @@ class Trainer:
             policy_targets,
             value_targets,
             masks,
-            self.config.value_loss_weight,
+            value_loss_weight,
         )
         total_loss.backward()
+
+        policy_loss_scalar = policy_loss.item()
+        value_loss_scalar = value_loss.item()
+        self.loss_balancer.append(policy_loss_scalar, value_loss_scalar)
+        policy_loss_avg, value_loss_avg = self.loss_balancer.averages()
 
         # Gradient clipping
         grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -186,8 +196,11 @@ class Trainer:
 
         metrics = {
             "train/loss": total_loss.item(),
-            "train/policy_loss": policy_loss.item(),
-            "train/value_loss": value_loss.item(),
+            "train/policy_loss": policy_loss_scalar,
+            "train/value_loss": value_loss_scalar,
+            "train/policy_loss_avg": policy_loss_avg,
+            "train/value_loss_avg": value_loss_avg,
+            "train/value_loss_weight": value_loss_weight,
             "train/grad_norm": grad_norm.item(),
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
             "batch/value_target_mean": value_targets.mean().item(),

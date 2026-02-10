@@ -70,6 +70,7 @@ class TrainingConfig:
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
     value_loss_weight: float = 30.0  # Scale factor for value loss in total loss
+    value_loss_weight_window: int = 200  # Rolling window size for dynamic value-loss weighting
 
     # MCTS / Self-play
     num_simulations: int = 1000
@@ -137,6 +138,8 @@ class TrainingConfig:
             raise ValueError("lr_step_divisor must be > 0")
         if self.value_loss_weight <= 0:
             raise ValueError("value_loss_weight must be > 0")
+        if self.value_loss_weight_window <= 0:
+            raise ValueError("value_loss_weight_window must be > 0")
         if self.lr_schedule == "step":
             step_size = self.lr_decay_steps // self.lr_step_divisor
             if step_size <= 0:
