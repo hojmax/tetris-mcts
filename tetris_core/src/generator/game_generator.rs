@@ -156,6 +156,7 @@ struct LastGameInfo {
     game_number: u64,
     stats: GameStats,
     total_attack: u32,
+    avg_overhang_fields: f32,
     num_moves: u32,
     avg_moves: f32,
     max_moves: u32,
@@ -459,6 +460,7 @@ impl GameGenerator {
             d.insert("total_lines".to_string(), info.stats.total_lines as f32);
             d.insert("holds".to_string(), info.stats.holds as f32);
             d.insert("total_attack".to_string(), info.total_attack as f32);
+            d.insert("avg_overhang".to_string(), info.avg_overhang_fields);
             d.insert("episode_length".to_string(), info.num_moves as f32);
             d.insert("avg_valid_actions".to_string(), info.avg_moves);
             d.insert("max_valid_actions".to_string(), info.max_moves as f32);
@@ -504,7 +506,7 @@ impl GameGenerator {
     /// Sample a batch of training data from the replay buffer.
     ///
     /// Returns a tuple of numpy arrays:
-    /// (boards, aux_features, policy_targets, value_targets, action_masks)
+    /// (boards, aux_features, policy_targets, value_targets, overhang_fields, action_masks)
     ///
     /// Returns None if the buffer is empty.
     #[pyo3(signature = (batch_size, max_moves))]
@@ -518,6 +520,7 @@ impl GameGenerator {
             &'py PyArray2<f32>,
             &'py PyArray2<f32>,
             &'py PyArray2<f32>,
+            &'py PyArray1<f32>,
             &'py PyArray1<f32>,
             &'py PyArray2<f32>,
         )>,
@@ -557,6 +560,7 @@ impl GameGenerator {
         let mut aux = vec![0.0f32; actual_batch * aux_features_size];
         let mut policies = vec![0.0f32; actual_batch * num_actions];
         let mut values = vec![0.0f32; actual_batch];
+        let mut overhangs = vec![0.0f32; actual_batch];
         let mut masks = vec![0.0f32; actual_batch * num_actions];
         let move_norm_denominator = max_moves as f32;
 
@@ -593,6 +597,9 @@ impl GameGenerator {
             // Copy value
             values[i] = ex.value;
 
+            // Copy overhang fields
+            overhangs[i] = ex.overhang_fields as f32;
+
             // Copy mask
             for (j, &val) in ex.action_mask.iter().enumerate() {
                 masks[i * num_actions + j] = if val { 1.0 } else { 0.0 };
@@ -610,6 +617,7 @@ impl GameGenerator {
             .reshape([actual_batch, num_actions])
             .unwrap();
         let values_arr = PyArray1::from_vec(py, values);
+        let overhangs_arr = PyArray1::from_vec(py, overhangs);
         let masks_arr = PyArray1::from_vec(py, masks)
             .reshape([actual_batch, num_actions])
             .unwrap();
@@ -619,6 +627,7 @@ impl GameGenerator {
             aux_arr,
             policies_arr,
             values_arr,
+            overhangs_arr,
             masks_arr,
         )))
     }
@@ -708,6 +717,7 @@ impl GameGenerator {
                     game_number,
                     stats: result.stats,
                     total_attack: result.total_attack,
+                    avg_overhang_fields: result.avg_overhang_fields,
                     num_moves: result.num_moves,
                     avg_moves: result.avg_moves,
                     max_moves: result.max_moves,
@@ -815,6 +825,7 @@ mod tests {
             policy,
             value: move_number as f32,
             action_mask,
+            overhang_fields: move_number,
         }
     }
 

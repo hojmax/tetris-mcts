@@ -26,6 +26,7 @@ use crate::mcts::{TrainingExample, NUM_ACTIONS};
 /// - policy_targets: (N, 735) float32
 /// - value_targets: (N,) float32
 /// - action_masks: (N, 735) bool
+/// - overhang_fields: (N,) uint32
 pub fn write_examples_to_npz(
     filepath: &PathBuf,
     examples: &[TrainingExample],
@@ -46,6 +47,7 @@ pub fn write_examples_to_npz(
     let mut policy_targets: Vec<f32> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut value_targets: Vec<f32> = Vec::with_capacity(n);
     let mut action_masks: Vec<u8> = Vec::with_capacity(n * NUM_ACTIONS);
+    let mut overhang_fields: Vec<u32> = Vec::with_capacity(n);
 
     let move_norm_denominator = max_moves as f32;
 
@@ -82,6 +84,9 @@ pub fn write_examples_to_npz(
 
         // Action mask
         action_masks.extend(ex.action_mask.iter().map(|&b| b as u8));
+
+        // Overhang fields
+        overhang_fields.push(ex.overhang_fields);
     }
 
     // Create NPZ file (zip with npy arrays)
@@ -153,6 +158,13 @@ pub fn write_examples_to_npz(
         &[n as u64, NUM_ACTIONS as u64],
         &action_masks,
     )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "overhang_fields.npy",
+        &[n as u64],
+        &overhang_fields,
+    )?;
 
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
@@ -181,6 +193,8 @@ pub fn read_examples_from_npz(
         read_npy_array::<f32>(&mut archive, "value_targets.npy")?;
     let (action_masks, action_masks_shape) =
         read_npy_array_bool_like(&mut archive, "action_masks.npy")?;
+    let (overhang_fields, overhang_fields_shape) =
+        read_npy_array::<u32>(&mut archive, "overhang_fields.npy")?;
 
     let expected_boards_shape = vec![0, BOARD_HEIGHT as u64, BOARD_WIDTH as u64];
     let n = validate_shape_with_dynamic_batch("boards", &boards_shape, &expected_boards_shape)?;
@@ -212,6 +226,7 @@ pub fn read_examples_from_npz(
         &action_masks_shape,
         &[n as u64, NUM_ACTIONS as u64],
     )?;
+    validate_shape("overhang_fields", &overhang_fields_shape, &[n as u64])?;
 
     let mut examples = Vec::with_capacity(n);
     let move_norm_denominator = max_moves as f32;
@@ -262,6 +277,7 @@ pub fn read_examples_from_npz(
                 .iter()
                 .map(|value| *value != 0)
                 .collect(),
+            overhang_fields: overhang_fields[i],
         });
     }
 
@@ -421,6 +437,7 @@ mod tests {
             policy,
             value: 3.5,
             action_mask,
+            overhang_fields: 17,
         }
     }
 
@@ -444,6 +461,7 @@ mod tests {
             assert_eq!(actual.value, expected.value);
             assert_eq!(actual.policy.len(), expected.policy.len());
             assert_eq!(actual.action_mask, expected.action_mask);
+            assert_eq!(actual.overhang_fields, expected.overhang_fields);
             assert_eq!(actual.policy[0], expected.policy[0]);
             assert_eq!(actual.policy[13], expected.policy[13]);
         }

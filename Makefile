@@ -4,6 +4,7 @@
 SHELL := /bin/bash
 CARGO_ENV := source $$HOME/.cargo/env 2>/dev/null || true
 PYTHON := .venv/bin/python
+PYTHON_ABS := $(abspath $(PYTHON))
 
 # Find all Rust source files (including subdirectories)
 RUST_SRC := $(shell find tetris_core/src -name '*.rs')
@@ -45,7 +46,7 @@ rebuild:
 # Run tests
 test:
 	$(MAKE) build-dev
-	cd tetris_core && $(CARGO_ENV) && cargo test
+	cd tetris_core && $(CARGO_ENV) && PYO3_PYTHON=$(PYTHON_ABS) cargo test
 	$(PYTHON) -m pytest
 
 # Clean build artifacts

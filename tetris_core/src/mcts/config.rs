@@ -33,6 +33,9 @@ pub struct MCTSConfig {
     /// Penalty applied when a simulation reaches game over (backs up as negative value)
     #[pyo3(get, set)]
     pub death_penalty: f32,
+    /// Weight for normalized overhang penalty subtracted per evaluated board state
+    #[pyo3(get, set)]
+    pub overhang_penalty_weight: f32,
 }
 
 #[pymethods]
@@ -49,6 +52,7 @@ impl MCTSConfig {
             max_moves: 100,
             track_value_history: false,
             death_penalty: 0.0,
+            overhang_penalty_weight: 0.0,
         }
     }
 }
@@ -75,5 +79,6 @@ mod tests {
         assert_eq!(config.max_moves, 100);
         assert!(!config.track_value_history);
         assert_eq!(config.death_penalty, 0.0);
+        assert_eq!(config.overhang_penalty_weight, 0.0);
     }
 }

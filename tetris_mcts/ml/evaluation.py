@@ -43,6 +43,7 @@ class Evaluator:
         checkpoint_dir: str | Path,
         num_simulations: int,
         max_moves: int,
+        overhang_penalty_weight: float,
         eval_seeds: list[int],
         eval_mcts_seed: int,
     ):
@@ -50,6 +51,7 @@ class Evaluator:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.num_simulations = num_simulations
         self.max_moves = max_moves
+        self.overhang_penalty_weight = overhang_penalty_weight
         self.eval_seeds = [int(s) for s in eval_seeds]
         self.eval_mcts_seed = eval_mcts_seed
 
@@ -79,6 +81,7 @@ class Evaluator:
         mcts_config = MCTSConfig()
         mcts_config.num_simulations = self.num_simulations
         mcts_config.max_moves = self.max_moves
+        mcts_config.overhang_penalty_weight = self.overhang_penalty_weight
         mcts_config.seed = self.eval_mcts_seed
 
         replay_path = self.checkpoint_dir / EVAL_REPLAYS_FILENAME

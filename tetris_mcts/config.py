@@ -83,6 +83,9 @@ class TrainingConfig:
     num_workers: int = 7  # Parallel game generation threads
     max_moves: int = 100  # Maximum moves for move number normalization
     death_penalty: float = 5.0  # Penalty subtracted from value when game ends in death
+    overhang_penalty_weight: float = (  # Weight for normalized overhang penalty in value targets
+        5.0
+    )
 
     # Replay buffer
     buffer_size: int = 500_000

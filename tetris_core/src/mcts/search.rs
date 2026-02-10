@@ -33,7 +33,7 @@ pub(super) fn simulate(
     rng: &mut StdRng,
 ) {
     // Selection: traverse tree, tracking path for backpropagation
-    // Store (node_ptr, action_idx, attack_at_this_step)
+    // Store (node_ptr, action_idx, reward_at_this_step)
     let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
     let mut current = root as *mut DecisionNode;
     let mut depth: u32 = 0;
@@ -93,7 +93,7 @@ pub(super) fn simulate(
                 chance_node.visit_count += 1;
             }
 
-            // Get attack and nn_value from the new node
+            // Get step reward and nn_value from the new node
             let chance_node = match node.children.get(&action_idx) {
                 Some(MCTSNode::Chance(cn)) => cn,
                 Some(MCTSNode::Decision(_)) => {
@@ -107,18 +107,22 @@ pub(super) fn simulate(
                     return;
                 }
             };
-            let leaf_attack = chance_node.attack as f32;
+            let leaf_reward = chance_node.attack as f32
+                - super::utils::compute_overhang_penalty(
+                    chance_node.overhang_fields,
+                    config.overhang_penalty_weight,
+                );
             let leaf_value = chance_node.nn_value; // Use stored NN value
 
-            // Add this step to path with its attack
-            path.push((current, action_idx, leaf_attack));
+            // Add this step to path with its reward
+            path.push((current, action_idx, leaf_reward));
 
-            // Backpropagate: total = attack_along_path + leaf_value
+            // Backpropagate: total = reward_along_path + leaf_value
             backup_with_value(&path, leaf_value, config.track_value_history);
             return;
         }
 
-        // Traverse to child - get attack at this step
+        // Traverse to child - get reward at this step
         let chance_node = match node.children.get_mut(&action_idx) {
             Some(MCTSNode::Chance(cn)) => cn,
             Some(MCTSNode::Decision(_)) => {
@@ -133,8 +137,12 @@ pub(super) fn simulate(
             }
         };
         chance_node.visit_count += 1;
-        let step_attack = chance_node.attack as f32;
-        path.push((current, action_idx, step_attack));
+        let step_reward = chance_node.attack as f32
+            - super::utils::compute_overhang_penalty(
+                chance_node.overhang_fields,
+                config.overhang_penalty_weight,
+            );
+        path.push((current, action_idx, step_reward));
         depth += 1;
 
         // Randomly select which piece outcome to explore
@@ -189,6 +197,8 @@ fn expand_action(
         }
     };
 
+    let overhang_fields = super::utils::count_overhang_fields(&new_state);
+
     // Truncate to visible queue length FIRST.
     // This ensures expand_chance pushes to position 5 (the first "unseen" position).
     new_state.truncate_queue(QUEUE_SIZE);
@@ -215,6 +225,7 @@ fn expand_action(
     Some(MCTSNode::Chance(ChanceNode::new(
         new_state,
         attack,
+        overhang_fields,
         move_number,
         bag_remaining,
         nn_value,
@@ -249,10 +260,10 @@ fn expand_chance(parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNod
 /// Backpropagate total episode value through the path
 ///
 /// All nodes in the path receive the SAME total value:
-///   total_value = cumulative_attack_along_path + leaf_value
+///   total_value = cumulative_reward_along_path + leaf_value
 ///
 /// The NN predicts future reward from each state. By adding the cumulative
-/// attack collected along the path to the leaf's NN value, we get the total
+/// reward collected along the path to the leaf's NN value, we get the total
 /// expected episode return. This same total is backed up to all nodes so that
 /// Q values represent "expected total return when passing through this node".
 fn backup_with_value(
@@ -264,9 +275,9 @@ fn backup_with_value(
         return;
     }
 
-    // Compute total value = all attacks along path + leaf's future value estimate
-    let total_attack: f32 = path.iter().map(|(_, _, attack)| attack).sum();
-    let total_value = total_attack + leaf_value;
+    // Compute total value = all step rewards along path + leaf's future value estimate
+    let total_reward: f32 = path.iter().map(|(_, _, reward)| reward).sum();
+    let total_value = total_reward + leaf_value;
 
     // All nodes on the path get the same total value
     for &(node_ptr, action_idx, _) in path.iter() {

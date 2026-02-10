@@ -125,7 +125,9 @@ impl TetrisNN {
                 // board_embed = W_board @ conv_out + bias
                 let embed = self.fc_weight_board.dot(&conv_arr) + self.fc_bias.as_ref();
 
-                self.board_cache.borrow_mut().insert(board_key, embed.clone());
+                self.board_cache
+                    .borrow_mut()
+                    .insert(board_key, embed.clone());
                 embed
             }
         };
@@ -135,11 +137,9 @@ impl TetrisNN {
         let fc_out = &board_embed + &self.fc_weight_aux.dot(&aux_arr);
 
         // Run heads model
-        let fc_pre_tensor = tract_ndarray::Array2::from_shape_vec(
-            (1, self.fc_hidden),
-            fc_out.to_vec(),
-        )?
-        .into_tensor();
+        let fc_pre_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, self.fc_hidden), fc_out.to_vec())?
+                .into_tensor();
 
         let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
 
@@ -200,11 +200,9 @@ impl TetrisNN {
             + &self.fc_weight_aux.dot(&aux_arr)
             + self.fc_bias.as_ref();
 
-        let fc_pre_tensor = tract_ndarray::Array2::from_shape_vec(
-            (1, self.fc_hidden),
-            fc_out.to_vec(),
-        )?
-        .into_tensor();
+        let fc_pre_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, self.fc_hidden), fc_out.to_vec())?
+                .into_tensor();
 
         let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
 
@@ -585,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_encoding_specification() {
-        // Verify the exact specification from CLAUDE.md:
+        // Verify the exact specification from AGENTS.md:
         // | Board state    | 20 x 10    | Binary (1 = filled, 0 = empty)  |
         // | Current piece  | 7          | One-hot encoded                 |
         // | Hold piece     | 8          | One-hot (7 pieces + empty)      |

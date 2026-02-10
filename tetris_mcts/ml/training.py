@@ -85,6 +85,7 @@ class Trainer:
             checkpoint_dir=config.checkpoint_dir,
             num_simulations=config.num_simulations,
             max_moves=config.max_moves,
+            overhang_penalty_weight=config.overhang_penalty_weight,
             eval_seeds=config.eval_seeds,
             eval_mcts_seed=config.eval_mcts_seed,
         )
@@ -156,11 +157,12 @@ class Trainer:
         """Execute one training step."""
         self.model.train()
 
-        boards, aux, policy_targets, value_targets, masks = batch
+        boards, aux, policy_targets, value_targets, overhang_fields, masks = batch
         boards = boards.to(self.device)
         aux = aux.to(self.device)
         policy_targets = policy_targets.to(self.device)
         value_targets = value_targets.to(self.device)
+        overhang_fields = overhang_fields.to(self.device)
         masks = masks.to(self.device)
 
         # Forward + backward
@@ -205,6 +207,7 @@ class Trainer:
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
             "batch/value_target_mean": value_targets.mean().item(),
             "batch/value_target_std": value_targets.std(unbiased=False).item(),
+            "batch/overhang_fields_mean": overhang_fields.mean().item(),
             "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         }
 
@@ -298,6 +301,7 @@ class Trainer:
         mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
         mcts_config.max_moves = self.config.max_moves
         mcts_config.death_penalty = self.config.death_penalty
+        mcts_config.overhang_penalty_weight = self.config.overhang_penalty_weight
 
         # Start background game generator
         training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME
@@ -361,7 +365,7 @@ class Trainer:
                 session_step = self.step - start_step
 
                 # Convert numpy arrays to torch tensors
-                boards, aux, policy_targets, value_targets, masks = result
+                boards, aux, policy_targets, value_targets, overhang_fields, masks = result
                 batch = (
                     torch.from_numpy(boards).reshape(
                         -1, 1, BOARD_HEIGHT, BOARD_WIDTH
@@ -369,6 +373,7 @@ class Trainer:
                     torch.from_numpy(aux),
                     torch.from_numpy(policy_targets),
                     torch.from_numpy(value_targets),
+                    torch.from_numpy(overhang_fields),
                     torch.from_numpy(masks),
                 )
 

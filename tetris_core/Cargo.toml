@@ -7,8 +7,12 @@ edition = "2021"
 name = "tetris_core"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
 [dependencies]
-pyo3 = { version = "0.20", features = ["extension-module"] }
+pyo3 = { version = "0.20" }
 numpy = "0.20"
 rand = "0.8"
 rand_distr = "0.4"

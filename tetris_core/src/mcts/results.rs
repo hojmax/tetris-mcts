@@ -49,12 +49,15 @@ pub struct TrainingExample {
     /// MCTS policy target (NUM_ACTIONS values)
     #[pyo3(get)]
     pub policy: Vec<f32>,
-    /// Value target (cumulative attack from this point)
+    /// Value target (cumulative attack - overhang penalty - death penalty)
     #[pyo3(get)]
     pub value: f32,
     /// Action mask (NUM_ACTIONS values, true = valid)
     #[pyo3(get)]
     pub action_mask: Vec<bool>,
+    /// Overhang fields in the post-action board used for this state's step penalty
+    #[pyo3(get)]
+    pub overhang_fields: u32,
 }
 
 /// Statistics about the MCTS tree structure after a single search.
@@ -196,6 +199,12 @@ pub struct GameResult {
     pub stats: GameStats,
     /// MCTS tree statistics aggregated across all moves
     pub tree_stats: GameTreeStats,
+    /// Sum of per-move overhang fields across the game
+    #[pyo3(get)]
+    pub total_overhang_fields: u32,
+    /// Average overhang fields per move across the game
+    #[pyo3(get)]
+    pub avg_overhang_fields: f32,
     /// Board embedding cache hits during this game
     #[pyo3(get)]
     pub cache_hits: u64,
@@ -413,6 +422,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 10.5,
             action_mask: vec![false; NUM_ACTIONS],
+            overhang_fields: 0,
         };
 
         assert_eq!(example.board.len(), 200);
@@ -440,6 +450,7 @@ mod tests {
                 policy: vec![],
                 value: 0.0,
                 action_mask: vec![],
+                overhang_fields: 0,
             };
             assert!(example.current_piece < 7);
         }
@@ -457,6 +468,7 @@ mod tests {
             policy: vec![],
             value: 0.0,
             action_mask: vec![],
+            overhang_fields: 0,
         };
         assert_eq!(example.hold_piece, 7);
     }
@@ -473,6 +485,7 @@ mod tests {
             policy: vec![],
             value: 0.0,
             action_mask: vec![],
+            overhang_fields: 0,
         };
         assert_eq!(example.hold_piece, 3);
         assert!(!example.hold_available);
@@ -490,6 +503,7 @@ mod tests {
             policy: vec![0.1; NUM_ACTIONS],
             value: 25.0,
             action_mask: vec![true; NUM_ACTIONS],
+            overhang_fields: 12,
         };
 
         let cloned = example.clone();
@@ -500,6 +514,7 @@ mod tests {
         assert_eq!(cloned.next_queue, example.next_queue);
         assert_eq!(cloned.move_number, example.move_number);
         assert_eq!(cloned.value, example.value);
+        assert_eq!(cloned.overhang_fields, example.overhang_fields);
     }
 
     #[test]
@@ -512,6 +527,8 @@ mod tests {
             max_moves: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
+            total_overhang_fields: 0,
+            avg_overhang_fields: 0.0,
             cache_hits: 0,
             cache_misses: 0,
             cache_size: 0,
@@ -520,6 +537,7 @@ mod tests {
         assert!(result.examples.is_empty());
         assert_eq!(result.total_attack, 150);
         assert_eq!(result.num_moves, 75);
+        assert_eq!(result.avg_overhang_fields, 0.0);
     }
 
     #[test]
@@ -534,6 +552,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 100.0,
             action_mask: vec![true; NUM_ACTIONS],
+            overhang_fields: 5,
         };
 
         let example2 = TrainingExample {
@@ -546,6 +565,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 95.0,
             action_mask: vec![true; NUM_ACTIONS],
+            overhang_fields: 4,
         };
 
         let result = GameResult {
@@ -556,6 +576,8 @@ mod tests {
             max_moves: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
+            total_overhang_fields: 0,
+            avg_overhang_fields: 0.0,
             cache_hits: 0,
             cache_misses: 0,
             cache_size: 0,
@@ -578,6 +600,8 @@ mod tests {
             max_moves: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
+            total_overhang_fields: 0,
+            avg_overhang_fields: 0.0,
             cache_hits: 0,
             cache_misses: 0,
             cache_size: 0,
@@ -635,6 +659,7 @@ mod tests {
             policy: policy.clone(),
             value: 0.0,
             action_mask: action_mask.clone(),
+            overhang_fields: 0,
         };
 
         // Check consistency: invalid actions should have zero policy

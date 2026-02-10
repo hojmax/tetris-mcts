@@ -184,6 +184,8 @@ pub struct ChanceNode {
     pub children: HashMap<usize, MCTSNode>,
     /// Attack gained from the action that led to this node
     pub attack: u32,
+    /// Overhang fields in the board state at this node
+    pub overhang_fields: u32,
     /// Move number in the game
     pub move_number: u32,
     /// Pieces remaining in current bag (possible next pieces)
@@ -200,6 +202,7 @@ impl ChanceNode {
     pub fn new(
         state: TetrisEnv,
         attack: u32,
+        overhang_fields: u32,
         move_number: u32,
         bag_remaining: Vec<usize>,
         nn_value: f32,
@@ -211,6 +214,7 @@ impl ChanceNode {
             value_sum: 0.0,
             children: HashMap::new(),
             attack,
+            overhang_fields,
             move_number,
             bag_remaining,
             nn_value,
@@ -372,7 +376,7 @@ mod tests {
 
         // Add a child with high value
         let action_idx = node.valid_actions[0];
-        let mut child = ChanceNode::new(env.clone(), 0, 0, vec![], 0.0, vec![]);
+        let mut child = ChanceNode::new(env.clone(), 0, 0, 0, vec![], 0.0, vec![]);
         child.visit_count = 5;
         child.value_sum = 10.0; // Mean value = 2.0
         node.children.insert(action_idx, MCTSNode::Chance(child));
@@ -387,11 +391,12 @@ mod tests {
         let env = TetrisEnv::new(10, 20);
         let bag: Vec<usize> = vec![0, 1, 2];
         let policy = vec![0.1; NUM_ACTIONS];
-        let node = ChanceNode::new(env, 5, 0, bag.clone(), 0.0, policy.clone());
+        let node = ChanceNode::new(env, 5, 0, 0, bag.clone(), 0.0, policy.clone());
 
         assert_eq!(node.visit_count, 0);
         assert_eq!(node.value_sum, 0.0);
         assert_eq!(node.attack, 5);
+        assert_eq!(node.overhang_fields, 0);
         assert!(node.children.is_empty());
         assert_eq!(node.bag_remaining, bag);
         assert_eq!(node.cached_policy.len(), NUM_ACTIONS);
@@ -402,7 +407,7 @@ mod tests {
         use rand::SeedableRng;
         let mut rng = StdRng::seed_from_u64(42);
         let env = TetrisEnv::new(10, 20);
-        let node = ChanceNode::new(env, 0, 0, vec![], 0.0, vec![]);
+        let node = ChanceNode::new(env, 0, 0, 0, vec![], 0.0, vec![]);
 
         // Empty bag - any piece should be selectable
         let piece = node.select_piece_random(&mut rng);
@@ -414,7 +419,7 @@ mod tests {
         use rand::SeedableRng;
         let mut rng = StdRng::seed_from_u64(42);
         let env = TetrisEnv::new(10, 20);
-        let node = ChanceNode::new(env, 0, 0, vec![1, 3, 5], 0.0, vec![]); // O, S, J remaining
+        let node = ChanceNode::new(env, 0, 0, 0, vec![1, 3, 5], 0.0, vec![]); // O, S, J remaining
 
         // Select many pieces and verify they're from the bag
         for _ in 0..20 {
@@ -440,7 +445,7 @@ mod tests {
     #[test]
     fn test_mcts_node_visit_count_chance() {
         let env = TetrisEnv::new(10, 20);
-        let mut chance = ChanceNode::new(env, 0, 0, vec![], 0.0, vec![]);
+        let mut chance = ChanceNode::new(env, 0, 0, 0, vec![], 0.0, vec![]);
         chance.visit_count = 17;
 
         let node = MCTSNode::Chance(chance);
@@ -451,7 +456,7 @@ mod tests {
     fn test_mcts_node_mean_value_unvisited() {
         let env = TetrisEnv::new(10, 20);
         let decision = DecisionNode::new(env.clone(), 0);
-        let chance = ChanceNode::new(env, 0, 0, vec![], 0.0, vec![]);
+        let chance = ChanceNode::new(env, 0, 0, 0, vec![], 0.0, vec![]);
 
         assert_eq!(MCTSNode::Decision(decision).mean_value(), 0.0);
         assert_eq!(MCTSNode::Chance(chance).mean_value(), 0.0);
@@ -466,7 +471,7 @@ mod tests {
 
         assert!((MCTSNode::Decision(decision).mean_value() - 2.5).abs() < 0.01);
 
-        let mut chance = ChanceNode::new(env, 0, 0, vec![], 0.0, vec![]);
+        let mut chance = ChanceNode::new(env, 0, 0, 0, vec![], 0.0, vec![]);
         chance.visit_count = 4;
         chance.value_sum = 10.0;
 
@@ -548,13 +553,13 @@ mod tests {
         node.set_nn_output(&policy, 0.0);
         node.visit_count = 100;
 
-        let mut high_q_child = ChanceNode::new(env.clone(), 0, 0, vec![], 0.0, vec![]);
+        let mut high_q_child = ChanceNode::new(env.clone(), 0, 0, 0, vec![], 0.0, vec![]);
         high_q_child.visit_count = 10;
         high_q_child.value_sum = 2000.0; // mean Q = 200
         node.children
             .insert(high_q_action, MCTSNode::Chance(high_q_child));
 
-        let mut high_prior_child = ChanceNode::new(env, 0, 0, vec![], 0.0, vec![]);
+        let mut high_prior_child = ChanceNode::new(env, 0, 0, 0, vec![], 0.0, vec![]);
         high_prior_child.visit_count = 1;
         high_prior_child.value_sum = 100.0; // mean Q = 100
         node.children
@@ -571,7 +576,7 @@ mod tests {
         use rand::SeedableRng;
         let mut rng = StdRng::seed_from_u64(42);
         let env = TetrisEnv::new(10, 20);
-        let node = ChanceNode::new(env, 0, 0, vec![], 0.0, vec![]); // Empty bag = all 7 pieces possible
+        let node = ChanceNode::new(env, 0, 0, 0, vec![], 0.0, vec![]); // Empty bag = all 7 pieces possible
 
         // Select many pieces and verify we get variety
         let mut seen = std::collections::HashSet::new();

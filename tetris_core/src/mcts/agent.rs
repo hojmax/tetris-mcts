@@ -73,6 +73,7 @@ impl MCTSAgent {
         let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
         let mut states: Vec<(TetrisEnv, u32, Vec<f32>, Vec<bool>)> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
+        let mut overhang_fields: Vec<u32> = Vec::new();
         let mut stats = GameStats::default();
         let mut valid_moves_sum: u32 = 0;
         let mut max_valid_moves: u32 = 0;
@@ -126,6 +127,7 @@ impl MCTSAgent {
                 .execute_action_index(result.action)
                 .expect("MCTS selected action is not executable");
             attacks.push(attack);
+            overhang_fields.push(super::utils::count_overhang_fields(&env));
 
             // Collect stats from the attack result
             if let Some(ref attack_result) = env.get_last_attack_result() {
@@ -179,24 +181,34 @@ impl MCTSAgent {
             }
         }
 
-        // Compute value targets (cumulative attack from each position, minus death penalty)
+        // Compute value targets (cumulative step reward from each position, minus death penalty)
         let num_states = states.len();
         debug_assert_eq!(
             states.len(),
             attacks.len(),
             "States and attacks should have same length"
         );
+        debug_assert_eq!(
+            states.len(),
+            overhang_fields.len(),
+            "States and overhang fields should have same length"
+        );
 
         let mut values = vec![0.0f32; num_states];
-        let mut cumulative = 0u32;
+        let mut cumulative = 0.0f32;
         for i in (0..num_states).rev() {
-            cumulative += attacks[i];
+            let overhang_penalty = super::utils::compute_overhang_penalty(
+                overhang_fields[i],
+                self.config.overhang_penalty_weight,
+            );
+            let step_reward = attacks[i] as f32 - overhang_penalty;
+            cumulative += step_reward;
             let death_offset = if env.game_over {
                 super::utils::compute_death_penalty(i as u32, max_moves, self.config.death_penalty)
             } else {
                 0.0
             };
-            values[i] = cumulative as f32 - death_offset;
+            values[i] = cumulative - death_offset;
         }
 
         // Build training examples (use all moves)
@@ -229,13 +241,20 @@ impl MCTSAgent {
                 policy: policy.clone(),
                 value: values[i],
                 action_mask: mask.clone(),
+                overhang_fields: overhang_fields[i],
             });
         }
 
         let total_attack: u32 = attacks.iter().sum();
+        let total_overhang_fields: u32 = overhang_fields.iter().sum();
         let num_moves = states.len() as u32;
         let avg_valid_moves = if num_moves > 0 {
             valid_moves_sum as f32 / num_moves as f32
+        } else {
+            0.0
+        };
+        let avg_overhang_fields = if num_moves > 0 {
+            total_overhang_fields as f32 / num_moves as f32
         } else {
             0.0
         };
@@ -251,6 +270,8 @@ impl MCTSAgent {
             max_moves: max_valid_moves,
             stats,
             tree_stats,
+            total_overhang_fields,
+            avg_overhang_fields,
             cache_hits,
             cache_misses,
             cache_size,

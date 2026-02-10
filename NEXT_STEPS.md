@@ -3,14 +3,8 @@
 - [ ] Take an interestnig state like tetris_mcts/scripts/outputs/game_3194.gif at step 14 (oppurtinity for t spin), and see how the model evaluates that state? Is it not reached or something?
 - [ ] Learning rate of around 0.0005. 0.005 is too high. Cycling too much on the learning rate.
 - [ ] Model sometimes gets worse at playing, I think the LR spikes causes this? We might want to gate swapping it out with the evaluation step? Yeah like playing 20 games, only swapping out if total attack is higher than the previous model. Hmm wait but that would mean huge intervals between swaps... I guess that is fine later on, but in the beginning we want to swap out more often. You could do something like this. You swap out one of the works with the new model, the other ones just run the best, and keep putting into the replay buffer. THen the one worker, plays 20 games, and then we compare total attack to previous models. If it is higher, then we first add in all the new games to the replay buffer from that one worker, and then swap out the model for all workers. If it is lower, then we just keep the old model, and throw out the newly generated games for that one worker.
-- [ ] Maybe larger buffer to avoid catastrophic forgetting?
-- [ ] Larger batch sizes? Seems like low GPU utilization?
-- [ ] I need tree stats. Branchning factor (avg. children), number of leafs, total nodes, max depth, max attack seen in the tree (like a move causing attack, not the model prediction).
 - [ ] All the steps setttings depend on batch size which is kind of annoying.
-- Value loss weight of 70.0 is maybe a tad too high. Changing to 30.0.
-- [ ] Autoscale loss weight to be roughly 1:1 and log the scaling constant.
 - [ ] Higher death penalty?
-- [ ] Maybe the cpuct and value vs. policy is not scaled right in the network? We need some auto scaling here. It might just be primiarly noise in the value network dirving choice of action.
 - [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
 
 # Confusion

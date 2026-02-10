@@ -1,4 +1,13 @@
-# CLAUDE.md - Project Context for Claude Code
+# Project Context for Agents
+
+## Keep This File Current (All Agents)
+
+Treat this document as a living resource, not static documentation.
+
+- If you spot inaccurate, outdated, or misleading information while working, update it immediately in the same change.
+- If you discover new critical context (architecture constraints, workflows, gotchas, debugging tips, command conventions), add it here.
+- Make small, iterative improvements continuously so future agents inherit accurate context.
+- When handing off work, call out any updates you made here and suggest follow-up updates if context is still incomplete.
 
 ## Project Overview
 
