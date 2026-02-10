@@ -1496,9 +1496,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                     html.Th("Qnorm", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("Qraw", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("U", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th(
-                        "Qnorm+U", style={"padding": "4px", "textAlign": "right"}
-                    ),
+                    html.Th("Qnorm+U", style={"padding": "4px", "textAlign": "right"}),
                     html.Th("N", style={"padding": "4px", "textAlign": "right"}),
                 ]
             )
@@ -1692,7 +1690,9 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
             parent = tree_dict["nodes"][parent_id]
             edge = node.get("edge_from_parent")
             if edge is not None and parent["action_priors"]:
-                parent_action_stats = build_decision_action_stats(parent, tree_dict, c_puct)
+                parent_action_stats = build_decision_action_stats(
+                    parent, tree_dict, c_puct
+                )
                 selection_row = next(
                     (row for row in parent_action_stats if row["action"] == edge), None
                 )
