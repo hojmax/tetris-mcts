@@ -282,3 +282,153 @@ def test_split_onnx_rust_matches_end_to_end_pytorch(tmp_path: Path) -> None:
             atol=1e-5,
             err_msg=f"Value mismatch (seed={move_number})",
         )
+
+
+def _piece_state(piece: object | None) -> tuple[int, int, int, int] | None:
+    if piece is None:
+        return None
+    return (piece.piece_type, piece.x, piece.y, piece.rotation)
+
+
+def _assert_env_states_equal(
+    lhs: tetris_core.TetrisEnv, rhs: tetris_core.TetrisEnv
+) -> None:
+    assert lhs.width == rhs.width
+    assert lhs.height == rhs.height
+    assert lhs.lines_cleared == rhs.lines_cleared
+    assert lhs.game_over == rhs.game_over
+    assert lhs.attack == rhs.attack
+    assert lhs.combo == rhs.combo
+    assert lhs.back_to_back == rhs.back_to_back
+
+    assert lhs.get_board() == rhs.get_board()
+    assert lhs.get_board_piece_types() == rhs.get_board_piece_types()
+    assert _piece_state(lhs.get_current_piece()) == _piece_state(
+        rhs.get_current_piece()
+    )
+    assert _piece_state(lhs.get_hold_piece()) == _piece_state(rhs.get_hold_piece())
+    assert lhs.is_hold_used() == rhs.is_hold_used()
+    assert lhs.get_pieces_spawned() == rhs.get_pieces_spawned()
+    assert lhs.get_queue_len() == rhs.get_queue_len()
+    assert lhs.get_queue(lhs.get_queue_len()) == rhs.get_queue(rhs.get_queue_len())
+    assert lhs.get_possible_next_pieces() == rhs.get_possible_next_pieces()
+
+
+def _assert_tree_exports_equal(
+    lhs: tetris_core.MCTSTreeExport, rhs: tetris_core.MCTSTreeExport
+) -> None:
+    assert lhs.root_id == rhs.root_id
+    assert lhs.num_simulations == rhs.num_simulations
+    assert lhs.selected_action == rhs.selected_action
+    np.testing.assert_array_equal(
+        np.asarray(lhs.policy, dtype=np.float32),
+        np.asarray(rhs.policy, dtype=np.float32),
+    )
+
+    assert len(lhs.nodes) == len(rhs.nodes)
+    for lhs_node, rhs_node in zip(lhs.nodes, rhs.nodes, strict=True):
+        assert lhs_node.id == rhs_node.id
+        assert lhs_node.node_type == rhs_node.node_type
+        assert lhs_node.visit_count == rhs_node.visit_count
+        assert lhs_node.value_sum == rhs_node.value_sum
+        assert lhs_node.mean_value == rhs_node.mean_value
+        np.testing.assert_array_equal(
+            np.asarray(lhs_node.value_history, dtype=np.float32),
+            np.asarray(rhs_node.value_history, dtype=np.float32),
+        )
+        assert lhs_node.nn_value == rhs_node.nn_value
+        assert lhs_node.is_terminal == rhs_node.is_terminal
+        assert lhs_node.move_number == rhs_node.move_number
+        assert lhs_node.attack == rhs_node.attack
+        assert lhs_node.parent_id == rhs_node.parent_id
+        assert lhs_node.edge_from_parent == rhs_node.edge_from_parent
+        assert lhs_node.children == rhs_node.children
+        assert lhs_node.valid_actions == rhs_node.valid_actions
+        np.testing.assert_array_equal(
+            np.asarray(lhs_node.action_priors, dtype=np.float32),
+            np.asarray(rhs_node.action_priors, dtype=np.float32),
+        )
+        _assert_env_states_equal(lhs_node.state, rhs_node.state)
+
+
+def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
+    torch.manual_seed(2026)
+    model = TetrisNet(
+        conv_filters=[4, 8],
+        fc_hidden=128,
+        conv_kernel_size=3,
+        conv_padding=1,
+    )
+    model.eval()
+
+    onnx_path = tmp_path / "mcts_cache_parity.onnx"
+    assert export_onnx(model, onnx_path)
+    assert export_split_models(model, onnx_path)
+
+    env = tetris_core.TetrisEnv.with_seed(10, 20, 4242)
+    for _ in range(5):
+        env.rotate_cw()
+        env.move_left()
+        env.hard_drop()
+    env.hold()
+    env.rotate_ccw()
+    env.move_right()
+
+    config = tetris_core.MCTSConfig()
+    config.num_simulations = 256
+    config.c_puct = 1.5
+    config.temperature = 1.0
+    config.dirichlet_alpha = 0.15
+    config.dirichlet_epsilon = 0.25
+    config.seed = 999
+    config.max_moves = 100
+    config.track_value_history = True
+    config.death_penalty = 0.0
+
+    cached_agent = tetris_core.MCTSAgent(config)
+    assert cached_agent.load_model(str(onnx_path))
+    assert cached_agent.set_board_cache_enabled(True)
+
+    warmup = cached_agent.search_with_tree(
+        env.clone_state(), add_noise=False, move_number=17
+    )
+    assert warmup is not None
+    warmup_stats = cached_agent.get_and_reset_cache_stats()
+    assert warmup_stats is not None
+
+    cached_search = cached_agent.search_with_tree(
+        env.clone_state(), add_noise=False, move_number=17
+    )
+    assert cached_search is not None
+    cached_result, cached_tree = cached_search
+    cached_stats = cached_agent.get_and_reset_cache_stats()
+    assert cached_stats is not None
+    cache_hits, cache_misses, cache_size = cached_stats
+    assert cache_hits > 0
+    assert cache_misses == 0
+    assert cache_size > 0
+
+    uncached_agent = tetris_core.MCTSAgent(config)
+    assert uncached_agent.load_model(str(onnx_path))
+    assert uncached_agent.set_board_cache_enabled(False)
+    uncached_search = uncached_agent.search_with_tree(
+        env.clone_state(), add_noise=False, move_number=17
+    )
+    assert uncached_search is not None
+    uncached_result, uncached_tree = uncached_search
+    uncached_stats = uncached_agent.get_and_reset_cache_stats()
+    assert uncached_stats is not None
+    uncached_hits, uncached_misses, uncached_size = uncached_stats
+    assert uncached_hits == 0
+    assert uncached_misses == 0
+    assert uncached_size == 0
+
+    assert cached_result.action == uncached_result.action
+    assert cached_result.value == uncached_result.value
+    assert cached_result.num_simulations == uncached_result.num_simulations
+    np.testing.assert_array_equal(
+        np.asarray(cached_result.policy, dtype=np.float32),
+        np.asarray(uncached_result.policy, dtype=np.float32),
+    )
+
+    _assert_tree_exports_equal(cached_tree, uncached_tree)
