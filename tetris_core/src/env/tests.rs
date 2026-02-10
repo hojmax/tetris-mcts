@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::constants::T_PIECE;
+    use crate::constants::{I_PIECE, T_PIECE};
     use crate::env::TetrisEnv;
     use crate::piece::Piece;
 
@@ -873,6 +873,45 @@ mod tests {
 
         // Drop distance should match how far piece traveled
         assert!(drop_distance > 0);
+    }
+
+    #[test]
+    fn test_hard_drop_matches_move_down_with_overhang() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        env.board.fill(0);
+        env.board_piece_types.fill(None);
+
+        // Create a roof block above the active piece's column. This makes the
+        // column-height shortcut incorrect while exact collision stepping remains correct.
+        let roof_x = 5;
+        let roof_y = 4;
+        env.board[roof_y * env.width + roof_x] = 1;
+        env.sync_board_stats();
+
+        let piece = Piece::with_position(I_PIECE, 3, 10, 1);
+        assert!(env.is_valid_position_for(&piece));
+        env.current_piece = Some(piece);
+
+        let mut moved_env = env.clone();
+        let mut expected_drop_distance: u32 = 0;
+        while moved_env.move_down() {
+            expected_drop_distance += 1;
+        }
+        assert!(expected_drop_distance > 0);
+
+        let ghost_piece = env
+            .get_ghost_piece()
+            .expect("ghost piece should exist when current piece is set");
+        let current_y = env
+            .current_piece
+            .as_ref()
+            .expect("current piece should exist")
+            .y;
+        assert_eq!(ghost_piece.y - current_y, expected_drop_distance as i32);
+
+        let hard_drop_distance = env.hard_drop();
+        assert_eq!(hard_drop_distance, expected_drop_distance);
     }
 
     #[test]

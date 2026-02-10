@@ -12,19 +12,19 @@ impl TetrisEnv {
         &self.board
     }
 
-    /// Compute how far a piece can drop using column_heights for O(1) per cell.
+    /// Compute how far a piece can drop using exact collision checks.
     /// Returns the drop distance (0 if already at bottom).
     pub(crate) fn compute_drop_distance(&self, piece: &Piece) -> i32 {
-        let mut min_drop = i32::MAX;
-        for (cx, cy) in get_cells(piece.piece_type, piece.rotation, piece.x, piece.y) {
-            if cx >= 0 && cx < self.width as i32 {
-                // Maximum y this cell can reach is column_heights[cx] - 1
-                let max_y = self.column_heights[cx as usize] - 1;
-                let drop = max_y - cy;
-                min_drop = min_drop.min(drop);
-            }
+        let mut drop_distance = 0;
+        while self.is_valid_position(
+            piece.piece_type,
+            piece.rotation,
+            piece.x,
+            piece.y + drop_distance + 1,
+        ) {
+            drop_distance += 1;
         }
-        min_drop.max(0)
+        drop_distance
     }
 }
 

@@ -54,7 +54,7 @@ pub struct TetrisEnv {
     /// The seed used to initialize this environment's RNG (for determinism tracking)
     pub(crate) seed: u64,
     /// Column heights: Y coordinate of topmost filled cell per column, or `height` if empty.
-    /// Used for O(1) hard drop distance calculation.
+    /// Maintained during lock/clear/sync board updates for board statistics.
     pub(crate) column_heights: Vec<i32>,
     /// Total number of filled cells on the board. Used for O(1) perfect clear detection.
     pub(crate) total_blocks: u32,
