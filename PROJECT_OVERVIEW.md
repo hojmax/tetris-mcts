@@ -453,53 +453,6 @@ def compute_loss(model, batch):
     return total_loss, policy_loss, value_loss
 ```
 
-### Training Configuration
-
-Configuration is managed via `TrainingConfig` dataclass in `config.py`:
-
-```python
-from tetris_mcts.config import TrainingConfig
-
-config = TrainingConfig(
-    # Training
-    total_steps=100_000,
-    batch_size=256,
-    learning_rate=0.001,
-    weight_decay=1e-4,
-    lr_schedule='cosine',  # 'cosine', 'step', or 'none'
-
-    # Network architecture
-    conv_filters=[4, 8],
-    fc_hidden=128,
-
-    # MCTS / Self-play
-    num_simulations=400,  # MCTS simulations per move
-    temperature=1.0,
-    dirichlet_alpha=0.05,
-    dirichlet_epsilon=0.25,
-    num_workers=5,  # Parallel game generation threads
-
-    # Replay buffer
-    buffer_size=100_000,
-    min_buffer_size=100,  # Minimum examples before training starts
-
-    # Intervals
-    model_sync_interval=2000,  # Steps between ONNX exports
-    checkpoint_interval=1000,
-    eval_interval=200_000,
-    log_interval=100,
-)
-```
-
-**Command-line overrides** (via `simple_parsing`):
-
-```bash
-python tetris_mcts/train.py \
-    --training.total-steps 500000 \
-    --training.num-simulations 800 \
-    --training.learning-rate 0.0005
-```
-
 ### Parallel Training Architecture
 
 The implementation uses **integrated parallel game generation** via Rust `GameGenerator`:

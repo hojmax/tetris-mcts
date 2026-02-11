@@ -963,6 +963,7 @@ impl GameGenerator {
                         max_moves,
                         candidate_eval_games,
                         candidate_eval_add_noise,
+                        non_network_num_simulations,
                         &buffer,
                         &games_generated,
                         &examples_generated,
@@ -1055,27 +1056,21 @@ impl GameGenerator {
             return true;
         }
 
-        let mut mode_config = config.clone();
-        mode_config.num_simulations = if target_uses_network {
-            config.num_simulations
+        let model_path = if target_uses_network {
+            Some(incumbent_model_path.read().unwrap().clone())
         } else {
-            non_network_num_simulations
+            None
         };
-        let mut new_agent = MCTSAgent::new(mode_config);
-        if target_uses_network {
-            let model_path = incumbent_model_path.read().unwrap().clone();
-            let path_str = model_path
-                .to_str()
-                .expect("Model path contains invalid UTF-8");
-            if !new_agent.load_model(path_str) {
-                eprintln!(
-                    "[GameGenerator] Worker {} failed to load incumbent model {}",
-                    worker_id,
-                    model_path.display()
-                );
-                return false;
-            }
-        }
+        let Some(new_agent) = Self::create_rollout_agent(
+            config,
+            target_uses_network,
+            non_network_num_simulations,
+            model_path.as_ref(),
+            worker_id,
+            "incumbent",
+        ) else {
+            return false;
+        };
 
         *loaded_model_step = incumbent_model_step.load(Ordering::SeqCst);
         if worker_id == 0 {
@@ -1106,6 +1101,7 @@ impl GameGenerator {
         max_moves: u32,
         candidate_eval_games: usize,
         candidate_eval_add_noise: bool,
+        non_network_num_simulations: u32,
         buffer: &Arc<SharedBuffer>,
         games_generated: &Arc<AtomicU64>,
         examples_generated: &Arc<AtomicU64>,
@@ -1120,12 +1116,14 @@ impl GameGenerator {
         incumbent_lifetime_games: &Arc<AtomicU64>,
         incumbent_lifetime_attack: &Arc<AtomicU64>,
     ) -> usize {
-        let mut candidate_agent = MCTSAgent::new(config.clone());
-        let candidate_path_str = candidate
-            .model_path
-            .to_str()
-            .expect("Model path contains invalid UTF-8");
-        if !candidate_agent.load_model(candidate_path_str) {
+        let Some(candidate_agent) = Self::create_rollout_agent(
+            config,
+            true,
+            non_network_num_simulations,
+            Some(&candidate.model_path),
+            worker_id,
+            "candidate",
+        ) else {
             eprintln!(
                 "[GameGenerator] Worker {} failed to load candidate step {} from {}",
                 worker_id,
@@ -1140,7 +1138,7 @@ impl GameGenerator {
                 None,
             );
             return 0;
-        }
+        };
 
         let mut candidate_results: Vec<GameResult> = Vec::with_capacity(candidate_eval_games);
         for _ in 0..candidate_eval_games {
@@ -1261,6 +1259,51 @@ impl GameGenerator {
             });
 
         committed_games
+    }
+
+    fn build_rollout_config(
+        base_config: &MCTSConfig,
+        uses_network: bool,
+        non_network_num_simulations: u32,
+    ) -> MCTSConfig {
+        let mut rollout_config = base_config.clone();
+        rollout_config.num_simulations = if uses_network {
+            base_config.num_simulations
+        } else {
+            non_network_num_simulations
+        };
+        rollout_config
+    }
+
+    fn create_rollout_agent(
+        base_config: &MCTSConfig,
+        uses_network: bool,
+        non_network_num_simulations: u32,
+        model_path: Option<&PathBuf>,
+        worker_id: usize,
+        role: &str,
+    ) -> Option<MCTSAgent> {
+        // Keep rollout behavior consistent across training and evaluator code paths,
+        // including visit_sampling_epsilon and all other shared MCTS settings.
+        let rollout_config =
+            Self::build_rollout_config(base_config, uses_network, non_network_num_simulations);
+        let mut agent = MCTSAgent::new(rollout_config);
+        if uses_network {
+            let model_path = model_path.expect("network rollout requires model path");
+            let path_str = model_path
+                .to_str()
+                .expect("Model path contains invalid UTF-8");
+            if !agent.load_model(path_str) {
+                eprintln!(
+                    "[GameGenerator] Worker {} failed to load {} model {}",
+                    worker_id,
+                    role,
+                    model_path.display()
+                );
+                return None;
+            }
+        }
+        Some(agent)
     }
 
     fn commit_game_result(
@@ -1485,6 +1528,30 @@ mod tests {
         assert_eq!(d["total_lines"], 7);
         assert_eq!(d["total_attack"], 7);
         assert_eq!(d["holds"], 7);
+    }
+
+    #[test]
+    fn test_build_rollout_config_keeps_sampling_settings() {
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 123;
+        config.visit_sampling_epsilon = 0.42;
+        config.temperature = 1.5;
+        config.dirichlet_alpha = 0.02;
+        config.dirichlet_epsilon = 0.3;
+
+        let network_config = GameGenerator::build_rollout_config(&config, true, 999);
+        assert_eq!(network_config.num_simulations, 123);
+        assert_eq!(network_config.visit_sampling_epsilon, 0.42);
+        assert_eq!(network_config.temperature, 1.5);
+        assert_eq!(network_config.dirichlet_alpha, 0.02);
+        assert_eq!(network_config.dirichlet_epsilon, 0.3);
+
+        let bootstrap_config = GameGenerator::build_rollout_config(&config, false, 999);
+        assert_eq!(bootstrap_config.num_simulations, 999);
+        assert_eq!(bootstrap_config.visit_sampling_epsilon, 0.42);
+        assert_eq!(bootstrap_config.temperature, 1.5);
+        assert_eq!(bootstrap_config.dirichlet_alpha, 0.02);
+        assert_eq!(bootstrap_config.dirichlet_epsilon, 0.3);
     }
 
     #[test]
