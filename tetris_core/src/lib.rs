@@ -30,7 +30,7 @@ pub mod scoring;
 // Re-export main types for convenience
 pub use constants::NUM_PIECE_TYPES;
 pub use env::TetrisEnv;
-pub use generator::{evaluate_model, EvalResult, GameGenerator};
+pub use generator::{evaluate_model, evaluate_model_without_nn, EvalResult, GameGenerator};
 pub use kicks::{get_i_kicks, get_jlstz_kicks, get_kicks_for_piece};
 pub use mcts::{
     GameResult, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
@@ -131,6 +131,7 @@ fn tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<GameGenerator>()?;
     m.add_class::<EvalResult>()?;
     m.add_function(wrap_pyfunction!(evaluate_model, m)?)?;
+    m.add_function(wrap_pyfunction!(evaluate_model_without_nn, m)?)?;
     m.add_function(wrap_pyfunction!(debug_encode_state, m)?)?;
     m.add_function(wrap_pyfunction!(debug_get_action_mask, m)?)?;
     m.add_function(wrap_pyfunction!(debug_masked_softmax, m)?)?;

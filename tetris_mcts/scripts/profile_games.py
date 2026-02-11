@@ -9,7 +9,7 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_core import MCTSConfig, evaluate_model
+from tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
 from tetris_mcts.config import (
     BENCHMARKS_DIR,
     PARALLEL_ONNX_FILENAME,
@@ -24,28 +24,29 @@ DEFAULT_TRAINING_CONFIG = TrainingConfig()
 class ProfileArgs:
     """Profile MCTS game generation performance with fixed seeds."""
 
-    model_path: Path = (
-        BENCHMARKS_DIR / "models" / PARALLEL_ONNX_FILENAME
-    )  # Path to ONNX model
+    model_path: Path = BENCHMARKS_DIR / "models" / PARALLEL_ONNX_FILENAME
+    use_dummy_network: bool = False  # Run bootstrap MCTS without loading an ONNX model
     num_games: int = 10  # Number of games to profile
     simulations: int = 100  # MCTS simulations per move
     seed_start: int = 42  # Starting seed for deterministic games
     c_puct: float = DEFAULT_TRAINING_CONFIG.c_puct  # PUCT exploration constant
-    mcts_seed: int | None = (
-        None  # Optional MCTS RNG seed for deterministic search (None = non-deterministic)
-    )
+    mcts_seed: int | None = None  # Optional deterministic MCTS RNG seed
     max_moves: int = DEFAULT_TRAINING_CONFIG.max_moves  # Maximum moves per game
     output: Path = BENCHMARKS_DIR / "profile_results.jsonl"  # Output JSONL file
 
 
 def main(args: ProfileArgs) -> None:
-    if not args.model_path.exists():
+    if not args.use_dummy_network and not args.model_path.exists():
         logger.error("Model not found", path=str(args.model_path))
         return
 
+    evaluation_mode = (
+        "dummy_no_network_uniform" if args.use_dummy_network else "onnx_network"
+    )
     logger.info(
         "Starting performance profiling",
-        model=str(args.model_path),
+        evaluation_mode=evaluation_mode,
+        model=str(args.model_path) if not args.use_dummy_network else None,
         num_games=args.num_games,
         simulations=args.simulations,
         seed_start=args.seed_start,
@@ -62,12 +63,19 @@ def main(args: ProfileArgs) -> None:
     logger.info("Starting game evaluation", seeds=seeds)
     start_time = time.perf_counter()
 
-    result = evaluate_model(
-        model_path=str(args.model_path),
-        seeds=seeds,
-        config=config,
-        max_moves=args.max_moves,
-    )
+    if args.use_dummy_network:
+        result = evaluate_model_without_nn(
+            seeds=seeds,
+            config=config,
+            max_moves=args.max_moves,
+        )
+    else:
+        result = evaluate_model(
+            model_path=str(args.model_path),
+            seeds=seeds,
+            config=config,
+            max_moves=args.max_moves,
+        )
 
     end_time = time.perf_counter()
     total_time = end_time - start_time
@@ -111,7 +119,8 @@ def main(args: ProfileArgs) -> None:
 
     profile_data = {
         "timestamp": timestamp,
-        "model_path": str(args.model_path),
+        "model_path": None if args.use_dummy_network else str(args.model_path),
+        "evaluation_mode": evaluation_mode,
         "config": {
             "num_games": args.num_games,
             "simulations": args.simulations,
@@ -119,6 +128,7 @@ def main(args: ProfileArgs) -> None:
             "c_puct": args.c_puct,
             "max_moves": args.max_moves,
             "evaluation_mode": "deterministic_argmax_no_dirichlet_noise",
+            "use_dummy_network": args.use_dummy_network,
         },
         "timing": {
             "total_time_sec": total_time,

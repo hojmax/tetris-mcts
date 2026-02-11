@@ -73,11 +73,13 @@ replay: $(RELEASE_MARKER)
 
 # Profile game generation performance (builds first if needed)
 # Usage: make profile MODEL=benchmarks/models/parallel.onnx SIMS=100 OUTPUT=benchmarks/profile.jsonl
+# Usage (dummy/no-network): make profile SIMS=4000 PROFILE_ARGS="--use_dummy_network"
 MODEL_PROFILE ?= training_runs/v6/checkpoints/latest.onnx
 SIMS ?= 1000
 OUTPUT_PROFILE ?= benchmarks/profile_results.jsonl
+PROFILE_ARGS ?=
 profile: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE)
+	$(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE) $(PROFILE_ARGS)
 
 # Profile with samply (interactive flamegraph viewer)
 # Usage: make profile-samply SIMS=50

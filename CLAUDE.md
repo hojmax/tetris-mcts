@@ -71,6 +71,7 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 make profile              # 10 games, 100 simulations (default)
 make profile SIMS=50      # Faster profiling with fewer simulations
 make profile SIMS=200     # More accurate with more simulations
+make profile SIMS=4000 PROFILE_ARGS="--use_dummy_network"  # No-network bootstrap mode
 ```
 
 Results saved to `benchmarks/profile_results.jsonl` with timing data for comparison across runs.

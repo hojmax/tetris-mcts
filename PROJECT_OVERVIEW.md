@@ -764,18 +764,19 @@ fn add_dirichlet_noise(priors: &mut [f32], alpha: f32, epsilon: f32) {
 
 ### Training Metrics
 
-- `loss`, `policy_loss`, `value_loss`
-- `policy_entropy` (should decrease over training)
-- `value_prediction_error`
-- `learning_rate`
-- `gradient_norm`
+- `train/loss`, `train/policy_loss`, `train/value_loss`
+- `train/learning_rate`, `train/grad_norm`
+- `batch/value_target_mean`, `batch/value_target_std`
+- `batch/overhang_fields_mean`, `batch/valid_actions_mean`
 
 ### Self-Play Metrics
 
-- `avg_game_length` (pieces placed per game)
-- `avg_attack` (total attack per game)
-- `avg_attack_per_piece` (efficiency)
-- `games_per_second`
+- `replay/buffer_size`, `replay/games_generated`, `replay/examples_generated`
+- `throughput/games_per_second`, `throughput/steps_per_second`
+- `incumbent/model_step`, `incumbent/uses_network`
+- `incumbent/lifetime_games`, `incumbent/lifetime_avg_attack`
+- `model_gate/*` (candidate vs incumbent promotion decisions)
+- `game/*` (per-completed-game stats, including `game/attack_per_move`)
 
 ### Evaluation Metrics (Fixed Seeds)
 

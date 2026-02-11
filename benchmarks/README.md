@@ -22,6 +22,9 @@ make profile SIMS=50
 
 # More accurate with more simulations
 make profile SIMS=200
+
+# Bootstrap/dummy-network profiling (no ONNX inference), e.g. 4000 simulations
+make profile SIMS=4000 PROFILE_ARGS="--use_dummy_network"
 ```
 
 Results are saved to `profile_results.jsonl` with:

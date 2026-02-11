@@ -436,21 +436,25 @@ class Trainer:
                 if self.step % self.config.log_interval == 0:
                     elapsed = time.time() - train_start_time
                     games = generator.games_generated()
-                    metrics["buffer_size"] = generator.buffer_size()
-                    metrics["games_generated"] = games
-                    metrics["examples_generated"] = generator.examples_generated()
-                    metrics["incumbent_model_step"] = generator.incumbent_model_step()
-                    metrics["incumbent_uses_network"] = (
+                    metrics["replay/buffer_size"] = generator.buffer_size()
+                    metrics["replay/games_generated"] = games
+                    metrics["replay/examples_generated"] = (
+                        generator.examples_generated()
+                    )
+                    metrics["incumbent/model_step"] = generator.incumbent_model_step()
+                    metrics["incumbent/uses_network"] = (
                         generator.incumbent_uses_network()
                     )
-                    metrics["incumbent_lifetime_games"] = (
+                    metrics["incumbent/lifetime_games"] = (
                         generator.incumbent_lifetime_games()
                     )
-                    metrics["incumbent_lifetime_avg_attack"] = (
+                    metrics["incumbent/lifetime_avg_attack"] = (
                         generator.incumbent_lifetime_avg_attack()
                     )
-                    metrics["games_per_second"] = games / elapsed if elapsed > 0 else 0
-                    metrics["steps_per_second"] = (
+                    metrics["throughput/games_per_second"] = (
+                        games / elapsed if elapsed > 0 else 0
+                    )
+                    metrics["throughput/steps_per_second"] = (
                         session_step / elapsed if elapsed > 0 else 0
                     )
                     if log_to_wandb:
@@ -462,7 +466,7 @@ class Trainer:
                             game_stats,
                         ) in generator.drain_completed_game_stats():
                             game_metrics = {
-                                "game_number": game_number,
+                                "game/number": game_number,
                                 "trainer_step": self.step,
                             }
                             for key, value in game_stats.items():
@@ -493,8 +497,8 @@ class Trainer:
                         learning_rate=metrics["train/learning_rate"],
                         buffer_size=generator.buffer_size(),
                         games_generated=games,
-                        games_per_second=metrics["games_per_second"],
-                        steps_per_second=metrics["steps_per_second"],
+                        games_per_second=metrics["throughput/games_per_second"],
+                        steps_per_second=metrics["throughput/steps_per_second"],
                     )
 
                 # Export updated model for generator

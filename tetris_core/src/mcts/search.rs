@@ -537,7 +537,7 @@ pub(super) fn search_internal(
 }
 
 /// Run MCTS search without NN guidance (uniform priors and zero value).
-pub(super) fn search_internal_without_nn(
+pub(crate) fn search_internal_without_nn(
     config: &MCTSConfig,
     env: &TetrisEnv,
     add_noise: bool,

@@ -12,7 +12,7 @@ mod config;
 mod export;
 mod nodes;
 mod results;
-mod search;
+pub(crate) mod search;
 mod utils;
 
 // Re-export public API
