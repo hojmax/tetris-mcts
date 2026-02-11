@@ -13,7 +13,7 @@ use super::results::{
     GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport, TreeStats,
     TreeStatsAccumulator,
 };
-use super::search::search_internal;
+use super::search::{search_internal, search_internal_without_nn};
 use crate::mcts::action_space::HOLD_ACTION_INDEX;
 
 /// MCTS Agent for Tetris
@@ -122,11 +122,9 @@ impl MCTSAgent {
     ///     add_noise: Whether to add Dirichlet noise (for exploration)
     ///
     /// Returns:
-    ///     GameResult with training examples, or None if no model loaded
+    ///     GameResult with training examples
     #[pyo3(signature = (max_moves=100, add_noise=true))]
     pub fn play_game(&self, max_moves: u32, add_noise: bool) -> Option<GameResult> {
-        let nn = self.nn.as_ref()?;
-
         let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
         let mut states: Vec<(TetrisEnv, u32, Vec<f32>, Vec<bool>)> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
@@ -152,32 +150,36 @@ impl MCTSAgent {
                 break;
             }
             let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
-            valid_moves_sum += valid_moves;
-            max_valid_moves = max_valid_moves.max(valid_moves);
 
-            // Get NN policy and value for root
-            let (policy, nn_value) =
-                match nn.predict_masked(&env, move_idx as usize, &mask, max_moves as usize) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        eprintln!(
+            // Run MCTS search (NN-guided when model is loaded, otherwise uniform+zero bootstrap mode)
+            let (result, move_tree_stats) = if let Some(nn) = self.nn.as_ref() {
+                let (policy, nn_value) =
+                    match nn.predict_masked(&env, move_idx as usize, &mask, max_moves as usize) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            eprintln!(
                             "[MCTSAgent] NN prediction failed at move {}: {}. Ending game early.",
                             move_idx, e
                         );
-                        break;
-                    }
-                };
+                            break;
+                        }
+                    };
+                self.search(&env, policy, nn_value, add_noise, move_idx)
+            } else {
+                let (mcts_result, _root, tree_stats) =
+                    search_internal_without_nn(&self.config, &env, add_noise, move_idx);
+                (mcts_result, tree_stats)
+            };
 
-            // Store state before making move
-            states.push((env.clone(), move_idx, policy.clone(), mask.clone()));
-
-            // Run MCTS search
-            let (result, move_tree_stats) =
-                self.search(&env, policy, nn_value, add_noise, move_idx);
+            valid_moves_sum += valid_moves;
+            max_valid_moves = max_valid_moves.max(valid_moves);
             tree_stats_acc.add(move_tree_stats);
             if result.action == HOLD_ACTION_INDEX {
                 stats.holds += 1;
             }
+
+            // Store state only after search succeeds so state/reward arrays stay aligned.
+            states.push((env.clone(), move_idx, result.policy.clone(), mask.clone()));
 
             // Execute the selected action
             let attack = env
@@ -230,11 +232,6 @@ impl MCTSAgent {
                         _ => {}
                     }
                 }
-            }
-
-            // Update stored policy with MCTS policy
-            if let Some(last) = states.last_mut() {
-                last.2 = result.policy;
             }
         }
 
@@ -309,7 +306,11 @@ impl MCTSAgent {
         };
 
         let tree_stats = tree_stats_acc.finalize();
-        let (cache_hits, cache_misses, cache_size) = nn.get_and_reset_cache_stats();
+        let (cache_hits, cache_misses, cache_size) = if let Some(nn) = self.nn.as_ref() {
+            nn.get_and_reset_cache_stats()
+        } else {
+            (0, 0, 0)
+        };
 
         Some(GameResult {
             examples,

@@ -22,6 +22,7 @@ from tetris_mcts.config import (
     BOARD_WIDTH,
     DEFAULT_GIF_FPS,
     DEFAULT_GIF_FRAME_DURATION_MS,
+    MODEL_CANDIDATES_DIRNAME,
     PARALLEL_ONNX_FILENAME,
     TRAINING_DATA_FILENAME,
     TrainingConfig,
@@ -284,6 +285,8 @@ class Trainer:
         assert self.config.checkpoint_dir is not None
         assert self.config.data_dir is not None
         onnx_path = self.config.checkpoint_dir / PARALLEL_ONNX_FILENAME
+        candidate_model_dir = self.config.checkpoint_dir / MODEL_CANDIDATES_DIRNAME
+        candidate_model_dir.mkdir(parents=True, exist_ok=True)
 
         # Export initial model (full ONNX + split models for cached Rust inference)
         export_onnx(self.model, onnx_path)
@@ -315,6 +318,11 @@ class Trainer:
             max_examples=self.config.buffer_size,
             games_per_save=self.config.games_per_save,
             num_workers=self.config.num_workers,
+            initial_model_step=self.step,
+            candidate_eval_games=self.config.model_promotion_eval_games,
+            candidate_eval_add_noise=self.config.model_promotion_eval_add_noise,
+            start_with_network=not self.config.bootstrap_without_network,
+            non_network_num_simulations=self.config.bootstrap_num_simulations,
         )
         generator.start()
         logger.info(
@@ -322,6 +330,10 @@ class Trainer:
             model_path=str(onnx_path),
             training_data_path=str(training_data_path),
             num_workers=self.config.num_workers,
+            candidate_eval_games=self.config.model_promotion_eval_games,
+            candidate_eval_add_noise=self.config.model_promotion_eval_add_noise,
+            bootstrap_without_network=self.config.bootstrap_without_network,
+            bootstrap_num_simulations=self.config.bootstrap_num_simulations,
         )
 
         # Wait for minimum buffer size
@@ -383,6 +395,43 @@ class Trainer:
                 # Train step
                 metrics = self.train_step(batch)
 
+                for event in generator.drain_model_eval_events():
+                    promoted = bool(event["promoted"])
+                    logger.info(
+                        "Model evaluation decision",
+                        trainer_step=self.step,
+                        candidate_step=int(event["candidate_step"]),
+                        candidate_games=int(event["candidate_games"]),
+                        candidate_avg_attack=event["candidate_avg_attack"],
+                        incumbent_step=int(event["incumbent_step"]),
+                        incumbent_uses_network=bool(event["incumbent_uses_network"]),
+                        incumbent_games=int(event["incumbent_games"]),
+                        incumbent_avg_attack=event["incumbent_avg_attack"],
+                        promoted=promoted,
+                        auto_promoted=bool(event["auto_promoted"]),
+                    )
+                    if log_to_wandb:
+                        wandb.log(
+                            {
+                                "trainer_step": self.step,
+                                "model_gate/candidate_step": event["candidate_step"],
+                                "model_gate/candidate_games": event["candidate_games"],
+                                "model_gate/candidate_avg_attack": event[
+                                    "candidate_avg_attack"
+                                ],
+                                "model_gate/incumbent_step": event["incumbent_step"],
+                                "model_gate/incumbent_uses_network": event[
+                                    "incumbent_uses_network"
+                                ],
+                                "model_gate/incumbent_games": event["incumbent_games"],
+                                "model_gate/incumbent_avg_attack": event[
+                                    "incumbent_avg_attack"
+                                ],
+                                "model_gate/promoted": event["promoted"],
+                                "model_gate/auto_promoted": event["auto_promoted"],
+                            }
+                        )
+
                 # Log metrics
                 if self.step % self.config.log_interval == 0:
                     elapsed = time.time() - train_start_time
@@ -390,6 +439,16 @@ class Trainer:
                     metrics["buffer_size"] = generator.buffer_size()
                     metrics["games_generated"] = games
                     metrics["examples_generated"] = generator.examples_generated()
+                    metrics["incumbent_model_step"] = generator.incumbent_model_step()
+                    metrics["incumbent_uses_network"] = (
+                        generator.incumbent_uses_network()
+                    )
+                    metrics["incumbent_lifetime_games"] = (
+                        generator.incumbent_lifetime_games()
+                    )
+                    metrics["incumbent_lifetime_avg_attack"] = (
+                        generator.incumbent_lifetime_avg_attack()
+                    )
                     metrics["games_per_second"] = games / elapsed if elapsed > 0 else 0
                     metrics["steps_per_second"] = (
                         session_step / elapsed if elapsed > 0 else 0
@@ -440,12 +499,25 @@ class Trainer:
 
                 # Export updated model for generator
                 if self.step % model_sync_interval == 0:
-                    export_onnx(self.model, onnx_path)
-                    export_split_models(self.model, onnx_path)
+                    candidate_onnx_path = (
+                        candidate_model_dir / f"candidate_step_{self.step}.onnx"
+                    )
+                    export_onnx(self.model, candidate_onnx_path)
+                    export_split_models(self.model, candidate_onnx_path)
+                    if not candidate_onnx_path.exists():
+                        raise RuntimeError(
+                            "ONNX export failed - candidate file not created: "
+                            f"{candidate_onnx_path}"
+                        )
+                    queued = generator.queue_candidate_model(
+                        str(candidate_onnx_path),
+                        self.step,
+                    )
                     logger.info(
-                        "Exported model for generator",
+                        "Queued candidate model for evaluator",
                         step=self.step,
-                        path=str(onnx_path),
+                        path=str(candidate_onnx_path),
+                        queued=queued,
                     )
 
                 # Evaluate

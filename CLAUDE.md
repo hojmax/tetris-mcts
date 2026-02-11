@@ -224,6 +224,8 @@ From `config.py` TrainingConfig defaults:
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
 - **Buffer**: 500K examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.01, epsilon=0.25, visit-sampling epsilon=0.15
+- **Model Promotion Gate**: candidate window=30 games, evaluator noise enabled by default
+- **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
 
@@ -248,12 +250,14 @@ Invalid actions get logits set to -inf before softmax, ensuring 0 probability.
 
 Training uses parallel Rust game generation via `GameGenerator`:
 
-1. Multiple worker threads (default: 5) run MCTS games in parallel
-2. Each game uses network priors + Dirichlet noise for exploration
-3. Training examples from completed games stored in shared in-memory ring buffer
-4. Python samples directly via `generator.sample_batch(batch_size, max_moves)` - no disk I/O during training
-5. Periodic NPZ saves for resume capability only
-6. Model hot-swapped atomically when Python exports new ONNX
+1. Multiple worker threads (default: 7) run MCTS games in parallel
+2. One dedicated evaluator worker tests queued candidate ONNX models over a fixed game window (default 30 games)
+3. Candidates are compared against incumbent lifetime average attack; if better, evaluator commits candidate games then promotes the model globally
+4. If candidate is worse, evaluator discards candidate games and keeps incumbent
+5. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
+6. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
+7. Training examples from accepted games are stored in a shared in-memory ring buffer
+8. Python samples directly via `generator.sample_batch(batch_size, max_moves)` with periodic NPZ saves for resume only
 
 ## Testing
 
