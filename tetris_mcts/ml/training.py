@@ -187,7 +187,7 @@ class Trainer:
         if self.loss_balancer.has_history():
             value_loss_weight = self.loss_balancer.value_loss_weight()
         else:
-            value_loss_weight = self.config.value_loss_weight
+            value_loss_weight = 1.0
         total_loss, policy_loss, value_loss = compute_loss(
             self.model,
             boards,
@@ -332,13 +332,12 @@ class Trainer:
             training_data_path=str(training_data_path),
             config=mcts_config,
             max_placements=self.config.max_placements,
-            add_noise=True,
+            add_noise=self.config.add_noise,
             max_examples=self.config.buffer_size,
             games_per_save=self.config.games_per_save,
             num_workers=self.config.num_workers,
             initial_model_step=self.step,
             candidate_eval_games=self.config.model_promotion_eval_games,
-            candidate_eval_add_noise=self.config.model_promotion_eval_add_noise,
             start_with_network=not self.config.bootstrap_without_network,
             non_network_num_simulations=self.config.bootstrap_num_simulations,
         )
@@ -348,8 +347,8 @@ class Trainer:
             model_path=str(onnx_path),
             training_data_path=str(training_data_path),
             num_workers=self.config.num_workers,
+            add_noise=self.config.add_noise,
             candidate_eval_games=self.config.model_promotion_eval_games,
-            candidate_eval_add_noise=self.config.model_promotion_eval_add_noise,
             bootstrap_without_network=self.config.bootstrap_without_network,
             bootstrap_num_simulations=self.config.bootstrap_num_simulations,
         )

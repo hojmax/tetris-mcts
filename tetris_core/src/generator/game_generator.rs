@@ -238,8 +238,6 @@ pub struct GameGenerator {
     num_workers: usize,
     /// Number of games the evaluator worker plays per candidate model.
     candidate_eval_games: usize,
-    /// Whether to use Dirichlet noise while evaluating candidate models.
-    candidate_eval_add_noise: bool,
     /// Number of simulations per move before the first promoted NN model.
     non_network_num_simulations: u32,
     /// Shared replay buffer (accessed by both worker threads and Python)
@@ -279,7 +277,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=30, candidate_eval_add_noise=false, start_with_network=true, non_network_num_simulations=3000))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=30, start_with_network=true, non_network_num_simulations=3000))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -291,7 +289,6 @@ impl GameGenerator {
         num_workers: usize,
         initial_model_step: u64,
         candidate_eval_games: usize,
-        candidate_eval_add_noise: bool,
         start_with_network: bool,
         non_network_num_simulations: u32,
     ) -> PyResult<Self> {
@@ -334,7 +331,6 @@ impl GameGenerator {
             games_per_save,
             num_workers,
             candidate_eval_games,
-            candidate_eval_add_noise,
             non_network_num_simulations,
             buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
@@ -435,7 +431,6 @@ impl GameGenerator {
             let add_noise = self.add_noise;
             let games_per_save = self.games_per_save;
             let candidate_eval_games = self.candidate_eval_games;
-            let candidate_eval_add_noise = self.candidate_eval_add_noise;
             let non_network_num_simulations = self.non_network_num_simulations;
             let num_workers = self.num_workers;
             let is_evaluator_worker = worker_id == evaluator_worker_id;
@@ -467,7 +462,6 @@ impl GameGenerator {
                     add_noise,
                     games_per_save,
                     candidate_eval_games,
-                    candidate_eval_add_noise,
                     non_network_num_simulations,
                     buffer,
                     running,
@@ -879,7 +873,6 @@ impl GameGenerator {
         add_noise: bool,
         games_per_save: usize,
         candidate_eval_games: usize,
-        candidate_eval_add_noise: bool,
         non_network_num_simulations: u32,
         buffer: Arc<SharedBuffer>,
         running: Arc<AtomicBool>,
@@ -975,7 +968,7 @@ impl GameGenerator {
                         &running,
                         max_placements,
                         candidate_eval_games,
-                        candidate_eval_add_noise,
+                        add_noise,
                         non_network_num_simulations,
                         &buffer,
                         &games_generated,
@@ -1113,7 +1106,7 @@ impl GameGenerator {
         running: &Arc<AtomicBool>,
         max_placements: u32,
         candidate_eval_games: usize,
-        candidate_eval_add_noise: bool,
+        add_noise: bool,
         non_network_num_simulations: u32,
         buffer: &Arc<SharedBuffer>,
         games_generated: &Arc<AtomicU64>,
@@ -1166,7 +1159,7 @@ impl GameGenerator {
                 return 0;
             }
             if let Some(result) =
-                candidate_agent.play_game(max_placements, candidate_eval_add_noise)
+                candidate_agent.play_game(max_placements, add_noise)
             {
                 candidate_results.push(result);
             }

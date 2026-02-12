@@ -70,17 +70,17 @@ class TrainingConfig:
     lr_min_factor: float = 0.5  # Minimum LR as fraction of initial (for cosine)
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
-    value_loss_weight: float = 30.0  # Scale factor for value loss in total loss
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
         2000
     )
 
     # MCTS / Self-play
-    num_simulations: int = 1000
+    num_simulations: int = 1000  # MCTS simulations per move
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = 1.5
-    dirichlet_alpha: float = 0.01
+    dirichlet_alpha: float = 0.02
     dirichlet_epsilon: float = 0.25
+    add_noise: bool = True  # Whether to add Dirichlet noise at the MCTS root during self-play
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
     )
@@ -92,11 +92,8 @@ class TrainingConfig:
     overhang_penalty_weight: float = (  # Weight for normalized overhang penalty in value targets
         5.0
     )
-    model_promotion_eval_games: int = (
-        30  # Candidate games to average before promoting a new self-play model
-    )
-    model_promotion_eval_add_noise: bool = (
-        True  # Whether evaluator worker adds Dirichlet noise while gating candidates
+    model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
+        30
     )
     bootstrap_without_network: bool = True  # If True, self-play starts with uniform-prior/zero-value MCTS until first promotion
     bootstrap_num_simulations: int = (  # Simulations per move before first promoted NN model
@@ -106,10 +103,10 @@ class TrainingConfig:
     # Replay buffer
     buffer_size: int = 500_000
     min_buffer_size: int = 100
-    games_per_save: int = 2000  # Games between disk saves (0 to disable)
+    games_per_save: int = 100  # Games between disk saves (0 to disable)
 
     # Intervals
-    model_sync_interval: int = 2000  # Steps between ONNX exports
+    model_sync_interval: int = 5000  # Steps between ONNX exports
     checkpoint_interval: int = 80000  # Steps between checkpoints
     eval_interval: int = 30000  # Steps between evaluations
     log_interval: int = 100  # Steps between logging
@@ -168,8 +165,6 @@ class TrainingConfig:
             raise ValueError("lr_decay_steps must be > 0")
         if self.lr_step_divisor <= 0:
             raise ValueError("lr_step_divisor must be > 0")
-        if self.value_loss_weight <= 0:
-            raise ValueError("value_loss_weight must be > 0")
         if self.value_loss_weight_window <= 0:
             raise ValueError("value_loss_weight_window must be > 0")
         if self.lr_schedule == "step":
