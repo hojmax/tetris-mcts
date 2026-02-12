@@ -12,7 +12,6 @@ from typing import Optional
 import time
 from pathlib import Path
 import tempfile
-import statistics
 
 import wandb
 import structlog
@@ -223,7 +222,6 @@ class Trainer:
             "train/grad_norm": grad_norm.item(),
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
             "batch/value_target_mean": value_targets.mean().item(),
-            "batch/value_target_std": value_targets.std(unbiased=False).item(),
             "batch/overhang_fields_mean": overhang_fields.mean().item(),
             "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         }
@@ -556,8 +554,6 @@ class Trainer:
                     )
                     if log_to_wandb:
                         eval_gif_path: Optional[Path] = None
-                        attacks = [attack for attack, _ in eval_result.game_results]
-                        moves = [moves for _, moves in eval_result.game_results]
                         log_data = {
                             "eval/num_games": eval_result.num_games,
                             "eval/avg_attack": eval_result.avg_attack,
@@ -567,8 +563,6 @@ class Trainer:
                             "eval/avg_moves": eval_result.avg_moves,
                             "eval/attack_per_piece": eval_result.attack_per_piece,
                             "eval/lines_per_piece": eval_result.lines_per_piece,
-                            "eval/attack_std": statistics.pstdev(attacks),
-                            "eval/moves_std": statistics.pstdev(moves),
                             "trainer_step": self.step,
                         }
                         # Log trajectory as animated GIF
