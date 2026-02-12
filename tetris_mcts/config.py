@@ -64,7 +64,7 @@ class TrainingConfig:
     batch_size: int = 1024
     learning_rate: float = 0.0005
     weight_decay: float = 1e-4
-    grad_clip_norm: float = 1.0
+    grad_clip_norm: float = 5.0
     lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
     lr_decay_steps: int = 100_000
     lr_min_factor: float = 0.5  # Minimum LR as fraction of initial (for cosine)

@@ -42,10 +42,11 @@ _env_cache: dict[int, TetrisEnv] = {}
 class ScriptArgs:
     run_dir: Path = Path(
         "training_runs/v11"
-    )  # Training run dir (default: training_runs/v3)
+    )  # Training run dir (default: training_runs/v11)
+    use_dummy_network: bool = False  # Use uniform-prior/zero-value bootstrap search
 
 
-def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
+def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float | bool]:
     run_dir = args.run_dir
     config_path = run_dir / CONFIG_FILENAME
     model_path = run_dir / CHECKPOINT_DIRNAME / PARALLEL_ONNX_FILENAME
@@ -54,7 +55,7 @@ def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
         raise ValueError(f"Run dir does not exist: {run_dir}")
     if not config_path.exists():
         raise ValueError(f"Missing run config: {config_path}")
-    if not model_path.exists():
+    if not args.use_dummy_network and not model_path.exists():
         raise ValueError(f"Missing latest ONNX checkpoint: {model_path}")
 
     config = json.loads(config_path.read_text())
@@ -80,6 +81,7 @@ def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
         "dirichlet_alpha": float(config["dirichlet_alpha"]),
         "dirichlet_epsilon": float(config["dirichlet_epsilon"]),
         "max_placements": int(config["max_placements"]),
+        "use_dummy_network": args.use_dummy_network,
     }
 
 
@@ -838,6 +840,12 @@ app.layout = html.Div(
                     value=VIZ_DEFAULTS["model_path"],
                     style={"width": "250px", "marginRight": "15px"},
                 ),
+                dcc.Checklist(
+                    id="use-dummy-network",
+                    options=[{"label": " Dummy network", "value": "dummy"}],
+                    value=["dummy"] if VIZ_DEFAULTS["use_dummy_network"] else [],
+                    style={"marginRight": "15px"},
+                ),
                 html.Label("Sims:", style={"marginRight": "5px"}),
                 dcc.Input(
                     id="num-simulations",
@@ -1115,6 +1123,7 @@ app.layout = html.Div(
     Input("step-back-button", "n_clicks"),
     Input("show-unvisited", "value"),
     State("model-path", "value"),
+    State("use-dummy-network", "value"),
     State("num-simulations", "value"),
     State("c-puct", "value"),
     State("seed", "value"),
@@ -1141,6 +1150,7 @@ def run_mcts(
     step_back_clicks,
     show_unvisited_value,
     model_path,
+    use_dummy_network_value,
     num_sims,
     c_puct,
     seed,
@@ -1228,46 +1238,67 @@ def run_mcts(
     config.track_value_history = True
     agent = MCTSAgent(config)
 
-    # Load model
-    if not Path(model_path).exists():
-        return (
-            None,
-            None,
-            0,
-            None,
-            [],
-            [
-                {
-                    "data": {"id": "error", "label": f"Model not found: {model_path}"},
-                    "classes": "decision",
-                }
-            ],
-            "Error: Model not found",
-        )
+    use_dummy_network = "dummy" in (use_dummy_network_value or [])
 
-    if not agent.load_model(model_path):
-        model_suffix = Path(model_path).suffix.lower()
-        if model_suffix == ".pt":
-            error_label = (
-                "Failed to load model: .pt checkpoint provided. "
-                "Use an ONNX file (e.g., training_runs/.../checkpoints/parallel.onnx)."
+    # Load model unless running uniform-prior/zero-value bootstrap mode.
+    if not use_dummy_network:
+        if model_path is None or str(model_path).strip() == "":
+            error_label = "Model path is required unless dummy network is enabled"
+            return (
+                None,
+                None,
+                0,
+                None,
+                [],
+                [
+                    {
+                        "data": {"id": "error", "label": error_label},
+                        "classes": "decision",
+                    }
+                ],
+                error_label,
             )
-        else:
-            error_label = "Failed to load model: expected an ONNX file"
-        return (
-            None,
-            None,
-            0,
-            None,
-            [],
-            [
-                {
-                    "data": {"id": "error", "label": error_label},
-                    "classes": "decision",
-                }
-            ],
-            error_label,
-        )
+
+        model_path_str = str(model_path)
+        if not Path(model_path_str).exists():
+            return (
+                None,
+                None,
+                0,
+                None,
+                [],
+                [
+                    {
+                        "data": {"id": "error", "label": f"Model not found: {model_path_str}"},
+                        "classes": "decision",
+                    }
+                ],
+                "Error: Model not found",
+            )
+
+        if not agent.load_model(model_path_str):
+            model_suffix = Path(model_path_str).suffix.lower()
+            if model_suffix == ".pt":
+                error_label = (
+                    "Failed to load model: .pt checkpoint provided. "
+                    "Use an ONNX file (e.g., training_runs/.../checkpoints/parallel.onnx)."
+                )
+            else:
+                error_label = "Failed to load model: expected an ONNX file"
+            return (
+                None,
+                None,
+                0,
+                None,
+                [],
+                [
+                    {
+                        "data": {"id": "error", "label": error_label},
+                        "classes": "decision",
+                    }
+                ],
+                error_label,
+            )
 
     # Create env from seed, then apply optional custom overrides
     env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed or 42)

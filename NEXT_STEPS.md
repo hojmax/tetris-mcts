@@ -1,11 +1,10 @@
 # Next Steps
 
-- [ ] Might want to skip using the network in the first part of training, until a better network is avaliable. Like it is literally just a very slow random number generator initially. Yeah, could probably mega search the game tree then.
+- [ ] Try to handcraft great Tetris bot.
+- [ ] What AWS instance would be well suited for this workload?
 - [ ] Take an interestnig state like tetris_mcts/scripts/outputs/game_3194.gif at step 14 (oppurtinity for t spin), and see how the model evaluates that state? Is it not reached or something?
 - [ ] Learning rate of around 0.0005. 0.005 is too high. Cycling too much on the learning rate.
-- [ ] Model sometimes gets worse at playing, I think the LR spikes causes this? We might want to gate swapping it out with the evaluation step? Yeah like playing 20 games, only swapping out if total attack is higher than the previous model. Hmm wait but that would mean huge intervals between swaps... I guess that is fine later on, but in the beginning we want to swap out more often. You could do something like this. You swap out one of the works with the new model, the other ones just run the best, and keep putting into the replay buffer. THen the one worker, plays 20 games, and then we compare total attack to previous models. If it is higher, then we first add in all the new games to the replay buffer from that one worker, and then swap out the model for all workers. If it is lower, then we just keep the old model, and throw out the newly generated games for that one worker.
 - [ ] All the steps setttings depend on batch size which is kind of annoying.
-- [ ] Higher death penalty?
 - [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
 
 # Confusion

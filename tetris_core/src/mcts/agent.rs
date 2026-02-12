@@ -387,7 +387,7 @@ impl MCTSAgent {
     ///     placement_count: The current placement count in the game
     ///
     /// Returns:
-    ///     Tuple of (MCTSResult, MCTSTreeExport) or None if no model loaded
+    ///     Tuple of (MCTSResult, MCTSTreeExport), or None if no valid actions exist
     #[pyo3(signature = (env, add_noise=false, placement_count=0))]
     pub fn search_with_tree(
         &self,
@@ -395,32 +395,34 @@ impl MCTSAgent {
         add_noise: bool,
         placement_count: u32,
     ) -> Option<(MCTSResult, MCTSTreeExport)> {
-        let nn = self.nn.as_ref()?;
-
-        // Get action mask and initial policy
+        // Keep parity with select_action/play_game: no valid actions means terminal state.
         let mask = crate::nn::get_action_mask(env);
         if !mask.iter().any(|&x| x) {
             return None;
         }
 
-        let (policy, nn_value) = nn
-            .predict_masked(
-                env,
-                placement_count as usize,
-                &mask,
-                self.config.max_placements as usize,
-            )
-            .expect("Neural network prediction failed");
+        let (mcts_result, root, _tree_stats) = if let Some(nn) = self.nn.as_ref() {
+            let (policy, nn_value) = nn
+                .predict_masked(
+                    env,
+                    placement_count as usize,
+                    &mask,
+                    self.config.max_placements as usize,
+                )
+                .expect("Neural network prediction failed");
 
-        let (mcts_result, root, _tree_stats) = search_internal(
-            &self.config,
-            nn,
-            env,
-            policy,
-            nn_value,
-            add_noise,
-            placement_count,
-        );
+            search_internal(
+                &self.config,
+                nn,
+                env,
+                policy,
+                nn_value,
+                add_noise,
+                placement_count,
+            )
+        } else {
+            search_internal_without_nn(&self.config, env, add_noise, placement_count)
+        };
 
         // Export tree structure
         let mut nodes: Vec<TreeNodeExport> = Vec::new();

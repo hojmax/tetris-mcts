@@ -168,6 +168,10 @@ def compute_metrics(
         pred_actions = policy_probs.argmax(dim=-1)
         target_actions = policy_targets.argmax(dim=-1)
         top1_acc = (pred_actions == target_actions).float().mean()
+        top3_actions = torch.topk(policy_probs, k=3, dim=-1).indices
+        top3_acc = (
+            top3_actions.eq(target_actions.unsqueeze(-1)).any(dim=-1).float().mean()
+        )
 
         positive_target = policy_targets > 0
         target_log_probs = torch.where(
@@ -201,6 +205,7 @@ def compute_metrics(
         "policy_entropy": entropy.item(),
         "value_error": value_error.item(),
         "top1_accuracy": top1_acc.item(),
+        "top3_accuracy": top3_acc.item(),
         "train/value_explained_variance": value_explained_variance.item(),
         "train/value_bias": value_bias.item(),
         "train/policy_kl_to_target": policy_kl_to_target.item(),
