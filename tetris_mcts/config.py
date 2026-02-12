@@ -77,7 +77,9 @@ class TrainingConfig:
     # MCTS / Self-play
     num_simulations: int = 1000  # MCTS simulations per move
     c_puct: float = 1.5  # PUCT exploration constant
-    temperature: float = 1.5
+    temperature: float = (  # Sharpening / Smoothening of MCTS visit-count policy target
+        0.8
+    )
     dirichlet_alpha: float = 0.02
     dirichlet_epsilon: float = 0.25
     add_noise: bool = (  # Whether to add Dirichlet noise at the MCTS root during self-play

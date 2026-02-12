@@ -863,6 +863,17 @@ impl GameGenerator {
 }
 
 impl GameGenerator {
+    fn next_snapshot_game_threshold(games_generated: u64, games_per_save: usize) -> u64 {
+        if games_per_save == 0 {
+            return u64::MAX;
+        }
+        let interval = games_per_save as u64;
+        let completed_intervals = games_generated / interval;
+        completed_intervals
+            .saturating_add(1)
+            .saturating_mul(interval)
+    }
+
     /// Worker thread main loop.
     fn worker_loop(
         worker_id: usize,
@@ -918,7 +929,10 @@ impl GameGenerator {
 
         // Only worker 0 handles disk saves to avoid race conditions
         let is_save_worker = worker_id == 0;
-        let mut local_games_count: usize = 0;
+        let mut next_snapshot_game_threshold = Self::next_snapshot_game_threshold(
+            games_generated.load(Ordering::SeqCst),
+            games_per_save,
+        );
 
         // Main generation loop
         while running.load(Ordering::SeqCst) {
@@ -963,7 +977,7 @@ impl GameGenerator {
                         *evaluating = Some(candidate.clone());
                     }
 
-                    let committed_games = Self::run_candidate_evaluation(
+                    let _committed_games = Self::run_candidate_evaluation(
                         worker_id,
                         candidate,
                         &config,
@@ -991,14 +1005,19 @@ impl GameGenerator {
                         let mut evaluating = evaluating_candidate.write().unwrap();
                         *evaluating = None;
                     }
-
-                    local_games_count += committed_games;
                     loaded_model_version = u64::MAX;
                     loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
 
-                    if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
+                    let global_games_generated = games_generated.load(Ordering::SeqCst);
+                    if is_save_worker
+                        && games_per_save > 0
+                        && global_games_generated >= next_snapshot_game_threshold
+                    {
                         Self::persist_buffer_snapshot(&training_data_path, &buffer, max_placements);
-                        local_games_count = 0;
+                        next_snapshot_game_threshold = Self::next_snapshot_game_threshold(
+                            global_games_generated,
+                            games_per_save,
+                        );
                     }
                     continue;
                 }
@@ -1019,12 +1038,19 @@ impl GameGenerator {
                     &incumbent_lifetime_attack,
                     count_toward_incumbent,
                 );
-                local_games_count += 1;
 
-                // Periodically save to disk for resume capability (only worker 0)
-                if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
+                // Periodically save to disk for resume capability based on
+                // global game count across all workers.
+                let global_games_generated = games_generated.load(Ordering::SeqCst);
+                if is_save_worker
+                    && games_per_save > 0
+                    && global_games_generated >= next_snapshot_game_threshold
+                {
                     Self::persist_buffer_snapshot(&training_data_path, &buffer, max_placements);
-                    local_games_count = 0;
+                    next_snapshot_game_threshold = Self::next_snapshot_game_threshold(
+                        global_games_generated,
+                        games_per_save,
+                    );
                 }
             }
         }
