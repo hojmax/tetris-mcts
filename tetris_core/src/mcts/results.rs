@@ -43,9 +43,12 @@ pub struct TrainingExample {
     /// Next queue (up to 5 piece types)
     #[pyo3(get)]
     pub next_queue: Vec<usize>,
-    /// Move number (0-99)
+    /// Frame index in the game trajectory (includes hold actions)
     #[pyo3(get)]
     pub move_number: u32,
+    /// Placement count at this frame (excludes hold actions)
+    #[pyo3(get)]
+    pub placement_count: u32,
     /// MCTS policy target (NUM_ACTIONS values)
     #[pyo3(get)]
     pub policy: Vec<f32>,
@@ -191,15 +194,15 @@ pub struct GameResult {
     /// Total attack scored
     #[pyo3(get)]
     pub total_attack: u32,
-    /// Number of moves played
+    /// Number of placements played (hold actions excluded)
     #[pyo3(get)]
     pub num_moves: u32,
-    /// Average number of valid actions per move in this game
+    /// Average number of valid actions per frame in this game
     #[pyo3(get)]
-    pub avg_moves: f32,
-    /// Maximum number of valid actions at any move in this game
+    pub avg_valid_actions: f32,
+    /// Maximum number of valid actions at any frame in this game
     #[pyo3(get)]
-    pub max_moves: u32,
+    pub max_valid_actions: u32,
     /// Detailed game statistics
     #[pyo3(get)]
     pub stats: GameStats,
@@ -425,6 +428,7 @@ mod tests {
             hold_available: true,
             next_queue: vec![0, 1, 2, 3, 4],
             move_number: 50,
+            placement_count: 45,
             policy: vec![0.0; NUM_ACTIONS],
             value: 10.5,
             action_mask: vec![false; NUM_ACTIONS],
@@ -439,6 +443,7 @@ mod tests {
         assert!(example.hold_available);
         assert_eq!(example.next_queue.len(), 5);
         assert_eq!(example.move_number, 50);
+        assert_eq!(example.placement_count, 45);
         assert_eq!(example.policy.len(), NUM_ACTIONS);
         assert!((example.value - 10.5).abs() < 0.001);
         assert_eq!(example.action_mask.len(), NUM_ACTIONS);
@@ -455,6 +460,7 @@ mod tests {
                 hold_available: true,
                 next_queue: vec![],
                 move_number: 0,
+                placement_count: 0,
                 policy: vec![],
                 value: 0.0,
                 action_mask: vec![],
@@ -475,6 +481,7 @@ mod tests {
             hold_available: true,
             next_queue: vec![],
             move_number: 0,
+            placement_count: 0,
             policy: vec![],
             value: 0.0,
             action_mask: vec![],
@@ -494,6 +501,7 @@ mod tests {
             hold_available: false, // Already used hold this turn
             next_queue: vec![],
             move_number: 0,
+            placement_count: 0,
             policy: vec![],
             value: 0.0,
             action_mask: vec![],
@@ -514,6 +522,7 @@ mod tests {
             hold_available: false,
             next_queue: vec![6, 0, 1],
             move_number: 99,
+            placement_count: 75,
             policy: vec![0.1; NUM_ACTIONS],
             value: 25.0,
             action_mask: vec![true; NUM_ACTIONS],
@@ -529,6 +538,7 @@ mod tests {
         assert_eq!(cloned.hold_available, example.hold_available);
         assert_eq!(cloned.next_queue, example.next_queue);
         assert_eq!(cloned.move_number, example.move_number);
+        assert_eq!(cloned.placement_count, example.placement_count);
         assert_eq!(cloned.value, example.value);
         assert_eq!(cloned.overhang_fields, example.overhang_fields);
     }
@@ -539,8 +549,8 @@ mod tests {
             examples: vec![],
             total_attack: 150,
             num_moves: 75,
-            avg_moves: 0.0,
-            max_moves: 0,
+            avg_valid_actions: 0.0,
+            max_valid_actions: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
             total_overhang_fields: 0,
@@ -565,6 +575,7 @@ mod tests {
             hold_available: true,
             next_queue: vec![1, 2, 3, 4, 5],
             move_number: 0,
+            placement_count: 0,
             policy: vec![0.0; NUM_ACTIONS],
             value: 100.0,
             action_mask: vec![true; NUM_ACTIONS],
@@ -580,6 +591,7 @@ mod tests {
             hold_available: false,
             next_queue: vec![2, 3, 4, 5, 6],
             move_number: 1,
+            placement_count: 1,
             policy: vec![0.0; NUM_ACTIONS],
             value: 95.0,
             action_mask: vec![true; NUM_ACTIONS],
@@ -592,8 +604,8 @@ mod tests {
             examples: vec![example1, example2],
             total_attack: 100,
             num_moves: 2,
-            avg_moves: 0.0,
-            max_moves: 0,
+            avg_valid_actions: 0.0,
+            max_valid_actions: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
             total_overhang_fields: 0,
@@ -606,6 +618,8 @@ mod tests {
         assert_eq!(result.examples.len(), 2);
         assert_eq!(result.examples[0].move_number, 0);
         assert_eq!(result.examples[1].move_number, 1);
+        assert_eq!(result.examples[0].placement_count, 0);
+        assert_eq!(result.examples[1].placement_count, 1);
         // Value should decrease as game progresses (less future attack remaining)
         assert!(result.examples[0].value > result.examples[1].value);
     }
@@ -616,8 +630,8 @@ mod tests {
             examples: vec![],
             total_attack: 200,
             num_moves: 100,
-            avg_moves: 0.0,
-            max_moves: 0,
+            avg_valid_actions: 0.0,
+            max_valid_actions: 0,
             stats: GameStats::default(),
             tree_stats: GameTreeStats::default(),
             total_overhang_fields: 0,
@@ -676,6 +690,7 @@ mod tests {
             hold_available: true,
             next_queue: vec![],
             move_number: 0,
+            placement_count: 0,
             policy: policy.clone(),
             value: 0.0,
             action_mask: action_mask.clone(),

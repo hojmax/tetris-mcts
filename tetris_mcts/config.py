@@ -85,7 +85,9 @@ class TrainingConfig:
         0.15
     )
     num_workers: int = 7  # Parallel game generation threads
-    max_moves: int = 100  # Maximum moves for move number normalization
+    max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
+        100
+    )
     death_penalty: float = 5.0  # Penalty subtracted from value when game ends in death
     overhang_penalty_weight: float = (  # Weight for normalized overhang penalty in value targets
         5.0
@@ -134,8 +136,8 @@ class TrainingConfig:
             raise ValueError("num_simulations must be > 0")
         if self.num_workers <= 0:
             raise ValueError("num_workers must be > 0")
-        if self.max_moves <= 0:
-            raise ValueError("max_moves must be > 0")
+        if self.max_placements <= 0:
+            raise ValueError("max_placements must be > 0")
         if self.buffer_size <= 0:
             raise ValueError("buffer_size must be > 0")
         if self.min_buffer_size <= 0:

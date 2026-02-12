@@ -9,7 +9,7 @@ use crate::constants::QUEUE_SIZE;
 use crate::env::TetrisEnv;
 use crate::nn::TetrisNN;
 
-use super::action_space::NUM_ACTIONS;
+use super::action_space::{HOLD_ACTION_INDEX, NUM_ACTIONS};
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
 use super::results::{MCTSResult, TreeStats};
@@ -59,7 +59,7 @@ trait LeafEvaluator {
         &self,
         state: &TetrisEnv,
         move_number: u32,
-        max_moves: u32,
+        max_placements: u32,
     ) -> Option<(Vec<f32>, f32)>;
 }
 
@@ -72,12 +72,12 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
         &self,
         state: &TetrisEnv,
         move_number: u32,
-        max_moves: u32,
+        max_placements: u32,
     ) -> Option<(Vec<f32>, f32)> {
         let mask = crate::nn::get_action_mask(state);
         match self
             .nn
-            .predict_masked(state, move_number as usize, &mask, max_moves as usize)
+            .predict_masked(state, move_number as usize, &mask, max_placements as usize)
         {
             Ok(result) => Some(result),
             Err(error) => {
@@ -98,7 +98,7 @@ impl LeafEvaluator for BootstrapLeafEvaluator {
         &self,
         state: &TetrisEnv,
         _move_number: u32,
-        _max_moves: u32,
+        _max_placements: u32,
     ) -> Option<(Vec<f32>, f32)> {
         let mask = crate::nn::get_action_mask(state);
         Some((uniform_policy_from_mask(&mask), 0.0))
@@ -114,19 +114,17 @@ fn simulate<E: LeafEvaluator>(
     config: &MCTSConfig,
     evaluator: &E,
     root: &mut DecisionNode,
-    root_move_number: u32,
     rng: &mut StdRng,
 ) {
     let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
     let mut current = root as *mut DecisionNode;
-    let mut depth: u32 = 0;
 
     loop {
         let node = unsafe { &mut *current };
         node.visit_count += 1;
 
         // Align search objective with training targets: no value beyond episode horizon.
-        if node.move_number >= config.max_moves {
+        if node.move_number >= config.max_placements {
             backup_with_value(&path, 0.0, config.track_value_history);
             return;
         }
@@ -134,7 +132,7 @@ fn simulate<E: LeafEvaluator>(
         if node.is_terminal {
             let penalty = super::utils::compute_death_penalty(
                 node.move_number,
-                config.max_moves,
+                config.max_placements,
                 config.death_penalty,
             );
             backup_with_value(&path, -penalty, config.track_value_history);
@@ -147,13 +145,19 @@ fn simulate<E: LeafEvaluator>(
         }
 
         let action_idx = node.select_action(config.c_puct);
+        let next_move_number = node.move_number
+            + if action_idx == HOLD_ACTION_INDEX {
+                0
+            } else {
+                1
+            };
         if !node.children.contains_key(&action_idx) {
             let child = match expand_action(
                 evaluator,
                 node,
                 action_idx,
-                root_move_number + depth + 1,
-                config.max_moves,
+                next_move_number,
+                config.max_placements,
             ) {
                 Some(child) => child,
                 None => {
@@ -193,9 +197,12 @@ fn simulate<E: LeafEvaluator>(
             let leaf_value = if chance_node.state.game_over {
                 -super::utils::compute_death_penalty(
                     chance_node.move_number,
-                    config.max_moves,
+                    config.max_placements,
                     config.death_penalty,
                 )
+            } else if chance_node.move_number >= config.max_placements {
+                // No value tail beyond the placement horizon.
+                0.0
             } else {
                 chance_node.nn_value
             };
@@ -226,17 +233,20 @@ fn simulate<E: LeafEvaluator>(
         if chance_node.state.game_over {
             let penalty = super::utils::compute_death_penalty(
                 chance_node.move_number,
-                config.max_moves,
+                config.max_placements,
                 config.death_penalty,
             );
             backup_with_value(&path, -penalty, config.track_value_history);
             return;
         }
-        depth += 1;
+        if chance_node.move_number >= config.max_placements {
+            backup_with_value(&path, 0.0, config.track_value_history);
+            return;
+        }
 
         let piece = chance_node.select_piece_random(rng);
         if !chance_node.children.contains_key(&piece) {
-            let decision_child = expand_chance(chance_node, piece, root_move_number + depth);
+            let decision_child = expand_chance(chance_node, piece, chance_node.move_number);
             chance_node.children.insert(piece, decision_child);
         }
 
@@ -264,7 +274,7 @@ fn expand_action<E: LeafEvaluator>(
     parent: &DecisionNode,
     action_idx: usize,
     move_number: u32,
-    max_moves: u32,
+    max_placements: u32,
 ) -> Option<MCTSNode> {
     let mut new_state = parent.state.clone();
     let attack = match new_state.execute_action_index(action_idx) {
@@ -282,7 +292,7 @@ fn expand_action<E: LeafEvaluator>(
     let overhang_fields = super::utils::count_overhang_fields(&new_state);
     new_state.truncate_queue(QUEUE_SIZE);
     let bag_remaining = new_state.get_possible_next_pieces();
-    let (policy, value) = evaluator.evaluate(&new_state, move_number, max_moves)?;
+    let (policy, value) = evaluator.evaluate(&new_state, move_number, max_placements)?;
 
     Some(MCTSNode::Chance(ChanceNode::new(
         new_state,
@@ -535,7 +545,7 @@ fn search_internal_with_evaluator<E: LeafEvaluator>(
     }
 
     for _ in 0..config.num_simulations {
-        simulate(config, evaluator, &mut root, move_number, &mut rng);
+        simulate(config, evaluator, &mut root, &mut rng);
     }
 
     let mcts_result = build_result_from_root(config, &root, &mut rng);
@@ -604,7 +614,7 @@ mod tests {
             &self,
             state: &TetrisEnv,
             _move_number: u32,
-            _max_moves: u32,
+            _max_placements: u32,
         ) -> Option<(Vec<f32>, f32)> {
             let mask = crate::nn::get_action_mask(state);
             Some((uniform_policy_from_mask(&mask), self.value))
@@ -625,16 +635,19 @@ mod tests {
         root.set_nn_output(&root_policy, 0.0);
 
         let mut config = MCTSConfig::default();
-        config.max_moves = 100;
+        config.max_placements = 100;
         config.death_penalty = 5.0;
         config.overhang_penalty_weight = 0.0;
 
         let evaluator = ConstantEvaluator { value: 123.0 };
         let mut rng = StdRng::seed_from_u64(1234);
-        simulate(&config, &evaluator, &mut root, 0, &mut rng);
+        simulate(&config, &evaluator, &mut root, &mut rng);
 
-        let expected_value =
-            -super::super::utils::compute_death_penalty(1, config.max_moves, config.death_penalty);
+        let expected_value = -super::super::utils::compute_death_penalty(
+            0,
+            config.max_placements,
+            config.death_penalty,
+        );
         assert!(
             (root.value_sum - expected_value).abs() < 1e-6,
             "Expected root value_sum to use death penalty ({}), got {}",
@@ -644,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simulate_stops_at_max_moves_horizon() {
+    fn test_simulate_stops_at_max_placements_horizon() {
         let env = TetrisEnv::new(10, 20);
         let mut root = DecisionNode::new(env, 3);
         let mut root_policy = vec![0.0; NUM_ACTIONS];
@@ -652,16 +665,52 @@ mod tests {
         root.set_nn_output(&root_policy, 0.0);
 
         let mut config = MCTSConfig::default();
-        config.max_moves = 3;
+        config.max_placements = 3;
         config.death_penalty = 5.0;
         config.overhang_penalty_weight = 0.0;
 
         let evaluator = ConstantEvaluator { value: 42.0 };
         let mut rng = StdRng::seed_from_u64(7);
-        simulate(&config, &evaluator, &mut root, 0, &mut rng);
+        simulate(&config, &evaluator, &mut root, &mut rng);
 
         assert_eq!(root.value_sum, 0.0);
         assert!(root.children.is_empty());
+    }
+
+    #[test]
+    fn test_simulate_horizon_after_last_placement_uses_immediate_reward_only() {
+        let env = TetrisEnv::new(10, 20);
+        let mut root = DecisionNode::new(env, 2);
+        let placement_action = root
+            .valid_actions
+            .iter()
+            .copied()
+            .find(|&action_idx| action_idx != HOLD_ACTION_INDEX)
+            .expect("Expected at least one placement action");
+        let mut root_policy = vec![0.0; NUM_ACTIONS];
+        root_policy[placement_action] = 1.0;
+        root.set_nn_output(&root_policy, 0.0);
+
+        let mut config = MCTSConfig::default();
+        config.max_placements = 3;
+        config.death_penalty = 5.0;
+        config.overhang_penalty_weight = 0.0;
+
+        let evaluator = ConstantEvaluator { value: 123.0 };
+        let mut rng = StdRng::seed_from_u64(99);
+        simulate(&config, &evaluator, &mut root, &mut rng);
+
+        let chance_node = match root.children.get(&placement_action) {
+            Some(MCTSNode::Chance(chance_node)) => chance_node,
+            _ => panic!("Expected expanded child to be a ChanceNode"),
+        };
+        let expected_value = chance_node.attack as f32;
+        assert!(
+            (root.value_sum - expected_value).abs() < 1e-6,
+            "Expected horizon backup to ignore NN tail value and use immediate reward only (expected {}, got {})",
+            expected_value,
+            root.value_sum
+        );
     }
 
     #[test]

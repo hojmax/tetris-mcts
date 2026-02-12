@@ -31,7 +31,9 @@ class ProfileArgs:
     seed_start: int = 42  # Starting seed for deterministic games
     c_puct: float = DEFAULT_TRAINING_CONFIG.c_puct  # PUCT exploration constant
     mcts_seed: int | None = None  # Optional deterministic MCTS RNG seed
-    max_moves: int = DEFAULT_TRAINING_CONFIG.max_moves  # Maximum moves per game
+    max_placements: int = (
+        DEFAULT_TRAINING_CONFIG.max_placements
+    )  # Maximum placements per game
     output: Path = BENCHMARKS_DIR / "profile_results.jsonl"  # Output JSONL file
 
 
@@ -55,7 +57,7 @@ def main(args: ProfileArgs) -> None:
     config = MCTSConfig()
     config.num_simulations = args.simulations
     config.c_puct = args.c_puct
-    config.max_moves = args.max_moves
+    config.max_placements = args.max_placements
     config.seed = args.mcts_seed
 
     seeds = list(range(args.seed_start, args.seed_start + args.num_games))
@@ -67,14 +69,14 @@ def main(args: ProfileArgs) -> None:
         result = evaluate_model_without_nn(
             seeds=seeds,
             config=config,
-            max_moves=args.max_moves,
+            max_placements=args.max_placements,
         )
     else:
         result = evaluate_model(
             model_path=str(args.model_path),
             seeds=seeds,
             config=config,
-            max_moves=args.max_moves,
+            max_placements=args.max_placements,
         )
 
     end_time = time.perf_counter()
@@ -126,7 +128,7 @@ def main(args: ProfileArgs) -> None:
             "simulations": args.simulations,
             "seed_start": args.seed_start,
             "c_puct": args.c_puct,
-            "max_moves": args.max_moves,
+            "max_placements": args.max_placements,
             "evaluation_mode": "deterministic_argmax_no_dirichlet_noise",
             "use_dummy_network": args.use_dummy_network,
         },

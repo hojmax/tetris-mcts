@@ -39,7 +39,7 @@ class ValuePredictor:
         hold_piece: np.ndarray,
         hold_available: float,
         next_queue: np.ndarray,
-        move_number: float,
+        placement_count: float,
     ) -> float:
         if index in self.value_cache:
             return self.value_cache[index]
@@ -48,14 +48,14 @@ class ValuePredictor:
             1, 1, BOARD_HEIGHT, BOARD_WIDTH
         )
         hold_available_feature = np.array([hold_available], dtype=np.float32)
-        move_number_feature = np.array([move_number], dtype=np.float32)
+        placement_count_feature = np.array([placement_count], dtype=np.float32)
         aux = np.concatenate(
             [
                 current_piece.astype(np.float32),
                 hold_piece.astype(np.float32),
                 hold_available_feature,
                 next_queue.astype(np.float32).reshape(-1),
-                move_number_feature,
+                placement_count_feature,
             ]
         )
         aux_tensor = torch.from_numpy(aux).reshape(1, -1)

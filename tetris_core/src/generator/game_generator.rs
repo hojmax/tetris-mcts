@@ -158,8 +158,8 @@ struct LastGameInfo {
     total_attack: u32,
     avg_overhang_fields: f32,
     num_moves: u32,
-    avg_moves: f32,
-    max_moves: u32,
+    avg_valid_actions: f32,
+    max_valid_actions: u32,
     tree_stats: GameTreeStats,
     cache_hits: u64,
     cache_misses: u64,
@@ -228,8 +228,8 @@ pub struct GameGenerator {
     training_data_path: PathBuf,
     /// MCTS configuration
     config: MCTSConfig,
-    /// Maximum moves per game
-    max_moves: u32,
+    /// Maximum placements per game (hold actions do not count)
+    max_placements: u32,
     /// Whether to add Dirichlet noise
     add_noise: bool,
     /// Number of games between disk saves (for resume capability)
@@ -279,12 +279,12 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_moves=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=30, candidate_eval_add_noise=false, start_with_network=true, non_network_num_simulations=3000))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=30, candidate_eval_add_noise=false, start_with_network=true, non_network_num_simulations=3000))]
     pub fn new(
         model_path: String,
         training_data_path: String,
         config: Option<MCTSConfig>,
-        max_moves: u32,
+        max_placements: u32,
         add_noise: bool,
         max_examples: usize,
         games_per_save: usize,
@@ -295,9 +295,9 @@ impl GameGenerator {
         start_with_network: bool,
         non_network_num_simulations: u32,
     ) -> PyResult<Self> {
-        if max_moves == 0 {
+        if max_placements == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_moves must be > 0",
+                "max_placements must be > 0",
             ));
         }
         if max_examples == 0 {
@@ -322,14 +322,14 @@ impl GameGenerator {
         }
 
         let mut resolved_config = config.unwrap_or_default();
-        resolved_config.max_moves = max_moves;
+        resolved_config.max_placements = max_placements;
         let bootstrap_model_path = PathBuf::from(model_path);
 
         Ok(GameGenerator {
             bootstrap_model_path: bootstrap_model_path.clone(),
             training_data_path: PathBuf::from(training_data_path),
             config: resolved_config,
-            max_moves,
+            max_placements,
             add_noise,
             games_per_save,
             num_workers,
@@ -382,14 +382,16 @@ impl GameGenerator {
 
         // Load existing replay buffer snapshot if present.
         if self.training_data_path.exists() {
-            let loaded_examples = read_examples_from_npz(&self.training_data_path, self.max_moves)
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                        "Failed to load replay data from {}: {}",
-                        self.training_data_path.display(),
-                        e
-                    ))
-                })?;
+            let loaded_examples =
+                read_examples_from_npz(&self.training_data_path, self.max_placements).map_err(
+                    |e| {
+                        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                            "Failed to load replay data from {}: {}",
+                            self.training_data_path.display(),
+                            e
+                        ))
+                    },
+                )?;
 
             if !loaded_examples.is_empty() {
                 let loaded_examples_count = loaded_examples.len();
@@ -429,7 +431,7 @@ impl GameGenerator {
             let bootstrap_model_path = self.bootstrap_model_path.clone();
             let training_data_path = self.training_data_path.clone();
             let config = self.config.clone();
-            let max_moves = self.max_moves;
+            let max_placements = self.max_placements;
             let add_noise = self.add_noise;
             let games_per_save = self.games_per_save;
             let candidate_eval_games = self.candidate_eval_games;
@@ -461,7 +463,7 @@ impl GameGenerator {
                     bootstrap_model_path,
                     training_data_path,
                     config,
-                    max_moves,
+                    max_placements,
                     add_noise,
                     games_per_save,
                     candidate_eval_games,
@@ -651,8 +653,11 @@ impl GameGenerator {
             d.insert("total_attack".to_string(), info.total_attack as f32);
             d.insert("avg_overhang".to_string(), info.avg_overhang_fields);
             d.insert("episode_length".to_string(), info.num_moves as f32);
-            d.insert("avg_valid_actions".to_string(), info.avg_moves);
-            d.insert("max_valid_actions".to_string(), info.max_moves as f32);
+            d.insert("avg_valid_actions".to_string(), info.avg_valid_actions);
+            d.insert(
+                "max_valid_actions".to_string(),
+                info.max_valid_actions as f32,
+            );
             // Tree statistics
             d.insert(
                 "tree_avg_branching_factor".to_string(),
@@ -737,12 +742,12 @@ impl GameGenerator {
     /// (boards, aux_features, policy_targets, value_targets, overhang_fields, action_masks)
     ///
     /// Returns None if the buffer is empty.
-    #[pyo3(signature = (batch_size, max_moves))]
+    #[pyo3(signature = (batch_size, max_placements))]
     pub fn sample_batch<'py>(
         &self,
         py: Python<'py>,
         batch_size: usize,
-        max_moves: u32,
+        max_placements: u32,
     ) -> PyResult<
         Option<(
             &'py PyArray2<f32>,
@@ -753,9 +758,9 @@ impl GameGenerator {
             &'py PyArray2<f32>,
         )>,
     > {
-        if max_moves == 0 {
+        if max_placements == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_moves must be > 0",
+                "max_placements must be > 0",
             ));
         }
 
@@ -790,7 +795,7 @@ impl GameGenerator {
         let mut values = vec![0.0f32; actual_batch];
         let mut overhangs = vec![0.0f32; actual_batch];
         let mut masks = vec![0.0f32; actual_batch * num_actions];
-        let move_norm_denominator = max_moves as f32;
+        let move_norm_denominator = max_placements as f32;
 
         for (i, ex) in sampled_examples.iter().enumerate() {
             // Copy board (already flat u8, convert to f32)
@@ -814,8 +819,8 @@ impl GameGenerator {
             for (j, &piece) in ex.next_queue.iter().take(5).enumerate() {
                 aux[aux_offset + 16 + j * 7 + piece] = 1.0;
             }
-            // Move number normalized (1)
-            aux[aux_offset + 51] = ex.move_number as f32 / move_norm_denominator;
+            // Placement count normalized (1)
+            aux[aux_offset + 51] = ex.placement_count as f32 / move_norm_denominator;
 
             // Copy policy
             for (j, &val) in ex.policy.iter().enumerate() {
@@ -870,7 +875,7 @@ impl GameGenerator {
         bootstrap_model_path: PathBuf,
         training_data_path: PathBuf,
         config: MCTSConfig,
-        max_moves: u32,
+        max_placements: u32,
         add_noise: bool,
         games_per_save: usize,
         candidate_eval_games: usize,
@@ -968,7 +973,7 @@ impl GameGenerator {
                         candidate,
                         &config,
                         &running,
-                        max_moves,
+                        max_placements,
                         candidate_eval_games,
                         candidate_eval_add_noise,
                         non_network_num_simulations,
@@ -997,7 +1002,7 @@ impl GameGenerator {
                     loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
 
                     if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
-                        Self::persist_buffer_snapshot(&training_data_path, &buffer, max_moves);
+                        Self::persist_buffer_snapshot(&training_data_path, &buffer, max_placements);
                         local_games_count = 0;
                     }
                     continue;
@@ -1005,7 +1010,7 @@ impl GameGenerator {
             }
 
             // Play one game
-            if let Some(result) = agent.play_game(max_moves, add_noise) {
+            if let Some(result) = agent.play_game(max_placements, add_noise) {
                 let count_toward_incumbent =
                     loaded_model_version == incumbent_model_version.load(Ordering::SeqCst);
                 Self::commit_game_result(
@@ -1023,7 +1028,7 @@ impl GameGenerator {
 
                 // Periodically save to disk for resume capability (only worker 0)
                 if is_save_worker && games_per_save > 0 && local_games_count >= games_per_save {
-                    Self::persist_buffer_snapshot(&training_data_path, &buffer, max_moves);
+                    Self::persist_buffer_snapshot(&training_data_path, &buffer, max_placements);
                     local_games_count = 0;
                 }
             }
@@ -1033,7 +1038,7 @@ impl GameGenerator {
         if is_save_worker {
             let all_examples = buffer.get_all();
             if !all_examples.is_empty() {
-                let _ = write_examples_to_npz(&training_data_path, &all_examples, max_moves);
+                let _ = write_examples_to_npz(&training_data_path, &all_examples, max_placements);
                 eprintln!(
                     "[GameGenerator] Saved {} examples to disk",
                     all_examples.len()
@@ -1106,7 +1111,7 @@ impl GameGenerator {
         candidate: CandidateModelRequest,
         config: &MCTSConfig,
         running: &Arc<AtomicBool>,
-        max_moves: u32,
+        max_placements: u32,
         candidate_eval_games: usize,
         candidate_eval_add_noise: bool,
         non_network_num_simulations: u32,
@@ -1160,7 +1165,9 @@ impl GameGenerator {
                 );
                 return 0;
             }
-            if let Some(result) = candidate_agent.play_game(max_moves, candidate_eval_add_noise) {
+            if let Some(result) =
+                candidate_agent.play_game(max_placements, candidate_eval_add_noise)
+            {
                 candidate_results.push(result);
             }
         }
@@ -1329,8 +1336,8 @@ impl GameGenerator {
             mut examples,
             total_attack,
             num_moves,
-            avg_moves,
-            max_moves,
+            avg_valid_actions,
+            max_valid_actions,
             stats,
             tree_stats,
             avg_overhang_fields,
@@ -1358,8 +1365,8 @@ impl GameGenerator {
             total_attack,
             avg_overhang_fields,
             num_moves,
-            avg_moves,
-            max_moves,
+            avg_valid_actions,
+            max_valid_actions,
             tree_stats,
             cache_hits,
             cache_misses,
@@ -1375,10 +1382,11 @@ impl GameGenerator {
     fn persist_buffer_snapshot(
         training_data_path: &PathBuf,
         buffer: &Arc<SharedBuffer>,
-        max_moves: u32,
+        max_placements: u32,
     ) {
         let all_examples = buffer.get_all();
-        if let Err(error) = write_examples_to_npz(training_data_path, &all_examples, max_moves) {
+        if let Err(error) = write_examples_to_npz(training_data_path, &all_examples, max_placements)
+        {
             eprintln!("[GameGenerator] Failed to write NPZ: {}", error);
         }
     }
@@ -1459,6 +1467,7 @@ mod tests {
             hold_available: true,
             next_queue: vec![0, 1, 2, 3, 4],
             move_number,
+            placement_count: move_number,
             policy,
             value: move_number as f32,
             action_mask,

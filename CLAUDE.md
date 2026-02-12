@@ -258,7 +258,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
 5. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
 6. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
 7. Training examples from accepted games are stored in a shared in-memory ring buffer
-8. Python samples directly via `generator.sample_batch(batch_size, max_moves)` with periodic NPZ saves for resume only
+8. Python samples directly via `generator.sample_batch(batch_size, max_placements)` with periodic NPZ saves for resume only
 9. `training_data.npz` snapshots include `game_numbers` (1-indexed WandB game ids) and `game_total_attacks` (raw per-game attack) for exact replay/WandB alignment
 
 ## Testing

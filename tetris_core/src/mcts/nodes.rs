@@ -65,7 +65,7 @@ pub struct DecisionNode {
     pub action_priors: Vec<f32>,
     /// Whether this is a terminal state
     pub is_terminal: bool,
-    /// Move number in the game
+    /// Placement count in the game (hold actions do not increment this)
     pub move_number: u32,
     /// Raw neural network value estimate (stored when node is expanded)
     pub nn_value: f32,
@@ -186,7 +186,7 @@ pub struct ChanceNode {
     pub attack: u32,
     /// Overhang fields in the board state at this node
     pub overhang_fields: u32,
-    /// Move number in the game
+    /// Placement count in the game (hold actions do not increment this)
     pub move_number: u32,
     /// Pieces remaining in current bag (possible next pieces)
     pub bag_remaining: Vec<usize>,

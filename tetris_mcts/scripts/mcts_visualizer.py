@@ -64,7 +64,7 @@ def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
         "temperature",
         "dirichlet_alpha",
         "dirichlet_epsilon",
-        "max_moves",
+        "max_placements",
     ]
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
@@ -79,7 +79,7 @@ def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float]:
         "temperature": float(config["temperature"]),
         "dirichlet_alpha": float(config["dirichlet_alpha"]),
         "dirichlet_epsilon": float(config["dirichlet_epsilon"]),
-        "max_moves": int(config["max_moves"]),
+        "max_placements": int(config["max_placements"]),
     }
 
 
@@ -901,11 +901,11 @@ app.layout = html.Div(
                     step=0.01,
                     style={"width": "70px", "marginRight": "15px"},
                 ),
-                html.Label("Max Moves:", style={"marginRight": "5px"}),
+                html.Label("Max Placements:", style={"marginRight": "5px"}),
                 dcc.Input(
-                    id="max-moves",
+                    id="max-placements",
                     type="number",
-                    value=VIZ_DEFAULTS["max_moves"],
+                    value=VIZ_DEFAULTS["max_placements"],
                     min=1,
                     step=1,
                     style={"width": "80px", "marginRight": "15px"},
@@ -1123,7 +1123,7 @@ app.layout = html.Div(
     State("temperature", "value"),
     State("dirichlet-alpha", "value"),
     State("dirichlet-epsilon", "value"),
-    State("max-moves", "value"),
+    State("max-placements", "value"),
     State("current-piece", "value"),
     State("hold-piece", "value"),
     State("hold-used", "value"),
@@ -1149,7 +1149,7 @@ def run_mcts(
     temperature,
     dirichlet_alpha,
     dirichlet_epsilon,
-    max_moves,
+    max_placements,
     current_piece_text,
     hold_piece_text,
     hold_used_text,
@@ -1185,8 +1185,8 @@ def run_mcts(
         raise ValueError("dirichlet_alpha is required")
     if dirichlet_epsilon is None:
         raise ValueError("dirichlet_epsilon is required")
-    if max_moves is None:
-        raise ValueError("max_moves is required")
+    if max_placements is None:
+        raise ValueError("max_placements is required")
 
     max_sims = num_sims
     current_sims = sims_done or 0
@@ -1223,7 +1223,7 @@ def run_mcts(
     config.temperature = temperature
     config.dirichlet_alpha = dirichlet_alpha
     config.dirichlet_epsilon = dirichlet_epsilon
-    config.max_moves = max_moves
+    config.max_placements = max_placements
     config.seed = int(seed) if seed is not None else None
     config.track_value_history = True
     agent = MCTSAgent(config)
@@ -1300,11 +1300,11 @@ def run_mcts(
 
     # Run MCTS with current number of simulations
     add_noise = "noise" in (add_noise_value or [])
-    move_number_int = int(move_number) if move_number is not None else 0
+    placement_count_int = int(move_number) if move_number is not None else 0
     result = agent.search_with_tree(
         env,
         add_noise=add_noise,
-        move_number=move_number_int,
+        placement_count=placement_count_int,
     )
     if result is None:
         return (
@@ -1376,7 +1376,7 @@ def run_mcts(
 
     return (
         tree_dict,
-        {"seed": seed, "move_number": move_number_int},
+        {"seed": seed, "move_number": placement_count_int},
         sims_to_run,
         None,
         [],

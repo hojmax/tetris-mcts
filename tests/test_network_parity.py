@@ -18,7 +18,7 @@ from tetris_mcts.ml.weights import export_onnx, export_split_models
 def _encode_state_python(
     env: tetris_core.TetrisEnv,
     move_number: int,
-    max_moves: int,
+    max_placements: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     board = np.array(
         [1.0 if cell != 0 else 0.0 for row in env.get_board() for cell in row],
@@ -47,7 +47,7 @@ def _encode_state_python(
         for piece_type in range(NUM_PIECE_TYPES):
             aux.append(1.0 if queue_piece == piece_type else 0.0)
 
-    aux.append(float(move_number) / float(max_moves))
+    aux.append(float(move_number) / float(max_placements))
 
     return board, np.asarray(aux, dtype=np.float32)
 
@@ -82,11 +82,11 @@ def _build_env_variants() -> list[tuple[tetris_core.TetrisEnv, int, int]]:
 
 
 def test_encode_state_matches_between_rust_inference_and_python_training_view() -> None:
-    for env, move_number, max_moves in _build_env_variants():
+    for env, move_number, max_placements in _build_env_variants():
         rust_board, rust_aux = tetris_core.debug_encode_state(
-            env, move_number, max_moves
+            env, move_number, max_placements
         )
-        py_board, py_aux = _encode_state_python(env, move_number, max_moves)
+        py_board, py_aux = _encode_state_python(env, move_number, max_placements)
 
         np.testing.assert_array_equal(
             np.asarray(rust_board, dtype=np.float32), py_board
@@ -125,8 +125,8 @@ def test_pytorch_and_rust_tract_inference_match_on_same_onnx(tmp_path: Path) -> 
     assert export_onnx(model, onnx_path)
     assert export_split_models(model, onnx_path)
 
-    for env, move_number, max_moves in _build_env_variants():
-        board, aux = _encode_state_python(env, move_number, max_moves)
+    for env, move_number, max_placements in _build_env_variants():
+        board, aux = _encode_state_python(env, move_number, max_placements)
         action_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
 
         board_tensor = torch.from_numpy(board).reshape(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
@@ -243,8 +243,8 @@ def test_split_onnx_rust_matches_end_to_end_pytorch(tmp_path: Path) -> None:
             env.hold()
         envs.append((env, game_seed % 100, 100))
 
-    for env, move_number, max_moves in envs:
-        board, aux = _encode_state_python(env, move_number, max_moves)
+    for env, move_number, max_placements in envs:
+        board, aux = _encode_state_python(env, move_number, max_placements)
         action_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
         if not action_mask.any():
             continue
@@ -381,7 +381,7 @@ def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
     config.dirichlet_alpha = 0.15
     config.dirichlet_epsilon = 0.25
     config.seed = 999
-    config.max_moves = 100
+    config.max_placements = 100
     config.track_value_history = True
     config.death_penalty = 0.0
 
@@ -390,14 +390,14 @@ def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
     assert cached_agent.set_board_cache_enabled(True)
 
     warmup = cached_agent.search_with_tree(
-        env.clone_state(), add_noise=False, move_number=17
+        env.clone_state(), add_noise=False, placement_count=17
     )
     assert warmup is not None
     warmup_stats = cached_agent.get_and_reset_cache_stats()
     assert warmup_stats is not None
 
     cached_search = cached_agent.search_with_tree(
-        env.clone_state(), add_noise=False, move_number=17
+        env.clone_state(), add_noise=False, placement_count=17
     )
     assert cached_search is not None
     cached_result, cached_tree = cached_search
@@ -412,7 +412,7 @@ def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
     assert uncached_agent.load_model(str(onnx_path))
     assert uncached_agent.set_board_cache_enabled(False)
     uncached_search = uncached_agent.search_with_tree(
-        env.clone_state(), add_noise=False, move_number=17
+        env.clone_state(), add_noise=False, placement_count=17
     )
     assert uncached_search is not None
     uncached_result, uncached_tree = uncached_search

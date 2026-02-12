@@ -7,7 +7,7 @@ Input Representation:
 - Hold piece: 8 (one-hot, 7 pieces + empty)
 - Hold available: 1 (binary)
 - Next queue: 5 x 7 = 35 (one-hot per slot)
-- Move number: 1 (normalized: move_idx / max_moves)
+- Placement count: 1 (normalized: placements_so_far / max_placements)
 
 Total input: 200 + 7 + 8 + 1 + 35 + 1 = 252 features
 

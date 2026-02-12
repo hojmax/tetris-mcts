@@ -27,9 +27,10 @@ pub struct MCTSConfig {
     /// Optional RNG seed for deterministic behavior (None = non-deterministic)
     #[pyo3(get, set)]
     pub seed: Option<u64>,
-    /// Maximum moves per episode. Used for move-number normalization in NN features
+    /// Maximum placements per episode (hold actions do not count toward this limit).
+    /// Used for placement-count normalization in NN features
     #[pyo3(get, set)]
-    pub max_moves: u32,
+    pub max_placements: u32,
     /// Whether to store per-visit backed-up values for visualization/debugging
     #[pyo3(get, set)]
     pub track_value_history: bool,
@@ -53,7 +54,7 @@ impl MCTSConfig {
             dirichlet_epsilon: 0.25,
             visit_sampling_epsilon: 0.0,
             seed: None,
-            max_moves: 100,
+            max_placements: 100,
             track_value_history: false,
             death_penalty: 0.0,
             overhang_penalty_weight: 0.0,
@@ -81,7 +82,7 @@ mod tests {
         assert_eq!(config.dirichlet_epsilon, 0.25);
         assert_eq!(config.visit_sampling_epsilon, 0.0);
         assert_eq!(config.seed, None);
-        assert_eq!(config.max_moves, 100);
+        assert_eq!(config.max_placements, 100);
         assert!(!config.track_value_history);
         assert_eq!(config.death_penalty, 0.0);
         assert_eq!(config.overhang_penalty_weight, 0.0);

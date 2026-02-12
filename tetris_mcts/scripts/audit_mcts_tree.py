@@ -16,6 +16,7 @@ from tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
 from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
+    NUM_ACTIONS,
     PIECE_NAMES,
     QUEUE_SIZE,
     TrainingConfig,
@@ -23,6 +24,7 @@ from tetris_mcts.config import (
 
 logger = structlog.get_logger()
 DEFAULT_TRAINING_CONFIG = TrainingConfig()
+HOLD_ACTION_INDEX = NUM_ACTIONS - 1
 
 
 def piece_to_dict(piece: object | None) -> dict | None:
@@ -498,21 +500,25 @@ def run_seed_audit(
         defaultdict(lambda: defaultdict(int))
     )
 
-    logger.info("Auditing seed", seed=seed, max_moves=args.max_moves)
+    logger.info("Auditing seed", seed=seed, max_placements=args.max_placements)
 
-    for move_idx in range(args.max_moves):
+    frame_idx = 0
+    placement_count = 0
+    while placement_count < args.max_placements:
         if env.game_over:
-            logger.info("Game over reached", seed=seed, move=move_idx)
+            logger.info("Game over reached", seed=seed, move=frame_idx)
             break
 
         pre_snapshot = get_state_snapshot(env)
 
-        result = agent.search_with_tree(env, add_noise=False, move_number=move_idx)
+        result = agent.search_with_tree(
+            env, add_noise=False, placement_count=placement_count
+        )
         if result is None:
             logger.warning(
                 "Search returned None (no valid action mask)",
                 seed=seed,
-                move=move_idx,
+                move=frame_idx,
             )
             break
 
@@ -953,7 +959,8 @@ def run_seed_audit(
 
         move_record = {
             "seed": int(seed),
-            "move": int(move_idx),
+            "move": int(frame_idx),
+            "placement_count": int(placement_count),
             "pre_state": pre_snapshot,
             "search": {
                 "num_nodes": int(len(nodes)),
@@ -1017,7 +1024,7 @@ def run_seed_audit(
                 for failure in failures:
                     payload = {
                         "seed": int(seed),
-                        "move": int(move_idx),
+                        "move": int(frame_idx),
                         "failure": failure,
                     }
                     f.write(json.dumps(payload) + "\n")
@@ -1025,7 +1032,7 @@ def run_seed_audit(
         if args.dump_full_tree:
             tree_payload = {
                 "seed": int(seed),
-                "move": int(move_idx),
+                "move": int(frame_idx),
                 "selected_action": int(selected_action),
                 "num_nodes": int(len(nodes)),
                 "num_simulations": int(mcts_result.num_simulations),
@@ -1033,14 +1040,14 @@ def run_seed_audit(
                 "policy": [safe_float(x) for x in mcts_result.policy],
                 "nodes": [serialize_tree_node(node) for node in nodes],
             }
-            write_json(seed_dir / f"tree_move_{move_idx:03d}.json", tree_payload)
+            write_json(seed_dir / f"tree_move_{frame_idx:03d}.json", tree_payload)
 
         total_failures += len(failures)
 
         logger.info(
             "Audited move",
             seed=seed,
-            move=move_idx,
+            move=frame_idx,
             selected_action=selected_action,
             selected_lines=int(live_lines),
             selected_attack=int(live_attack),
@@ -1048,6 +1055,9 @@ def run_seed_audit(
             num_nodes=int(len(nodes)),
             failures=int(len(failures)),
         )
+        if selected_action != HOLD_ACTION_INDEX:
+            placement_count += 1
+        frame_idx += 1
 
     seed_summary = {
         "seed": int(seed),
@@ -1103,7 +1113,7 @@ def build_mcts_config(args: "ScriptArgs") -> MCTSConfig:
     config.temperature = args.temperature
     config.dirichlet_alpha = args.dirichlet_alpha
     config.dirichlet_epsilon = args.dirichlet_epsilon
-    config.max_moves = args.max_moves
+    config.max_placements = args.max_placements
     config.seed = args.mcts_seed
     return config
 
@@ -1122,7 +1132,7 @@ class ScriptArgs:
         Path(__file__).parent / "outputs" / "mcts_tree_audits"
     )  # Directory for audit artifacts
     run_name: str = ""  # Optional explicit run directory name (empty = auto-generated)
-    max_moves: int = 30  # Maximum moves to audit per seed
+    max_placements: int = 30  # Maximum placements to audit per seed
     seeds: list[int] = sp_field(
         default_factory=list
     )  # Explicit seed list (overrides seed_start/num_seeds)
@@ -1179,7 +1189,7 @@ def main(args: ScriptArgs) -> None:
             seed_tag = f"{seeds[0]}to{seeds[-1]}n{len(seeds)}"
         run_name = (
             f"{args.model_path.stem}_sim{args.num_simulations}_temp{args.temperature:.2f}"
-            f"_mcts{args.mcts_seed}_m{args.max_moves}_seeds{seed_tag}"
+            f"_mcts{args.mcts_seed}_m{args.max_placements}_seeds{seed_tag}"
         )
     run_dir = args.output_dir / run_name
     if run_dir.exists():
@@ -1200,7 +1210,7 @@ def main(args: ScriptArgs) -> None:
         model_path=str(args.model_path),
         run_dir=str(run_dir),
         seeds=seeds,
-        max_moves=args.max_moves,
+        max_placements=args.max_placements,
         num_simulations=args.num_simulations,
         temperature=args.temperature,
         check_uniform_piece_sampling=args.check_uniform_piece_sampling,
@@ -1257,7 +1267,7 @@ def main(args: ScriptArgs) -> None:
         "run_dir": str(run_dir),
         "seeds": [int(seed) for seed in seeds],
         "num_seeds": int(len(seeds)),
-        "max_moves": int(args.max_moves),
+        "max_placements": int(args.max_placements),
         "num_simulations": int(args.num_simulations),
         "temperature": float(args.temperature),
         "mcts_seed": int(args.mcts_seed),

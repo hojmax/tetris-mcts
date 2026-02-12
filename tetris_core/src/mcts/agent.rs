@@ -28,7 +28,8 @@ fn compute_value_targets(
     attacks: &[u32],
     overhang_fields: &[u32],
     episode_ended_in_death: bool,
-    max_moves: u32,
+    terminal_placement_count: u32,
+    max_placements: u32,
     death_penalty: f32,
     overhang_penalty_weight: f32,
 ) -> Vec<f32> {
@@ -42,7 +43,7 @@ fn compute_value_targets(
     let death_offset = if episode_ended_in_death {
         // Keep value targets aligned with MCTS terminal backup semantics:
         // penalty is determined by when the episode ended, not by source state index.
-        super::utils::compute_death_penalty(num_states as u32, max_moves, death_penalty)
+        super::utils::compute_death_penalty(terminal_placement_count, max_placements, death_penalty)
     } else {
         0.0
     };
@@ -118,23 +119,25 @@ impl MCTSAgent {
     /// All neural network inference happens in Rust. Returns training data.
     ///
     /// Args:
-    ///     max_moves: Maximum moves per game (default 100)
+    ///     max_placements: Maximum placements per game (hold actions don't count)
     ///     add_noise: Whether to add Dirichlet noise (for exploration)
     ///
     /// Returns:
     ///     GameResult with training examples
-    #[pyo3(signature = (max_moves=100, add_noise=true))]
-    pub fn play_game(&self, max_moves: u32, add_noise: bool) -> Option<GameResult> {
+    #[pyo3(signature = (max_placements=100, add_noise=true))]
+    pub fn play_game(&self, max_placements: u32, add_noise: bool) -> Option<GameResult> {
         let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
-        let mut states: Vec<(TetrisEnv, u32, Vec<f32>, Vec<bool>)> = Vec::new();
+        let mut states: Vec<(TetrisEnv, u32, u32, Vec<f32>, Vec<bool>)> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
         let mut overhang_fields: Vec<u32> = Vec::new();
         let mut stats = GameStats::default();
         let mut valid_moves_sum: u32 = 0;
         let mut max_valid_moves: u32 = 0;
         let mut tree_stats_acc = TreeStatsAccumulator::new();
+        let mut frame_index: u32 = 0;
+        let mut placement_count: u32 = 0;
 
-        for move_idx in 0..max_moves {
+        while placement_count < max_placements {
             if env.game_over {
                 break;
             }
@@ -153,21 +156,25 @@ impl MCTSAgent {
 
             // Run MCTS search (NN-guided when model is loaded, otherwise uniform+zero bootstrap mode)
             let (result, move_tree_stats) = if let Some(nn) = self.nn.as_ref() {
-                let (policy, nn_value) =
-                    match nn.predict_masked(&env, move_idx as usize, &mask, max_moves as usize) {
-                        Ok(result) => result,
-                        Err(e) => {
-                            eprintln!(
-                            "[MCTSAgent] NN prediction failed at move {}: {}. Ending game early.",
-                            move_idx, e
+                let (policy, nn_value) = match nn.predict_masked(
+                    &env,
+                    placement_count as usize,
+                    &mask,
+                    max_placements as usize,
+                ) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!(
+                            "[MCTSAgent] NN prediction failed at placement {}: {}. Ending game early.",
+                            placement_count, e
                         );
-                            break;
-                        }
-                    };
-                self.search(&env, policy, nn_value, add_noise, move_idx)
+                        break;
+                    }
+                };
+                self.search(&env, policy, nn_value, add_noise, placement_count)
             } else {
                 let (mcts_result, _root, tree_stats) =
-                    search_internal_without_nn(&self.config, &env, add_noise, move_idx);
+                    search_internal_without_nn(&self.config, &env, add_noise, placement_count);
                 (mcts_result, tree_stats)
             };
 
@@ -179,7 +186,13 @@ impl MCTSAgent {
             }
 
             // Store state only after search succeeds so state/reward arrays stay aligned.
-            states.push((env.clone(), move_idx, result.policy.clone(), mask.clone()));
+            states.push((
+                env.clone(),
+                frame_index,
+                placement_count,
+                result.policy.clone(),
+                mask.clone(),
+            ));
 
             // Execute the selected action
             let attack = env
@@ -187,6 +200,10 @@ impl MCTSAgent {
                 .expect("MCTS selected action is not executable");
             attacks.push(attack);
             overhang_fields.push(super::utils::count_overhang_fields(&env));
+            if result.action != HOLD_ACTION_INDEX {
+                placement_count += 1;
+            }
+            frame_index += 1;
 
             // Collect stats from the attack result
             if let Some(ref attack_result) = env.get_last_attack_result() {
@@ -252,7 +269,8 @@ impl MCTSAgent {
             &attacks,
             &overhang_fields,
             env.game_over,
-            max_moves,
+            placement_count,
+            max_placements,
             self.config.death_penalty,
             self.config.overhang_penalty_weight,
         );
@@ -261,7 +279,7 @@ impl MCTSAgent {
         let mut examples = Vec::with_capacity(num_states);
 
         for i in 0..num_states {
-            let (ref state, move_num, ref policy, ref mask) = states[i];
+            let (ref state, frame_idx, placement_idx, ref policy, ref mask) = states[i];
 
             // Convert board to binary (1 = filled, 0 = empty)
             let board: Vec<u8> = state
@@ -283,7 +301,8 @@ impl MCTSAgent {
                 hold_piece,
                 hold_available,
                 next_queue,
-                move_number: move_num,
+                move_number: frame_idx,
+                placement_count: placement_idx,
                 policy: policy.clone(),
                 value: values[i],
                 action_mask: mask.clone(),
@@ -295,14 +314,15 @@ impl MCTSAgent {
 
         let total_attack: u32 = attacks.iter().sum();
         let total_overhang_fields: u32 = overhang_fields.iter().sum();
-        let num_moves = states.len() as u32;
-        let avg_valid_moves = if num_moves > 0 {
-            valid_moves_sum as f32 / num_moves as f32
+        let num_frames = states.len() as u32;
+        let num_moves = placement_count;
+        let avg_valid_moves = if num_frames > 0 {
+            valid_moves_sum as f32 / num_frames as f32
         } else {
             0.0
         };
-        let avg_overhang_fields = if num_moves > 0 {
-            total_overhang_fields as f32 / num_moves as f32
+        let avg_overhang_fields = if num_frames > 0 {
+            total_overhang_fields as f32 / num_frames as f32
         } else {
             0.0
         };
@@ -318,8 +338,8 @@ impl MCTSAgent {
             examples,
             total_attack,
             num_moves,
-            avg_moves: avg_valid_moves,
-            max_moves: max_valid_moves,
+            avg_valid_actions: avg_valid_moves,
+            max_valid_actions: max_valid_moves,
             stats,
             tree_stats,
             total_overhang_fields,
@@ -334,22 +354,22 @@ impl MCTSAgent {
     ///
     /// Args:
     ///     num_games: Number of games to play
-    ///     max_moves: Maximum moves per game
+    ///     max_placements: Maximum placements per game (hold actions don't count)
     ///     add_noise: Whether to add Dirichlet noise
     ///
     /// Returns:
     ///     List of all training examples from all games
-    #[pyo3(signature = (num_games, max_moves=100, add_noise=true))]
+    #[pyo3(signature = (num_games, max_placements=100, add_noise=true))]
     pub fn generate_games(
         &self,
         num_games: u32,
-        max_moves: u32,
+        max_placements: u32,
         add_noise: bool,
     ) -> Vec<TrainingExample> {
         let mut all_examples = Vec::new();
 
         for _ in 0..num_games {
-            if let Some(result) = self.play_game(max_moves, add_noise) {
+            if let Some(result) = self.play_game(max_placements, add_noise) {
                 all_examples.extend(result.examples);
             }
         }
@@ -364,16 +384,16 @@ impl MCTSAgent {
     /// Args:
     ///     env: The game state to search from
     ///     add_noise: Whether to add Dirichlet noise to root priors
-    ///     move_number: The current move number in the game
+    ///     placement_count: The current placement count in the game
     ///
     /// Returns:
     ///     Tuple of (MCTSResult, MCTSTreeExport) or None if no model loaded
-    #[pyo3(signature = (env, add_noise=false, move_number=0))]
+    #[pyo3(signature = (env, add_noise=false, placement_count=0))]
     pub fn search_with_tree(
         &self,
         env: &TetrisEnv,
         add_noise: bool,
-        move_number: u32,
+        placement_count: u32,
     ) -> Option<(MCTSResult, MCTSTreeExport)> {
         let nn = self.nn.as_ref()?;
 
@@ -386,9 +406,9 @@ impl MCTSAgent {
         let (policy, nn_value) = nn
             .predict_masked(
                 env,
-                move_number as usize,
+                placement_count as usize,
                 &mask,
-                self.config.max_moves as usize,
+                self.config.max_placements as usize,
             )
             .expect("Neural network prediction failed");
 
@@ -399,7 +419,7 @@ impl MCTSAgent {
             policy,
             nn_value,
             add_noise,
-            move_number,
+            placement_count,
         );
 
         // Export tree structure
@@ -425,16 +445,16 @@ impl MCTSAgent {
     /// Args:
     ///     env: The game state to search from
     ///     add_noise: Whether to add Dirichlet noise to root priors
-    ///     move_number: The current move number in the game
+    ///     placement_count: The current placement count in the game
     ///
     /// Returns:
     ///     MCTSResult with selected action and policy, or None if no model loaded
-    #[pyo3(signature = (env, add_noise=false, move_number=0))]
+    #[pyo3(signature = (env, add_noise=false, placement_count=0))]
     pub fn select_action(
         &self,
         env: &TetrisEnv,
         add_noise: bool,
-        move_number: u32,
+        placement_count: u32,
     ) -> Option<MCTSResult> {
         let nn = self.nn.as_ref()?;
 
@@ -447,9 +467,9 @@ impl MCTSAgent {
         let (policy, nn_value) = nn
             .predict_masked(
                 env,
-                move_number as usize,
+                placement_count as usize,
                 &mask,
-                self.config.max_moves as usize,
+                self.config.max_placements as usize,
             )
             .expect("Neural network prediction failed");
 
@@ -460,7 +480,7 @@ impl MCTSAgent {
             policy,
             nn_value,
             add_noise,
-            move_number,
+            placement_count,
         );
         Some(mcts_result)
     }
@@ -479,7 +499,7 @@ impl MCTSAgent {
         policy: Vec<f32>,
         nn_value: f32,
         add_noise: bool,
-        move_number: u32,
+        placement_count: u32,
     ) -> (MCTSResult, TreeStats) {
         let nn = self
             .nn
@@ -492,7 +512,7 @@ impl MCTSAgent {
             policy,
             nn_value,
             add_noise,
-            move_number,
+            placement_count,
         );
         (result, tree_stats)
     }
@@ -574,7 +594,7 @@ mod tests {
         let attacks = vec![1, 2, 3];
         let overhang_fields = vec![0, 0, 0];
 
-        let values = compute_value_targets(&attacks, &overhang_fields, false, 100, 5.0, 0.0);
+        let values = compute_value_targets(&attacks, &overhang_fields, false, 3, 100, 5.0, 0.0);
 
         assert_eq!(values.len(), 3);
         assert!((values[0] - 6.0).abs() < 1e-6);
@@ -586,14 +606,15 @@ mod tests {
     fn test_compute_value_targets_death_penalty_uses_terminal_move_for_all_states() {
         let attacks = vec![1, 2, 3];
         let overhang_fields = vec![0, 0, 0];
-        let max_moves = 100;
+        let max_placements = 100;
         let death_penalty = 5.0;
 
         let alive_values = compute_value_targets(
             &attacks,
             &overhang_fields,
             false,
-            max_moves,
+            2,
+            max_placements,
             death_penalty,
             0.0,
         );
@@ -601,16 +622,14 @@ mod tests {
             &attacks,
             &overhang_fields,
             true,
-            max_moves,
+            2,
+            max_placements,
             death_penalty,
             0.0,
         );
 
-        let expected_offset = super::super::utils::compute_death_penalty(
-            attacks.len() as u32,
-            max_moves,
-            death_penalty,
-        );
+        let expected_offset =
+            super::super::utils::compute_death_penalty(2, max_placements, death_penalty);
 
         for i in 0..attacks.len() {
             let observed_offset = alive_values[i] - dead_values[i];

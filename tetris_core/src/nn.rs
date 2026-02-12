@@ -104,11 +104,11 @@ impl TetrisNN {
     pub fn predict_masked(
         &self,
         env: &TetrisEnv,
-        move_number: usize,
+        placement_count: usize,
         action_mask: &[bool],
-        max_moves: usize,
+        max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (board_f32, aux_vec) = encode_state_features(env, move_number, max_moves)?;
+        let (board_f32, aux_vec) = encode_state_features(env, placement_count, max_placements)?;
 
         let board_embed = if self.cache_enabled.get() {
             let board_key = pack_board(env);
@@ -318,10 +318,10 @@ fn load_fc_binary(path: &Path) -> TractResult<(Array2<f32>, Array1<f32>)> {
 #[cfg(test)]
 fn encode_state(
     env: &TetrisEnv,
-    move_number: usize,
-    max_moves: usize,
+    placement_count: usize,
+    max_placements: usize,
 ) -> TractResult<(Tensor, Tensor)> {
-    let (board_tensor, aux_tensor) = encode_state_features(env, move_number, max_moves)?;
+    let (board_tensor, aux_tensor) = encode_state_features(env, placement_count, max_placements)?;
     let board =
         tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
             .into_tensor();
@@ -331,13 +331,15 @@ fn encode_state(
 
 pub fn encode_state_features(
     env: &TetrisEnv,
-    move_number: usize,
-    max_moves: usize,
+    placement_count: usize,
+    max_placements: usize,
 ) -> TractResult<(Vec<f32>, Vec<f32>)> {
-    if max_moves == 0 {
-        return Err(
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "max_moves must be > 0").into(),
-        );
+    if max_placements == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "max_placements must be > 0",
+        )
+        .into());
     }
 
     // Board tensor: binary (1 = filled, 0 = empty) - 200 values (will be reshaped to 1x20x10)
@@ -375,9 +377,9 @@ pub fn encode_state_features(
         }
     }
 
-    // Move number: normalized (1)
-    let normalized_denominator = max_moves as f32;
-    aux.push(move_number as f32 / normalized_denominator);
+    // Placement count: normalized (1)
+    let normalized_denominator = max_placements as f32;
+    aux.push(placement_count as f32 / normalized_denominator);
 
     Ok((board_tensor, aux))
 }
@@ -558,12 +560,12 @@ mod tests {
             idx += NUM_PIECE_TYPES;
         }
 
-        // Move number: normalized (1)
+        // Placement count: normalized (1)
         let move_norm = aux[idx];
         let expected_norm = 42.0 / 100.0;
         assert!(
             (move_norm - expected_norm).abs() < 1e-6,
-            "Move number should be {}, got {}",
+            "Placement count feature should be {}, got {}",
             expected_norm,
             move_norm
         );
@@ -584,7 +586,7 @@ mod tests {
         // | Hold piece     | 8          | One-hot (7 pieces + empty)      |
         // | Hold available | 1          | Binary (can use hold this turn) |
         // | Next queue     | 5 x 7 = 35 | One-hot encoded per slot        |
-        // | Move number    | 1          | Normalized: move_idx / 100      |
+        // | Placement count| 1          | Normalized: placements / 100     |
 
         let env = TetrisEnv::new(10, 20);
         let (board, aux) = encode_state(&env, 50, 100).expect("encoding failed");
@@ -641,15 +643,15 @@ mod tests {
             );
         }
 
-        // Verify move number is normalized [0, 1]
+        // Verify placement count is normalized [0, 1]
         let move_norm = aux[51];
         assert!(
             move_norm >= 0.0 && move_norm <= 1.0,
-            "Move number must be in [0, 1]"
+            "Placement count must be in [0, 1]"
         );
         assert!(
             (move_norm - 0.5).abs() < 1e-6,
-            "Move 50 should normalize to 0.5"
+            "Placement count 50 should normalize to 0.5"
         );
     }
 
@@ -727,14 +729,14 @@ mod tests {
         assert_eq!(policy1, policy2, "Cache hit should produce same policy");
         assert_eq!(value1, value2, "Cache hit should produce same value");
 
-        // Different aux (different move_number) with same board - different output
+        // Different aux (different placement count) with same board - different output
         let (_policy3, value3) = nn
             .predict_masked(&env, 50, &mask, 100)
             .expect("Third inference (different aux) failed");
         // Values should differ because aux features changed
         assert_ne!(
             value1, value3,
-            "Different move numbers should produce different values"
+            "Different placement counts should produce different values"
         );
 
         // Verify cache has exactly 1 entry (same board both times)

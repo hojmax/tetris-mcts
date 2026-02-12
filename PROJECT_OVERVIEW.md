@@ -378,7 +378,7 @@ Attack values per action:
 - Combo bonus: scales with combo count
 
 ```rust
-const MAX_MOVES: usize = 100;
+const MAX_PLACEMENTS: usize = 100;
 
 fn compute_training_examples(game: &Game) -> Vec<TrainingExample> {
     let mut examples = Vec::new();
@@ -523,21 +523,21 @@ def train():
         conv_padding=config.conv_padding,
     )
     mcts_config = MCTSConfig(num_simulations=400, ...)
-    mcts_config.max_moves = config.max_moves
+    mcts_config.max_placements = config.max_placements
 
     # Create GameGenerator with worker threads
     generator = GameGenerator(
         model_path="parallel.onnx",
         training_data_path="training_runs/v0/training_data.npz",
         config=mcts_config,
-        max_moves=config.max_moves,
+        max_placements=config.max_placements,
         num_workers=5,
         max_examples=100_000,
     )
 
     for step in range(total_steps):
         # Sample directly from Rust buffer (no disk I/O)
-        batch = generator.sample_batch(batch_size=256, max_moves=config.max_moves)
+        batch = generator.sample_batch(batch_size=256, max_placements=config.max_placements)
         if batch is None:
             continue
 
@@ -784,12 +784,12 @@ fn add_dirichlet_noise(priors: &mut [f32], alpha: f32, epsilon: f32) {
 
 ```rust
 const EVAL_SEEDS: [u64; 20] = [0, 1, 2, ..., 19];
-const EVAL_MAX_MOVES: u32 = 100;
+const EVAL_MAX_PLACEMENTS: u32 = 100;
 
 fn evaluate(model: &Model) -> EvalMetrics {
     let mut metrics = EvalMetrics::default();
     for seed in EVAL_SEEDS {
-        let game = play_game_with_seed(model, seed, EVAL_MAX_MOVES, /*no exploration*/);
+        let game = play_game_with_seed(model, seed, EVAL_MAX_PLACEMENTS, /*no exploration*/);
         metrics.accumulate(&game);
     }
     metrics.average()

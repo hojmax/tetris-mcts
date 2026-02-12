@@ -11,13 +11,13 @@ NUM_PIECE_TYPES = 7
 BOARD_HEIGHT = 20
 BOARD_WIDTH = 10
 AUX_FEATURES = 52  # 7 + 8 + 1 + 35 + 1
-MAX_MOVES = 100
+MAX_PLACEMENTS = 100
 
 # ── State from MCTS visualizer (node 3, chance node) ──
 CURRENT_PIECE = "J"
 HOLD_PIECE = "L"
 QUEUE = ["I", "Z", "O", "S", "O"]
-MOVE_NUMBER = 2
+PLACEMENT_COUNT = 2
 HOLD_AVAILABLE = True  # hold not used this turn
 
 # Board: T-piece rotation 1, placed in bottom-left corner
@@ -43,7 +43,7 @@ def encode_aux(
     hold_piece: str | None,
     hold_available: bool,
     queue: list[str],
-    move_number: int,
+    placement_count: int,
 ) -> np.ndarray:
     aux = np.zeros(AUX_FEATURES, dtype=np.float32)
     idx = 0
@@ -68,8 +68,8 @@ def encode_aux(
         aux[idx + slot * NUM_PIECE_TYPES + PIECE_INDEX[piece_name]] = 1.0
     idx += 5 * NUM_PIECE_TYPES
 
-    # Move number: normalized
-    aux[idx] = move_number / MAX_MOVES
+    # Placement count: normalized
+    aux[idx] = placement_count / MAX_PLACEMENTS
     idx += 1
 
     assert idx == AUX_FEATURES
@@ -79,7 +79,7 @@ def encode_aux(
 def main() -> None:
     board_tensor = encode_board(BOARD)
     aux_tensor = encode_aux(
-        CURRENT_PIECE, HOLD_PIECE, HOLD_AVAILABLE, QUEUE, MOVE_NUMBER
+        CURRENT_PIECE, HOLD_PIECE, HOLD_AVAILABLE, QUEUE, PLACEMENT_COUNT
     )
 
     print(f"Board tensor shape: {board_tensor.shape}")
@@ -101,7 +101,10 @@ def main() -> None:
         q_idx = np.argmax(aux[16 + s * 7 : 16 + (s + 1) * 7])
         queue_names.append(list(PIECE_INDEX.keys())[q_idx])
     print(f"Encoded queue:         {queue_names}")
-    print(f"Encoded move number:   {aux[51]} (raw {MOVE_NUMBER}/{MAX_MOVES})")
+    print(
+        f"Encoded placement count: {aux[51]} "
+        f"(raw {PLACEMENT_COUNT}/{MAX_PLACEMENTS})"
+    )
     print()
 
     # Load ONNX and run inference

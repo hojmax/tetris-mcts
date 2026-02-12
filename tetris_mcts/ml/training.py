@@ -101,7 +101,7 @@ class Trainer:
             model=self.model,
             checkpoint_dir=config.checkpoint_dir,
             num_simulations=config.num_simulations,
-            max_moves=config.max_moves,
+            max_placements=config.max_placements,
             overhang_penalty_weight=config.overhang_penalty_weight,
             eval_seeds=config.eval_seeds,
             eval_mcts_seed=config.eval_mcts_seed,
@@ -321,7 +321,7 @@ class Trainer:
         mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
         mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
         mcts_config.visit_sampling_epsilon = self.config.visit_sampling_epsilon
-        mcts_config.max_moves = self.config.max_moves
+        mcts_config.max_placements = self.config.max_placements
         mcts_config.death_penalty = self.config.death_penalty
         mcts_config.overhang_penalty_weight = self.config.overhang_penalty_weight
 
@@ -331,7 +331,7 @@ class Trainer:
             model_path=str(onnx_path),
             training_data_path=str(training_data_path),
             config=mcts_config,
-            max_moves=self.config.max_moves,
+            max_placements=self.config.max_placements,
             add_noise=True,
             max_examples=self.config.buffer_size,
             games_per_save=self.config.games_per_save,
@@ -386,7 +386,7 @@ class Trainer:
                 # Sample batch directly from generator's in-memory buffer
                 result = generator.sample_batch(
                     self.config.batch_size,
-                    self.config.max_moves,
+                    self.config.max_placements,
                 )
                 if result is None:
                     time.sleep(0.1)

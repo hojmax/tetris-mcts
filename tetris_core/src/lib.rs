@@ -46,9 +46,9 @@ pub use scoring::{
 fn debug_encode_state(
     env: &TetrisEnv,
     move_number: usize,
-    max_moves: usize,
+    max_placements: usize,
 ) -> PyResult<(Vec<f32>, Vec<f32>)> {
-    nn::encode_state_features(env, move_number, max_moves)
+    nn::encode_state_features(env, move_number, max_placements)
         .map_err(|e| PyValueError::new_err(format!("Failed to encode state: {e}")))
 }
 

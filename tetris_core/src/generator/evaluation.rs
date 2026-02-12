@@ -10,7 +10,7 @@ use std::io::{BufWriter, Write};
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
-use crate::mcts::{MCTSAgent, MCTSConfig};
+use crate::mcts::{MCTSAgent, MCTSConfig, HOLD_ACTION_INDEX};
 
 /// A single move in a game replay.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,7 +105,7 @@ fn create_replay_writer(output_path: Option<&str>) -> PyResult<Option<BufWriter<
 
 fn evaluate_with_action_selector<F>(
     seeds: &[u64],
-    max_moves: u32,
+    max_placements: u32,
     output_path: Option<String>,
     mut select_action: F,
 ) -> PyResult<EvalResult>
@@ -127,9 +127,10 @@ where
         let mut game_attack: u32 = 0;
         let mut game_lines: u32 = 0;
         let mut game_moves: u32 = 0;
+        let mut placement_count: u32 = 0;
         let mut replay_moves: Vec<ReplayMove> = Vec::new();
 
-        for move_idx in 0..max_moves {
+        while placement_count < max_placements {
             if env.game_over {
                 break;
             }
@@ -139,7 +140,7 @@ where
                 break;
             }
 
-            let action = select_action(&env, &mask, move_idx)?;
+            let action = select_action(&env, &mask, placement_count)?;
 
             let attack = env.execute_action_index(action).ok_or_else(|| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -148,10 +149,13 @@ where
                 ))
             })?;
             game_attack += attack;
+            if action != HOLD_ACTION_INDEX {
+                placement_count += 1;
+                game_moves += 1;
+            }
             if let Some(attack_result) = env.get_last_attack_result() {
                 game_lines += attack_result.lines_cleared;
             }
-            game_moves += 1;
             if save_replays {
                 replay_moves.push(ReplayMove { action, attack });
             }
@@ -248,30 +252,30 @@ where
 ///     model_path: Path to ONNX model file
 ///     seeds: List of random seeds to use (determines piece sequence)
 ///     config: MCTS configuration (temperature is forced to 0 for argmax)
-///     max_moves: Maximum moves per game
+///     max_placements: Maximum placements per game (hold actions do not count)
 ///     output_path: Optional path to save replays as JSONL
 ///
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (model_path, seeds, config=None, max_moves=100, output_path=None))]
+#[pyo3(signature = (model_path, seeds, config=None, max_placements=100, output_path=None))]
 pub fn evaluate_model(
     model_path: &str,
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
-    max_moves: u32,
+    max_placements: u32,
     output_path: Option<String>,
 ) -> PyResult<EvalResult> {
-    if max_moves == 0 {
+    if max_placements == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "max_moves must be > 0",
+            "max_placements must be > 0",
         ));
     }
 
     // Use provided config but force temperature=0 for argmax
     let mut config = config.unwrap_or_default();
     config.temperature = 0.0; // Argmax for deterministic evaluation
-    config.max_moves = max_moves;
+    config.max_placements = max_placements;
 
     let mut agent = MCTSAgent::new(config);
 
@@ -282,20 +286,25 @@ pub fn evaluate_model(
         )));
     }
 
-    evaluate_with_action_selector(&seeds, max_moves, output_path, |env, mask, move_idx| {
-        let nn = agent.get_nn().expect("Model should be loaded");
-        let (policy, nn_value) = nn
-            .predict_masked(env, move_idx as usize, mask, max_moves as usize)
-            .map_err(|error| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "NN prediction failed: {}",
-                    error
-                ))
-            })?;
+    evaluate_with_action_selector(
+        &seeds,
+        max_placements,
+        output_path,
+        |env, mask, placement_count| {
+            let nn = agent.get_nn().expect("Model should be loaded");
+            let (policy, nn_value) = nn
+                .predict_masked(env, placement_count as usize, mask, max_placements as usize)
+                .map_err(|error| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "NN prediction failed: {}",
+                        error
+                    ))
+                })?;
 
-        let (result, _tree_stats) = agent.search(env, policy, nn_value, false, move_idx);
-        Ok(result.action)
-    })
+            let (result, _tree_stats) = agent.search(env, policy, nn_value, false, placement_count);
+            Ok(result.action)
+        },
+    )
 }
 
 /// Evaluate MCTS without a network on fixed seeds (uniform priors + zero value).
@@ -306,32 +315,41 @@ pub fn evaluate_model(
 /// Args:
 ///     seeds: List of random seeds to use (determines piece sequence)
 ///     config: MCTS configuration (temperature is forced to 0 for argmax)
-///     max_moves: Maximum moves per game
+///     max_placements: Maximum placements per game (hold actions do not count)
 ///     output_path: Optional path to save replays as JSONL
 ///
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (seeds, config=None, max_moves=100, output_path=None))]
+#[pyo3(signature = (seeds, config=None, max_placements=100, output_path=None))]
 pub fn evaluate_model_without_nn(
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
-    max_moves: u32,
+    max_placements: u32,
     output_path: Option<String>,
 ) -> PyResult<EvalResult> {
-    if max_moves == 0 {
+    if max_placements == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "max_moves must be > 0",
+            "max_placements must be > 0",
         ));
     }
 
     let mut config = config.unwrap_or_default();
     config.temperature = 0.0;
-    config.max_moves = max_moves;
+    config.max_placements = max_placements;
 
-    evaluate_with_action_selector(&seeds, max_moves, output_path, |env, _mask, move_idx| {
-        let (result, _root, _tree_stats) =
-            crate::mcts::search::search_internal_without_nn(&config, env, false, move_idx);
-        Ok(result.action)
-    })
+    evaluate_with_action_selector(
+        &seeds,
+        max_placements,
+        output_path,
+        |env, _mask, placement_count| {
+            let (result, _root, _tree_stats) = crate::mcts::search::search_internal_without_nn(
+                &config,
+                env,
+                false,
+                placement_count,
+            );
+            Ok(result.action)
+        },
+    )
 }

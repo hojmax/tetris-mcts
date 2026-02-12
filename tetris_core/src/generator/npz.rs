@@ -22,7 +22,8 @@ use crate::mcts::{TrainingExample, NUM_ACTIONS};
 /// - hold_pieces: (N, 8) float32 one-hot
 /// - hold_available: (N,) bool
 /// - next_queue: (N, 5, 7) float32 one-hot
-/// - move_numbers: (N,) float32 normalized
+/// - move_numbers: (N,) float32 normalized frame indices (includes holds)
+/// - placement_counts: (N,) float32 normalized placement counts (excludes holds)
 /// - policy_targets: (N, 735) float32
 /// - value_targets: (N,) float32
 /// - action_masks: (N, 735) bool
@@ -32,7 +33,7 @@ use crate::mcts::{TrainingExample, NUM_ACTIONS};
 pub fn write_examples_to_npz(
     filepath: &PathBuf,
     examples: &[TrainingExample],
-    max_moves: u32,
+    max_placements: u32,
 ) -> Result<(), String> {
     let n = examples.len();
     if n == 0 {
@@ -46,6 +47,7 @@ pub fn write_examples_to_npz(
     let mut hold_available: Vec<u8> = Vec::with_capacity(n);
     let mut next_queue: Vec<f32> = vec![0.0; n * QUEUE_SIZE * NUM_PIECE_TYPES];
     let mut move_numbers: Vec<f32> = Vec::with_capacity(n);
+    let mut placement_counts: Vec<f32> = Vec::with_capacity(n);
     let mut policy_targets: Vec<f32> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut value_targets: Vec<f32> = Vec::with_capacity(n);
     let mut action_masks: Vec<u8> = Vec::with_capacity(n * NUM_ACTIONS);
@@ -53,7 +55,7 @@ pub fn write_examples_to_npz(
     let mut game_numbers: Vec<u64> = Vec::with_capacity(n);
     let mut game_total_attacks: Vec<u32> = Vec::with_capacity(n);
 
-    let move_norm_denominator = max_moves as f32;
+    let move_norm_denominator = max_placements as f32;
 
     for (i, ex) in examples.iter().enumerate() {
         // Board (flatten from (20, 10) to 200)
@@ -79,6 +81,7 @@ pub fn write_examples_to_npz(
 
         // Move number (normalized)
         move_numbers.push(ex.move_number as f32 / move_norm_denominator);
+        placement_counts.push(ex.placement_count as f32 / move_norm_denominator);
 
         // Policy targets
         policy_targets.extend(ex.policy.iter().copied());
@@ -146,6 +149,13 @@ pub fn write_examples_to_npz(
     write_npy_to_zip(
         &mut zip,
         options,
+        "placement_counts.npy",
+        &[n as u64],
+        &placement_counts,
+    )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
         "policy_targets.npy",
         &[n as u64, NUM_ACTIONS as u64],
         &policy_targets,
@@ -193,7 +203,7 @@ pub fn write_examples_to_npz(
 /// Read training examples from NPZ format.
 pub fn read_examples_from_npz(
     filepath: &PathBuf,
-    max_moves: u32,
+    max_placements: u32,
 ) -> Result<Vec<TrainingExample>, String> {
     let file = File::open(filepath).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
@@ -207,6 +217,8 @@ pub fn read_examples_from_npz(
     let (next_queue, next_queue_shape) = read_npy_array::<f32>(&mut archive, "next_queue.npy")?;
     let (move_numbers, move_numbers_shape) =
         read_npy_array::<f32>(&mut archive, "move_numbers.npy")?;
+    let (placement_counts, placement_counts_shape) =
+        read_npy_array::<f32>(&mut archive, "placement_counts.npy")?;
     let (policy_targets, policy_targets_shape) =
         read_npy_array::<f32>(&mut archive, "policy_targets.npy")?;
     let (value_targets, value_targets_shape) =
@@ -239,6 +251,7 @@ pub fn read_examples_from_npz(
         &[n as u64, QUEUE_SIZE as u64, NUM_PIECE_TYPES as u64],
     )?;
     validate_shape("move_numbers", &move_numbers_shape, &[n as u64])?;
+    validate_shape("placement_counts", &placement_counts_shape, &[n as u64])?;
     validate_shape(
         "policy_targets",
         &policy_targets_shape,
@@ -255,7 +268,7 @@ pub fn read_examples_from_npz(
     validate_shape("game_total_attacks", &game_total_attacks_shape, &[n as u64])?;
 
     let mut examples = Vec::with_capacity(n);
-    let move_norm_denominator = max_moves as f32;
+    let move_norm_denominator = max_placements as f32;
     let board_size = BOARD_HEIGHT * BOARD_WIDTH;
     let hold_size = NUM_PIECE_TYPES + 1;
     let next_queue_size = QUEUE_SIZE * NUM_PIECE_TYPES;
@@ -297,6 +310,7 @@ pub fn read_examples_from_npz(
             hold_available: hold_available[i] != 0,
             next_queue: next_queue_pieces,
             move_number: denormalize_move_number(move_numbers[i], move_norm_denominator),
+            placement_count: denormalize_move_number(placement_counts[i], move_norm_denominator),
             policy: policy_targets[policy_start..policy_end].to_vec(),
             value: value_targets[i],
             action_mask: action_masks[mask_start..mask_end]
@@ -462,6 +476,7 @@ mod tests {
             hold_available: true,
             next_queue: vec![0, 1, 2, 3, 4],
             move_number,
+            placement_count: move_number,
             policy,
             value: 3.5,
             action_mask,
@@ -488,6 +503,7 @@ mod tests {
             assert_eq!(actual.hold_available, expected.hold_available);
             assert_eq!(actual.next_queue, expected.next_queue);
             assert_eq!(actual.move_number, expected.move_number);
+            assert_eq!(actual.placement_count, expected.placement_count);
             assert_eq!(actual.value, expected.value);
             assert_eq!(actual.policy.len(), expected.policy.len());
             assert_eq!(actual.action_mask, expected.action_mask);

@@ -48,9 +48,9 @@ pub fn sample_dirichlet<R: rand::Rng + ?Sized>(alpha: f32, n: usize, rng: &mut R
 
 /// Compute proportional death penalty based on how early the game ended.
 /// Dying early (low move_number) incurs a larger penalty than dying late.
-/// Returns 0.0 if death_penalty is 0.0 or move_number >= max_moves.
-pub fn compute_death_penalty(move_number: u32, max_moves: u32, death_penalty: f32) -> f32 {
-    let remaining = (max_moves as f32 - move_number as f32) / max_moves as f32;
+/// Returns 0.0 if death_penalty is 0.0 or move_number >= max_placements.
+pub fn compute_death_penalty(move_number: u32, max_placements: u32, death_penalty: f32) -> f32 {
+    let remaining = (max_placements as f32 - move_number as f32) / max_placements as f32;
     death_penalty * remaining.max(0.0)
 }
 
