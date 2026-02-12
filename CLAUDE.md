@@ -225,6 +225,7 @@ From `config.py` TrainingConfig defaults:
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
 - **Buffer**: 500K examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
+- **NN Value Override**: `ignore_nn_value_head=false` by default; when true, MCTS uses NN policy priors but forces NN value estimates to 0
 - **Model Promotion Gate**: candidate window=30 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 

@@ -104,6 +104,7 @@ class Trainer:
             overhang_penalty_weight=config.overhang_penalty_weight,
             eval_seeds=config.eval_seeds,
             eval_mcts_seed=config.eval_mcts_seed,
+            ignore_nn_value_head=config.ignore_nn_value_head,
         )
 
         # Training state
@@ -322,6 +323,7 @@ class Trainer:
         mcts_config.max_placements = self.config.max_placements
         mcts_config.death_penalty = self.config.death_penalty
         mcts_config.overhang_penalty_weight = self.config.overhang_penalty_weight
+        mcts_config.ignore_nn_value_head = self.config.ignore_nn_value_head
 
         # Start background game generator
         training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME

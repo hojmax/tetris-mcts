@@ -40,6 +40,9 @@ pub struct MCTSConfig {
     /// Weight for normalized overhang penalty subtracted per evaluated board state
     #[pyo3(get, set)]
     pub overhang_penalty_weight: f32,
+    /// If true, ignore neural value-head output during search (use policy only, value=0)
+    #[pyo3(get, set)]
+    pub ignore_nn_value_head: bool,
 }
 
 #[pymethods]
@@ -58,6 +61,7 @@ impl MCTSConfig {
             track_value_history: false,
             death_penalty: 0.0,
             overhang_penalty_weight: 0.0,
+            ignore_nn_value_head: false,
         }
     }
 }
@@ -86,5 +90,6 @@ mod tests {
         assert!(!config.track_value_history);
         assert_eq!(config.death_penalty, 0.0);
         assert_eq!(config.overhang_penalty_weight, 0.0);
+        assert!(!config.ignore_nn_value_head);
     }
 }

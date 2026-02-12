@@ -54,6 +54,14 @@ fn uniform_policy_from_mask(mask: &[bool]) -> Vec<f32> {
     policy
 }
 
+fn maybe_ignore_nn_value(value: f32, ignore_nn_value_head: bool) -> f32 {
+    if ignore_nn_value_head {
+        0.0
+    } else {
+        value
+    }
+}
+
 trait LeafEvaluator {
     fn evaluate(
         &self,
@@ -65,6 +73,7 @@ trait LeafEvaluator {
 
 struct NeuralLeafEvaluator<'a> {
     nn: &'a TetrisNN,
+    ignore_nn_value_head: bool,
 }
 
 impl LeafEvaluator for NeuralLeafEvaluator<'_> {
@@ -79,7 +88,10 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
             .nn
             .predict_masked(state, move_number as usize, &mask, max_placements as usize)
         {
-            Ok(result) => Some(result),
+            Ok((policy, value)) => Some((
+                policy,
+                maybe_ignore_nn_value(value, self.ignore_nn_value_head),
+            )),
             Err(error) => {
                 eprintln!(
                     "[MCTS] NN prediction failed during expansion at move {}: {}",
@@ -563,13 +575,16 @@ pub(super) fn search_internal(
     add_noise: bool,
     move_number: u32,
 ) -> (MCTSResult, DecisionNode, TreeStats) {
-    let evaluator = NeuralLeafEvaluator { nn };
+    let evaluator = NeuralLeafEvaluator {
+        nn,
+        ignore_nn_value_head: config.ignore_nn_value_head,
+    };
     search_internal_with_evaluator(
         config,
         &evaluator,
         env,
         policy,
-        nn_value,
+        maybe_ignore_nn_value(nn_value, config.ignore_nn_value_head),
         add_noise,
         move_number,
     )

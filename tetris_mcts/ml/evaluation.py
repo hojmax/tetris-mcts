@@ -57,6 +57,7 @@ class Evaluator:
         overhang_penalty_weight: float,
         eval_seeds: list[int],
         eval_mcts_seed: int,
+        ignore_nn_value_head: bool,
     ):
         self.model = model
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -65,6 +66,7 @@ class Evaluator:
         self.overhang_penalty_weight = overhang_penalty_weight
         self.eval_seeds = [int(s) for s in eval_seeds]
         self.eval_mcts_seed = eval_mcts_seed
+        self.ignore_nn_value_head = ignore_nn_value_head
 
     def evaluate(
         self, render_trajectory: bool = False
@@ -97,6 +99,7 @@ class Evaluator:
         mcts_config.overhang_penalty_weight = self.overhang_penalty_weight
         mcts_config.visit_sampling_epsilon = 0.0
         mcts_config.seed = self.eval_mcts_seed
+        mcts_config.ignore_nn_value_head = self.ignore_nn_value_head
 
         replay_path = self.checkpoint_dir / EVAL_REPLAYS_FILENAME
 

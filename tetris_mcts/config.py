@@ -83,6 +83,9 @@ class TrainingConfig:
     add_noise: bool = (  # Whether to add Dirichlet noise at the MCTS root during self-play
         True
     )
+    ignore_nn_value_head: bool = (  # If True, MCTS uses NN policy priors but forces NN value estimates to 0.0
+        False
+    )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
     )
