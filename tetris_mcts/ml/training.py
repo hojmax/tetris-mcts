@@ -484,6 +484,7 @@ class Trainer:
                             game_stats,
                         ) in generator.drain_completed_game_stats():
                             game_metrics = {
+                                "game_number": game_number,
                                 "game/number": game_number,
                                 "trainer_step": self.step,
                             }

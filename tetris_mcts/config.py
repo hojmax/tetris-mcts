@@ -86,7 +86,7 @@ class TrainingConfig:
     )
     num_workers: int = 7  # Parallel game generation threads
     max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
-        100
+        50
     )
     death_penalty: float = 5.0  # Penalty subtracted from value when game ends in death
     overhang_penalty_weight: float = (  # Weight for normalized overhang penalty in value targets
