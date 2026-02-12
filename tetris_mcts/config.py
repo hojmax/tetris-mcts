@@ -82,7 +82,7 @@ class TrainingConfig:
     dirichlet_alpha: float = 0.01
     dirichlet_epsilon: float = 0.25
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
-        0.15
+        0
     )
     num_workers: int = 7  # Parallel game generation threads
     max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
@@ -99,8 +99,8 @@ class TrainingConfig:
         True  # Whether evaluator worker adds Dirichlet noise while gating candidates
     )
     bootstrap_without_network: bool = True  # If True, self-play starts with uniform-prior/zero-value MCTS until first promotion
-    bootstrap_num_simulations: int = (
-        4000  # Simulations per move before first promoted NN model
+    bootstrap_num_simulations: int = (  # Simulations per move before first promoted NN model
+        4000
     )
 
     # Replay buffer
