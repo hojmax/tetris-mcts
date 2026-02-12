@@ -102,8 +102,7 @@ def main() -> None:
         queue_names.append(list(PIECE_INDEX.keys())[q_idx])
     print(f"Encoded queue:         {queue_names}")
     print(
-        f"Encoded placement count: {aux[51]} "
-        f"(raw {PLACEMENT_COUNT}/{MAX_PLACEMENTS})"
+        f"Encoded placement count: {aux[51]} (raw {PLACEMENT_COUNT}/{MAX_PLACEMENTS})"
     )
     print()
 

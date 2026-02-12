@@ -80,7 +80,9 @@ class TrainingConfig:
     temperature: float = 1.5
     dirichlet_alpha: float = 0.02
     dirichlet_epsilon: float = 0.25
-    add_noise: bool = True  # Whether to add Dirichlet noise at the MCTS root during self-play
+    add_noise: bool = (  # Whether to add Dirichlet noise at the MCTS root during self-play
+        True
+    )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
     )

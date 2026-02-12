@@ -1158,9 +1158,7 @@ impl GameGenerator {
                 );
                 return 0;
             }
-            if let Some(result) =
-                candidate_agent.play_game(max_placements, add_noise)
-            {
+            if let Some(result) = candidate_agent.play_game(max_placements, add_noise) {
                 candidate_results.push(result);
             }
         }
