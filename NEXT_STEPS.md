@@ -1,6 +1,8 @@
 # Next Steps
 
-- [ ] Try to handcraft great Tetris bot.
+- [ ] Try to handcraft great Tetris bot heuristics.
+- [ ] Try running this with just the policy head, no value head. Must be better?
+    - My leading hypothesis is that the noise in the value estimates are ruining the model's game playing ability. But the policy loss is actually going pretty good. So should be quite useful?
 - [ ] What AWS instance would be well suited for this workload?
 - [ ] Take an interestnig state like tetris_mcts/scripts/outputs/game_3194.gif at step 14 (oppurtinity for t spin), and see how the model evaluates that state? Is it not reached or something?
 - [ ] Learning rate of around 0.0005. 0.005 is too high. Cycling too much on the learning rate.

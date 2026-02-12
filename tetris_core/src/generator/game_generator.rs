@@ -505,6 +505,8 @@ impl GameGenerator {
             })?;
         }
 
+        self.cleanup_queued_candidate_artifacts();
+
         Ok(())
     }
 
@@ -1382,12 +1384,15 @@ impl GameGenerator {
         }
     }
 
-    fn model_artifact_paths(model_path: &Path) -> [PathBuf; 4] {
+    fn model_artifact_paths(model_path: &Path) -> [PathBuf; 7] {
         let base_path = model_path.with_extension("");
         [
             model_path.to_path_buf(),
+            model_path.with_extension("onnx.data"),
             base_path.with_extension("conv.onnx"),
+            base_path.with_extension("conv.onnx.data"),
             base_path.with_extension("heads.onnx"),
+            base_path.with_extension("heads.onnx.data"),
             base_path.with_extension("fc.bin"),
         ]
     }
@@ -1425,6 +1430,30 @@ impl GameGenerator {
         }
         Self::remove_model_artifacts(model_path);
     }
+
+    fn cleanup_queued_candidate_artifacts(&self) {
+        let incumbent_path = self.incumbent_model_path.read().unwrap().clone();
+
+        let pending = self.pending_candidate.write().unwrap().take();
+        if let Some(candidate) = pending {
+            Self::remove_model_artifacts_if_safe(
+                &candidate.model_path,
+                &self.bootstrap_model_path,
+                &incumbent_path,
+                None,
+            );
+        }
+
+        let evaluating = self.evaluating_candidate.write().unwrap().take();
+        if let Some(candidate) = evaluating {
+            Self::remove_model_artifacts_if_safe(
+                &candidate.model_path,
+                &self.bootstrap_model_path,
+                &incumbent_path,
+                None,
+            );
+        }
+    }
 }
 
 impl Drop for GameGenerator {
@@ -1434,6 +1463,7 @@ impl Drop for GameGenerator {
         for handle in self.thread_handles.drain(..) {
             let _ = handle.join();
         }
+        self.cleanup_queued_candidate_artifacts();
     }
 }
 
@@ -1574,9 +1604,12 @@ mod tests {
         let onnx_path = unique_temp_path("candidate").with_extension("onnx");
         let artifacts = GameGenerator::model_artifact_paths(&onnx_path);
         assert_eq!(artifacts[0], onnx_path);
-        assert_eq!(artifacts[1], onnx_path.with_extension("conv.onnx"));
-        assert_eq!(artifacts[2], onnx_path.with_extension("heads.onnx"));
-        assert_eq!(artifacts[3], onnx_path.with_extension("fc.bin"));
+        assert_eq!(artifacts[1], onnx_path.with_extension("onnx.data"));
+        assert_eq!(artifacts[2], onnx_path.with_extension("conv.onnx"));
+        assert_eq!(artifacts[3], onnx_path.with_extension("conv.onnx.data"));
+        assert_eq!(artifacts[4], onnx_path.with_extension("heads.onnx"));
+        assert_eq!(artifacts[5], onnx_path.with_extension("heads.onnx.data"));
+        assert_eq!(artifacts[6], onnx_path.with_extension("fc.bin"));
     }
 
     #[test]
@@ -1622,5 +1655,61 @@ mod tests {
         for artifact in &artifacts {
             assert!(!artifact.exists(), "candidate artifacts should be removed");
         }
+    }
+
+    #[test]
+    fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
+        let bootstrap_path = unique_temp_path("bootstrap").with_extension("onnx");
+        let training_data_path = unique_temp_path("training_data");
+        let generator = GameGenerator::new(
+            bootstrap_path.to_string_lossy().to_string(),
+            training_data_path.to_string_lossy().to_string(),
+            None,
+            100,
+            true,
+            16,
+            1,
+            1,
+            0,
+            1,
+            true,
+            10,
+        )
+        .expect("generator should construct");
+
+        let pending_path = unique_temp_path("pending").with_extension("onnx");
+        for artifact in GameGenerator::model_artifact_paths(&pending_path) {
+            fs::write(&artifact, b"pending").expect("pending artifact write should succeed");
+        }
+        let evaluating_path = unique_temp_path("evaluating").with_extension("onnx");
+        for artifact in GameGenerator::model_artifact_paths(&evaluating_path) {
+            fs::write(&artifact, b"evaluating").expect("evaluating artifact write should succeed");
+        }
+
+        {
+            let mut pending = generator.pending_candidate.write().unwrap();
+            *pending = Some(CandidateModelRequest {
+                model_path: pending_path.clone(),
+                model_step: 1,
+            });
+        }
+        {
+            let mut evaluating = generator.evaluating_candidate.write().unwrap();
+            *evaluating = Some(CandidateModelRequest {
+                model_path: evaluating_path.clone(),
+                model_step: 2,
+            });
+        }
+
+        generator.cleanup_queued_candidate_artifacts();
+
+        for artifact in GameGenerator::model_artifact_paths(&pending_path) {
+            assert!(!artifact.exists(), "pending artifacts should be removed");
+        }
+        for artifact in GameGenerator::model_artifact_paths(&evaluating_path) {
+            assert!(!artifact.exists(), "evaluating artifacts should be removed");
+        }
+        assert!(generator.pending_candidate.read().unwrap().is_none());
+        assert!(generator.evaluating_candidate.read().unwrap().is_none());
     }
 }
