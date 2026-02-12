@@ -163,6 +163,11 @@ def _split_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
     )
 
 
+def split_model_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
+    """Return paths for the split-model artifacts associated with an ONNX file."""
+    return _split_paths(onnx_path)
+
+
 def export_split_models(
     model: TetrisNet,
     onnx_path: str | Path,

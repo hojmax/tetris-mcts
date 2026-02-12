@@ -58,6 +58,12 @@ pub struct TrainingExample {
     /// Overhang fields in the post-action board used for this state's step penalty
     #[pyo3(get)]
     pub overhang_fields: u32,
+    /// 1-indexed global game number used for WandB per-game metrics
+    #[pyo3(get)]
+    pub game_number: u64,
+    /// Total raw attack for the full game that produced this example
+    #[pyo3(get)]
+    pub game_total_attack: u32,
 }
 
 /// Statistics about the MCTS tree structure after a single search.
@@ -423,6 +429,8 @@ mod tests {
             value: 10.5,
             action_mask: vec![false; NUM_ACTIONS],
             overhang_fields: 0,
+            game_number: 0,
+            game_total_attack: 0,
         };
 
         assert_eq!(example.board.len(), 200);
@@ -451,6 +459,8 @@ mod tests {
                 value: 0.0,
                 action_mask: vec![],
                 overhang_fields: 0,
+                game_number: 0,
+                game_total_attack: 0,
             };
             assert!(example.current_piece < 7);
         }
@@ -469,6 +479,8 @@ mod tests {
             value: 0.0,
             action_mask: vec![],
             overhang_fields: 0,
+            game_number: 0,
+            game_total_attack: 0,
         };
         assert_eq!(example.hold_piece, 7);
     }
@@ -486,6 +498,8 @@ mod tests {
             value: 0.0,
             action_mask: vec![],
             overhang_fields: 0,
+            game_number: 0,
+            game_total_attack: 0,
         };
         assert_eq!(example.hold_piece, 3);
         assert!(!example.hold_available);
@@ -504,6 +518,8 @@ mod tests {
             value: 25.0,
             action_mask: vec![true; NUM_ACTIONS],
             overhang_fields: 12,
+            game_number: 0,
+            game_total_attack: 0,
         };
 
         let cloned = example.clone();
@@ -553,6 +569,8 @@ mod tests {
             value: 100.0,
             action_mask: vec![true; NUM_ACTIONS],
             overhang_fields: 5,
+            game_number: 0,
+            game_total_attack: 0,
         };
 
         let example2 = TrainingExample {
@@ -566,6 +584,8 @@ mod tests {
             value: 95.0,
             action_mask: vec![true; NUM_ACTIONS],
             overhang_fields: 4,
+            game_number: 0,
+            game_total_attack: 0,
         };
 
         let result = GameResult {
@@ -660,6 +680,8 @@ mod tests {
             value: 0.0,
             action_mask: action_mask.clone(),
             overhang_fields: 0,
+            game_number: 0,
+            game_total_attack: 0,
         };
 
         // Check consistency: invalid actions should have zero policy

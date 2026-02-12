@@ -393,14 +393,22 @@ impl GameGenerator {
 
             if !loaded_examples.is_empty() {
                 let loaded_examples_count = loaded_examples.len();
+                let loaded_max_game_number = loaded_examples
+                    .iter()
+                    .map(|example| example.game_number)
+                    .max()
+                    .unwrap_or(0);
                 self.buffer.add_examples(loaded_examples);
                 let retained_examples_count = self.buffer.len();
+                self.games_generated
+                    .store(loaded_max_game_number, Ordering::SeqCst);
                 self.examples_generated
                     .store(retained_examples_count as u64, Ordering::SeqCst);
                 eprintln!(
-                    "[GameGenerator] Loaded {} replay examples from {}",
+                    "[GameGenerator] Loaded {} replay examples from {} (max_game_number={})",
                     retained_examples_count,
-                    self.training_data_path.display()
+                    self.training_data_path.display(),
+                    loaded_max_game_number
                 );
                 if retained_examples_count < loaded_examples_count {
                     eprintln!(
@@ -1318,7 +1326,7 @@ impl GameGenerator {
         count_toward_incumbent: bool,
     ) {
         let GameResult {
-            examples,
+            mut examples,
             total_attack,
             num_moves,
             avg_moves,
@@ -1332,10 +1340,15 @@ impl GameGenerator {
             ..
         } = result;
 
+        let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
+        for example in &mut examples {
+            example.game_number = game_number;
+            example.game_total_attack = total_attack;
+        }
+
         let num_examples = examples.len() as u64;
         buffer.add_examples(examples);
 
-        let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
         examples_generated.fetch_add(num_examples, Ordering::SeqCst);
         game_stats.add(&stats, total_attack);
 
@@ -1450,6 +1463,8 @@ mod tests {
             value: move_number as f32,
             action_mask,
             overhang_fields: move_number,
+            game_number: 0,
+            game_total_attack: 0,
         }
     }
 

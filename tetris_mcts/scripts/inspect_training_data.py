@@ -1,6 +1,7 @@
 """Inspect training data by rendering games as GIFs."""
 
 from dataclasses import dataclass
+import json
 import sys
 from pathlib import Path
 
@@ -26,6 +27,15 @@ logger = structlog.get_logger()
 console = Console()
 
 
+@dataclass(frozen=True)
+class GameSlice:
+    local_index: int
+    start: int
+    end: int
+    total_attack: float
+    wandb_game_number: int | None
+
+
 def get_piece_type(one_hot: np.ndarray) -> int | None:
     """Convert one-hot encoded piece to type index."""
     idx = np.argmax(one_hot)
@@ -47,6 +57,109 @@ def find_game_boundaries(move_numbers: np.ndarray) -> list[tuple[int, int]]:
     return games
 
 
+def build_game_slices(data: np.lib.npyio.NpzFile) -> list[GameSlice]:
+    """Build game slices with metadata aligned to WandB game numbers when available."""
+    n_examples = len(data["boards"])
+    if n_examples == 0:
+        return []
+
+    if "game_numbers" in data and "game_total_attacks" in data:
+        game_numbers = data["game_numbers"].astype(np.int64)
+        game_total_attacks = data["game_total_attacks"].astype(np.float32)
+
+        boundaries = np.where(np.diff(game_numbers) != 0)[0] + 1
+        starts = np.concatenate(([0], boundaries))
+        ends = np.concatenate((boundaries, [n_examples]))
+
+        games: list[GameSlice] = []
+        for local_index, (start_raw, end_raw) in enumerate(zip(starts, ends)):
+            start = int(start_raw)
+            end = int(end_raw)
+            game_number = int(game_numbers[start])
+            total_attack = float(game_total_attacks[start])
+            games.append(
+                GameSlice(
+                    local_index=local_index,
+                    start=start,
+                    end=end,
+                    total_attack=total_attack,
+                    wandb_game_number=game_number,
+                )
+            )
+        return games
+
+    logger.warning(
+        "NPZ is missing game_numbers/game_total_attacks; WandB index alignment is unavailable",
+        expected_keys=["game_numbers", "game_total_attacks"],
+    )
+    move_numbers = data["move_numbers"]
+    value_targets = data["value_targets"]
+    boundaries = find_game_boundaries(move_numbers)
+    games = []
+    for local_index, (start_raw, end_raw) in enumerate(boundaries):
+        start = int(start_raw)
+        end = int(end_raw)
+        games.append(
+            GameSlice(
+                local_index=local_index,
+                start=start,
+                end=end,
+                total_attack=float(value_targets[start]),
+                wandb_game_number=None,
+            )
+        )
+    return games
+
+
+def find_game_by_wandb_number(games: list[GameSlice], wandb_game_number: int) -> GameSlice:
+    for game in games:
+        if game.wandb_game_number == wandb_game_number:
+            return game
+    raise ValueError(f"WandB game number not found in snapshot: {wandb_game_number}")
+
+
+def get_game_by_local_index(games: list[GameSlice], requested_index: int) -> GameSlice:
+    n_games = len(games)
+    game_idx = requested_index if requested_index >= 0 else n_games + requested_index
+    if game_idx < 0 or game_idx >= n_games:
+        raise ValueError(
+            f"Game index out of range: requested={requested_index}, valid=[0, {n_games})"
+        )
+    return games[game_idx]
+
+
+def load_reward_config(config_path: Path) -> tuple[int, float, float] | None:
+    if not config_path.exists():
+        return None
+    config = json.loads(config_path.read_text())
+    return (
+        int(config["max_moves"]),
+        float(config["death_penalty"]),
+        float(config["overhang_penalty_weight"]),
+    )
+
+
+def estimate_total_attack_from_value_targets(
+    data: np.lib.npyio.NpzFile,
+    game: GameSlice,
+    reward_config: tuple[int, float, float] | None,
+) -> int:
+    if reward_config is None:
+        return int(round(game.total_attack))
+
+    max_moves, death_penalty, overhang_penalty_weight = reward_config
+    overhang_fields = data["overhang_fields"][game.start : game.end].astype(np.float32)
+    value_target_start = float(data["value_targets"][game.start])
+    overhang_penalty = np.sum(overhang_fields / 190.0 * overhang_penalty_weight).item()
+    num_moves = game.end - game.start
+    death_offset = 0.0
+    if num_moves < max_moves:
+        remaining = (max_moves - num_moves) / max_moves
+        death_offset = death_penalty * max(remaining, 0.0)
+    estimated_total_attack = value_target_start + overhang_penalty + death_offset
+    return int(round(estimated_total_attack))
+
+
 @dataclass
 class ScriptArgs:
     """Inspect training data by rendering games as GIFs."""
@@ -65,6 +178,12 @@ class ScriptArgs:
         None  # Output path (default: script outputs/game_{index}.gif)
     )
     frame_duration: int = DEFAULT_GIF_FRAME_DURATION_MS  # Milliseconds per frame
+    highest_attack_only: bool = (
+        False  # If True, ignore game_index and select highest-attack game
+    )
+    wandb_game_number: int = (
+        -1  # Select by WandB game_number (1-indexed); ignored when -1
+    )
     print_buffer_vectors: bool = (
         True  # Print full literal vectors/matrices for selected game
     )
@@ -78,6 +197,10 @@ class ScriptArgs:
             )
         if self.config_path is None:
             self.config_path = run_dir / CONFIG_FILENAME
+        if self.highest_attack_only and self.wandb_game_number > 0:
+            raise ValueError(
+                "Cannot set both highest_attack_only=True and wandb_game_number > 0"
+            )
 
 
 def format_array(arr: np.ndarray) -> str:
@@ -115,6 +238,13 @@ def print_game_buffer_vectors(data: np.lib.npyio.NpzFile, start: int, end: int) 
 
 
 def main(args: ScriptArgs) -> None:
+    if args.checkpoint_path is None:
+        raise ValueError("checkpoint_path cannot be None")
+    if args.config_path is None:
+        raise ValueError("config_path cannot be None")
+    checkpoint_path = args.checkpoint_path
+    config_path = args.config_path
+
     # Validate file
     if not args.data_path.exists():
         logger.error("File not found", path=str(args.data_path))
@@ -126,51 +256,113 @@ def main(args: ScriptArgs) -> None:
         return
 
     value_predictor: ValuePredictor | None = None
-    if args.checkpoint_path.exists() and args.config_path.exists():
-        value_predictor = ValuePredictor(args.checkpoint_path, args.config_path)
+    reward_config = load_reward_config(config_path)
+    if checkpoint_path.exists() and config_path.exists():
+        value_predictor = ValuePredictor(checkpoint_path, config_path)
         logger.info(
             "Loaded model predictions",
-            checkpoint_path=str(args.checkpoint_path),
-            config_path=str(args.config_path),
+            checkpoint_path=str(checkpoint_path),
+            config_path=str(config_path),
         )
     else:
         logger.warning(
             "Model predictions disabled: checkpoint/config not found",
-            checkpoint_path=str(args.checkpoint_path),
-            config_path=str(args.config_path),
+            checkpoint_path=str(checkpoint_path),
+            config_path=str(config_path),
         )
 
     # Load data
     with np.load(args.data_path) as data:
         n_examples = len(data["boards"])
-        move_numbers = data["move_numbers"]
-
-        # Find game boundaries
-        games = find_game_boundaries(move_numbers)
+        games = build_game_slices(data)
         n_games = len(games)
-
-        # Handle negative game index
-        game_idx = (
-            args.game_index if args.game_index >= 0 else n_games + args.game_index
-        )
-        if game_idx < 0 or game_idx >= n_games:
-            logger.error(
-                "Game index out of range",
-                requested_game_index=args.game_index,
-                min_index=0,
-                max_exclusive=n_games,
-            )
+        if n_games == 0:
+            logger.error("No games found in dataset", path=str(args.data_path))
             return
 
-        start, end = games[game_idx]
-        start = int(start)
-        end = int(end)
+        if args.highest_attack_only:
+            game = max(
+                games,
+                key=lambda g: estimate_total_attack_from_value_targets(
+                    data,
+                    g,
+                    reward_config,
+                ),
+            )
+        elif args.wandb_game_number > 0:
+            has_wandb_metadata = any(
+                game_slice.wandb_game_number is not None for game_slice in games
+            )
+            if not has_wandb_metadata:
+                approximated_local_index = args.wandb_game_number - 1
+                logger.warning(
+                    "Approximating WandB game number via local index (wandb_game_number - 1)",
+                    requested_wandb_game_number=args.wandb_game_number,
+                    approximated_local_index=approximated_local_index,
+                )
+                try:
+                    game = get_game_by_local_index(games, approximated_local_index)
+                except ValueError:
+                    logger.error(
+                        "Approximated local index is out of range",
+                        requested_wandb_game_number=args.wandb_game_number,
+                        approximated_local_index=approximated_local_index,
+                        min_index=0,
+                        max_exclusive=n_games,
+                    )
+                    return
+            else:
+                try:
+                    game = find_game_by_wandb_number(games, args.wandb_game_number)
+                except ValueError:
+                    logger.error(
+                        "WandB game number not found",
+                        requested_wandb_game_number=args.wandb_game_number,
+                        min_available=min(
+                            [
+                                g.wandb_game_number
+                                for g in games
+                                if g.wandb_game_number is not None
+                            ],
+                            default=None,
+                        ),
+                        max_available=max(
+                            [
+                                g.wandb_game_number
+                                for g in games
+                                if g.wandb_game_number is not None
+                            ],
+                            default=None,
+                        ),
+                    )
+                    return
+        else:
+            try:
+                game = get_game_by_local_index(games, args.game_index)
+            except ValueError:
+                logger.error(
+                    "Game index out of range",
+                    requested_game_index=args.game_index,
+                    min_index=0,
+                    max_exclusive=n_games,
+                )
+                return
+
+        start = game.start
+        end = game.end
         game_length = end - start
+        game_total_attack = estimate_total_attack_from_value_targets(
+            data,
+            game,
+            reward_config,
+        )
 
         logger.info("Loaded dataset", num_games=n_games, total_examples=n_examples)
         logger.info(
             "Rendering game",
-            game_index=game_idx,
+            game_index=game.local_index,
+            wandb_game_number=game.wandb_game_number,
+            game_total_attack=game_total_attack,
             example_start=start,
             example_end=end - 1,
             num_frames=game_length,
@@ -213,9 +405,12 @@ def main(args: ScriptArgs) -> None:
             frame = render_board(
                 board=board,
                 move_number=move_number,
-                attack=int(value_target),
+                attack=game_total_attack,
                 value_pred=value_pred,
-                info_text=f"Can hold: {'y' if can_hold else 'n'}",
+                info_text=(
+                    f"Can hold: {'y' if can_hold else 'n'}"
+                    f"  value_target: {value_target:.2f}"
+                ),
                 show_piece_info=True,
                 current_piece_name=current_name,
                 hold_piece_name=hold_name,
@@ -225,7 +420,10 @@ def main(args: ScriptArgs) -> None:
 
         # Determine save path
         if args.save_path is None:
-            save_path = OUTPUTS_DIR / f"game_{game_idx}.gif"
+            if game.wandb_game_number is not None:
+                save_path = OUTPUTS_DIR / f"game_wandb_{game.wandb_game_number}.gif"
+            else:
+                save_path = OUTPUTS_DIR / f"game_{game.local_index}.gif"
         else:
             save_path = args.save_path
         save_path.parent.mkdir(parents=True, exist_ok=True)

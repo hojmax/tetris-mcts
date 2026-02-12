@@ -22,7 +22,7 @@ from tetris_mcts.config import (
     QUEUE_SIZE,
 )
 from tetris_mcts.ml.network import TetrisNet
-from tetris_mcts.ml.weights import export_onnx, export_split_models
+from tetris_mcts.ml.weights import export_onnx, export_split_models, split_model_paths
 
 from tetris_core import (
     MCTSConfig,
@@ -32,6 +32,17 @@ from tetris_core import (
 )
 
 logger = structlog.get_logger()
+
+
+def assert_rust_inference_artifacts(onnx_path: Path) -> None:
+    conv_path, heads_path, fc_path = split_model_paths(onnx_path)
+    required_paths = [onnx_path, conv_path, heads_path, fc_path]
+    missing_paths = [str(path) for path in required_paths if not path.exists()]
+    if missing_paths:
+        raise RuntimeError(
+            "Model export incomplete for Rust inference; missing artifacts: "
+            + ", ".join(missing_paths)
+        )
 
 
 class Evaluator:
@@ -71,11 +82,13 @@ class Evaluator:
 
         # Export model to ONNX for Rust evaluation (full + split for cached inference)
         onnx_path = self.checkpoint_dir / EVAL_ONNX_FILENAME
-        export_onnx(self.model, onnx_path)
-        export_split_models(self.model, onnx_path)
-
-        if not onnx_path.exists():
-            raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
+        full_export_ok = export_onnx(self.model, onnx_path)
+        split_export_ok = export_split_models(self.model, onnx_path)
+        if not full_export_ok:
+            raise RuntimeError("ONNX export failed due to missing dependencies")
+        if not split_export_ok:
+            raise RuntimeError("Split-model export failed due to missing dependencies")
+        assert_rust_inference_artifacts(onnx_path)
 
         # Create MCTS config for evaluation (temperature=0 enforced by evaluate_model)
         mcts_config = MCTSConfig()

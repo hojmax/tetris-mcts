@@ -288,6 +288,8 @@ impl MCTSAgent {
                 value: values[i],
                 action_mask: mask.clone(),
                 overhang_fields: overhang_fields[i],
+                game_number: 0,
+                game_total_attack: 0,
             });
         }
 

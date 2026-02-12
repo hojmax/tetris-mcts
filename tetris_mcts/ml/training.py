@@ -28,7 +28,12 @@ from tetris_mcts.config import (
     TrainingConfig,
 )
 from tetris_mcts.ml.network import TetrisNet
-from tetris_mcts.ml.weights import WeightManager, export_onnx, export_split_models
+from tetris_mcts.ml.weights import (
+    WeightManager,
+    export_onnx,
+    export_split_models,
+    split_model_paths,
+)
 from tetris_mcts.ml.loss import RunningLossBalancer, compute_loss, compute_metrics
 from tetris_mcts.ml.evaluation import Evaluator
 from tetris_mcts.ml.visualization import create_trajectory_gif
@@ -36,6 +41,17 @@ from tetris_mcts.ml.visualization import create_trajectory_gif
 from tetris_core import MCTSConfig, GameGenerator
 
 logger = structlog.get_logger()
+
+
+def assert_rust_inference_artifacts(onnx_path: Path) -> None:
+    conv_path, heads_path, fc_path = split_model_paths(onnx_path)
+    required_paths = [onnx_path, conv_path, heads_path, fc_path]
+    missing_paths = [str(path) for path in required_paths if not path.exists()]
+    if missing_paths:
+        raise RuntimeError(
+            "Model export incomplete for Rust inference; missing artifacts: "
+            + ", ".join(missing_paths)
+        )
 
 
 class Trainer:
@@ -289,11 +305,13 @@ class Trainer:
         candidate_model_dir.mkdir(parents=True, exist_ok=True)
 
         # Export initial model (full ONNX + split models for cached Rust inference)
-        export_onnx(self.model, onnx_path)
-        export_split_models(self.model, onnx_path)
-
-        if not onnx_path.exists():
-            raise RuntimeError(f"ONNX export failed - file not created: {onnx_path}")
+        full_export_ok = export_onnx(self.model, onnx_path)
+        split_export_ok = export_split_models(self.model, onnx_path)
+        if not full_export_ok:
+            raise RuntimeError("ONNX export failed due to missing dependencies")
+        if not split_export_ok:
+            raise RuntimeError("Split-model export failed due to missing dependencies")
+        assert_rust_inference_artifacts(onnx_path)
 
         # Create MCTS config for generator
         mcts_config = MCTSConfig()
@@ -506,13 +524,19 @@ class Trainer:
                     candidate_onnx_path = (
                         candidate_model_dir / f"candidate_step_{self.step}.onnx"
                     )
-                    export_onnx(self.model, candidate_onnx_path)
-                    export_split_models(self.model, candidate_onnx_path)
-                    if not candidate_onnx_path.exists():
+                    full_export_ok = export_onnx(self.model, candidate_onnx_path)
+                    split_export_ok = export_split_models(
+                        self.model, candidate_onnx_path
+                    )
+                    if not full_export_ok:
                         raise RuntimeError(
-                            "ONNX export failed - candidate file not created: "
-                            f"{candidate_onnx_path}"
+                            "Candidate ONNX export failed due to missing dependencies"
                         )
+                    if not split_export_ok:
+                        raise RuntimeError(
+                            "Candidate split-model export failed due to missing dependencies"
+                        )
+                    assert_rust_inference_artifacts(candidate_onnx_path)
                     queued = generator.queue_candidate_model(
                         str(candidate_onnx_path),
                         self.step,
