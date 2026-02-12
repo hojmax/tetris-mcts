@@ -224,7 +224,7 @@ From `config.py` TrainingConfig defaults:
 - **Training**: batch_size=1024, lr=0.0005, cosine schedule, weight_decay=1e-4
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
 - **Buffer**: 500K examples (ring buffer), 7 parallel workers
-- **Exploration**: Dirichlet alpha=0.01, epsilon=0.25, visit-sampling epsilon=0.15
+- **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **Model Promotion Gate**: candidate window=30 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
@@ -246,6 +246,7 @@ total_loss = policy_loss + value_loss
 ### Move Masking
 
 Invalid actions get logits set to -inf before softmax, ensuring 0 probability.
+Dirichlet root noise is mixed over `DecisionNode.action_priors` (valid actions only), not all 735 actions.
 
 ### Self-Play Data Generation
 

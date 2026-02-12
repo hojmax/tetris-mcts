@@ -321,6 +321,43 @@ mod tests {
     }
 
     #[test]
+    fn test_set_nn_output_ignores_invalid_action_mass() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env, 0);
+
+        let invalid_action = (0..NUM_ACTIONS)
+            .find(|idx| !node.valid_actions.contains(idx))
+            .expect("Expected at least one invalid action");
+        let preferred_valid_action = node.valid_actions[0];
+
+        let mut policy = vec![0.0; NUM_ACTIONS];
+        policy[invalid_action] = 1000.0;
+        policy[preferred_valid_action] = 1.0;
+
+        node.set_nn_output(&policy, 0.0);
+
+        let preferred_prior_index = node
+            .valid_actions
+            .iter()
+            .position(|&idx| idx == preferred_valid_action)
+            .expect("Preferred valid action should be present in valid_actions");
+
+        for (i, prior) in node.action_priors.iter().enumerate() {
+            if i == preferred_prior_index {
+                assert!(
+                    (*prior - 1.0).abs() < 1e-6,
+                    "Preferred valid action should have all probability mass"
+                );
+            } else {
+                assert_eq!(
+                    *prior, 0.0,
+                    "Other valid actions should have zero mass after renormalization"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_decision_node_add_dirichlet_noise() {
         use rand::SeedableRng;
         let env = TetrisEnv::new(10, 20);

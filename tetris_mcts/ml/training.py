@@ -373,6 +373,10 @@ class Trainer:
         )
 
         train_start_time = time.time()
+        sample_batch_time_s = 0.0
+        sample_batch_count = 0
+        train_step_time_s = 0.0
+        train_step_count = 0
 
         interrupted = False
         pending_error: BaseException | None = None
@@ -381,13 +385,17 @@ class Trainer:
         try:
             while self.step < num_steps:
                 # Sample batch directly from generator's in-memory buffer
+                sample_batch_start = time.perf_counter()
                 result = generator.sample_batch(
                     self.config.batch_size,
                     self.config.max_placements,
                 )
+                sample_batch_elapsed_s = time.perf_counter() - sample_batch_start
                 if result is None:
                     time.sleep(0.1)
                     continue
+                sample_batch_time_s += sample_batch_elapsed_s
+                sample_batch_count += 1
 
                 self.step += 1
                 session_step = self.step - start_step
@@ -408,7 +416,10 @@ class Trainer:
                 )
 
                 # Train step
+                train_step_start = time.perf_counter()
                 metrics = self.train_step(batch)
+                train_step_time_s += time.perf_counter() - train_step_start
+                train_step_count += 1
 
                 for event in generator.drain_model_eval_events():
                     promoted = bool(event["promoted"])
@@ -472,6 +483,16 @@ class Trainer:
                     metrics["throughput/steps_per_second"] = (
                         session_step / elapsed if elapsed > 0 else 0
                     )
+                    metrics["timing/sample_batch_ms"] = (
+                        1000.0 * sample_batch_time_s / sample_batch_count
+                        if sample_batch_count > 0
+                        else 0.0
+                    )
+                    metrics["timing/train_step_ms"] = (
+                        1000.0 * train_step_time_s / train_step_count
+                        if train_step_count > 0
+                        else 0.0
+                    )
                     if log_to_wandb:
                         metrics["trainer_step"] = self.step
                         wandb.log(metrics)
@@ -506,6 +527,10 @@ class Trainer:
                             # games can complete between train ticks, and reusing the
                             # same step causes only a subset to appear in history.
                             wandb.log(game_metrics)
+                    sample_batch_time_s = 0.0
+                    sample_batch_count = 0
+                    train_step_time_s = 0.0
+                    train_step_count = 0
                     logger.info(
                         "Training progress",
                         step=self.step,
@@ -515,6 +540,8 @@ class Trainer:
                         games_generated=games,
                         games_per_second=metrics["throughput/games_per_second"],
                         steps_per_second=metrics["throughput/steps_per_second"],
+                        sample_batch_ms=metrics["timing/sample_batch_ms"],
+                        train_step_ms=metrics["timing/train_step_ms"],
                     )
 
                 # Export updated model for generator
@@ -522,6 +549,7 @@ class Trainer:
                     candidate_onnx_path = (
                         candidate_model_dir / f"candidate_step_{self.step}.onnx"
                     )
+                    onnx_export_start = time.perf_counter()
                     full_export_ok = export_onnx(self.model, candidate_onnx_path)
                     split_export_ok = export_split_models(
                         self.model, candidate_onnx_path
@@ -535,6 +563,7 @@ class Trainer:
                             "Candidate split-model export failed due to missing dependencies"
                         )
                     assert_rust_inference_artifacts(candidate_onnx_path)
+                    onnx_export_ms = 1000.0 * (time.perf_counter() - onnx_export_start)
                     queued = generator.queue_candidate_model(
                         str(candidate_onnx_path),
                         self.step,
@@ -544,14 +573,24 @@ class Trainer:
                         step=self.step,
                         path=str(candidate_onnx_path),
                         queued=queued,
+                        onnx_export_ms=onnx_export_ms,
                     )
+                    if log_to_wandb:
+                        wandb.log(
+                            {
+                                "trainer_step": self.step,
+                                "timing/onnx_export_ms": onnx_export_ms,
+                            }
+                        )
 
                 # Evaluate
                 if self.step % self.config.eval_interval == 0:
                     # Render trajectory every evaluation for visualization
+                    eval_start = time.perf_counter()
                     eval_result, trajectory_frames = self.evaluate(
                         render_trajectory=log_to_wandb
                     )
+                    eval_ms = 1000.0 * (time.perf_counter() - eval_start)
                     if log_to_wandb:
                         eval_gif_path: Optional[Path] = None
                         log_data = {
@@ -563,6 +602,7 @@ class Trainer:
                             "eval/avg_moves": eval_result.avg_moves,
                             "eval/attack_per_piece": eval_result.attack_per_piece,
                             "eval/lines_per_piece": eval_result.lines_per_piece,
+                            "timing/eval_ms": eval_ms,
                             "trainer_step": self.step,
                         }
                         # Log trajectory as animated GIF

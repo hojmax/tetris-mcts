@@ -151,16 +151,62 @@ def compute_metrics(
         )
         entropy = -torch.sum(policy_probs * log_probs_safe, dim=-1).mean()
 
-        # Value prediction error
-        value_error = torch.abs(value_pred.squeeze(-1) - value_targets).mean()
+        value_pred_flat = value_pred.squeeze(-1)
+        value_residual = value_pred_flat - value_targets
+        value_error = torch.abs(value_residual).mean()
+        value_bias = value_residual.mean()
+        value_target_var = torch.var(value_targets, unbiased=False)
+        value_residual_var = torch.var(value_targets - value_pred_flat, unbiased=False)
+        if value_target_var.item() > 0:
+            value_explained_variance = 1.0 - (value_residual_var / value_target_var)
+        else:
+            value_explained_variance = torch.tensor(
+                float("nan"), device=value_targets.device
+            )
 
         # Top-1 accuracy (if target is argmax of MCTS policy)
         pred_actions = policy_probs.argmax(dim=-1)
         target_actions = policy_targets.argmax(dim=-1)
         top1_acc = (pred_actions == target_actions).float().mean()
 
+        positive_target = policy_targets > 0
+        target_log_probs = torch.where(
+            positive_target,
+            torch.log(policy_targets),
+            torch.zeros_like(policy_targets),
+        )
+        target_entropy = -torch.sum(
+            torch.where(
+                positive_target,
+                policy_targets * target_log_probs,
+                torch.zeros_like(policy_targets),
+            ),
+            dim=-1,
+        ).mean()
+        policy_kl_to_target = torch.sum(
+            torch.where(
+                positive_target,
+                policy_targets * (target_log_probs - log_probs),
+                torch.zeros_like(policy_targets),
+            ),
+            dim=-1,
+        ).mean()
+
+        top3 = torch.topk(policy_probs, k=3, dim=-1).values
+        p1 = top3[:, 0]
+        p2 = top3[:, 1]
+        p3 = top3[:, 2]
+
     return {
         "policy_entropy": entropy.item(),
         "value_error": value_error.item(),
         "top1_accuracy": top1_acc.item(),
+        "train/value_explained_variance": value_explained_variance.item(),
+        "train/value_bias": value_bias.item(),
+        "train/policy_kl_to_target": policy_kl_to_target.item(),
+        "train/target_entropy": target_entropy.item(),
+        "train/policy_p1_mean": p1.mean().item(),
+        "train/policy_p2_mean": p2.mean().item(),
+        "train/policy_p3_mean": p3.mean().item(),
+        "train/policy_top3_mass": (p1 + p2 + p3).mean().item(),
     }
