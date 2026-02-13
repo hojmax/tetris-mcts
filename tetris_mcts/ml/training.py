@@ -331,7 +331,10 @@ class Trainer:
             files_to_upload.extend([conv_path, heads_path, fc_path])
         else:
             # WeightManager.save currently always exports ONNX for Rust; fail fast if this changes.
-            expected_onnx_path = self.config.checkpoint_dir / LATEST_ONNX_FILENAME
+            checkpoint_dir = self.config.checkpoint_dir
+            if checkpoint_dir is None:
+                raise RuntimeError("checkpoint_dir is not set on training config")
+            expected_onnx_path = checkpoint_dir / LATEST_ONNX_FILENAME
             raise RuntimeError(
                 "Saved paths missing ONNX artifact during final WandB upload "
                 f"(expected {expected_onnx_path})"
@@ -344,9 +347,7 @@ class Trainer:
                 )
             artifact.add_file(str(file_path), name=file_path.name)
 
-        wandb.log_artifact(
-            artifact, aliases=["latest", "final", f"step-{self.step}"]
-        )
+        wandb.log_artifact(artifact, aliases=["latest", "final", f"step-{self.step}"])
         logger.info(
             "Uploaded final model artifact to WandB",
             artifact_name=artifact_name,

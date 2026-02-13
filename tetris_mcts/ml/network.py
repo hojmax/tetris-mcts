@@ -1,7 +1,7 @@
 """
-Neural Network Architecture for Tetris AlphaZero
+Neural network architecture for Tetris AlphaZero.
 
-Input Representation:
+Input representation:
 - Board state: 20 x 10 binary (1 = filled, 0 = empty)
 - Current piece: 7 (one-hot)
 - Hold piece: 8 (one-hot, 7 pieces + empty)
@@ -12,11 +12,11 @@ Input Representation:
 - Back-to-back: 1 (binary)
 - Next hidden piece distribution: 7 (7-bag probabilities)
 
-Total input: 200 + 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 = 261 features
+Total input: 200 board + 61 aux = 261 features.
 
 Output:
-- Policy head: 735 outputs (softmax over actions: 734 placements + hold)
-- Value head: 1 output (predicted scalar value target)
+- Policy head: 735 outputs (734 placements + hold)
+- Value head: 1 output (scalar target)
 """
 
 import torch
@@ -56,15 +56,7 @@ AUX_FEATURES = (
 
 
 class TetrisNet(nn.Module):
-    """
-    AlphaZero-style network for Tetris.
-
-    Architecture:
-    - Conv layers process the board (20x10x1)
-    - Aux features concatenated after flattening
-    - Shared FC layer with LayerNorm
-    - Separate policy and value heads
-    """
+    """Gated-fusion model with cached board embedding support."""
 
     def __init__(
         self,
@@ -72,6 +64,8 @@ class TetrisNet(nn.Module):
         fc_hidden: int,
         conv_kernel_size: int,
         conv_padding: int,
+        aux_hidden: int = 24,
+        num_fusion_blocks: int = 0,
     ):
         super().__init__()
 
@@ -83,7 +77,6 @@ class TetrisNet(nn.Module):
         conv0 = conv_filters[0]
         conv1 = conv_filters[1]
 
-        # Convolutional layers for board
         self.conv1 = nn.Conv2d(
             1, conv0, kernel_size=conv_kernel_size, padding=conv_padding
         )
@@ -96,18 +89,44 @@ class TetrisNet(nn.Module):
         )
         self.bn2 = nn.BatchNorm2d(conv1)
 
-        # Flattened conv output size: 20 * 10 * conv1
+        if num_fusion_blocks < 0:
+            raise ValueError("num_fusion_blocks must be >= 0")
+
         conv_flat_size = BOARD_HEIGHT * BOARD_WIDTH * conv1
+        fusion_hidden = fc_hidden
 
-        # Fully connected layer
-        self.fc1 = nn.Linear(conv_flat_size + AUX_FEATURES, fc_hidden)
-        self.ln1 = nn.LayerNorm(fc_hidden)
+        # Board-only projection cached by Rust inference.
+        self.board_proj = nn.Linear(conv_flat_size, fusion_hidden)
 
-        # Policy head
-        self.policy_head = nn.Linear(fc_hidden, NUM_ACTIONS)
+        # Aux-conditioned modulation.
+        self.aux_fc = nn.Linear(AUX_FEATURES, aux_hidden)
+        self.aux_ln = nn.LayerNorm(aux_hidden)
+        self.gate_fc = nn.Linear(aux_hidden, fusion_hidden)
+        self.aux_proj = nn.Linear(aux_hidden, fusion_hidden)
 
-        # Value head
-        self.value_head = nn.Linear(fc_hidden, 1)
+        # Post-fusion processing.
+        self.fusion_ln = nn.LayerNorm(fusion_hidden)
+        self.fusion_blocks = nn.ModuleList(
+            [ResidualFusionBlock(fusion_hidden) for _ in range(num_fusion_blocks)]
+        )
+
+        self.policy_head = nn.Linear(fusion_hidden, NUM_ACTIONS)
+        self.value_head = nn.Linear(fusion_hidden, 1)
+
+    def forward_from_board_embedding(
+        self, board_h: torch.Tensor, aux_features: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        aux_h = F.relu(self.aux_ln(self.aux_fc(aux_features)))
+        gate = torch.sigmoid(self.gate_fc(aux_h))
+
+        fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
+        fused = F.relu(self.fusion_ln(fused))
+        for block in self.fusion_blocks:
+            fused = block(fused)
+
+        policy_logits = self.policy_head(fused)
+        value = self.value_head(fused)
+        return policy_logits, value
 
     def forward(
         self,
@@ -126,29 +145,32 @@ class TetrisNet(nn.Module):
                 action mask before softmax to mask invalid actions)
             value: Shape (batch, 1) - predicted scalar value target
         """
-        # Conv layers
         x = F.relu(self.bn1(self.conv1(board)))
         x = F.relu(self.bn2(self.conv2(x)))
+        board_h = self.board_proj(x.view(x.size(0), -1))
+        return self.forward_from_board_embedding(board_h, aux_features)
 
-        # Flatten conv output
-        batch_size = x.size(0)
-        x = x.view(batch_size, -1)  # (batch, 1600)
 
-        # Concatenate with auxiliary features
-        x = torch.cat([x, aux_features], dim=1)  # (batch, 1661)
+class ResidualFusionBlock(nn.Module):
+    """Residual MLP block used after board/aux fusion."""
 
-        # Shared FC layer
-        x = F.relu(self.ln1(self.fc1(x)))
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(hidden_size)
+        self.fc1 = nn.Linear(hidden_size, hidden_size)
+        self.ln2 = nn.LayerNorm(hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
 
-        # Policy and value heads
-        policy_logits = self.policy_head(x)
-        value = self.value_head(x)
-
-        return policy_logits, value
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = F.relu(self.ln1(x))
+        h = self.fc1(h)
+        h = F.relu(self.ln2(h))
+        h = self.fc2(h)
+        return x + h
 
 
 class ConvBackbone(nn.Module):
-    """Extracts the conv layers from TetrisNet: board (1,1,20,10) → (1, 1600)."""
+    """Extracts conv layers from TetrisNet: board -> flattened conv features."""
 
     def __init__(self, parent: TetrisNet):
         super().__init__()
@@ -164,14 +186,26 @@ class ConvBackbone(nn.Module):
 
 
 class HeadsModel(nn.Module):
-    """Extracts the heads from TetrisNet: fc_pre (1, 128) → policy + value."""
+    """Extracts aux fusion + heads from TetrisNet: board_h + aux -> policy + value."""
 
     def __init__(self, parent: TetrisNet):
         super().__init__()
-        self.ln1 = parent.ln1
+        self.aux_fc = parent.aux_fc
+        self.aux_ln = parent.aux_ln
+        self.gate_fc = parent.gate_fc
+        self.aux_proj = parent.aux_proj
+        self.fusion_ln = parent.fusion_ln
+        self.fusion_blocks = parent.fusion_blocks
         self.policy_head = parent.policy_head
         self.value_head = parent.value_head
 
-    def forward(self, fc_pre: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = F.relu(self.ln1(fc_pre))
-        return self.policy_head(x), self.value_head(x)
+    def forward(
+        self, board_h: torch.Tensor, aux_features: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        aux_h = F.relu(self.aux_ln(self.aux_fc(aux_features)))
+        gate = torch.sigmoid(self.gate_fc(aux_h))
+        fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
+        fused = F.relu(self.fusion_ln(fused))
+        for block in self.fusion_blocks:
+            fused = block(fused)
+        return self.policy_head(fused), self.value_head(fused)

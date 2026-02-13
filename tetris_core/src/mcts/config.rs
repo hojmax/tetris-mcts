@@ -37,7 +37,7 @@ pub struct MCTSConfig {
     /// Penalty applied when a simulation reaches game over (backs up as negative value)
     #[pyo3(get, set)]
     pub death_penalty: f32,
-    /// Weight for normalized overhang penalty subtracted per evaluated board state
+    /// Weight for normalized overhang penalty subtracted during MCTS search scoring
     #[pyo3(get, set)]
     pub overhang_penalty_weight: f32,
     /// Scale factor applied to neural value-head output during search (0 = ignore value head)

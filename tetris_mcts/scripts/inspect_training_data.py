@@ -1,7 +1,6 @@
 """Inspect training data by rendering games as GIFs."""
 
 from dataclasses import dataclass
-import json
 import sys
 from pathlib import Path
 
@@ -130,41 +129,8 @@ def get_game_by_local_index(games: list[GameSlice], requested_index: int) -> Gam
     return games[game_idx]
 
 
-def load_reward_config(config_path: Path) -> tuple[int, float, float] | None:
-    if not config_path.exists():
-        return None
-    config = json.loads(config_path.read_text())
-    return (
-        int(config["max_placements"]),
-        float(config["death_penalty"]),
-        float(config["overhang_penalty_weight"]),
-    )
-
-
-def estimate_total_attack_from_value_targets(
-    data: np.lib.npyio.NpzFile,
-    game: GameSlice,
-    reward_config: tuple[int, float, float] | None,
-) -> int:
-    if reward_config is None:
-        return int(round(game.total_attack))
-
-    max_placements, death_penalty, overhang_penalty_weight = reward_config
-    overhang_fields = data["overhang_fields"][game.start : game.end].astype(np.float32)
-    value_target_start = float(data["value_targets"][game.start])
-    placement_counts = data["placement_counts"][game.start : game.end].astype(
-        np.float32
-    )
-    overhang_penalty = np.sum(overhang_fields / 190.0 * overhang_penalty_weight).item()
-    terminal_placement_count = (
-        int(round(float(placement_counts[-1]) * max_placements)) + 1
-    )
-    death_offset = 0.0
-    if terminal_placement_count < max_placements:
-        remaining = (max_placements - terminal_placement_count) / max_placements
-        death_offset = death_penalty * max(remaining, 0.0)
-    estimated_total_attack = value_target_start + overhang_penalty + death_offset
-    return int(round(estimated_total_attack))
+def estimate_total_attack_from_value_targets(game: GameSlice) -> int:
+    return int(round(game.total_attack))
 
 
 @dataclass
@@ -275,7 +241,6 @@ def main(args: ScriptArgs) -> None:
         return
 
     value_predictor: ValuePredictor | None = None
-    reward_config = load_reward_config(config_path)
     if checkpoint_path.exists() and config_path.exists():
         value_predictor = ValuePredictor(checkpoint_path, config_path)
         logger.info(
@@ -303,9 +268,7 @@ def main(args: ScriptArgs) -> None:
             game = max(
                 games,
                 key=lambda g: estimate_total_attack_from_value_targets(
-                    data,
                     g,
-                    reward_config,
                 ),
             )
         elif args.wandb_game_number > 0:
@@ -371,9 +334,7 @@ def main(args: ScriptArgs) -> None:
         end = game.end
         game_length = end - start
         game_total_attack = estimate_total_attack_from_value_targets(
-            data,
             game,
-            reward_config,
         )
 
         logger.info("Loaded dataset", num_games=n_games, total_examples=n_examples)

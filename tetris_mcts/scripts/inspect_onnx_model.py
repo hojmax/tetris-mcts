@@ -56,6 +56,18 @@ def inspect_onnx(model_path: Path) -> None:
             for key in ["conv1.weight", "conv2.weight", "fc1.weight", "bn1", "bn2"]
         ):
             logger.info(f"  {name}: {list(dims)}")
+        if any(
+            key in name
+            for key in [
+                "board_proj.weight",
+                "aux_fc.weight",
+                "gate_fc.weight",
+                "aux_proj.weight",
+                "policy_head.weight",
+                "value_head.weight",
+            ]
+        ):
+            logger.info(f"  {name}: {list(dims)}")
 
     logger.info("=" * 80)
     logger.info(f"Total parameters: {total_params:,}")
@@ -85,16 +97,29 @@ def inspect_onnx(model_path: Path) -> None:
                 logger.info(f"  Conv filters: [{out_channels}, {conv2_filters}]")
                 break
 
-        # Determine which config
+        # Determine model family
+        has_gating = any(
+            "gate_fc.weight" in init.name for init in model.graph.initializer
+        )
+        has_concat_fc = any(
+            "fc1.weight" in init.name for init in model.graph.initializer
+        )
+
         if conv2_filters is None:
             logger.warning("Could not locate conv2.weight in model initializers")
-        elif out_channels == 4 and conv2_filters == 8:
-            logger.info("✓ This is the OLD (large) architecture: [4, 8] filters")
-        elif out_channels == 2 and conv2_filters == 4:
-            logger.info("✓ This is the NEW (small) architecture: [2, 4] filters")
+        elif has_gating:
+            logger.info(
+                "✓ Detected gated-fusion architecture",
+                conv_filters=[out_channels, conv2_filters],
+            )
+        elif has_concat_fc:
+            logger.info(
+                "✓ Detected concat+fc architecture",
+                conv_filters=[out_channels, conv2_filters],
+            )
         else:
             logger.info(
-                f"Custom architecture: [{out_channels}, {conv2_filters}] filters"
+                f"Unrecognized architecture family: [{out_channels}, {conv2_filters}] filters"
             )
 
 

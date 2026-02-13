@@ -68,7 +68,7 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 ### Offline Architecture Comparison
 
 ```bash
-# Compare current concat+FC model vs gated-fusion model on a fixed NPZ snapshot.
+# Compare legacy concat+FC baseline vs current gated-fusion model on a fixed NPZ snapshot.
 # Logs all per-step losses and final comparison to WandB.
 # Gated model is auto-matched to baseline by parameter count and forward FLOPs
 # within configurable relative tolerances (cache-weighted with hit-rate default 0.96).
@@ -207,8 +207,8 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 ### Neural Network (TetrisNet)
 
 - **Input**: 261 features (200 board cells + 61 auxiliary: current piece, hold, queue, move number, combo, back-to-back, hidden-piece distribution)
-- **Architecture**: Conv2d(1→4→8) + FC(1661→128) + policy head (735) + value head (1)
-- **Output**: Policy probabilities over 735 actions (734 placements + hold), value (trained on `value_targets` by default; penalty-adjusted cumulative reward)
+- **Architecture**: Conv2d(1→4→8) + board projection + aux-conditioned gated fusion + optional fusion residual blocks + policy/value heads
+- **Output**: Policy probabilities over 735 actions (734 placements + hold), value (trained on raw cumulative-attack `value_targets`)
 
 ### 7-Bag Randomizer
 
@@ -227,7 +227,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 - `Piece` - Tetromino (piece_type, x, y, rotation)
 - `MCTSAgent` - MCTS search coordinator
 - `MCTSConfig` - Search hyperparameters (num_simulations, c_puct, temperature, etc.)
-- `TrainingExample` - State + MCTS policy target + value target (`value`) + raw cumulative-attack target (`raw_value`) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`)
+- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + raw cumulative-attack mirror (`raw_value`) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`)
 - `GameGenerator` - Background self-play worker
 
 ### Python
@@ -245,7 +245,7 @@ From `config.py` TrainingConfig defaults:
 
 - **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
-- **Architecture**: Conv(1→4→8), FC(1661→128), 735 policy outputs, 1 value output
+- **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 1M examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.001` by default; value head currently has very low influence during search unless this is increased.
@@ -286,8 +286,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
 7. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
 8. Training examples from accepted games are stored in a shared in-memory ring buffer
 9. Python samples directly via `generator.sample_batch(batch_size, max_placements)` returning `(boards, aux, policy_targets, value_targets, raw_value_targets, overhang_fields, action_masks)` with periodic NPZ saves for resume only
-10. `training_data.npz` snapshots include `raw_value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`) for exact replay/WandB alignment plus future feature experiments
-11. Backward compatibility: if loading an older snapshot without `raw_value_targets.npy`, Rust loader defaults `raw_value` to `0.0` for all examples
+10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing
 
@@ -316,7 +315,7 @@ Tests are in:
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
 
-Current behavior: split-model Rust inference infers conv output width from `fc.bin` (`total_fc_cols - AUX_FEATURES`) and validates that `conv.onnx` output width matches, so changing `conv_filters[-1]` no longer requires a Rust constant edit.
+Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board))`. `fc.bin` stores `board_proj` weights/bias only, and Rust validates that `conv.onnx` output width matches `fc.bin` columns, so changing `conv_filters[-1]` still does not require a Rust constant edit.
 
 ### Training a model
 

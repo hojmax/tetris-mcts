@@ -11,7 +11,7 @@ from tetris_mcts.config import (
     NUM_PIECE_TYPES,
     QUEUE_SIZE,
 )
-from tetris_mcts.ml.network import ConvBackbone, HeadsModel, TetrisNet
+from tetris_mcts.ml.network import AUX_FEATURES, ConvBackbone, HeadsModel, TetrisNet
 from tetris_mcts.ml.weights import export_onnx, export_split_models
 
 
@@ -48,7 +48,20 @@ def _encode_state_python(
             aux.append(1.0 if queue_piece == piece_type else 0.0)
 
     aux.append(float(move_number) / float(max_placements))
+    aux.append(min(float(env.combo), 12.0) / 12.0)
+    aux.append(1.0 if env.back_to_back else 0.0)
 
+    hidden_candidates = env.get_possible_next_pieces()
+    if len(hidden_candidates) == 0:
+        raise ValueError("Hidden-piece candidate set must not be empty")
+    hidden_distribution = [0.0] * NUM_PIECE_TYPES
+    probability = 1.0 / float(len(hidden_candidates))
+    for piece in hidden_candidates:
+        hidden_distribution[int(piece)] = probability
+    aux.extend(hidden_distribution)
+
+    if len(aux) != AUX_FEATURES:
+        raise ValueError(f"Expected {AUX_FEATURES} aux features, got {len(aux)}")
     return board, np.asarray(aux, dtype=np.float32)
 
 
@@ -158,7 +171,7 @@ def test_pytorch_and_rust_tract_inference_match_on_same_onnx(tmp_path: Path) -> 
 
 
 def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
-    """Verify split computation (conv + manual FC + heads) matches TetrisNet.forward()."""
+    """Verify split computation (conv + board proj + heads) matches TetrisNet.forward()."""
     rng = np.random.default_rng(42)
 
     for seed in range(10):
@@ -176,12 +189,6 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
         heads = HeadsModel(model)
         heads.eval()
 
-        # Extract FC weight/bias split
-        fc_weight = model.fc1.weight.detach()  # (128, 1652)
-        fc_bias = model.fc1.bias.detach()  # (128,)
-        w_board = fc_weight[:, :1600]  # (128, 1600)
-        w_aux = fc_weight[:, 1600:]  # (128, 52)
-
         # Generate random inputs
         for _ in range(20):
             board = torch.from_numpy(
@@ -189,7 +196,9 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
                     np.float32
                 )
             )
-            aux = torch.from_numpy(rng.standard_normal((1, 52)).astype(np.float32))
+            aux = torch.from_numpy(
+                rng.standard_normal((1, AUX_FEATURES)).astype(np.float32)
+            )
 
             with torch.no_grad():
                 # End-to-end
@@ -197,9 +206,8 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
 
                 # Split path
                 conv_out = conv_backbone(board)  # (1, 1600)
-                board_embed = (w_board @ conv_out.squeeze(0)) + fc_bias  # (128,)
-                fc_out = board_embed + (w_aux @ aux.squeeze(0))  # (128,)
-                split_logits, split_value = heads(fc_out.unsqueeze(0))
+                board_h = model.board_proj(conv_out)
+                split_logits, split_value = heads(board_h, aux)
 
             np.testing.assert_allclose(
                 split_logits.numpy(),

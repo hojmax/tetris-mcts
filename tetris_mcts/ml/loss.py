@@ -11,9 +11,8 @@ Implements:
 from collections import deque
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-
-from tetris_mcts.ml.network import TetrisNet
 
 
 class RunningLossBalancer:
@@ -78,7 +77,7 @@ def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch
 
 
 def compute_loss(
-    model: TetrisNet,
+    model: nn.Module,
     boards: torch.Tensor,
     aux_features: torch.Tensor,
     policy_targets: torch.Tensor,
@@ -128,7 +127,7 @@ def compute_loss(
 
 
 def compute_metrics(
-    model: TetrisNet,
+    model: nn.Module,
     boards: torch.Tensor,
     aux_features: torch.Tensor,
     policy_targets: torch.Tensor,

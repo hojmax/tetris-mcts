@@ -67,16 +67,10 @@ def main(args: ScriptArgs) -> None:
     n_examples = len(data["boards"])
     move_numbers = data["move_numbers"]
     value_targets = data["value_targets"]
-    if "raw_value_targets" in data:
-        raw_value_targets = data["raw_value_targets"]
-    else:
-        raw_value_targets = np.zeros(n_examples, dtype=np.float32)
     if len(move_numbers) != n_examples:
         raise ValueError("move_numbers length does not match boards length")
     if len(value_targets) != n_examples:
         raise ValueError("value_targets length does not match boards length")
-    if len(raw_value_targets) != n_examples:
-        raise ValueError("raw_value_targets length does not match boards length")
 
     # Find game boundaries
     games = find_game_boundaries(move_numbers)
@@ -98,8 +92,8 @@ def main(args: ScriptArgs) -> None:
     for start, end in games:
         length = end - start
         game_lengths.append(length)
-        # First state's raw value target is cumulative future attack (= total game attack).
-        total_attack = raw_value_targets[start]
+        # First state's value target is cumulative future attack (= total game attack).
+        total_attack = value_targets[start]
         game_final_values.append(total_attack)
 
     game_lengths = np.array(game_lengths)
@@ -116,12 +110,6 @@ def main(args: ScriptArgs) -> None:
     # Value target distribution (all examples)
     print_percentiles(value_targets, "Value Targets (all examples)")
     print_histogram(value_targets, bins=15, title="Value Target Distribution")
-
-    # Raw value target distribution (all examples)
-    print_percentiles(raw_value_targets, "Raw Value Targets (all examples)")
-    print_histogram(
-        raw_value_targets, bins=15, title="Raw Value Target Distribution"
-    )
 
     # Summary table
     print("\n" + "=" * 50)

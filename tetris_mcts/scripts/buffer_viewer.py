@@ -384,17 +384,21 @@ def main(args: ScriptArgs) -> None:
         print(f"Error: File not found: {args.data_path}")
         return
 
+    if args.checkpoint_path is None or args.config_path is None:
+        raise ValueError("checkpoint_path and config_path must be set")
+    checkpoint_path = args.checkpoint_path
+    config_path = args.config_path
+
     value_predictor: ValuePredictor | None = None
-    if args.checkpoint_path.exists() and args.config_path.exists():
-        value_predictor = ValuePredictor(args.checkpoint_path, args.config_path)
+    if checkpoint_path.exists() and config_path.exists():
+        value_predictor = ValuePredictor(checkpoint_path, config_path)
         print(
-            f"Loaded model predictions from {args.checkpoint_path} "
-            f"(config: {args.config_path})"
+            f"Loaded model predictions from {checkpoint_path} (config: {config_path})"
         )
     else:
         print(
             "Model predictions disabled: checkpoint/config not found "
-            f"({args.checkpoint_path}, {args.config_path})"
+            f"({checkpoint_path}, {config_path})"
         )
 
     viewer = BufferViewer(args.data_path, value_predictor)

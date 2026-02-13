@@ -202,26 +202,27 @@ def export_split_models(
 
         heads_model = HeadsModel(model)
         heads_model.eval()
-        fc_hidden = model.fc1.out_features
-        dummy_fc_pre = torch.zeros(1, fc_hidden)
+        board_hidden = model.board_proj.out_features
+        dummy_board_h = torch.zeros(1, board_hidden)
+        dummy_aux = torch.zeros(1, AUX_FEATURES)
         with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
             warnings.filterwarnings("ignore")
             torch.onnx.export(
                 heads_model,
-                (dummy_fc_pre,),
+                (dummy_board_h, dummy_aux),
                 str(heads_path),
                 export_params=True,
                 opset_version=opset_version,
                 do_constant_folding=True,
-                input_names=["fc_pre"],
+                input_names=["board_h", "aux_features"],
                 output_names=["policy_logits", "value"],
                 verbose=False,
             )
 
-        # Export FC weight and bias as raw f32 binary
+        # Export board projection weight and bias as raw f32 binary
         # Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
-        weight = model.fc1.weight.detach().numpy()  # (fc_hidden, conv_flat + aux)
-        bias = model.fc1.bias.detach().numpy()  # (fc_hidden,)
+        weight = model.board_proj.weight.detach().numpy()  # (hidden, conv_flat)
+        bias = model.board_proj.bias.detach().numpy()  # (hidden,)
         rows, cols = weight.shape
         with open(fc_path, "wb") as f:
             f.write(struct.pack("<II", rows, cols))

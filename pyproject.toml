@@ -26,6 +26,9 @@ dependencies = [
 ]
 
 [tool.pyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
 reportAttributeAccessIssue = "none"  # tetris_core is a native module
 
 [build-system]

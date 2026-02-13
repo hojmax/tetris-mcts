@@ -1269,7 +1269,10 @@ def run_mcts(
                 [],
                 [
                     {
-                        "data": {"id": "error", "label": f"Model not found: {model_path_str}"},
+                        "data": {
+                            "id": "error",
+                            "label": f"Model not found: {model_path_str}",
+                        },
                         "classes": "decision",
                     }
                 ],

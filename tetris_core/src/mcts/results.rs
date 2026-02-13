@@ -82,10 +82,10 @@ pub struct TrainingExample {
     /// MCTS policy target (NUM_ACTIONS values)
     #[pyo3(get)]
     pub policy: Vec<f32>,
-    /// Value target (cumulative attack - overhang penalty - death penalty)
+    /// Value target (raw cumulative attack)
     #[pyo3(get)]
     pub value: f32,
-    /// Raw value target (cumulative attack only, no penalties)
+    /// Raw value target mirror (matches `value`)
     #[pyo3(get)]
     pub raw_value: f32,
     /// Action mask (NUM_ACTIONS values, true = valid)

@@ -152,8 +152,8 @@ def main() -> None:
         None,
         {input_names[0]: board_tensor, input_names[1]: aux_tensor},
     )
-    policy_logits = outputs[0][0]
-    value = outputs[1][0, 0]
+    policy_logits = np.asarray(outputs[0], dtype=np.float32)[0]
+    value = float(np.asarray(outputs[1], dtype=np.float32)[0, 0])
 
     print(f"\nNN value estimate: {value:.6f}")
     print(f"Expected value:    {EXPECTED_VALUE:.6f}")

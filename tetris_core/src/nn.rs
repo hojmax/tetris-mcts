@@ -1,7 +1,7 @@
 //! Neural Network Inference using tract-onnx
 //!
-//! Loads split ONNX models (conv backbone + heads) and FC weights from binary.
-//! Caches board embeddings to skip conv + board FC on repeated board states.
+//! Loads split ONNX models (conv backbone + heads) and board projection weights from binary.
+//! Caches board embeddings to skip conv + board projection on repeated board states.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -22,10 +22,9 @@ use crate::env::TetrisEnv;
 pub struct TetrisNN {
     conv_model: Arc<TypedRunnableModel<TypedModel>>,
     heads_model: Arc<TypedRunnableModel<TypedModel>>,
-    fc_weight_board: Arc<Array2<f32>>, // (fc_hidden, conv_out_size)
-    fc_weight_aux: Arc<Array2<f32>>,   // (fc_hidden, AUX_FEATURES)
-    fc_bias: Arc<Array1<f32>>,         // (fc_hidden,)
-    fc_hidden: usize,
+    board_proj_weight: Arc<Array2<f32>>, // (board_hidden, conv_out_size)
+    board_proj_bias: Arc<Array1<f32>>,   // (board_hidden,)
+    board_hidden: usize,
     conv_out_size: usize,
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
     cache_hits: Cell<u64>,
@@ -37,8 +36,8 @@ impl TetrisNN {
     /// Load split models from file.
     /// Given a base path like "latest.onnx", loads:
     /// - "latest.conv.onnx" (conv backbone)
-    /// - "latest.heads.onnx" (heads model)
-    /// - "latest.fc.bin" (FC weight + bias)
+    /// - "latest.heads.onnx" (gated fusion + heads)
+    /// - "latest.fc.bin" (board projection weight + bias)
     pub fn load<P: AsRef<Path>>(path: P) -> TractResult<Self> {
         let base = path.as_ref().with_extension("");
         let conv_path = base.with_extension("conv.onnx");
@@ -55,31 +54,15 @@ impl TetrisNN {
             .into_optimized()?
             .into_runnable()?;
 
-        let (fc_weight, fc_bias) = load_fc_binary(&fc_path)?;
-        let fc_hidden = fc_weight.nrows();
-        let total_cols = fc_weight.ncols();
-        if total_cols <= AUX_FEATURES {
+        let (board_proj_weight, board_proj_bias) = load_fc_binary(&fc_path)?;
+        let board_hidden = board_proj_weight.nrows();
+        let conv_out_size = board_proj_weight.ncols();
+        if conv_out_size == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "FC weight width {} is too small; expected > AUX_FEATURES ({})",
-                    total_cols, AUX_FEATURES
-                ),
-            )
-            .into());
-        }
-        let conv_out_size = total_cols - AUX_FEATURES;
-
-        // Split FC weight into board part and aux part
-        let fc_weight_board = fc_weight.slice(ndarray::s![.., ..conv_out_size]).to_owned();
-        let fc_weight_aux = fc_weight.slice(ndarray::s![.., conv_out_size..]).to_owned();
-        if fc_weight_aux.ncols() != AUX_FEATURES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "FC aux width mismatch: model={} expected={} (feature encoding changed; re-export model)",
-                    fc_weight_aux.ncols(),
-                    AUX_FEATURES
+                    "Board projection width {} is invalid; expected > 0",
+                    conv_out_size
                 ),
             )
             .into());
@@ -88,10 +71,9 @@ impl TetrisNN {
         Ok(TetrisNN {
             conv_model: Arc::new(conv_model),
             heads_model: Arc::new(heads_model),
-            fc_weight_board: Arc::new(fc_weight_board),
-            fc_weight_aux: Arc::new(fc_weight_aux),
-            fc_bias: Arc::new(fc_bias),
-            fc_hidden,
+            board_proj_weight: Arc::new(board_proj_weight),
+            board_proj_bias: Arc::new(board_proj_bias),
+            board_hidden,
             conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
             cache_hits: Cell::new(0),
@@ -126,7 +108,7 @@ impl TetrisNN {
         }
 
         let conv_arr = Array1::from_vec(conv_out);
-        Ok(self.fc_weight_board.dot(&conv_arr) + self.fc_bias.as_ref())
+        Ok(self.board_proj_weight.dot(&conv_arr) + self.board_proj_bias.as_ref())
     }
 
     /// Run inference with action mask applied, using board embedding cache.
@@ -164,16 +146,14 @@ impl TetrisNN {
             self.compute_board_embedding(&board_f32)?
         };
 
-        // fc_out = board_embed + W_aux @ aux
-        let aux_arr = Array1::from_vec(aux_vec);
-        let fc_out = &board_embed + &self.fc_weight_aux.dot(&aux_arr);
-
-        // Run heads model
-        let fc_pre_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, self.fc_hidden), fc_out.to_vec())?
+        let board_h_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, self.board_hidden), board_embed.to_vec())?
                 .into_tensor();
-
-        let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
+        let aux_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_vec)?.into_tensor();
+        let heads_output = self
+            .heads_model
+            .run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
 
         let policy_logits: Vec<f32> = heads_output[0]
             .to_array_view::<f32>()?
@@ -213,14 +193,15 @@ impl TetrisNN {
     ) -> TractResult<(Vec<f32>, f32)> {
         // No caching for raw tensor inputs (used only by debug functions)
         let board_embed = self.compute_board_embedding(board_tensor)?;
-        let aux_arr = Array1::from_vec(aux_tensor.to_vec());
-        let fc_out = &board_embed + &self.fc_weight_aux.dot(&aux_arr);
-
-        let fc_pre_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, self.fc_hidden), fc_out.to_vec())?
+        let board_h_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, self.board_hidden), board_embed.to_vec())?
                 .into_tensor();
-
-        let heads_output = self.heads_model.run(tvec!(fc_pre_tensor.into()))?;
+        let aux_tensor =
+            tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor.to_vec())?
+                .into_tensor();
+        let heads_output = self
+            .heads_model
+            .run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
 
         let policy_logits: Vec<f32> = heads_output[0]
             .to_array_view::<f32>()?
@@ -276,10 +257,9 @@ impl Clone for TetrisNN {
         TetrisNN {
             conv_model: Arc::clone(&self.conv_model),
             heads_model: Arc::clone(&self.heads_model),
-            fc_weight_board: Arc::clone(&self.fc_weight_board),
-            fc_weight_aux: Arc::clone(&self.fc_weight_aux),
-            fc_bias: Arc::clone(&self.fc_bias),
-            fc_hidden: self.fc_hidden,
+            board_proj_weight: Arc::clone(&self.board_proj_weight),
+            board_proj_bias: Arc::clone(&self.board_proj_bias),
+            board_hidden: self.board_hidden,
             conv_out_size: self.conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
             cache_hits: Cell::new(0),
@@ -302,13 +282,17 @@ fn pack_board(env: &TetrisEnv) -> [u64; 4] {
     key
 }
 
-/// Load FC weight matrix and bias from binary file.
+/// Load board-projection weight matrix and bias from binary file.
 /// Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
 fn load_fc_binary(path: &Path) -> TractResult<(Array2<f32>, Array1<f32>)> {
     let mut file = File::open(path).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("FC binary not found at {}: {}", path.display(), e),
+            format!(
+                "Board projection binary not found at {}: {}",
+                path.display(),
+                e
+            ),
         )
     })?;
 
@@ -335,7 +319,7 @@ fn load_fc_binary(path: &Path) -> TractResult<(Array2<f32>, Array1<f32>)> {
     let weight = Array2::from_shape_vec((rows, cols), weight_f32).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("FC weight shape mismatch: {}", e),
+            format!("Board projection weight shape mismatch: {}", e),
         )
     })?;
 

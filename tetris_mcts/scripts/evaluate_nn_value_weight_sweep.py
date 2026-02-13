@@ -331,8 +331,10 @@ def evaluate_weight(
 
 
 def text_size(
-    draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont
-) -> tuple[int, int]:
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont | ImageFont.FreeTypeFont,
+) -> tuple[float, float]:
     x0, y0, x1, y1 = draw.textbbox((0, 0), text, font=font)
     return x1 - x0, y1 - y0
 

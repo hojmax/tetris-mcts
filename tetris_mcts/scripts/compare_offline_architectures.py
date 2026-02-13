@@ -14,7 +14,7 @@ from simple_parsing import parse
 
 from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, PROJECT_ROOT
 from tetris_mcts.ml.loss import compute_loss
-from tetris_mcts.ml.network import AUX_FEATURES, TetrisNet
+from tetris_mcts.ml.network import AUX_FEATURES
 
 logger = structlog.get_logger()
 
@@ -25,6 +25,9 @@ REQUIRED_NPZ_KEYS = (
     "hold_available",
     "next_queue",
     "placement_counts",
+    "combos",
+    "back_to_back",
+    "next_hidden_piece_probs",
     "policy_targets",
     "value_targets",
     "action_masks",
@@ -138,6 +141,51 @@ class ResidualFusionBlock(nn.Module):
         h = F.relu(self.ln2(h))
         h = self.fc2(h)
         return x + h
+
+
+class BaselineConcatFCTetrisNet(nn.Module):
+    def __init__(
+        self,
+        conv_filters: list[int],
+        fc_hidden: int,
+        conv_kernel_size: int,
+        conv_padding: int,
+    ):
+        super().__init__()
+        if len(conv_filters) != 2:
+            raise ValueError(
+                f"Expected exactly 2 convolutional filters, got {len(conv_filters)}"
+            )
+        conv0 = conv_filters[0]
+        conv1 = conv_filters[1]
+
+        self.conv1 = nn.Conv2d(
+            1, conv0, kernel_size=conv_kernel_size, padding=conv_padding
+        )
+        self.bn1 = nn.BatchNorm2d(conv0)
+        self.conv2 = nn.Conv2d(
+            conv0,
+            conv1,
+            kernel_size=conv_kernel_size,
+            padding=conv_padding,
+        )
+        self.bn2 = nn.BatchNorm2d(conv1)
+
+        conv_flat_size = BOARD_HEIGHT * BOARD_WIDTH * conv1
+        self.fc1 = nn.Linear(conv_flat_size + AUX_FEATURES, fc_hidden)
+        self.ln1 = nn.LayerNorm(fc_hidden)
+        self.policy_head = nn.Linear(fc_hidden, NUM_ACTIONS)
+        self.value_head = nn.Linear(fc_hidden, 1)
+
+    def forward(
+        self, board: torch.Tensor, aux_features: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        x = F.relu(self.bn1(self.conv1(board)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = x.view(x.size(0), -1)
+        x = torch.cat([x, aux_features], dim=1)
+        x = F.relu(self.ln1(self.fc1(x)))
+        return self.policy_head(x), self.value_head(x)
 
 
 class GatedFusionTetrisNet(nn.Module):
@@ -497,6 +545,8 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
         raise ValueError("hold_pieces must have shape (N, 8)")
     if data["next_queue"].shape[1:] != (5, 7):
         raise ValueError("next_queue must have shape (N, 5, 7)")
+    if data["next_hidden_piece_probs"].shape[1] != 7:
+        raise ValueError("next_hidden_piece_probs must have shape (N, 7)")
     if data["policy_targets"].shape[1] != NUM_ACTIONS:
         raise ValueError(f"policy_targets must have shape (N, {NUM_ACTIONS})")
     if data["action_masks"].shape[1] != NUM_ACTIONS:
@@ -508,6 +558,9 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
         "hold_available",
         "next_queue",
         "placement_counts",
+        "combos",
+        "back_to_back",
+        "next_hidden_piece_probs",
         "policy_targets",
         "value_targets",
         "action_masks",
@@ -549,8 +602,24 @@ def build_aux_batch_from_npz(
     placement_counts = (
         data["placement_counts"][global_indices].astype(np.float32).reshape(-1, 1)
     )
+    combos = data["combos"][global_indices].astype(np.float32).reshape(-1, 1)
+    back_to_back = (
+        data["back_to_back"][global_indices].astype(np.float32).reshape(-1, 1)
+    )
+    next_hidden_piece_probs = data["next_hidden_piece_probs"][global_indices].astype(
+        np.float32, copy=False
+    )
     return np.concatenate(
-        [current_pieces, hold_pieces, hold_available, next_queue, placement_counts],
+        [
+            current_pieces,
+            hold_pieces,
+            hold_available,
+            next_queue,
+            placement_counts,
+            combos,
+            back_to_back,
+            next_hidden_piece_probs,
+        ],
         axis=1,
     )
 
@@ -978,6 +1047,9 @@ def main(args: ScriptArgs) -> None:
         tags=args.wandb_tags,
         config=normalize_args_for_wandb(args),
     )
+    run = wandb.run
+    if run is None:
+        raise RuntimeError("wandb.init did not create a run")
     wandb.define_metric("offline_step")
     wandb.define_metric("baseline/*", step_metric="offline_step")
     wandb.define_metric("gated/*", step_metric="offline_step")
@@ -1054,7 +1126,7 @@ def main(args: ScriptArgs) -> None:
         )
 
         torch.manual_seed(args.seed)
-        baseline_model = TetrisNet(
+        baseline_model = BaselineConcatFCTetrisNet(
             conv_filters=args.conv_filters,
             fc_hidden=args.fc_hidden,
             conv_kernel_size=args.conv_kernel_size,
@@ -1184,25 +1256,21 @@ def main(args: ScriptArgs) -> None:
             }
         )
 
-        wandb.run.summary["winner_by_final_val_total_loss"] = winner
-        wandb.run.summary["baseline_final_val_total_loss"] = baseline_result["final"][
+        run.summary["winner_by_final_val_total_loss"] = winner
+        run.summary["baseline_final_val_total_loss"] = baseline_result["final"][
             "val_total_loss"
         ]
-        wandb.run.summary["gated_final_val_total_loss"] = gated_result["final"][
+        run.summary["gated_final_val_total_loss"] = gated_result["final"][
             "val_total_loss"
         ]
-        wandb.run.summary["matched_gated_aux_hidden"] = matched.aux_hidden
-        wandb.run.summary["matched_gated_fusion_hidden"] = matched.fusion_hidden
-        wandb.run.summary["matched_gated_num_fusion_blocks"] = matched.num_fusion_blocks
-        wandb.run.summary["matched_param_rel_error"] = matched.param_rel_error
-        wandb.run.summary["matched_cache_weighted_flop_rel_error"] = (
-            matched.flop_rel_error
-        )
-        wandb.run.summary["cache_hit_rate_for_matching"] = (
-            args.cache_hit_rate_for_matching
-        )
-        wandb.run.summary["baseline_effective_flops"] = baseline_flops.effective
-        wandb.run.summary["gated_effective_flops"] = matched.effective_flops
+        run.summary["matched_gated_aux_hidden"] = matched.aux_hidden
+        run.summary["matched_gated_fusion_hidden"] = matched.fusion_hidden
+        run.summary["matched_gated_num_fusion_blocks"] = matched.num_fusion_blocks
+        run.summary["matched_param_rel_error"] = matched.param_rel_error
+        run.summary["matched_cache_weighted_flop_rel_error"] = matched.flop_rel_error
+        run.summary["cache_hit_rate_for_matching"] = args.cache_hit_rate_for_matching
+        run.summary["baseline_effective_flops"] = baseline_flops.effective
+        run.summary["gated_effective_flops"] = matched.effective_flops
 
         logger.info(
             "Offline architecture comparison complete",

@@ -13,8 +13,8 @@ from tetris_mcts.train import main as train_main
 logger = structlog.get_logger()
 
 MODEL_SIZE_PRESETS = {
-    "baseline": {"conv_filters": [4, 8], "fc_hidden": 128},
-    "large": {"conv_filters": [8, 8], "fc_hidden": 256},
+    "baseline": {"conv_filters": [4, 8], "fusion_hidden": 128},
+    "large": {"conv_filters": [8, 8], "fusion_hidden": 256},
 }
 
 
@@ -126,7 +126,8 @@ def build_training_config(
         run_name=f"{args.run_name_prefix}-{run_name}",
     )
     config.conv_filters = copy.deepcopy(model_preset["conv_filters"])
-    config.fc_hidden = int(model_preset["fc_hidden"])
+    # TrainingConfig still uses fc_hidden; in gated fusion this is the fusion hidden size.
+    config.fc_hidden = int(model_preset["fusion_hidden"])
     return config
 
 
@@ -144,13 +145,14 @@ def run_single_trial(args: SweepArgs) -> None:
         model_size = str(sampled["model_size"])
         learning_rate = float(sampled["learning_rate"])
         model_preset = MODEL_SIZE_PRESETS[model_size]
+        run_name = run.name if run.name is not None else run.id
 
-        training_config = build_training_config(args, run.name, sampled)
+        training_config = build_training_config(args, run_name, sampled)
         wandb.config.update(
             {
                 "sweep_model_size": model_size,
                 "sweep_conv_filters": copy.deepcopy(model_preset["conv_filters"]),
-                "sweep_fc_hidden": int(model_preset["fc_hidden"]),
+                "sweep_fusion_hidden": int(model_preset["fusion_hidden"]),
                 "sweep_learning_rate": learning_rate,
             },
             allow_val_change=True,
@@ -162,7 +164,7 @@ def run_single_trial(args: SweepArgs) -> None:
             learning_rate=learning_rate,
             model_size=model_size,
             conv_filters=training_config.conv_filters,
-            fc_hidden=training_config.fc_hidden,
+            fusion_hidden=int(model_preset["fusion_hidden"]),
             total_steps=training_config.total_steps,
             batch_size=training_config.batch_size,
         )

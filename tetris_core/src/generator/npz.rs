@@ -36,7 +36,6 @@ use crate::mcts::{TrainingExample, NUM_ACTIONS};
 /// - holes: (N,) float32 normalized by maximum possible holes
 /// - policy_targets: (N, 735) float32
 /// - value_targets: (N,) float32
-/// - raw_value_targets: (N,) float32
 /// - action_masks: (N, 735) bool
 /// - overhang_fields: (N,) uint32
 /// - game_numbers: (N,) uint64 (1-indexed game IDs aligned with WandB game_number)
@@ -71,7 +70,6 @@ pub fn write_examples_to_npz(
     let mut holes: Vec<f32> = Vec::with_capacity(n);
     let mut policy_targets: Vec<f32> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut value_targets: Vec<f32> = Vec::with_capacity(n);
-    let mut raw_value_targets: Vec<f32> = Vec::with_capacity(n);
     let mut action_masks: Vec<u8> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut overhang_fields: Vec<u32> = Vec::with_capacity(n);
     let mut game_numbers: Vec<u64> = Vec::with_capacity(n);
@@ -141,7 +139,6 @@ pub fn write_examples_to_npz(
 
         // Value target
         value_targets.push(ex.value);
-        raw_value_targets.push(ex.raw_value);
 
         // Action mask
         action_masks.extend(ex.action_mask.iter().map(|&b| b as u8));
@@ -276,13 +273,6 @@ pub fn write_examples_to_npz(
     write_npy_to_zip(
         &mut zip,
         options,
-        "raw_value_targets.npy",
-        &[n as u64],
-        &raw_value_targets,
-    )?;
-    write_npy_to_zip(
-        &mut zip,
-        options,
         "action_masks.npy",
         &[n as u64, NUM_ACTIONS as u64],
         &action_masks,
@@ -353,8 +343,6 @@ pub fn read_examples_from_npz(
         read_npy_array::<f32>(&mut archive, "policy_targets.npy")?;
     let (value_targets, value_targets_shape) =
         read_npy_array::<f32>(&mut archive, "value_targets.npy")?;
-    let raw_value_targets_optional =
-        read_optional_npy_array::<f32>(&mut archive, "raw_value_targets.npy")?;
     let (action_masks, action_masks_shape) =
         read_npy_array_bool_like(&mut archive, "action_masks.npy")?;
     let (overhang_fields, overhang_fields_shape) =
@@ -412,12 +400,6 @@ pub fn read_examples_from_npz(
         &[n as u64, NUM_ACTIONS as u64],
     )?;
     validate_shape("value_targets", &value_targets_shape, &[n as u64])?;
-    let raw_value_targets = if let Some((values, shape)) = raw_value_targets_optional {
-        validate_shape("raw_value_targets", &shape, &[n as u64])?;
-        values
-    } else {
-        vec![0.0; n]
-    };
     validate_shape(
         "action_masks",
         &action_masks_shape,
@@ -493,7 +475,7 @@ pub fn read_examples_from_npz(
             holes: holes[i],
             policy: policy_targets[policy_start..policy_end].to_vec(),
             value: value_targets[i],
-            raw_value: raw_value_targets[i],
+            raw_value: value_targets[i],
             action_mask: action_masks[mask_start..mask_end]
                 .iter()
                 .map(|value| *value != 0)
@@ -574,21 +556,6 @@ fn read_npy_array<T: npyz::Deserialize>(
     let shape = npy.shape().to_vec();
     let values = npy.into_vec::<T>().map_err(|e| e.to_string())?;
     Ok((values, shape))
-}
-
-fn read_optional_npy_array<T: npyz::Deserialize>(
-    archive: &mut ZipArchive<File>,
-    entry_name: &str,
-) -> Result<Option<(Vec<T>, Vec<u64>)>, String> {
-    let file = match archive.by_name(entry_name) {
-        Ok(file) => file,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    let npy = NpyFile::new(file).map_err(|e| e.to_string())?;
-    let shape = npy.shape().to_vec();
-    let values = npy.into_vec::<T>().map_err(|e| e.to_string())?;
-    Ok(Some((values, shape)))
 }
 
 fn read_npy_array_bool_like(
@@ -685,38 +652,12 @@ mod tests {
             holes: 0.05,
             policy,
             value: 3.5,
-            raw_value: 4.0,
+            raw_value: 3.5,
             action_mask,
             overhang_fields: 17,
             game_number: 123,
             game_total_attack: 37,
         }
-    }
-
-    fn write_npz_without_entry(source: &PathBuf, destination: &PathBuf, missing_entry: &str) {
-        let input = File::open(source).expect("source npz should exist");
-        let mut input_zip = ZipArchive::new(input).expect("source npz should be valid zip");
-        let output = File::create(destination).expect("destination npz should be writable");
-        let mut output_zip = ZipWriter::new(output);
-        let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
-
-        for i in 0..input_zip.len() {
-            let mut entry = input_zip
-                .by_index(i)
-                .expect("entry index should be valid in source npz");
-            let entry_name = entry.name().to_string();
-            if entry_name == missing_entry {
-                continue;
-            }
-            output_zip
-                .start_file(entry_name, options)
-                .expect("writing destination entry should succeed");
-            std::io::copy(&mut entry, &mut output_zip).expect("copying entry bytes should work");
-        }
-
-        output_zip
-            .finish()
-            .expect("finishing destination npz should succeed");
     }
 
     #[test]
@@ -759,26 +700,6 @@ mod tests {
             assert_eq!(actual.game_total_attack, expected.game_total_attack);
             assert_eq!(actual.policy[0], expected.policy[0]);
             assert_eq!(actual.policy[13], expected.policy[13]);
-        }
-    }
-
-    #[test]
-    fn test_read_npz_defaults_missing_raw_value_targets_to_zero() {
-        let source_path = unique_temp_path("missing_raw_source");
-        let compat_path = unique_temp_path("missing_raw_compat");
-        let examples = vec![make_example(0, 7), make_example(88, 5)];
-
-        write_examples_to_npz(&source_path, &examples, 100).expect("write should succeed");
-        write_npz_without_entry(&source_path, &compat_path, "raw_value_targets.npy");
-
-        let loaded = read_examples_from_npz(&compat_path, 100).expect("read should succeed");
-
-        fs::remove_file(&source_path).expect("source temp file cleanup should succeed");
-        fs::remove_file(&compat_path).expect("compat temp file cleanup should succeed");
-
-        assert_eq!(loaded.len(), examples.len());
-        for loaded_example in loaded {
-            assert_eq!(loaded_example.raw_value, 0.0);
         }
     }
 

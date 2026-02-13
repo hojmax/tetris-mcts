@@ -24,44 +24,7 @@ pub struct MCTSAgent {
     nn: Option<crate::nn::TetrisNN>,
 }
 
-fn compute_value_targets(
-    attacks: &[u32],
-    overhang_fields: &[u32],
-    episode_ended_in_death: bool,
-    terminal_placement_count: u32,
-    max_placements: u32,
-    death_penalty: f32,
-    overhang_penalty_weight: f32,
-) -> Vec<f32> {
-    debug_assert_eq!(
-        attacks.len(),
-        overhang_fields.len(),
-        "attacks and overhang_fields must have same length"
-    );
-
-    let num_states = attacks.len();
-    let death_offset = if episode_ended_in_death {
-        // Keep value targets aligned with MCTS terminal backup semantics:
-        // penalty is determined by when the episode ended, not by source state index.
-        super::utils::compute_death_penalty(terminal_placement_count, max_placements, death_penalty)
-    } else {
-        0.0
-    };
-
-    let mut values = vec![0.0f32; num_states];
-    let mut cumulative = 0.0f32;
-    for i in (0..num_states).rev() {
-        let overhang_penalty =
-            super::utils::compute_overhang_penalty(overhang_fields[i], overhang_penalty_weight);
-        let step_reward = attacks[i] as f32 - overhang_penalty;
-        cumulative += step_reward;
-        values[i] = cumulative - death_offset;
-    }
-
-    values
-}
-
-fn compute_raw_value_targets(attacks: &[u32]) -> Vec<f32> {
+fn compute_value_targets(attacks: &[u32]) -> Vec<f32> {
     let mut values = vec![0.0f32; attacks.len()];
     let mut cumulative = 0.0f32;
     for i in (0..attacks.len()).rev() {
@@ -265,7 +228,7 @@ impl MCTSAgent {
             }
         }
 
-        // Compute value targets (cumulative step reward from each position, minus death penalty)
+        // Compute value targets (raw cumulative attack from each position).
         let num_states = states.len();
         debug_assert_eq!(
             states.len(),
@@ -283,16 +246,8 @@ impl MCTSAgent {
             "States and hole counts should have same length"
         );
 
-        let values = compute_value_targets(
-            &attacks,
-            &overhang_fields,
-            env.game_over,
-            placement_count,
-            max_placements,
-            self.config.death_penalty,
-            self.config.overhang_penalty_weight,
-        );
-        let raw_values = compute_raw_value_targets(&attacks);
+        let values = compute_value_targets(&attacks);
+        let raw_values = values.clone();
 
         // Build training examples (use all moves)
         let mut examples = Vec::with_capacity(num_states);
@@ -643,63 +598,10 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_value_targets_without_death_penalty() {
+    fn test_compute_value_targets_without_penalties() {
         let attacks = vec![1, 2, 3];
-        let overhang_fields = vec![0, 0, 0];
+        let values = compute_value_targets(&attacks);
 
-        let values = compute_value_targets(&attacks, &overhang_fields, false, 3, 100, 5.0, 0.0);
-
-        assert_eq!(values.len(), 3);
-        assert!((values[0] - 6.0).abs() < 1e-6);
-        assert!((values[1] - 5.0).abs() < 1e-6);
-        assert!((values[2] - 3.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_compute_value_targets_death_penalty_uses_terminal_move_for_all_states() {
-        let attacks = vec![1, 2, 3];
-        let overhang_fields = vec![0, 0, 0];
-        let max_placements = 100;
-        let death_penalty = 5.0;
-
-        let alive_values = compute_value_targets(
-            &attacks,
-            &overhang_fields,
-            false,
-            2,
-            max_placements,
-            death_penalty,
-            0.0,
-        );
-        let dead_values = compute_value_targets(
-            &attacks,
-            &overhang_fields,
-            true,
-            2,
-            max_placements,
-            death_penalty,
-            0.0,
-        );
-
-        let expected_offset =
-            super::super::utils::compute_death_penalty(2, max_placements, death_penalty);
-
-        for i in 0..attacks.len() {
-            let observed_offset = alive_values[i] - dead_values[i];
-            assert!(
-                (observed_offset - expected_offset).abs() < 1e-6,
-                "Death penalty offset mismatch at index {}: got {}, expected {}",
-                i,
-                observed_offset,
-                expected_offset
-            );
-        }
-    }
-
-    #[test]
-    fn test_compute_raw_value_targets() {
-        let attacks = vec![1, 2, 3];
-        let values = compute_raw_value_targets(&attacks);
         assert_eq!(values.len(), 3);
         assert!((values[0] - 6.0).abs() < 1e-6);
         assert!((values[1] - 5.0).abs() < 1e-6);
