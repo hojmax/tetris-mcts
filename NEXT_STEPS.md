@@ -1,7 +1,6 @@
 # Next Steps
 
 - [ ] Deeper search depth potentially.
-- [ ] Better architecture choice with model fusion.
 - [ ] What AWS instance would be well suited for this workload?
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler
