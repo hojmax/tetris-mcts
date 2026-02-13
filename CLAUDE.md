@@ -27,6 +27,7 @@ make play       # Run interactive Tetris game
 make viz        # Run MCTS tree visualizer (Dash app at localhost:8050)
 make test       # Run Rust tests (cargo test)
 make check      # Run ruff + pyright linting
+make sweep-lr-model  # Run W&B sweep for learning rate + model size
 make rebuild    # Force clean rebuild (slow, only when needed)
 ```
 
@@ -224,10 +225,10 @@ From `config.py` TrainingConfig defaults:
 - **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
-- **Buffer**: 500K examples (ring buffer), 7 parallel workers
+- **Buffer**: 1M examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
-- **NN Value Scaling**: `nn_value_weight=0.01` by default; playing around with this to see if it helps reduce noise in value estimates overpowering the environment feedback.
-- **Model Promotion Gate**: candidate window=30 games, evaluator noise enabled by default
+- **NN Value Scaling**: `nn_value_weight=0.001` by default; value head currently has very low influence during search unless this is increased.
+- **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
@@ -256,14 +257,15 @@ Dirichlet root noise is mixed over `DecisionNode.action_priors` (valid actions o
 Training uses parallel Rust game generation via `GameGenerator`:
 
 1. Multiple worker threads (default: 7) run MCTS games in parallel
-2. One dedicated evaluator worker tests queued candidate ONNX models over a fixed game window (default 30 games)
-3. Candidates are compared against incumbent lifetime average attack; if better, evaluator commits candidate games then promotes the model globally
-4. If candidate is worse, evaluator discards candidate games and keeps incumbent
-5. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
-6. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
-7. Training examples from accepted games are stored in a shared in-memory ring buffer
-8. Python samples directly via `generator.sample_batch(batch_size, max_placements)` with periodic NPZ saves for resume only
-9. `training_data.npz` snapshots include `game_numbers` (1-indexed WandB game ids) and `game_total_attacks` (raw per-game attack) for exact replay/WandB alignment
+2. One dedicated evaluator worker tests queued candidate ONNX models over a fixed game window (default 50 games)
+3. Candidate evaluation games use fresh random environment seeds (not a fixed seed list)
+4. Candidates are compared against incumbent lifetime average attack; if better, evaluator commits candidate games then promotes the model globally
+5. If candidate is worse, evaluator discards candidate games and keeps incumbent
+6. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
+7. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
+8. Training examples from accepted games are stored in a shared in-memory ring buffer
+9. Python samples directly via `generator.sample_batch(batch_size, max_placements)` with periodic NPZ saves for resume only
+10. `training_data.npz` snapshots include `game_numbers` (1-indexed WandB game ids) and `game_total_attacks` (raw per-game attack) for exact replay/WandB alignment
 
 ## Testing
 
@@ -291,6 +293,8 @@ Tests are in:
 1. Edit `tetris_mcts/ml/network.py`
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
+
+Current behavior: split-model Rust inference infers conv output width from `fc.bin` (`total_fc_cols - AUX_FEATURES`) and validates that `conv.onnx` output width matches, so changing `conv_filters[-1]` no longer requires a Rust constant edit.
 
 ### Training a model
 

@@ -86,7 +86,7 @@ class TrainingConfig:
         True
     )
     nn_value_weight: float = (  # Scale factor for NN value output in MCTS (0.0 ignores value head)
-        0.01
+        0.001
     )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
@@ -100,7 +100,7 @@ class TrainingConfig:
         5.0
     )
     model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
-        30
+        50
     )
     bootstrap_without_network: bool = True  # If True, self-play starts with uniform-prior/zero-value MCTS until first promotion
     bootstrap_num_simulations: int = (  # Simulations per move before first promoted NN model

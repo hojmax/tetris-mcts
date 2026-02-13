@@ -16,17 +16,15 @@ use tract_onnx::prelude::*;
 use crate::constants::{AUX_FEATURES, BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::env::TetrisEnv;
 
-/// Number of conv output features (BOARD_HEIGHT * BOARD_WIDTH * conv_filters[-1])
-const CONV_OUT_SIZE: usize = BOARD_HEIGHT * BOARD_WIDTH * 8; // 1600
-
 /// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
     conv_model: Arc<TypedRunnableModel<TypedModel>>,
     heads_model: Arc<TypedRunnableModel<TypedModel>>,
-    fc_weight_board: Arc<Array2<f32>>, // (fc_hidden, CONV_OUT_SIZE)
+    fc_weight_board: Arc<Array2<f32>>, // (fc_hidden, conv_out_size)
     fc_weight_aux: Arc<Array2<f32>>,   // (fc_hidden, AUX_FEATURES)
     fc_bias: Arc<Array1<f32>>,         // (fc_hidden,)
     fc_hidden: usize,
+    conv_out_size: usize,
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
     cache_hits: Cell<u64>,
     cache_misses: Cell<u64>,
@@ -58,15 +56,32 @@ impl TetrisNN {
         let (fc_weight, fc_bias) = load_fc_binary(&fc_path)?;
         let fc_hidden = fc_weight.nrows();
         let total_cols = fc_weight.ncols();
+        if total_cols <= AUX_FEATURES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "FC weight width {} is too small; expected > AUX_FEATURES ({})",
+                    total_cols, AUX_FEATURES
+                ),
+            )
+            .into());
+        }
+        let conv_out_size = total_cols - AUX_FEATURES;
 
         // Split FC weight into board part and aux part
-        let fc_weight_board = fc_weight.slice(ndarray::s![.., ..CONV_OUT_SIZE]).to_owned();
-        let fc_weight_aux = fc_weight
-            .slice(ndarray::s![.., CONV_OUT_SIZE..total_cols])
-            .to_owned();
-
-        debug_assert_eq!(fc_weight_board.ncols(), CONV_OUT_SIZE);
-        debug_assert_eq!(fc_weight_aux.ncols(), AUX_FEATURES);
+        let fc_weight_board = fc_weight.slice(ndarray::s![.., ..conv_out_size]).to_owned();
+        let fc_weight_aux = fc_weight.slice(ndarray::s![.., conv_out_size..]).to_owned();
+        if fc_weight_aux.ncols() != AUX_FEATURES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "FC aux width mismatch: model={} expected={} (feature encoding changed; re-export model)",
+                    fc_weight_aux.ncols(),
+                    AUX_FEATURES
+                ),
+            )
+            .into());
+        }
 
         Ok(TetrisNN {
             conv_model: Arc::new(conv_model),
@@ -75,6 +90,7 @@ impl TetrisNN {
             fc_weight_aux: Arc::new(fc_weight_aux),
             fc_bias: Arc::new(fc_bias),
             fc_hidden,
+            conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
             cache_hits: Cell::new(0),
             cache_misses: Cell::new(0),
@@ -95,6 +111,17 @@ impl TetrisNN {
             .iter()
             .copied()
             .collect();
+        if conv_out.len() != self.conv_out_size {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Conv output size mismatch: conv.onnx={} fc.bin={} (re-export split models together)",
+                    conv_out.len(),
+                    self.conv_out_size
+                ),
+            )
+            .into());
+        }
 
         let conv_arr = Array1::from_vec(conv_out);
         Ok(self.fc_weight_board.dot(&conv_arr) + self.fc_bias.as_ref())
@@ -251,6 +278,7 @@ impl Clone for TetrisNN {
             fc_weight_aux: Arc::clone(&self.fc_weight_aux),
             fc_bias: Arc::clone(&self.fc_bias),
             fc_hidden: self.fc_hidden,
+            conv_out_size: self.conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
             cache_hits: Cell::new(0),
             cache_misses: Cell::new(0),

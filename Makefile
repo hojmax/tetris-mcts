@@ -1,4 +1,4 @@
-.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply
+.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -66,6 +66,11 @@ check:
 # Usage: make train ARGS="--iterations 10 --games-per-iter 50"
 train: $(RELEASE_MARKER)
 	$(PYTHON) tetris_mcts/train.py $(ARGS)
+
+# Run W&B sweep over learning rate and model size (builds first if needed)
+# Usage: make sweep-lr-model ARGS="--count 20"
+sweep-lr-model: $(RELEASE_MARKER)
+	$(PYTHON) tetris_mcts/scripts/wandb_sweep_lr_model_size.py $(ARGS)
 
 # View replay file
 # Usage: make replay FILE=replays.jsonl

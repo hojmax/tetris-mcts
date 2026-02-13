@@ -31,6 +31,21 @@ def get_best_device() -> str:
     return "cpu"
 
 
+def initialize_or_update_wandb(config: TrainingConfig, device: str) -> None:
+    wandb_config = json.loads(config.to_json())
+    wandb_config["device"] = device
+
+    if wandb.run is None:
+        wandb.init(
+            project=config.project_name,
+            name=config.run_name,
+            config=wandb_config,
+        )
+        return
+
+    wandb.config.update(wandb_config, allow_val_change=True)
+
+
 @dataclass
 class ScriptArgs:
     """Training script arguments."""
@@ -42,7 +57,7 @@ class ScriptArgs:
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
     resume_dir: (  # Bootstrap a new run from existing run dir
         Path | None
-    ) = None  # Path(__file__).parent.parent / "training_runs" / "v5"
+    ) = Path(__file__).parent.parent / "training_runs" / "v17"
     resume_restore_optimizer_scheduler: bool = True  # If True, restore optimizer and scheduler from checkpoint when using resume_dir; if False, restore optimizer only and rebuild scheduler from current config
     init_checkpoint: Path | None = None  # Initialize model weights from checkpoint
     no_wandb: bool = False  # Disable WandB logging
@@ -167,14 +182,7 @@ def main(args: ScriptArgs) -> None:
     log_to_wandb = not args.no_wandb
 
     if log_to_wandb:
-        # Use config's JSON serialization for wandb config
-        wandb_config = json.loads(config.to_json())
-        wandb_config["device"] = device
-        wandb.init(
-            project=config.project_name,
-            name=config.run_name,
-            config=wandb_config,
-        )
+        initialize_or_update_wandb(config, device)
         wandb.define_metric("trainer_step")
         wandb.define_metric("train/*", step_metric="trainer_step")
         wandb.define_metric("batch/*", step_metric="trainer_step")

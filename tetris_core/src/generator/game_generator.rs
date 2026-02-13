@@ -277,7 +277,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=30, start_with_network=true, non_network_num_simulations=3000))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -1174,6 +1174,8 @@ impl GameGenerator {
             return 0;
         };
 
+        // Each play_game call creates a fresh TetrisEnv::new(...) with a new RNG seed.
+        // Candidate gating therefore evaluates on randomized games, not a fixed seed list.
         let mut candidate_results: Vec<GameResult> = Vec::with_capacity(candidate_eval_games);
         for _ in 0..candidate_eval_games {
             if !running.load(Ordering::SeqCst) {
