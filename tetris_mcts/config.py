@@ -108,8 +108,8 @@ class TrainingConfig:
     )
 
     # Replay buffer
-    buffer_size: int = 1_000_000
-    min_buffer_size: int = 100
+    buffer_size: int = 1_000_000  # Maximum buffer size. FIFO eviction.
+    min_buffer_size: int = 100  # Minimum buffer size before training starts
     games_per_save: int = 100  # Games between disk saves (0 to disable)
 
     # Intervals
