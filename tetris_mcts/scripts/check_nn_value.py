@@ -10,8 +10,9 @@ PIECE_INDEX = {"I": 0, "O": 1, "T": 2, "S": 3, "Z": 4, "J": 5, "L": 6}
 NUM_PIECE_TYPES = 7
 BOARD_HEIGHT = 20
 BOARD_WIDTH = 10
-AUX_FEATURES = 52  # 7 + 8 + 1 + 35 + 1
+AUX_FEATURES = 61  # 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7
 MAX_PLACEMENTS = 100
+COMBO_NORMALIZATION_MAX = 12.0
 
 # ── State from MCTS visualizer (node 3, chance node) ──
 CURRENT_PIECE = "J"
@@ -19,6 +20,9 @@ HOLD_PIECE = "L"
 QUEUE = ["I", "Z", "O", "S", "O"]
 PLACEMENT_COUNT = 2
 HOLD_AVAILABLE = True  # hold not used this turn
+COMBO = 0
+BACK_TO_BACK = False
+NEXT_HIDDEN_PIECE_PROBS = [1.0 / NUM_PIECE_TYPES] * NUM_PIECE_TYPES
 
 # Board: T-piece rotation 1, placed in bottom-left corner
 # x.
@@ -44,7 +48,15 @@ def encode_aux(
     hold_available: bool,
     queue: list[str],
     placement_count: int,
+    combo: int,
+    back_to_back: bool,
+    next_hidden_piece_probs: list[float],
 ) -> np.ndarray:
+    if len(next_hidden_piece_probs) != NUM_PIECE_TYPES:
+        raise ValueError(
+            f"next_hidden_piece_probs must have length {NUM_PIECE_TYPES}, got {len(next_hidden_piece_probs)}"
+        )
+
     aux = np.zeros(AUX_FEATURES, dtype=np.float32)
     idx = 0
 
@@ -72,6 +84,21 @@ def encode_aux(
     aux[idx] = placement_count / MAX_PLACEMENTS
     idx += 1
 
+    # Combo: normalized
+    aux[idx] = min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
+    idx += 1
+
+    # Back-to-back: binary
+    aux[idx] = 1.0 if back_to_back else 0.0
+    idx += 1
+
+    # Next hidden piece distribution: 7 probabilities
+    aux[idx : idx + NUM_PIECE_TYPES] = np.asarray(
+        next_hidden_piece_probs,
+        dtype=np.float32,
+    )
+    idx += NUM_PIECE_TYPES
+
     assert idx == AUX_FEATURES
     return aux.reshape(1, AUX_FEATURES)
 
@@ -79,7 +106,14 @@ def encode_aux(
 def main() -> None:
     board_tensor = encode_board(BOARD)
     aux_tensor = encode_aux(
-        CURRENT_PIECE, HOLD_PIECE, HOLD_AVAILABLE, QUEUE, PLACEMENT_COUNT
+        CURRENT_PIECE,
+        HOLD_PIECE,
+        HOLD_AVAILABLE,
+        QUEUE,
+        PLACEMENT_COUNT,
+        COMBO,
+        BACK_TO_BACK,
+        NEXT_HIDDEN_PIECE_PROBS,
     )
 
     print(f"Board tensor shape: {board_tensor.shape}")
@@ -104,6 +138,9 @@ def main() -> None:
     print(
         f"Encoded placement count: {aux[51]} (raw {PLACEMENT_COUNT}/{MAX_PLACEMENTS})"
     )
+    print(f"Encoded combo:         {aux[52]} (raw {COMBO})")
+    print(f"Encoded back-to-back:  {aux[53]}")
+    print(f"Encoded hidden dist:   {aux[54:61].tolist()}")
     print()
 
     # Load ONNX and run inference

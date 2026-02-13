@@ -92,7 +92,7 @@ def compute_loss(
     Args:
         model: TetrisNet model
         boards: (batch, 1, 20, 10)
-        aux_features: (batch, 52)
+        aux_features: (batch, 61)
         policy_targets: (batch, 735) - MCTS policy targets
         value_targets: (batch,) - scalar value targets from replay data
         action_masks: (batch, 735) - valid action masks

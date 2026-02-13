@@ -66,9 +66,20 @@ impl TetrisEnv {
         self.total_blocks == 0
     }
 
-    /// Recalculate total_blocks and row_fill_counts from the board state.
-    /// Call this after directly modifying the board.
-    pub(crate) fn sync_board_stats(&mut self) {
+    pub(crate) fn recompute_column_heights(&mut self) {
+        self.column_heights.fill(0);
+        for x in 0..self.width {
+            for y in 0..self.height {
+                if self.board[y * self.width + x] == 0 {
+                    continue;
+                }
+                self.column_heights[x] = (self.height - y) as u8;
+                break;
+            }
+        }
+    }
+
+    pub(crate) fn recompute_total_blocks_and_row_fill_counts(&mut self) {
         self.total_blocks = 0;
         self.row_fill_counts = vec![0; self.height];
         for y in 0..self.height {
@@ -80,5 +91,12 @@ impl TetrisEnv {
                 self.row_fill_counts[y] += 1;
             }
         }
+    }
+
+    /// Recalculate total_blocks, row_fill_counts, and column_heights from the board state.
+    /// Call this after directly modifying the board.
+    pub(crate) fn sync_board_stats(&mut self) {
+        self.recompute_total_blocks_and_row_fill_counts();
+        self.recompute_column_heights();
     }
 }

@@ -54,31 +54,160 @@ pub fn compute_death_penalty(move_number: u32, max_placements: u32, death_penalt
     death_penalty * remaining.max(0.0)
 }
 
-/// Count overhang fields (empty cells with at least one filled cell above in the same column).
-pub fn count_overhang_fields(env: &TetrisEnv) -> u32 {
-    let mut overhang_fields: u32 = 0;
+/// Count overhang fields and holes in one pass.
+///
+/// Overhang fields are empty cells with at least one filled cell above in the same column.
+/// Holes are overhang fields not reachable from top-row air via 4-neighbor flood-fill.
+pub fn count_overhang_fields_and_holes(env: &TetrisEnv) -> (u32, u32) {
     let board = env.board_cells();
+    let width = env.width;
+    let height = env.height;
+    let cell_count = width * height;
 
+    let mut reachable = vec![false; cell_count];
+    let mut queue = vec![0usize; cell_count];
+    let mut queue_head = 0usize;
+    let mut queue_tail = 0usize;
+
+    // Multi-source flood-fill from all top-row empty cells.
+    for x in 0..width {
+        let idx = x;
+        if board[idx] != 0 || reachable[idx] {
+            continue;
+        }
+        reachable[idx] = true;
+        queue[queue_tail] = idx;
+        queue_tail += 1;
+    }
+
+    while queue_head < queue_tail {
+        let idx = queue[queue_head];
+        queue_head += 1;
+        let x = idx % width;
+        let y = idx / width;
+
+        if y > 0 {
+            let up = idx - width;
+            if board[up] == 0 && !reachable[up] {
+                reachable[up] = true;
+                queue[queue_tail] = up;
+                queue_tail += 1;
+            }
+        }
+        if y + 1 < height {
+            let down = idx + width;
+            if board[down] == 0 && !reachable[down] {
+                reachable[down] = true;
+                queue[queue_tail] = down;
+                queue_tail += 1;
+            }
+        }
+        if x > 0 {
+            let left = idx - 1;
+            if board[left] == 0 && !reachable[left] {
+                reachable[left] = true;
+                queue[queue_tail] = left;
+                queue_tail += 1;
+            }
+        }
+        if x + 1 < width {
+            let right = idx + 1;
+            if board[right] == 0 && !reachable[right] {
+                reachable[right] = true;
+                queue[queue_tail] = right;
+                queue_tail += 1;
+            }
+        }
+    }
+
+    let mut overhang_fields: u32 = 0;
+    let mut holes: u32 = 0;
     for x in 0..env.width {
         let mut seen_filled = false;
         for y in 0..env.height {
-            let cell = board[y * env.width + x];
+            let idx = y * env.width + x;
+            let cell = board[idx];
             if cell != 0 {
                 seen_filled = true;
                 continue;
             }
             if seen_filled {
                 overhang_fields += 1;
+                if !reachable[idx] {
+                    holes += 1;
+                }
             }
         }
     }
 
-    overhang_fields
+    (overhang_fields, holes)
+}
+
+/// Count overhang fields (empty cells with at least one filled cell above in the same column).
+pub fn count_overhang_fields(env: &TetrisEnv) -> u32 {
+    count_overhang_fields_and_holes(env).0
+}
+
+/// Count holes (overhang fields not reachable from top-row air).
+pub fn count_holes(env: &TetrisEnv) -> u32 {
+    count_overhang_fields_and_holes(env).1
 }
 
 /// Compute normalized overhang penalty magnitude from raw overhang count.
 pub fn compute_overhang_penalty(overhang_fields: u32, overhang_penalty_weight: f32) -> f32 {
     (overhang_fields as f32 / OVERHANG_NORMALIZATION_DENOMINATOR) * overhang_penalty_weight
+}
+
+/// Compute terrain bumpiness as the sum of squared adjacent column-height deltas.
+/// For heights h[0..W-1], bumpiness = Σ_{i=0..W-2} (h[i] - h[i+1])^2.
+pub fn compute_bumpiness(column_heights: &[u8]) -> u32 {
+    if column_heights.len() < 2 {
+        return 0;
+    }
+
+    let mut bumpiness: u32 = 0;
+    for i in 0..(column_heights.len() - 1) {
+        let delta = column_heights[i] as i32 - column_heights[i + 1] as i32;
+        bumpiness += (delta * delta) as u32;
+    }
+    bumpiness
+}
+
+pub fn normalize_column_heights(column_heights: &[u8], board_height: usize) -> Vec<f32> {
+    let denominator = board_height as f32;
+    column_heights
+        .iter()
+        .map(|&height| height as f32 / denominator)
+        .collect()
+}
+
+pub fn normalize_row_fill_counts(row_fill_counts: &[u8], board_width: usize) -> Vec<f32> {
+    let denominator = board_width as f32;
+    row_fill_counts
+        .iter()
+        .map(|&count| count as f32 / denominator)
+        .collect()
+}
+
+pub fn normalize_total_blocks(total_blocks: u32, board_width: usize, board_height: usize) -> f32 {
+    let denominator = (board_width * board_height) as f32;
+    total_blocks as f32 / denominator
+}
+
+pub fn normalize_bumpiness(raw_bumpiness: u32, board_width: usize, board_height: usize) -> f32 {
+    if board_width < 2 {
+        return 0.0;
+    }
+    let max_bumpiness = ((board_width - 1) * board_height * board_height) as f32;
+    raw_bumpiness as f32 / max_bumpiness
+}
+
+pub fn normalize_holes(holes: u32, board_width: usize, board_height: usize) -> f32 {
+    if board_height < 2 || board_width == 0 {
+        return 0.0;
+    }
+    let max_holes = (board_width * (board_height - 1)) as f32;
+    holes as f32 / max_holes
 }
 
 #[cfg(test)]
@@ -119,9 +248,77 @@ mod tests {
     }
 
     #[test]
+    fn test_count_holes_ignores_reachable_overhang_air() {
+        let mut env = TetrisEnv::with_seed(3, 4, 3);
+        let board = vec![vec![0, 1, 0], vec![0, 0, 0], vec![1, 0, 1], vec![1, 1, 1]];
+        env.set_board(board).expect("set_board should succeed");
+
+        let (overhang, holes) = count_overhang_fields_and_holes(&env);
+        assert_eq!(overhang, 2);
+        assert_eq!(holes, 0);
+    }
+
+    #[test]
+    fn test_count_holes_counts_sealed_overhang_cells() {
+        let mut env = TetrisEnv::with_seed(3, 4, 4);
+        let board = vec![vec![0, 1, 0], vec![1, 0, 1], vec![1, 0, 1], vec![1, 1, 1]];
+        env.set_board(board).expect("set_board should succeed");
+
+        let (overhang, holes) = count_overhang_fields_and_holes(&env);
+        assert_eq!(overhang, 2);
+        assert_eq!(holes, 2);
+        assert_eq!(count_holes(&env), 2);
+    }
+
+    #[test]
     fn test_compute_overhang_penalty_uses_fixed_normalization() {
         let penalty = compute_overhang_penalty(95, 2.0);
         // 95 / 190 = 0.5
         assert!((penalty - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_compute_bumpiness_squared_adjacent_deltas() {
+        let column_heights = vec![0, 2, 5, 1];
+        // (0-2)^2 + (2-5)^2 + (5-1)^2 = 4 + 9 + 16 = 29
+        assert_eq!(compute_bumpiness(&column_heights), 29);
+    }
+
+    #[test]
+    fn test_compute_bumpiness_short_inputs_are_zero() {
+        assert_eq!(compute_bumpiness(&[]), 0);
+        assert_eq!(compute_bumpiness(&[3]), 0);
+    }
+
+    #[test]
+    fn test_normalize_total_blocks_on_standard_board() {
+        let normalized = normalize_total_blocks(50, 10, 20);
+        assert!((normalized - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalize_column_heights_divides_by_board_height() {
+        let normalized = normalize_column_heights(&[0, 10, 20], 20);
+        assert_eq!(normalized, vec![0.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn test_normalize_row_fill_counts_divides_by_board_width() {
+        let normalized = normalize_row_fill_counts(&[0, 5, 10], 10);
+        assert_eq!(normalized, vec![0.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn test_normalize_bumpiness_uses_board_maximum() {
+        let normalized = normalize_bumpiness(1800, 10, 20);
+        // Max is (10 - 1) * 20^2 = 3600
+        assert!((normalized - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalize_holes_on_standard_board() {
+        let normalized = normalize_holes(95, 10, 20);
+        // Max is 10 * (20 - 1) = 190
+        assert!((normalized - 0.5).abs() < 1e-6);
     }
 }

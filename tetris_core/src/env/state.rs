@@ -58,6 +58,8 @@ pub struct TetrisEnv {
     /// Number of filled cells per row. Used for O(1) line clear detection.
     /// A row is full when `row_fill_counts[y] == width`.
     pub(crate) row_fill_counts: Vec<u8>,
+    /// Height per column measured from the bottom (0 for empty, up to board height).
+    pub(crate) column_heights: Vec<u8>,
     /// Cached placements for current piece (invalidated when piece or board changes)
     /// Using RefCell for interior mutability to cache with &self
     pub(crate) placements_cache: RefCell<Option<PlacementCache>>,
@@ -93,6 +95,7 @@ impl TetrisEnv {
             seed,
             total_blocks: 0,
             row_fill_counts: vec![0; height],
+            column_heights: vec![0; width],
             placements_cache: RefCell::new(None),
         };
         env.spawn_piece_internal();
@@ -124,6 +127,7 @@ impl TetrisEnv {
         self.seed = seed;
         self.total_blocks = 0;
         self.row_fill_counts = vec![0; self.height];
+        self.column_heights = vec![0; self.width];
         *self.placements_cache.borrow_mut() = None;
         self.spawn_piece_internal();
     }

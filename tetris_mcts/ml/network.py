@@ -8,8 +8,11 @@ Input Representation:
 - Hold available: 1 (binary)
 - Next queue: 5 x 7 = 35 (one-hot per slot)
 - Placement count: 1 (normalized: placements_so_far / max_placements)
+- Combo: 1 (normalized, capped)
+- Back-to-back: 1 (binary)
+- Next hidden piece distribution: 7 (7-bag probabilities)
 
-Total input: 200 + 7 + 8 + 1 + 35 + 1 = 252 features
+Total input: 200 + 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 = 261 features
 
 Output:
 - Policy head: 735 outputs (softmax over actions: 734 placements + hold)
@@ -36,6 +39,9 @@ HOLD_PIECE_FEATURES = NUM_PIECE_TYPES + 1  # 8 (7 pieces + empty)
 HOLD_AVAILABLE_FEATURES = 1
 QUEUE_FEATURES = QUEUE_SIZE * NUM_PIECE_TYPES  # 35
 MOVE_NUMBER_FEATURES = 1
+COMBO_FEATURES = 1
+BACK_TO_BACK_FEATURES = 1
+HIDDEN_PIECE_DISTRIBUTION_FEATURES = NUM_PIECE_TYPES  # 7
 
 AUX_FEATURES = (
     CURRENT_PIECE_FEATURES
@@ -43,7 +49,10 @@ AUX_FEATURES = (
     + HOLD_AVAILABLE_FEATURES
     + QUEUE_FEATURES
     + MOVE_NUMBER_FEATURES
-)  # 52
+    + COMBO_FEATURES
+    + BACK_TO_BACK_FEATURES
+    + HIDDEN_PIECE_DISTRIBUTION_FEATURES
+)  # 61
 
 
 class TetrisNet(nn.Module):
@@ -110,7 +119,7 @@ class TetrisNet(nn.Module):
 
         Args:
             board: Shape (batch, 1, 20, 10) - binary board state
-            aux_features: Shape (batch, 52) - auxiliary features
+            aux_features: Shape (batch, 61) - auxiliary features
 
         Returns:
             policy_logits: Shape (batch, 735) - raw logits (caller should apply
@@ -126,7 +135,7 @@ class TetrisNet(nn.Module):
         x = x.view(batch_size, -1)  # (batch, 1600)
 
         # Concatenate with auxiliary features
-        x = torch.cat([x, aux_features], dim=1)  # (batch, 1652)
+        x = torch.cat([x, aux_features], dim=1)  # (batch, 1661)
 
         # Shared FC layer
         x = F.relu(self.ln1(self.fc1(x)))

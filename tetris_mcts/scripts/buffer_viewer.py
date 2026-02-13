@@ -92,7 +92,10 @@ class BufferViewer:
         hold_piece_raw = self.data["hold_pieces"][i]
         hold_available_raw = float(self.data["hold_available"][i])
         next_queue_raw = self.data["next_queue"][i]
-        move_number_raw = float(self.data["move_numbers"][i])
+        placement_count_raw = float(self.data["placement_counts"][i])
+        combo_raw = float(self.data["combos"][i])
+        back_to_back_raw = float(self.data["back_to_back"][i])
+        next_hidden_piece_probs_raw = self.data["next_hidden_piece_probs"][i]
         current_piece = get_piece_type(self.data["current_pieces"][i])
         hold_piece = get_piece_type(self.data["hold_pieces"][i])
         next_queue = [
@@ -110,7 +113,10 @@ class BufferViewer:
                 hold_piece=hold_piece_raw,
                 hold_available=hold_available_raw,
                 next_queue=next_queue_raw,
-                move_number=move_number_raw,
+                placement_count=placement_count_raw,
+                combo=combo_raw,
+                back_to_back=back_to_back_raw,
+                next_hidden_piece_probs=next_hidden_piece_probs_raw,
             )
 
         return {

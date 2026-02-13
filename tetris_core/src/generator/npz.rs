@@ -24,6 +24,16 @@ use crate::mcts::{TrainingExample, NUM_ACTIONS};
 /// - next_queue: (N, 5, 7) float32 one-hot
 /// - move_numbers: (N,) float32 normalized frame indices (includes holds)
 /// - placement_counts: (N,) float32 normalized placement counts (excludes holds)
+/// - combos: (N,) uint32
+/// - back_to_back: (N,) bool
+/// - next_hidden_piece_probs: (N, 7) float32
+/// - column_heights: (N, 10) float32 normalized by board height
+/// - max_column_heights: (N,) float32
+/// - min_column_heights: (N,) float32
+/// - row_fill_counts: (N, 20) float32 normalized by board width
+/// - total_blocks: (N,) float32 normalized by board area
+/// - bumpiness: (N,) float32 normalized
+/// - holes: (N,) float32 normalized by maximum possible holes
 /// - policy_targets: (N, 735) float32
 /// - value_targets: (N,) float32
 /// - raw_value_targets: (N,) float32
@@ -49,6 +59,16 @@ pub fn write_examples_to_npz(
     let mut next_queue: Vec<f32> = vec![0.0; n * QUEUE_SIZE * NUM_PIECE_TYPES];
     let mut move_numbers: Vec<f32> = Vec::with_capacity(n);
     let mut placement_counts: Vec<f32> = Vec::with_capacity(n);
+    let mut combos: Vec<u32> = Vec::with_capacity(n);
+    let mut back_to_back: Vec<u8> = Vec::with_capacity(n);
+    let mut next_hidden_piece_probs: Vec<f32> = Vec::with_capacity(n * NUM_PIECE_TYPES);
+    let mut column_heights: Vec<f32> = Vec::with_capacity(n * BOARD_WIDTH);
+    let mut max_column_heights: Vec<f32> = Vec::with_capacity(n);
+    let mut min_column_heights: Vec<f32> = Vec::with_capacity(n);
+    let mut row_fill_counts: Vec<f32> = Vec::with_capacity(n * BOARD_HEIGHT);
+    let mut total_blocks: Vec<f32> = Vec::with_capacity(n);
+    let mut bumpiness: Vec<f32> = Vec::with_capacity(n);
+    let mut holes: Vec<f32> = Vec::with_capacity(n);
     let mut policy_targets: Vec<f32> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut value_targets: Vec<f32> = Vec::with_capacity(n);
     let mut raw_value_targets: Vec<f32> = Vec::with_capacity(n);
@@ -84,6 +104,37 @@ pub fn write_examples_to_npz(
         // Move number (normalized)
         move_numbers.push(ex.move_number as f32 / move_norm_denominator);
         placement_counts.push(ex.placement_count as f32 / move_norm_denominator);
+        combos.push(ex.combo);
+        back_to_back.push(ex.back_to_back as u8);
+        if ex.next_hidden_piece_probs.len() != NUM_PIECE_TYPES {
+            return Err(format!(
+                "next_hidden_piece_probs length is {}, expected {}",
+                ex.next_hidden_piece_probs.len(),
+                NUM_PIECE_TYPES
+            ));
+        }
+        next_hidden_piece_probs.extend(ex.next_hidden_piece_probs.iter().copied());
+        if ex.column_heights.len() != BOARD_WIDTH {
+            return Err(format!(
+                "column_heights length is {}, expected {}",
+                ex.column_heights.len(),
+                BOARD_WIDTH
+            ));
+        }
+        if ex.row_fill_counts.len() != BOARD_HEIGHT {
+            return Err(format!(
+                "row_fill_counts length is {}, expected {}",
+                ex.row_fill_counts.len(),
+                BOARD_HEIGHT
+            ));
+        }
+        column_heights.extend(ex.column_heights.iter().copied());
+        max_column_heights.push(ex.max_column_height);
+        min_column_heights.push(ex.min_column_height);
+        row_fill_counts.extend(ex.row_fill_counts.iter().copied());
+        total_blocks.push(ex.total_blocks);
+        bumpiness.push(ex.bumpiness);
+        holes.push(ex.holes);
 
         // Policy targets
         policy_targets.extend(ex.policy.iter().copied());
@@ -156,6 +207,58 @@ pub fn write_examples_to_npz(
         &[n as u64],
         &placement_counts,
     )?;
+    write_npy_to_zip(&mut zip, options, "combos.npy", &[n as u64], &combos)?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "back_to_back.npy",
+        &[n as u64],
+        &back_to_back,
+    )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "next_hidden_piece_probs.npy",
+        &[n as u64, NUM_PIECE_TYPES as u64],
+        &next_hidden_piece_probs,
+    )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "column_heights.npy",
+        &[n as u64, BOARD_WIDTH as u64],
+        &column_heights,
+    )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "max_column_heights.npy",
+        &[n as u64],
+        &max_column_heights,
+    )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "min_column_heights.npy",
+        &[n as u64],
+        &min_column_heights,
+    )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "row_fill_counts.npy",
+        &[n as u64, BOARD_HEIGHT as u64],
+        &row_fill_counts,
+    )?;
+    write_npy_to_zip(
+        &mut zip,
+        options,
+        "total_blocks.npy",
+        &[n as u64],
+        &total_blocks,
+    )?;
+    write_npy_to_zip(&mut zip, options, "bumpiness.npy", &[n as u64], &bumpiness)?;
+    write_npy_to_zip(&mut zip, options, "holes.npy", &[n as u64], &holes)?;
     write_npy_to_zip(
         &mut zip,
         options,
@@ -229,6 +332,23 @@ pub fn read_examples_from_npz(
         read_npy_array::<f32>(&mut archive, "move_numbers.npy")?;
     let (placement_counts, placement_counts_shape) =
         read_npy_array::<f32>(&mut archive, "placement_counts.npy")?;
+    let (combos, combos_shape) = read_npy_array::<u32>(&mut archive, "combos.npy")?;
+    let (back_to_back, back_to_back_shape) =
+        read_npy_array_bool_like(&mut archive, "back_to_back.npy")?;
+    let (next_hidden_piece_probs, next_hidden_piece_probs_shape) =
+        read_npy_array::<f32>(&mut archive, "next_hidden_piece_probs.npy")?;
+    let (column_heights, column_heights_shape) =
+        read_npy_array::<f32>(&mut archive, "column_heights.npy")?;
+    let (max_column_heights, max_column_heights_shape) =
+        read_npy_array::<f32>(&mut archive, "max_column_heights.npy")?;
+    let (min_column_heights, min_column_heights_shape) =
+        read_npy_array::<f32>(&mut archive, "min_column_heights.npy")?;
+    let (row_fill_counts, row_fill_counts_shape) =
+        read_npy_array::<f32>(&mut archive, "row_fill_counts.npy")?;
+    let (total_blocks, total_blocks_shape) =
+        read_npy_array::<f32>(&mut archive, "total_blocks.npy")?;
+    let (bumpiness, bumpiness_shape) = read_npy_array::<f32>(&mut archive, "bumpiness.npy")?;
+    let (holes, holes_shape) = read_npy_array::<f32>(&mut archive, "holes.npy")?;
     let (policy_targets, policy_targets_shape) =
         read_npy_array::<f32>(&mut archive, "policy_targets.npy")?;
     let (value_targets, value_targets_shape) =
@@ -264,6 +384,28 @@ pub fn read_examples_from_npz(
     )?;
     validate_shape("move_numbers", &move_numbers_shape, &[n as u64])?;
     validate_shape("placement_counts", &placement_counts_shape, &[n as u64])?;
+    validate_shape("combos", &combos_shape, &[n as u64])?;
+    validate_shape("back_to_back", &back_to_back_shape, &[n as u64])?;
+    validate_shape(
+        "next_hidden_piece_probs",
+        &next_hidden_piece_probs_shape,
+        &[n as u64, NUM_PIECE_TYPES as u64],
+    )?;
+    validate_shape(
+        "column_heights",
+        &column_heights_shape,
+        &[n as u64, BOARD_WIDTH as u64],
+    )?;
+    validate_shape("max_column_heights", &max_column_heights_shape, &[n as u64])?;
+    validate_shape("min_column_heights", &min_column_heights_shape, &[n as u64])?;
+    validate_shape(
+        "row_fill_counts",
+        &row_fill_counts_shape,
+        &[n as u64, BOARD_HEIGHT as u64],
+    )?;
+    validate_shape("total_blocks", &total_blocks_shape, &[n as u64])?;
+    validate_shape("bumpiness", &bumpiness_shape, &[n as u64])?;
+    validate_shape("holes", &holes_shape, &[n as u64])?;
     validate_shape(
         "policy_targets",
         &policy_targets_shape,
@@ -290,6 +432,9 @@ pub fn read_examples_from_npz(
     let board_size = BOARD_HEIGHT * BOARD_WIDTH;
     let hold_size = NUM_PIECE_TYPES + 1;
     let next_queue_size = QUEUE_SIZE * NUM_PIECE_TYPES;
+    let next_hidden_piece_probs_size = NUM_PIECE_TYPES;
+    let column_heights_size = BOARD_WIDTH;
+    let row_fill_counts_size = BOARD_HEIGHT;
 
     for i in 0..n {
         let board_start = i * board_size;
@@ -320,6 +465,12 @@ pub fn read_examples_from_npz(
         let policy_end = policy_start + NUM_ACTIONS;
         let mask_start = i * NUM_ACTIONS;
         let mask_end = mask_start + NUM_ACTIONS;
+        let hidden_probs_start = i * next_hidden_piece_probs_size;
+        let hidden_probs_end = hidden_probs_start + next_hidden_piece_probs_size;
+        let column_heights_start = i * column_heights_size;
+        let column_heights_end = column_heights_start + column_heights_size;
+        let row_fill_counts_start = i * row_fill_counts_size;
+        let row_fill_counts_end = row_fill_counts_start + row_fill_counts_size;
 
         examples.push(TrainingExample {
             board: boards[board_start..board_end].to_vec(),
@@ -329,6 +480,17 @@ pub fn read_examples_from_npz(
             next_queue: next_queue_pieces,
             move_number: denormalize_move_number(move_numbers[i], move_norm_denominator),
             placement_count: denormalize_move_number(placement_counts[i], move_norm_denominator),
+            combo: combos[i],
+            back_to_back: back_to_back[i] != 0,
+            next_hidden_piece_probs: next_hidden_piece_probs[hidden_probs_start..hidden_probs_end]
+                .to_vec(),
+            column_heights: column_heights[column_heights_start..column_heights_end].to_vec(),
+            max_column_height: max_column_heights[i],
+            min_column_height: min_column_heights[i],
+            row_fill_counts: row_fill_counts[row_fill_counts_start..row_fill_counts_end].to_vec(),
+            total_blocks: total_blocks[i],
+            bumpiness: bumpiness[i],
+            holes: holes[i],
             policy: policy_targets[policy_start..policy_end].to_vec(),
             value: value_targets[i],
             raw_value: raw_value_targets[i],
@@ -511,6 +673,16 @@ mod tests {
             next_queue: vec![0, 1, 2, 3, 4],
             move_number,
             placement_count: move_number,
+            combo: 3,
+            back_to_back: true,
+            next_hidden_piece_probs: vec![0.25, 0.25, 0.0, 0.0, 0.25, 0.25, 0.0],
+            column_heights: vec![0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45],
+            max_column_height: 0.45,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; BOARD_HEIGHT],
+            total_blocks: 0.01,
+            bumpiness: 0.0025,
+            holes: 0.05,
             policy,
             value: 3.5,
             raw_value: 4.0,
@@ -565,6 +737,19 @@ mod tests {
             assert_eq!(actual.next_queue, expected.next_queue);
             assert_eq!(actual.move_number, expected.move_number);
             assert_eq!(actual.placement_count, expected.placement_count);
+            assert_eq!(actual.combo, expected.combo);
+            assert_eq!(actual.back_to_back, expected.back_to_back);
+            assert_eq!(
+                actual.next_hidden_piece_probs,
+                expected.next_hidden_piece_probs
+            );
+            assert_eq!(actual.column_heights, expected.column_heights);
+            assert_eq!(actual.max_column_height, expected.max_column_height);
+            assert_eq!(actual.min_column_height, expected.min_column_height);
+            assert_eq!(actual.row_fill_counts, expected.row_fill_counts);
+            assert_eq!(actual.total_blocks, expected.total_blocks);
+            assert_eq!(actual.bumpiness, expected.bumpiness);
+            assert_eq!(actual.holes, expected.holes);
             assert_eq!(actual.value, expected.value);
             assert_eq!(actual.raw_value, expected.raw_value);
             assert_eq!(actual.policy.len(), expected.policy.len());
