@@ -38,13 +38,16 @@ class ScriptArgs:
     )  # Path to offline replay buffer NPZ
     device: str = "auto"  # auto/cpu/cuda/mps
     seed: int = 123
-    max_examples: int = 200_000  # 0 = use all examples in NPZ
+    max_examples: int = 0  # 0 = use all examples in NPZ
     train_fraction: float = 0.9
-    steps: int = 1500
+    steps: int = 400
     batch_size: int = 1024
     eval_interval: int = 100
     eval_examples: int = 32_768  # Max examples to use per train/val eval pass
     eval_batch_size: int = 2048
+    log_train_metrics_every: int = 1  # Batch metric logging cadence
+    preload_to_gpu: bool = False  # Preload selected dataset tensors to GPU
+    preload_to_ram: bool = False  # Preload selected dataset tensors to CPU RAM
     learning_rate: float = 0.0005
     weight_decay: float = 1e-4
     grad_clip_norm: float = 5.0
@@ -102,6 +105,23 @@ class FlopBreakdown:
     hit_path: int
     full: int
     effective: float
+
+
+@dataclass
+class OfflineTensorDataset:
+    boards: torch.Tensor
+    aux: torch.Tensor
+    policy_targets: torch.Tensor
+    value_targets: torch.Tensor
+    action_masks: torch.Tensor
+    storage_device: torch.device
+
+
+@dataclass
+class OfflineDataSource:
+    npz: np.lib.npyio.NpzFile
+    selected_global_indices: np.ndarray
+    tensor_data: OfflineTensorDataset | None
 
 
 class ResidualFusionBlock(nn.Module):
@@ -416,6 +436,8 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError("batch_size must be > 0")
     if args.eval_interval <= 0:
         raise ValueError("eval_interval must be > 0")
+    if args.log_train_metrics_every <= 0:
+        raise ValueError("log_train_metrics_every must be > 0")
     if args.eval_batch_size <= 0:
         raise ValueError("eval_batch_size must be > 0")
     if args.eval_examples <= 0:
@@ -496,35 +518,129 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
     return n
 
 
-def build_aux_batch(data: np.lib.npyio.NpzFile, indices: np.ndarray) -> np.ndarray:
-    current_pieces = data["current_pieces"][indices].astype(np.float32, copy=False)
-    hold_pieces = data["hold_pieces"][indices].astype(np.float32, copy=False)
-    hold_available = data["hold_available"][indices].astype(np.float32).reshape(-1, 1)
-    next_queue = data["next_queue"][indices].astype(np.float32).reshape(len(indices), -1)
-    placement_counts = data["placement_counts"][indices].astype(np.float32).reshape(-1, 1)
+def get_preload_mode(args: ScriptArgs) -> str:
+    if args.preload_to_gpu and args.preload_to_ram:
+        raise ValueError("preload_to_gpu and preload_to_ram cannot both be true")
+    if args.preload_to_gpu:
+        return "gpu"
+    if args.preload_to_ram:
+        return "ram"
+    return "none"
+
+
+def build_aux_batch_from_npz(
+    data: np.lib.npyio.NpzFile,
+    global_indices: np.ndarray,
+) -> np.ndarray:
+    current_pieces = data["current_pieces"][global_indices].astype(np.float32, copy=False)
+    hold_pieces = data["hold_pieces"][global_indices].astype(np.float32, copy=False)
+    hold_available = data["hold_available"][global_indices].astype(np.float32).reshape(-1, 1)
+    next_queue = data["next_queue"][global_indices].astype(np.float32).reshape(
+        len(global_indices), -1
+    )
+    placement_counts = data["placement_counts"][global_indices].astype(np.float32).reshape(
+        -1, 1
+    )
     return np.concatenate(
         [current_pieces, hold_pieces, hold_available, next_queue, placement_counts],
         axis=1,
     )
 
 
-def build_torch_batch(
+def build_torch_batch_from_npz(
     data: np.lib.npyio.NpzFile,
-    indices: np.ndarray,
+    global_indices: np.ndarray,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    boards_np = data["boards"][indices].astype(np.float32)
-    aux_np = build_aux_batch(data, indices)
-    policy_targets_np = data["policy_targets"][indices].astype(np.float32, copy=False)
-    value_targets_np = data["value_targets"][indices].astype(np.float32, copy=False)
-    action_masks_np = data["action_masks"][indices].astype(np.float32, copy=False)
+    boards_np = data["boards"][global_indices].astype(np.float32, copy=False)
+    aux_np = build_aux_batch_from_npz(data, global_indices)
+    policy_targets_np = data["policy_targets"][global_indices].astype(np.float32, copy=False)
+    value_targets_np = data["value_targets"][global_indices].astype(np.float32, copy=False)
+    action_masks_np = data["action_masks"][global_indices].astype(np.float32, copy=False)
 
-    boards = torch.from_numpy(boards_np).unsqueeze(1).to(device)
-    aux = torch.from_numpy(aux_np).to(device)
-    policy_targets = torch.from_numpy(policy_targets_np).to(device)
-    value_targets = torch.from_numpy(value_targets_np).to(device)
-    action_masks = torch.from_numpy(action_masks_np).to(device)
+    boards = torch.from_numpy(boards_np).unsqueeze(1).to(device, non_blocking=True)
+    aux = torch.from_numpy(aux_np).to(device, non_blocking=True)
+    policy_targets = torch.from_numpy(policy_targets_np).to(device, non_blocking=True)
+    value_targets = torch.from_numpy(value_targets_np).to(device, non_blocking=True)
+    action_masks = torch.from_numpy(action_masks_np).to(device, non_blocking=True)
     return boards, aux, policy_targets, value_targets, action_masks
+
+
+def build_tensor_dataset(
+    data: np.lib.npyio.NpzFile,
+    selected_global_indices: np.ndarray,
+    mode: str,
+    train_device: torch.device,
+) -> OfflineTensorDataset:
+    boards_np = data["boards"][selected_global_indices].astype(np.float32, copy=False)
+    aux_np = build_aux_batch_from_npz(data, selected_global_indices).astype(
+        np.float32, copy=False
+    )
+    policy_targets_np = data["policy_targets"][selected_global_indices].astype(
+        np.float32, copy=False
+    )
+    value_targets_np = data["value_targets"][selected_global_indices].astype(
+        np.float32, copy=False
+    )
+    action_masks_np = data["action_masks"][selected_global_indices].astype(
+        np.float32, copy=False
+    )
+
+    boards = torch.from_numpy(boards_np).unsqueeze(1)
+    aux = torch.from_numpy(aux_np)
+    policy_targets = torch.from_numpy(policy_targets_np)
+    value_targets = torch.from_numpy(value_targets_np)
+    action_masks = torch.from_numpy(action_masks_np)
+
+    if mode == "gpu":
+        storage_device = train_device
+        boards = boards.to(storage_device, non_blocking=True)
+        aux = aux.to(storage_device, non_blocking=True)
+        policy_targets = policy_targets.to(storage_device, non_blocking=True)
+        value_targets = value_targets.to(storage_device, non_blocking=True)
+        action_masks = action_masks.to(storage_device, non_blocking=True)
+    else:
+        storage_device = torch.device("cpu")
+
+    return OfflineTensorDataset(
+        boards=boards,
+        aux=aux,
+        policy_targets=policy_targets,
+        value_targets=value_targets,
+        action_masks=action_masks,
+        storage_device=storage_device,
+    )
+
+
+def build_torch_batch(
+    source: OfflineDataSource,
+    local_indices: np.ndarray,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    if source.tensor_data is None:
+        global_indices = source.selected_global_indices[local_indices]
+        return build_torch_batch_from_npz(source.npz, global_indices, device)
+
+    tensor_data = source.tensor_data
+    gather_indices = torch.from_numpy(local_indices.astype(np.int64, copy=False)).to(
+        tensor_data.storage_device, non_blocking=True
+    )
+    boards = tensor_data.boards.index_select(0, gather_indices)
+    aux = tensor_data.aux.index_select(0, gather_indices)
+    policy_targets = tensor_data.policy_targets.index_select(0, gather_indices)
+    value_targets = tensor_data.value_targets.index_select(0, gather_indices)
+    action_masks = tensor_data.action_masks.index_select(0, gather_indices)
+
+    if tensor_data.storage_device == device:
+        return boards, aux, policy_targets, value_targets, action_masks
+
+    return (
+        boards.to(device, non_blocking=True),
+        aux.to(device, non_blocking=True),
+        policy_targets.to(device, non_blocking=True),
+        value_targets.to(device, non_blocking=True),
+        action_masks.to(device, non_blocking=True),
+    )
 
 
 def select_subset(indices: np.ndarray, max_examples: int, seed: int) -> np.ndarray:
@@ -534,10 +650,21 @@ def select_subset(indices: np.ndarray, max_examples: int, seed: int) -> np.ndarr
     return rng.choice(indices, size=max_examples, replace=False)
 
 
+def tensor_dataset_bytes(dataset: OfflineTensorDataset) -> int:
+    tensors = (
+        dataset.boards,
+        dataset.aux,
+        dataset.policy_targets,
+        dataset.value_targets,
+        dataset.action_masks,
+    )
+    return sum(t.numel() * t.element_size() for t in tensors)
+
+
 def evaluate_losses(
     model: nn.Module,
-    data: np.lib.npyio.NpzFile,
-    indices: np.ndarray,
+    source: OfflineDataSource,
+    local_indices: np.ndarray,
     device: torch.device,
     eval_batch_size: int,
     value_loss_weight: float,
@@ -549,10 +676,10 @@ def evaluate_losses(
 
     model.eval()
     with torch.no_grad():
-        for start in range(0, len(indices), eval_batch_size):
-            batch_indices = indices[start : start + eval_batch_size]
+        for start in range(0, len(local_indices), eval_batch_size):
+            batch_indices = local_indices[start : start + eval_batch_size]
             boards, aux, policy_targets, value_targets, action_masks = build_torch_batch(
-                data, batch_indices, device
+                source, batch_indices, device
             )
             total_loss, policy_loss, value_loss = compute_loss(
                 model=model,
@@ -571,7 +698,7 @@ def evaluate_losses(
             sample_count += n
 
     if sample_count == 0:
-        raise ValueError("Cannot evaluate with empty indices")
+        raise ValueError("Cannot evaluate with empty local_indices")
 
     return {
         "total_loss": total_sum / sample_count,
@@ -588,10 +715,10 @@ def train_offline_model(
     model_name: str,
     wandb_prefix: str,
     model: nn.Module,
-    data: np.lib.npyio.NpzFile,
-    train_indices: np.ndarray,
-    train_eval_indices: np.ndarray,
-    val_eval_indices: np.ndarray,
+    source: OfflineDataSource,
+    train_local_indices: np.ndarray,
+    train_eval_local_indices: np.ndarray,
+    val_eval_local_indices: np.ndarray,
     args: ScriptArgs,
     device: torch.device,
     schedule_seed: int,
@@ -604,28 +731,52 @@ def train_offline_model(
     history: list[dict[str, float | int]] = []
     rng = np.random.default_rng(schedule_seed)
     start_time = time.perf_counter()
+    train_compute_seconds_total = 0.0
+    eval_seconds_total = 0.0
+    window_train_seconds = 0.0
+    window_batches = 0
+    window_examples = 0
+
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
 
     def record_eval(step: int) -> None:
+        nonlocal eval_seconds_total
+        eval_start = time.perf_counter()
         train_metrics = evaluate_losses(
             model=model,
-            data=data,
-            indices=train_eval_indices,
+            source=source,
+            local_indices=train_eval_local_indices,
             device=device,
             eval_batch_size=args.eval_batch_size,
             value_loss_weight=args.value_loss_weight,
         )
         val_metrics = evaluate_losses(
             model=model,
-            data=data,
-            indices=val_eval_indices,
+            source=source,
+            local_indices=val_eval_local_indices,
             device=device,
             eval_batch_size=args.eval_batch_size,
             value_loss_weight=args.value_loss_weight,
         )
+        eval_seconds = time.perf_counter() - eval_start
+        eval_seconds_total += eval_seconds
         elapsed_sec = time.perf_counter() - start_time
+        eval_examples = len(train_eval_local_indices) + len(val_eval_local_indices)
+        eval_examples_per_sec = (
+            eval_examples / eval_seconds if eval_seconds > 0 else 0.0
+        )
+        train_examples_seen = step * args.batch_size
+        epochs_seen = train_examples_seen / len(train_local_indices)
+        train_batches_per_sec = (
+            step / train_compute_seconds_total if train_compute_seconds_total > 0 else 0.0
+        )
+        wall_batches_per_sec = step / elapsed_sec if elapsed_sec > 0 else 0.0
         row = {
             "step": step,
             "elapsed_sec": elapsed_sec,
+            "eval_seconds": eval_seconds,
+            "eval_examples_per_sec": eval_examples_per_sec,
             "train_total_loss": train_metrics["total_loss"],
             "train_policy_loss": train_metrics["policy_loss"],
             "train_value_loss": train_metrics["value_loss"],
@@ -634,18 +785,35 @@ def train_offline_model(
             "val_value_loss": val_metrics["value_loss"],
         }
         history.append(row)
-        wandb.log(
-            {
-                "offline_step": step,
-                f"{wandb_prefix}/eval_train_total_loss": row["train_total_loss"],
-                f"{wandb_prefix}/eval_train_policy_loss": row["train_policy_loss"],
-                f"{wandb_prefix}/eval_train_value_loss": row["train_value_loss"],
-                f"{wandb_prefix}/eval_val_total_loss": row["val_total_loss"],
-                f"{wandb_prefix}/eval_val_policy_loss": row["val_policy_loss"],
-                f"{wandb_prefix}/eval_val_value_loss": row["val_value_loss"],
-                f"{wandb_prefix}/elapsed_sec": elapsed_sec,
-            }
-        )
+        log_data = {
+            "offline_step": step,
+            f"{wandb_prefix}/eval_train_total_loss": row["train_total_loss"],
+            f"{wandb_prefix}/eval_train_policy_loss": row["train_policy_loss"],
+            f"{wandb_prefix}/eval_train_value_loss": row["train_value_loss"],
+            f"{wandb_prefix}/eval_val_total_loss": row["val_total_loss"],
+            f"{wandb_prefix}/eval_val_policy_loss": row["val_policy_loss"],
+            f"{wandb_prefix}/eval_val_value_loss": row["val_value_loss"],
+            f"{wandb_prefix}/eval_seconds": eval_seconds,
+            f"{wandb_prefix}/eval_examples_per_sec": eval_examples_per_sec,
+            f"{wandb_prefix}/elapsed_sec": elapsed_sec,
+            f"{wandb_prefix}/train_compute_seconds_total": train_compute_seconds_total,
+            f"{wandb_prefix}/eval_seconds_total": eval_seconds_total,
+            f"{wandb_prefix}/train_examples_seen": train_examples_seen,
+            f"{wandb_prefix}/epochs_seen": epochs_seen,
+            f"{wandb_prefix}/train_batches_per_sec": train_batches_per_sec,
+            f"{wandb_prefix}/wall_batches_per_sec": wall_batches_per_sec,
+        }
+        if device.type == "cuda":
+            log_data[f"{wandb_prefix}/gpu_mem_allocated_mb"] = (
+                torch.cuda.memory_allocated(device) / (1024.0 * 1024.0)
+            )
+            log_data[f"{wandb_prefix}/gpu_mem_reserved_mb"] = (
+                torch.cuda.memory_reserved(device) / (1024.0 * 1024.0)
+            )
+            log_data[f"{wandb_prefix}/gpu_mem_max_allocated_mb"] = (
+                torch.cuda.max_memory_allocated(device) / (1024.0 * 1024.0)
+            )
+        wandb.log(log_data)
         logger.info(
             "Offline eval",
             model=model_name,
@@ -656,15 +824,20 @@ def train_offline_model(
             val_policy_loss=row["val_policy_loss"],
             train_value_loss=row["train_value_loss"],
             val_value_loss=row["val_value_loss"],
+            eval_seconds=eval_seconds,
+            eval_examples_per_sec=eval_examples_per_sec,
+            train_batches_per_sec=train_batches_per_sec,
+            wall_batches_per_sec=wall_batches_per_sec,
         )
 
     record_eval(step=0)
 
     for step in range(1, args.steps + 1):
-        positions = rng.integers(0, len(train_indices), size=args.batch_size)
-        batch_indices = train_indices[positions]
+        step_start = time.perf_counter()
+        positions = rng.integers(0, len(train_local_indices), size=args.batch_size)
+        batch_indices = train_local_indices[positions]
         boards, aux, policy_targets, value_targets, action_masks = build_torch_batch(
-            data, batch_indices, device
+            source, batch_indices, device
         )
 
         model.train()
@@ -679,17 +852,70 @@ def train_offline_model(
             value_loss_weight=args.value_loss_weight,
         )
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), args.grad_clip_norm
+        )
         optimizer.step()
+        step_seconds = time.perf_counter() - step_start
+        train_compute_seconds_total += step_seconds
+        window_train_seconds += step_seconds
+        window_batches += 1
+        window_examples += args.batch_size
 
-        wandb.log(
-            {
+        if step % args.log_train_metrics_every == 0 or step == args.steps:
+            elapsed_sec = time.perf_counter() - start_time
+            train_examples_seen = step * args.batch_size
+            epochs_seen = train_examples_seen / len(train_local_indices)
+            window_batches_per_sec = (
+                window_batches / window_train_seconds if window_train_seconds > 0 else 0.0
+            )
+            window_examples_per_sec = (
+                window_examples / window_train_seconds if window_train_seconds > 0 else 0.0
+            )
+            train_batches_per_sec = (
+                step / train_compute_seconds_total
+                if train_compute_seconds_total > 0
+                else 0.0
+            )
+            wall_batches_per_sec = step / elapsed_sec if elapsed_sec > 0 else 0.0
+            log_data = {
                 "offline_step": step,
                 f"{wandb_prefix}/train_batch_total_loss": total_loss.item(),
                 f"{wandb_prefix}/train_batch_policy_loss": policy_loss.item(),
                 f"{wandb_prefix}/train_batch_value_loss": value_loss.item(),
+                f"{wandb_prefix}/train_step_seconds": step_seconds,
+                f"{wandb_prefix}/grad_norm": float(grad_norm.item()),
+                f"{wandb_prefix}/learning_rate": optimizer.param_groups[0]["lr"],
+                f"{wandb_prefix}/train_examples_seen": train_examples_seen,
+                f"{wandb_prefix}/epochs_seen": epochs_seen,
+                f"{wandb_prefix}/train_batches_per_sec": train_batches_per_sec,
+                f"{wandb_prefix}/train_examples_per_sec": (
+                    train_examples_seen / train_compute_seconds_total
+                    if train_compute_seconds_total > 0
+                    else 0.0
+                ),
+                f"{wandb_prefix}/wall_batches_per_sec": wall_batches_per_sec,
+                f"{wandb_prefix}/window_batches_per_sec": window_batches_per_sec,
+                f"{wandb_prefix}/window_examples_per_sec": window_examples_per_sec,
+                f"{wandb_prefix}/elapsed_sec": elapsed_sec,
+                f"{wandb_prefix}/train_compute_seconds_total": train_compute_seconds_total,
+                f"{wandb_prefix}/eval_seconds_total": eval_seconds_total,
+                f"{wandb_prefix}/progress_fraction": step / args.steps,
             }
-        )
+            if device.type == "cuda":
+                log_data[f"{wandb_prefix}/gpu_mem_allocated_mb"] = (
+                    torch.cuda.memory_allocated(device) / (1024.0 * 1024.0)
+                )
+                log_data[f"{wandb_prefix}/gpu_mem_reserved_mb"] = (
+                    torch.cuda.memory_reserved(device) / (1024.0 * 1024.0)
+                )
+                log_data[f"{wandb_prefix}/gpu_mem_max_allocated_mb"] = (
+                    torch.cuda.max_memory_allocated(device) / (1024.0 * 1024.0)
+                )
+            wandb.log(log_data)
+            window_train_seconds = 0.0
+            window_batches = 0
+            window_examples = 0
 
         if step % args.eval_interval == 0 or step == args.steps:
             record_eval(step=step)
@@ -720,6 +946,9 @@ def main(args: ScriptArgs) -> None:
 
     device_str = pick_device(args.device)
     device = torch.device(device_str)
+    preload_mode = get_preload_mode(args)
+    if preload_mode == "gpu" and device.type == "cpu":
+        raise ValueError("preload_to_gpu requires a non-CPU device")
     logger.info("Using device", device=device_str)
 
     wandb.init(
@@ -737,28 +966,45 @@ def main(args: ScriptArgs) -> None:
     try:
         ensure_required_keys(npz)
         total_examples = validate_shapes(npz)
-        all_indices = np.arange(total_examples, dtype=np.int64)
+        selected_global_indices = np.arange(total_examples, dtype=np.int64)
 
         split_rng = np.random.default_rng(args.seed)
-        split_rng.shuffle(all_indices)
+        split_rng.shuffle(selected_global_indices)
         if args.max_examples > 0:
-            all_indices = all_indices[: args.max_examples]
+            selected_global_indices = selected_global_indices[: args.max_examples]
 
-        split_point = int(len(all_indices) * args.train_fraction)
-        if split_point <= 0 or split_point >= len(all_indices):
+        num_selected = len(selected_global_indices)
+        split_point = int(num_selected * args.train_fraction)
+        if split_point <= 0 or split_point >= num_selected:
             raise ValueError(
                 "Invalid train/val split; adjust max_examples or train_fraction"
             )
-        train_indices = all_indices[:split_point]
-        val_indices = all_indices[split_point:]
+        train_local_indices = np.arange(split_point, dtype=np.int64)
+        val_local_indices = np.arange(split_point, num_selected, dtype=np.int64)
 
-        train_eval_indices = select_subset(
-            train_indices,
+        preload_start = time.perf_counter()
+        tensor_data: OfflineTensorDataset | None = None
+        if preload_mode != "none":
+            tensor_data = build_tensor_dataset(
+                data=npz,
+                selected_global_indices=selected_global_indices,
+                mode=preload_mode,
+                train_device=device,
+            )
+        preload_sec = time.perf_counter() - preload_start
+        source = OfflineDataSource(
+            npz=npz,
+            selected_global_indices=selected_global_indices,
+            tensor_data=tensor_data,
+        )
+
+        train_eval_local_indices = select_subset(
+            train_local_indices,
             max_examples=args.eval_examples,
             seed=args.seed + 1,
         )
-        val_eval_indices = select_subset(
-            val_indices,
+        val_eval_local_indices = select_subset(
+            val_local_indices,
             max_examples=args.eval_examples,
             seed=args.seed + 2,
         )
@@ -766,20 +1012,24 @@ def main(args: ScriptArgs) -> None:
         logger.info(
             "Dataset split",
             total_examples=total_examples,
-            used_examples=len(all_indices),
-            train_examples=len(train_indices),
-            val_examples=len(val_indices),
-            train_eval_examples=len(train_eval_indices),
-            val_eval_examples=len(val_eval_indices),
+            used_examples=num_selected,
+            train_examples=len(train_local_indices),
+            val_examples=len(val_local_indices),
+            train_eval_examples=len(train_eval_local_indices),
+            val_eval_examples=len(val_eval_local_indices),
+            preload_mode=preload_mode,
+            preload_seconds=preload_sec,
         )
         wandb.log(
             {
                 "dataset/total_examples": total_examples,
-                "dataset/used_examples": len(all_indices),
-                "dataset/train_examples": len(train_indices),
-                "dataset/val_examples": len(val_indices),
-                "dataset/train_eval_examples": len(train_eval_indices),
-                "dataset/val_eval_examples": len(val_eval_indices),
+                "dataset/used_examples": num_selected,
+                "dataset/train_examples": len(train_local_indices),
+                "dataset/val_examples": len(val_local_indices),
+                "dataset/train_eval_examples": len(train_eval_local_indices),
+                "dataset/val_eval_examples": len(val_eval_local_indices),
+                "dataset/preload_mode": preload_mode,
+                "dataset/preload_seconds": preload_sec,
             }
         )
 
@@ -863,10 +1113,10 @@ def main(args: ScriptArgs) -> None:
             model_name="baseline_concat_fc",
             wandb_prefix="baseline",
             model=baseline_model,
-            data=npz,
-            train_indices=train_indices,
-            train_eval_indices=train_eval_indices,
-            val_eval_indices=val_eval_indices,
+            source=source,
+            train_local_indices=train_local_indices,
+            train_eval_local_indices=train_eval_local_indices,
+            val_eval_local_indices=val_eval_local_indices,
             args=args,
             device=device,
             schedule_seed=args.seed + 12345,
@@ -876,10 +1126,10 @@ def main(args: ScriptArgs) -> None:
             model_name="gated_fusion",
             wandb_prefix="gated",
             model=gated_model,
-            data=npz,
-            train_indices=train_indices,
-            train_eval_indices=train_eval_indices,
-            val_eval_indices=val_eval_indices,
+            source=source,
+            train_local_indices=train_local_indices,
+            train_eval_local_indices=train_eval_local_indices,
+            val_eval_local_indices=val_eval_local_indices,
             args=args,
             device=device,
             schedule_seed=args.seed + 12345,

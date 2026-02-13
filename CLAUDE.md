@@ -73,8 +73,16 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 # Gated model is auto-matched to baseline by parameter count and forward FLOPs
 # within configurable relative tolerances (cache-weighted with hit-rate default 0.96).
 # Matching search may choose 0+ fusion residual blocks depending on fairness constraints.
+# Default uses all examples in the NPZ (`max_examples=0`) and 400 training steps.
+# Throughput and system metrics are logged (batches/sec, examples/sec, eval throughput,
+# step time, grad norm, and CUDA memory where available).
 python tetris_mcts/scripts/compare_offline_architectures.py \
     --data_path training_runs/v17/training_data.npz
+
+# Optional: preload selected examples to GPU once to reduce per-batch transfer overhead
+python tetris_mcts/scripts/compare_offline_architectures.py \
+    --data_path training_runs/v17/training_data.npz \
+    --preload_to_gpu true
 ```
 
 ### Performance Profiling
