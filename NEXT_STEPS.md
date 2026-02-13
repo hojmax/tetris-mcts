@@ -28,6 +28,10 @@
 - [ ] Adding in alpha downweighting of value loss?
 - [ ] Maybe beefier conv network is fine since cache rate is soo high? Might be quite cheap. 80% caching would mean that making it 2x as slow is not a big deal in the total GPU time budget.
 
+# Confusions
+
+- [ ] How the hell does incumbent lifetime avg attack keep going up? 
+
 # Deep Review
 
 Done: ✅
