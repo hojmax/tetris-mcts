@@ -40,7 +40,7 @@ class ScriptArgs:
     seed: int = 123
     max_examples: int = 0  # 0 = use all examples in NPZ
     train_fraction: float = 0.9
-    steps: int = 2000
+    steps: int = 20000
     batch_size: int = 1024
     eval_interval: int = 100
     eval_examples: int = 32_768  # Max examples to use per train/val eval pass
