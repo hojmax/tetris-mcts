@@ -46,7 +46,7 @@ class ScriptArgs:
     eval_examples: int = 32_768  # Max examples to use per train/val eval pass
     eval_batch_size: int = 2048
     log_train_metrics_every: int = 1  # Batch metric logging cadence
-    preload_to_gpu: bool = False  # Preload selected dataset tensors to GPU
+    preload_to_gpu: bool = True  # Preload selected dataset tensors to GPU
     preload_to_ram: bool = False  # Preload selected dataset tensors to CPU RAM
     learning_rate: float = 0.0005
     weight_decay: float = 1e-4
