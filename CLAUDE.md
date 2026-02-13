@@ -110,6 +110,7 @@ ONNX Export                  ← Model exported for Rust inference
 **Key design**: Game logic and MCTS run entirely in Rust for speed. Neural network training and all visualization/presentation concerns run in Python. Models are exported as ONNX for Rust inference.
 
 **Ownership boundary (strict):**
+
 - Rust (`tetris_core/`) = environment logic, move generation, scoring, MCTS, inference/runtime state.
 - Python (`tetris_mcts/`) = training, evaluation UX, and visualization/rendering.
 - Color palettes and UI styling are Python-owned. Rust should expose piece identity/state (for example `piece_type`), not display colors.
@@ -225,13 +226,14 @@ From `config.py` TrainingConfig defaults:
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
 - **Buffer**: 500K examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
-- **NN Value Scaling**: `nn_value_weight=1.0` by default; set to `0.0` to ignore NN value head or a small value (for example `0.01`) for weak value guidance
+- **NN Value Scaling**: `nn_value_weight=0.01` by default; playing around with this to see if it helps reduce noise in value estimates overpowering the environment feedback.
 - **Model Promotion Gate**: candidate window=30 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
 
 Temperature behavior:
+
 - `temperature` shapes the MCTS visit-count policy target used for training.
 - In training self-play, action execution samples from the visit policy with probability `visit_sampling_epsilon` and otherwise uses argmax.
 - In evaluation, action execution is deterministic argmax.
@@ -300,6 +302,7 @@ Tests are in:
 6. Resume with `--resume-dir training_runs/vN`
 
 `inspect_training_data.py` supports:
+
 - `--highest_attack_only true` to auto-select the highest-attack game in the snapshot
 - `--wandb_game_number <N>` to select by WandB `game_number` when NPZ metadata is present
 - If NPZ metadata is missing (older snapshots), `--wandb_game_number` falls back to local index `N-1` with a warning

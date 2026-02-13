@@ -630,6 +630,13 @@ mod tests {
     }
 
     #[test]
+    fn test_scale_nn_value() {
+        assert_eq!(scale_nn_value(7.0, 0.0), 0.0);
+        assert!((scale_nn_value(7.0, 0.01) - 0.07).abs() < 1e-6);
+        assert_eq!(scale_nn_value(-3.0, 1.0), -3.0);
+    }
+
+    #[test]
     fn test_simulate_terminal_after_expansion_uses_death_penalty() {
         let mut env = TetrisEnv::new(10, 20);
         for x in 0..env.width {
