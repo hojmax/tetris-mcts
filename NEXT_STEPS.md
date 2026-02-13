@@ -1,21 +1,32 @@
 # Next Steps
 
-- [ ] Try to handcraft great Tetris bot heuristics.
-- [ ] Try running this with just the policy head, no value head. Must be better?
-    - My leading hypothesis is that the noise in the value estimates are ruining the model's game playing ability. But the policy loss is actually going pretty good. So should be quite useful?
-- [ ] What AWS instance would be well suited for this workload?
-- [ ] Take an interestnig state like tetris_mcts/scripts/outputs/game_3194.gif at step 14 (oppurtinity for t spin), and see how the model evaluates that state? Is it not reached or something?
-- [ ] Learning rate of around 0.0005. 0.005 is too high. Cycling too much on the learning rate.
-- [ ] All the steps setttings depend on batch size which is kind of annoying.
 - [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
+- [ ] What AWS instance would be well suited for this workload?
+- [ ] Try running this with just the policy head, no value head. Must be better?
+- [ ] Do online learning experiments. Things to validate:
+  - Learning rate and scheduler
+  - Model size
+  - Batch size
+  - Policy / Value loss weighting
+  - Weight decay
+  - Optimizer
+  - Architecture choices
 
-# Confusion
-
-- Game length steadily increasing whilst attack is decreasing.
-- Valid actions steadily increasing whilst attack is decreasing.
-- Why did we see a big drop in attack mid training?
-- I think the learning rate is too high, but the model was actually at its peak right at the highest LR.
-- Hold rate is steadily increasing. Why is it so good to hold that much? I hold alot, but not every 0.375 moves. Is that not almost all the time, when you can only hold 50% of the time?
+- [ ] Adding hand crafted heuristics to offload work off the neural network
+  - Column heights
+  - Number of holes
+  - Overhang fields
+  - Fill of rows
+  - Fill of columns (not sure?)
+  - Bumpiness of terrain
+  - max of column heights / min of column heights
+  - can t-spin filter?
+- [ ] Try to handcraft great Tetris bot heuristics.
+- [ ] All the steps setttings depend on batch size which is kind of annoying. Maybe wall clock is nicer for all these settings?
+- [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
+- [ ] Another round of benchmarking and optimizing?
+- [ ] Adding in alpha downweighting of value loss?
+- [ ] Maybe beefier conv network is fine since cache rate is soo high? Might be quite cheap. 80% caching would mean that making it 2x as slow is not a big deal in the total GPU time budget.
 
 # Deep Review
 
@@ -40,7 +51,6 @@ In progress: 🟨
 
 # Backlog
 
-- [ ] We might want to scale cpuct to average value head precition magnitude?
 - [ ] Visualizing MCTS search and verifying correctness
 - [ ] Reading through and validating all code
 - [ ] Proper network split caching. Caching board CNN head, and optimizing such that we only run last part of network.
