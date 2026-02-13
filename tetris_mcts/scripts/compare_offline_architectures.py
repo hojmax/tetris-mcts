@@ -40,7 +40,7 @@ class ScriptArgs:
     seed: int = 123
     max_examples: int = 0  # 0 = use all examples in NPZ
     train_fraction: float = 0.9
-    steps: int = 400
+    steps: int = 2000
     batch_size: int = 1024
     eval_interval: int = 100
     eval_examples: int = 32_768  # Max examples to use per train/val eval pass
@@ -73,8 +73,8 @@ class ScriptArgs:
     )
     match_flop_weight: float = 1.0  # Score weight for cache-weighted FLOP error
     cache_hit_rate_for_matching: float = (
-        0.96
-    )  # Expected board-cache hit rate for effective FLOP matching
+        0.96  # Expected board-cache hit rate for effective FLOP matching
+    )
 
     wandb_project: str = "tetris-mcts-offline"
     wandb_run_name: str | None = None
@@ -465,7 +465,9 @@ def validate_args(args: ScriptArgs) -> None:
     if args.match_fusion_hidden_min > args.match_fusion_hidden_max:
         raise ValueError("match_fusion_hidden_min must be <= match_fusion_hidden_max")
     if any(blocks < 0 for blocks in args.match_num_fusion_blocks_options):
-        raise ValueError("match_num_fusion_blocks_options must contain only >= 0 values")
+        raise ValueError(
+            "match_num_fusion_blocks_options must contain only >= 0 values"
+        )
     if args.match_param_tolerance <= 0:
         raise ValueError("match_param_tolerance must be > 0")
     if args.match_flop_tolerance <= 0:
@@ -532,14 +534,20 @@ def build_aux_batch_from_npz(
     data: np.lib.npyio.NpzFile,
     global_indices: np.ndarray,
 ) -> np.ndarray:
-    current_pieces = data["current_pieces"][global_indices].astype(np.float32, copy=False)
-    hold_pieces = data["hold_pieces"][global_indices].astype(np.float32, copy=False)
-    hold_available = data["hold_available"][global_indices].astype(np.float32).reshape(-1, 1)
-    next_queue = data["next_queue"][global_indices].astype(np.float32).reshape(
-        len(global_indices), -1
+    current_pieces = data["current_pieces"][global_indices].astype(
+        np.float32, copy=False
     )
-    placement_counts = data["placement_counts"][global_indices].astype(np.float32).reshape(
-        -1, 1
+    hold_pieces = data["hold_pieces"][global_indices].astype(np.float32, copy=False)
+    hold_available = (
+        data["hold_available"][global_indices].astype(np.float32).reshape(-1, 1)
+    )
+    next_queue = (
+        data["next_queue"][global_indices]
+        .astype(np.float32)
+        .reshape(len(global_indices), -1)
+    )
+    placement_counts = (
+        data["placement_counts"][global_indices].astype(np.float32).reshape(-1, 1)
     )
     return np.concatenate(
         [current_pieces, hold_pieces, hold_available, next_queue, placement_counts],
@@ -554,9 +562,15 @@ def build_torch_batch_from_npz(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     boards_np = data["boards"][global_indices].astype(np.float32, copy=False)
     aux_np = build_aux_batch_from_npz(data, global_indices)
-    policy_targets_np = data["policy_targets"][global_indices].astype(np.float32, copy=False)
-    value_targets_np = data["value_targets"][global_indices].astype(np.float32, copy=False)
-    action_masks_np = data["action_masks"][global_indices].astype(np.float32, copy=False)
+    policy_targets_np = data["policy_targets"][global_indices].astype(
+        np.float32, copy=False
+    )
+    value_targets_np = data["value_targets"][global_indices].astype(
+        np.float32, copy=False
+    )
+    action_masks_np = data["action_masks"][global_indices].astype(
+        np.float32, copy=False
+    )
 
     boards = torch.from_numpy(boards_np).unsqueeze(1).to(device, non_blocking=True)
     aux = torch.from_numpy(aux_np).to(device, non_blocking=True)
@@ -678,8 +692,8 @@ def evaluate_losses(
     with torch.no_grad():
         for start in range(0, len(local_indices), eval_batch_size):
             batch_indices = local_indices[start : start + eval_batch_size]
-            boards, aux, policy_targets, value_targets, action_masks = build_torch_batch(
-                source, batch_indices, device
+            boards, aux, policy_targets, value_targets, action_masks = (
+                build_torch_batch(source, batch_indices, device)
             )
             total_loss, policy_loss, value_loss = compute_loss(
                 model=model,
@@ -769,7 +783,9 @@ def train_offline_model(
         train_examples_seen = step * args.batch_size
         epochs_seen = train_examples_seen / len(train_local_indices)
         train_batches_per_sec = (
-            step / train_compute_seconds_total if train_compute_seconds_total > 0 else 0.0
+            step / train_compute_seconds_total
+            if train_compute_seconds_total > 0
+            else 0.0
         )
         wall_batches_per_sec = step / elapsed_sec if elapsed_sec > 0 else 0.0
         row = {
@@ -867,10 +883,14 @@ def train_offline_model(
             train_examples_seen = step * args.batch_size
             epochs_seen = train_examples_seen / len(train_local_indices)
             window_batches_per_sec = (
-                window_batches / window_train_seconds if window_train_seconds > 0 else 0.0
+                window_batches / window_train_seconds
+                if window_train_seconds > 0
+                else 0.0
             )
             window_examples_per_sec = (
-                window_examples / window_train_seconds if window_train_seconds > 0 else 0.0
+                window_examples / window_train_seconds
+                if window_train_seconds > 0
+                else 0.0
             )
             train_batches_per_sec = (
                 step / train_compute_seconds_total
@@ -1173,9 +1193,7 @@ def main(args: ScriptArgs) -> None:
         ]
         wandb.run.summary["matched_gated_aux_hidden"] = matched.aux_hidden
         wandb.run.summary["matched_gated_fusion_hidden"] = matched.fusion_hidden
-        wandb.run.summary["matched_gated_num_fusion_blocks"] = (
-            matched.num_fusion_blocks
-        )
+        wandb.run.summary["matched_gated_num_fusion_blocks"] = matched.num_fusion_blocks
         wandb.run.summary["matched_param_rel_error"] = matched.param_rel_error
         wandb.run.summary["matched_cache_weighted_flop_rel_error"] = (
             matched.flop_rel_error
