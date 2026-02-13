@@ -21,6 +21,7 @@ from tetris_mcts.config import (
     BOARD_WIDTH,
     DEFAULT_GIF_FPS,
     DEFAULT_GIF_FRAME_DURATION_MS,
+    LATEST_ONNX_FILENAME,
     MODEL_CANDIDATES_DIRNAME,
     PARALLEL_ONNX_FILENAME,
     TRAINING_DATA_FILENAME,
@@ -278,14 +279,70 @@ class Trainer:
 
     def save(self):
         """Save model checkpoint."""
-        self.weight_manager.save(
+        paths = self.weight_manager.save(
             self.model,
             self.optimizer,
             self.scheduler,
             self.step,
             export_for_rust=True,
         )
-        logger.info("Saved checkpoint", step=self.step)
+        logger.info(
+            "Saved checkpoint",
+            step=self.step,
+            checkpoint=str(paths["checkpoint"]),
+            onnx=str(paths.get("onnx")) if "onnx" in paths else None,
+        )
+        return paths
+
+    def _log_final_wandb_model_artifact(self, saved_paths: dict[str, Path]) -> None:
+        if wandb.run is None:
+            logger.warning(
+                "Skipping final WandB model artifact upload; no active WandB run",
+                step=self.step,
+            )
+            return
+
+        artifact_name = f"tetris-model-{wandb.run.id}"
+        artifact = wandb.Artifact(
+            name=artifact_name,
+            type="model",
+            description="Final model snapshot saved when training loop stops",
+            metadata={
+                "trainer_step": self.step,
+                "run_name": self.config.run_name,
+            },
+        )
+
+        files_to_upload = [saved_paths["checkpoint"], saved_paths["metadata"]]
+        onnx_path = saved_paths.get("onnx")
+        if onnx_path is not None:
+            files_to_upload.append(onnx_path)
+            conv_path, heads_path, fc_path = split_model_paths(onnx_path)
+            files_to_upload.extend([conv_path, heads_path, fc_path])
+        else:
+            # WeightManager.save currently always exports ONNX for Rust; fail fast if this changes.
+            expected_onnx_path = self.config.checkpoint_dir / LATEST_ONNX_FILENAME
+            raise RuntimeError(
+                "Saved paths missing ONNX artifact during final WandB upload "
+                f"(expected {expected_onnx_path})"
+            )
+
+        for file_path in files_to_upload:
+            if not file_path.exists():
+                raise FileNotFoundError(
+                    f"Expected model artifact file is missing: {file_path}"
+                )
+            artifact.add_file(str(file_path), name=file_path.name)
+
+        wandb.log_artifact(
+            artifact, aliases=["latest", "final", f"step-{self.step}"]
+        )
+        logger.info(
+            "Uploaded final model artifact to WandB",
+            artifact_name=artifact_name,
+            step=self.step,
+            files=[path.name for path in files_to_upload],
+        )
 
     def train(self, log_to_wandb: bool = True):
         """
@@ -654,8 +711,9 @@ class Trainer:
                 logger.exception("Failed to stop game generator cleanly")
 
             # Always save latest model state on shutdown/interruption.
-            self.save()
+            final_saved_paths = self.save()
             if log_to_wandb:
+                self._log_final_wandb_model_artifact(final_saved_paths)
                 wandb.finish()
 
         if pending_error is not None:

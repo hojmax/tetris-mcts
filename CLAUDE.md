@@ -28,6 +28,7 @@ make viz        # Run MCTS tree visualizer (Dash app at localhost:8050)
 make test       # Run Rust tests (cargo test)
 make check      # Run ruff + pyright linting
 make sweep-lr-model  # Run W&B sweep for learning rate + model size
+make eval-nn-value-weight  # Evaluate fixed network at multiple nn_value_weight values
 make rebuild    # Force clean rebuild (slow, only when needed)
 ```
 
@@ -356,6 +357,10 @@ training_runs/
 - `eval/max_attack` - Best single game
 - `eval/attack_per_piece` - Efficiency metric
 - Breakdown by clear types and T-spins
+
+### WandB Artifacts
+
+- On training shutdown/interruption, trainer uploads a final `model` artifact containing: `checkpoint_<step>.pt`, `latest_metadata.json`, `latest.onnx`, `latest.conv.onnx`, `latest.heads.onnx`, and `latest.fc.bin` (aliases: `latest`, `final`, `step-<N>`).
 
 ## Coding Rules
 

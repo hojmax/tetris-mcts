@@ -1,4 +1,4 @@
-.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model
+.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -71,6 +71,11 @@ train: $(RELEASE_MARKER)
 # Usage: make sweep-lr-model ARGS="--count 20"
 sweep-lr-model: $(RELEASE_MARKER)
 	$(PYTHON) tetris_mcts/scripts/wandb_sweep_lr_model_size.py $(ARGS)
+
+# Evaluate one model across nn_value_weight values (no training)
+# Usage: make eval-nn-value-weight ARGS="--run_dir training_runs/v17 --num_games 50"
+eval-nn-value-weight: $(RELEASE_MARKER)
+	$(PYTHON) tetris_mcts/scripts/evaluate_nn_value_weight_sweep.py $(ARGS)
 
 # View replay file
 # Usage: make replay FILE=replays.jsonl
