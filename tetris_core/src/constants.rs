@@ -17,8 +17,21 @@ pub const NUM_PIECE_TYPES: usize = 7;
 /// Number of occupied cells in any tetromino
 pub const MAX_PIECE_CELLS: usize = 4;
 
-/// Auxiliary feature vector size for NN input (7 + 8 + 1 + 35 + 1)
-pub const AUX_FEATURES: usize = 52;
+/// Combo normalization divisor (combo >= this value maps to 1.0).
+/// Chosen to match the combo-attack table saturation point.
+pub const COMBO_NORMALIZATION_MAX: u32 = 12;
+
+/// Auxiliary feature vector size for NN input:
+/// current piece (7) + hold piece (8) + hold available (1) + queue (35) + placement count (1)
+/// + combo (1) + back-to-back (1) + hidden-piece distribution (7).
+pub const AUX_FEATURES: usize = NUM_PIECE_TYPES
+    + (NUM_PIECE_TYPES + 1)
+    + 1
+    + (QUEUE_SIZE * NUM_PIECE_TYPES)
+    + 1
+    + 1
+    + 1
+    + NUM_PIECE_TYPES;
 
 /// Default lock delay in milliseconds
 pub const DEFAULT_LOCK_DELAY_MS: u32 = 500;

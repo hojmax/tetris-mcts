@@ -74,6 +74,9 @@ impl TetrisEnv {
                     Some(piece.piece_type);
                 // Update row fill count
                 self.row_fill_counts[y as usize] += 1;
+                let column_height = (self.height - y as usize) as u8;
+                self.column_heights[x as usize] =
+                    self.column_heights[x as usize].max(column_height);
             }
             // Tetrominos always have 4 cells (all within bounds due to is_valid_position check)
             self.total_blocks += 4;
@@ -124,6 +127,7 @@ impl TetrisEnv {
 
         // Each cleared line removes width blocks
         self.total_blocks -= self.width as u32 * num_lines;
+        self.recompute_column_heights();
 
         let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);
         let is_pc = self.is_perfect_clear();

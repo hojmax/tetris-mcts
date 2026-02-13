@@ -196,7 +196,10 @@ class Evaluator:
                 ghost_cells=ghost_cells,
                 move_number=move_idx,
                 attack=total_attack,
-                info_text=f"Can hold: {'y' if can_hold else 'n'}",
+                info_text=(
+                    f"Can hold: {'y' if can_hold else 'n'}\n"
+                    f"Combo: {env.combo}  B2B: {'y' if env.back_to_back else 'n'}"
+                ),
                 show_piece_info=True,
                 current_piece_name=current_name,
                 hold_piece_name=hold_name,
@@ -232,7 +235,10 @@ class Evaluator:
                 ghost_cells=ghost_cells,
                 move_number=len(frames),
                 attack=total_attack,
-                info_text=f"{'Terminal  ' if env.game_over else ''}Can hold: {'y' if can_hold else 'n'}",
+                info_text=(
+                    f"{'Terminal  ' if env.game_over else ''}Can hold: {'y' if can_hold else 'n'}\n"
+                    f"Combo: {env.combo}  B2B: {'y' if env.back_to_back else 'n'}"
+                ),
                 show_piece_info=True,
                 current_piece_name=current_name,
                 hold_piece_name=hold_name,

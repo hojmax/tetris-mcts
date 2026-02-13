@@ -13,7 +13,9 @@ use std::sync::Arc;
 use ndarray::{Array1, Array2};
 use tract_onnx::prelude::*;
 
-use crate::constants::{AUX_FEATURES, BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
+use crate::constants::{
+    AUX_FEATURES, BOARD_HEIGHT, BOARD_WIDTH, COMBO_NORMALIZATION_MAX, NUM_PIECE_TYPES, QUEUE_SIZE,
+};
 use crate::env::TetrisEnv;
 
 /// Neural network model wrapper with board embedding cache
@@ -409,7 +411,40 @@ pub fn encode_state_features(
     let normalized_denominator = max_placements as f32;
     aux.push(placement_count as f32 / normalized_denominator);
 
+    // Combo: normalized (1)
+    aux.push(normalize_combo_for_feature(env.combo));
+
+    // Back-to-back flag: binary (1)
+    aux.push(if env.back_to_back { 1.0 } else { 0.0 });
+
+    // Next hidden piece distribution from 7-bag (7)
+    let hidden_piece_distribution = next_hidden_piece_distribution(env);
+    aux.extend(hidden_piece_distribution);
+
     Ok((board_tensor, aux))
+}
+
+pub fn normalize_combo_for_feature(combo: u32) -> f32 {
+    let capped = combo.min(COMBO_NORMALIZATION_MAX) as f32;
+    capped / COMBO_NORMALIZATION_MAX as f32
+}
+
+/// Probability distribution over the next hidden queue piece implied by the 7-bag state.
+pub fn next_hidden_piece_distribution(env: &TetrisEnv) -> Vec<f32> {
+    let possible_pieces = env.get_possible_next_pieces();
+    if possible_pieces.is_empty() {
+        panic!("Possible hidden-piece set must never be empty");
+    }
+
+    let probability = 1.0 / possible_pieces.len() as f32;
+    let mut distribution = vec![0.0; NUM_PIECE_TYPES];
+    for piece in possible_pieces {
+        if piece >= NUM_PIECE_TYPES {
+            panic!("Invalid piece type {} in possible next pieces", piece);
+        }
+        distribution[piece] = probability;
+    }
+    distribution
 }
 
 /// Softmax with mask (invalid actions get 0 probability)
@@ -518,9 +553,9 @@ mod tests {
             .expect("aux tensor should contain f32");
         let aux: Vec<f32> = aux_array.iter().copied().collect();
 
-        // Total size: 7 + 8 + 1 + 35 + 1 = 52
+        // Total size: 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 = 61
         assert_eq!(aux.len(), AUX_FEATURES);
-        assert_eq!(aux.len(), 52);
+        assert_eq!(aux.len(), 61);
 
         let mut idx = 0;
 
@@ -599,6 +634,46 @@ mod tests {
         );
         idx += 1;
 
+        // Combo: normalized (1)
+        let combo_norm = aux[idx];
+        let expected_combo_norm = normalize_combo_for_feature(env.combo);
+        assert!(
+            (combo_norm - expected_combo_norm).abs() < 1e-6,
+            "Combo feature should be {}, got {}",
+            expected_combo_norm,
+            combo_norm
+        );
+        idx += 1;
+
+        // Back-to-back flag: binary (1)
+        let back_to_back = aux[idx];
+        let expected_back_to_back = if env.back_to_back { 1.0 } else { 0.0 };
+        assert_eq!(
+            back_to_back, expected_back_to_back,
+            "Back-to-back feature incorrect"
+        );
+        idx += 1;
+
+        // Next hidden piece distribution (7)
+        let hidden_distribution = &aux[idx..idx + NUM_PIECE_TYPES];
+        let expected_hidden_distribution = next_hidden_piece_distribution(&env);
+        let hidden_sum: f32 = hidden_distribution.iter().sum();
+        assert!(
+            (hidden_sum - 1.0).abs() < 1e-6,
+            "Hidden-piece distribution should sum to 1.0, got {}",
+            hidden_sum
+        );
+        for piece in 0..NUM_PIECE_TYPES {
+            assert!(
+                (hidden_distribution[piece] - expected_hidden_distribution[piece]).abs() < 1e-6,
+                "Hidden-piece probability mismatch for piece {}: expected {}, got {}",
+                piece,
+                expected_hidden_distribution[piece],
+                hidden_distribution[piece]
+            );
+        }
+        idx += NUM_PIECE_TYPES;
+
         assert_eq!(
             idx, AUX_FEATURES,
             "Should consume all {} aux features",
@@ -615,6 +690,9 @@ mod tests {
         // | Hold available | 1          | Binary (can use hold this turn) |
         // | Next queue     | 5 x 7 = 35 | One-hot encoded per slot        |
         // | Placement count| 1          | Normalized: placements / 100     |
+        // | Combo          | 1          | Normalized combo                 |
+        // | Back-to-back   | 1          | Binary                           |
+        // | Hidden piece   | 7          | 7-bag distribution               |
 
         let env = TetrisEnv::new(10, 20);
         let (board, aux) = encode_state(&env, 50, 100).expect("encoding failed");
@@ -630,8 +708,8 @@ mod tests {
         assert_eq!(board.len(), 20 * 10, "Board should be 20x10 = 200 values");
         assert_eq!(
             aux.len(),
-            7 + 8 + 1 + 35 + 1,
-            "Aux should be 7+8+1+35+1 = 52 values"
+            7 + 8 + 1 + 35 + 1 + 1 + 1 + 7,
+            "Aux should be 7+8+1+35+1+1+1+7 = 61 values"
         );
 
         // Verify board is binary
@@ -681,6 +759,36 @@ mod tests {
             (move_norm - 0.5).abs() < 1e-6,
             "Placement count 50 should normalize to 0.5"
         );
+
+        // Verify combo is normalized [0, 1]
+        let combo_norm = aux[52];
+        assert!(
+            combo_norm >= 0.0 && combo_norm <= 1.0,
+            "Combo must be in [0, 1]"
+        );
+        assert_eq!(combo_norm, 0.0, "Initial combo should be 0.0");
+
+        // Verify back-to-back is binary
+        let back_to_back = aux[53];
+        assert!(
+            back_to_back == 0.0 || back_to_back == 1.0,
+            "Back-to-back must be binary"
+        );
+        assert_eq!(back_to_back, 0.0, "Initial back-to-back should be 0.0");
+
+        // Verify hidden-piece distribution is valid probabilities
+        let hidden_distribution = &aux[54..61];
+        let hidden_sum: f32 = hidden_distribution.iter().sum();
+        assert!(
+            (hidden_sum - 1.0).abs() < 1e-6,
+            "Hidden-piece distribution must sum to 1.0"
+        );
+        for &p in hidden_distribution {
+            assert!(
+                (0.0..=1.0).contains(&p),
+                "Hidden-piece probabilities must be in [0, 1]"
+            );
+        }
     }
 
     #[test]

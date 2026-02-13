@@ -15,6 +15,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use crate::constants::{AUX_FEATURES, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::mcts::GameStats;
 use crate::mcts::{GameResult, GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
@@ -792,7 +793,7 @@ impl GameGenerator {
         let board_height = 20usize;
         let board_width = 10usize;
         let num_actions = NUM_ACTIONS;
-        let aux_features_size = 52usize;
+        let aux_features_size = AUX_FEATURES;
 
         let mut boards = vec![0.0f32; actual_batch * board_height * board_width];
         let mut aux = vec![0.0f32; actual_batch * aux_features_size];
@@ -811,22 +812,49 @@ impl GameGenerator {
 
             // Build aux features (same encoding as Python)
             let aux_offset = i * aux_features_size;
+            let mut aux_idx = aux_offset;
             // Current piece one-hot (7)
-            aux[aux_offset + ex.current_piece] = 1.0;
+            aux[aux_idx + ex.current_piece] = 1.0;
+            aux_idx += NUM_PIECE_TYPES;
+
             // Hold piece one-hot (8) - 7 means empty
-            if ex.hold_piece < 7 {
-                aux[aux_offset + 7 + ex.hold_piece] = 1.0;
+            if ex.hold_piece < NUM_PIECE_TYPES {
+                aux[aux_idx + ex.hold_piece] = 1.0;
             } else {
-                aux[aux_offset + 7 + 7] = 1.0; // Empty slot
+                aux[aux_idx + NUM_PIECE_TYPES] = 1.0; // Empty slot
             }
+            aux_idx += NUM_PIECE_TYPES + 1;
+
             // Hold available (1)
-            aux[aux_offset + 15] = if ex.hold_available { 1.0 } else { 0.0 };
+            aux[aux_idx] = if ex.hold_available { 1.0 } else { 0.0 };
+            aux_idx += 1;
+
             // Next queue one-hot (5 * 7 = 35)
-            for (j, &piece) in ex.next_queue.iter().take(5).enumerate() {
-                aux[aux_offset + 16 + j * 7 + piece] = 1.0;
+            for (j, &piece) in ex.next_queue.iter().take(QUEUE_SIZE).enumerate() {
+                aux[aux_idx + j * NUM_PIECE_TYPES + piece] = 1.0;
             }
+            aux_idx += QUEUE_SIZE * NUM_PIECE_TYPES;
+
             // Placement count normalized (1)
-            aux[aux_offset + 51] = ex.placement_count as f32 / move_norm_denominator;
+            aux[aux_idx] = ex.placement_count as f32 / move_norm_denominator;
+            aux_idx += 1;
+
+            // Combo normalized (1)
+            aux[aux_idx] = crate::nn::normalize_combo_for_feature(ex.combo);
+            aux_idx += 1;
+
+            // Back-to-back flag (1)
+            aux[aux_idx] = if ex.back_to_back { 1.0 } else { 0.0 };
+            aux_idx += 1;
+
+            // Next hidden piece distribution (7)
+            debug_assert_eq!(ex.next_hidden_piece_probs.len(), NUM_PIECE_TYPES);
+            for (piece, &probability) in ex.next_hidden_piece_probs.iter().enumerate() {
+                aux[aux_idx + piece] = probability;
+            }
+            aux_idx += NUM_PIECE_TYPES;
+
+            debug_assert_eq!(aux_idx - aux_offset, aux_features_size);
 
             // Copy policy
             for (j, &val) in ex.policy.iter().enumerate() {
@@ -1509,7 +1537,7 @@ impl Drop for GameGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
+    use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1528,6 +1556,16 @@ mod tests {
             next_queue: vec![0, 1, 2, 3, 4],
             move_number,
             placement_count: move_number,
+            combo: 0,
+            back_to_back: false,
+            next_hidden_piece_probs: vec![1.0 / NUM_PIECE_TYPES as f32; NUM_PIECE_TYPES],
+            column_heights: vec![0.0; BOARD_WIDTH],
+            max_column_height: 0.0,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; BOARD_HEIGHT],
+            total_blocks: 0.0,
+            bumpiness: 0.0,
+            holes: 0.0,
             policy,
             value: move_number as f32,
             raw_value: move_number as f32,

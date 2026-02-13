@@ -1394,6 +1394,19 @@ mod tests {
         (total_blocks, row_fill_counts)
     }
 
+    fn compute_expected_column_heights(board: &[u8], width: usize, height: usize) -> Vec<u8> {
+        let mut column_heights = vec![0u8; width];
+        for x in 0..width {
+            for y in 0..height {
+                if board[y * width + x] != 0 {
+                    column_heights[x] = (height - y) as u8;
+                    break;
+                }
+            }
+        }
+        column_heights
+    }
+
     #[test]
     fn test_tracking_fields_after_hard_drop() {
         let mut env = TetrisEnv::with_seed(10, 20, 42);
@@ -1411,6 +1424,12 @@ mod tests {
         assert_eq!(
             env.row_fill_counts, expected_row_counts,
             "row_fill_counts mismatch after hard_drop"
+        );
+        let expected_column_heights =
+            compute_expected_column_heights(&env.board, env.width, env.height);
+        assert_eq!(
+            env.column_heights, expected_column_heights,
+            "column_heights mismatch after hard_drop"
         );
     }
 
@@ -1436,6 +1455,12 @@ mod tests {
             env.row_fill_counts, expected_row_counts,
             "row_fill_counts mismatch after multiple drops"
         );
+        let expected_column_heights =
+            compute_expected_column_heights(&env.board, env.width, env.height);
+        assert_eq!(
+            env.column_heights, expected_column_heights,
+            "column_heights mismatch after multiple drops"
+        );
     }
 
     #[test]
@@ -1460,6 +1485,12 @@ mod tests {
             env.row_fill_counts, expected_row_counts,
             "row_fill_counts mismatch after line clears"
         );
+        let expected_column_heights =
+            compute_expected_column_heights(&env.board, env.width, env.height);
+        assert_eq!(
+            env.column_heights, expected_column_heights,
+            "column_heights mismatch after line clears"
+        );
     }
 
     #[test]
@@ -1483,6 +1514,9 @@ mod tests {
             compute_expected_stats(&env.board, env.width, env.height);
         assert_eq!(env.total_blocks, expected_blocks);
         assert_eq!(env.row_fill_counts, expected_row_counts);
+        let expected_column_heights =
+            compute_expected_column_heights(&env.board, env.width, env.height);
+        assert_eq!(env.column_heights, expected_column_heights);
     }
 
     #[test]
@@ -1499,6 +1533,9 @@ mod tests {
             compute_expected_stats(&env.board, env.width, env.height);
         assert_eq!(env.total_blocks, expected_blocks);
         assert_eq!(env.row_fill_counts, expected_row_counts);
+        let expected_column_heights =
+            compute_expected_column_heights(&env.board, env.width, env.height);
+        assert_eq!(env.column_heights, expected_column_heights);
     }
 
     #[test]
@@ -1518,6 +1555,9 @@ mod tests {
             compute_expected_stats(&env.board, env.width, env.height);
         assert_eq!(env.total_blocks, expected_blocks);
         assert_eq!(env.row_fill_counts, expected_row_counts);
+        let expected_column_heights =
+            compute_expected_column_heights(&env.board, env.width, env.height);
+        assert_eq!(env.column_heights, expected_column_heights);
     }
 
     #[test]
@@ -1585,10 +1625,13 @@ mod tests {
             // Save current tracked values (from incremental updates).
             let inc_blocks = env.total_blocks;
             let inc_row_counts = env.row_fill_counts.clone();
+            let inc_column_heights = env.column_heights.clone();
 
             // Recalculate from scratch.
             let (sync_blocks, sync_row_counts) =
                 compute_expected_stats(&env.board, env.width, env.height);
+            let sync_column_heights =
+                compute_expected_column_heights(&env.board, env.width, env.height);
 
             assert_eq!(
                 inc_blocks, sync_blocks,
@@ -1598,6 +1641,11 @@ mod tests {
             assert_eq!(
                 inc_row_counts, sync_row_counts,
                 "Iteration {}: row_fill_counts incremental != sync",
+                i
+            );
+            assert_eq!(
+                inc_column_heights, sync_column_heights,
+                "Iteration {}: column_heights incremental != sync",
                 i
             );
 
@@ -1616,6 +1664,8 @@ mod tests {
         // Recompute expected values from scratch
         let (expected_blocks, expected_row_counts) =
             compute_expected_stats(&env.board, env.width, env.height);
+        let expected_column_heights =
+            compute_expected_column_heights(&env.board, env.width, env.height);
 
         // 1. Total blocks must match actual board state
         assert_eq!(
@@ -1629,6 +1679,11 @@ mod tests {
             env.row_fill_counts, expected_row_counts,
             "{}: row_fill_counts mismatch. Got {:?}, expected {:?}",
             context, env.row_fill_counts, expected_row_counts
+        );
+        assert_eq!(
+            env.column_heights, expected_column_heights,
+            "{}: column_heights mismatch. Got {:?}, expected {:?}",
+            context, env.column_heights, expected_column_heights
         );
 
         // 3. Board dimensions must be consistent

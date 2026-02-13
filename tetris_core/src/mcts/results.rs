@@ -49,6 +49,36 @@ pub struct TrainingExample {
     /// Placement count at this frame (excludes hold actions)
     #[pyo3(get)]
     pub placement_count: u32,
+    /// Current combo counter at this frame
+    #[pyo3(get)]
+    pub combo: u32,
+    /// Whether back-to-back is active at this frame
+    #[pyo3(get)]
+    pub back_to_back: bool,
+    /// Distribution over hidden next piece implied by current 7-bag state
+    #[pyo3(get)]
+    pub next_hidden_piece_probs: Vec<f32>,
+    /// Height per column normalized by board height (0.0..1.0)
+    #[pyo3(get)]
+    pub column_heights: Vec<f32>,
+    /// Maximum normalized column height
+    #[pyo3(get)]
+    pub max_column_height: f32,
+    /// Minimum normalized column height
+    #[pyo3(get)]
+    pub min_column_height: f32,
+    /// Filled cells per row normalized by board width (0.0..1.0)
+    #[pyo3(get)]
+    pub row_fill_counts: Vec<f32>,
+    /// Total filled cells normalized by board area (0.0..1.0)
+    #[pyo3(get)]
+    pub total_blocks: f32,
+    /// Sum of squared adjacent column-height deltas normalized to 0.0..1.0
+    #[pyo3(get)]
+    pub bumpiness: f32,
+    /// Hole count normalized by maximum possible holes
+    #[pyo3(get)]
+    pub holes: f32,
     /// MCTS policy target (NUM_ACTIONS values)
     #[pyo3(get)]
     pub policy: Vec<f32>,
@@ -432,6 +462,16 @@ mod tests {
             next_queue: vec![0, 1, 2, 3, 4],
             move_number: 50,
             placement_count: 45,
+            combo: 0,
+            back_to_back: false,
+            next_hidden_piece_probs: vec![0.0; 7],
+            column_heights: vec![0.0; 10],
+            max_column_height: 0.0,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; 20],
+            total_blocks: 0.0,
+            bumpiness: 0.0,
+            holes: 0.0,
             policy: vec![0.0; NUM_ACTIONS],
             value: 10.5,
             raw_value: 13.0,
@@ -448,6 +488,16 @@ mod tests {
         assert_eq!(example.next_queue.len(), 5);
         assert_eq!(example.move_number, 50);
         assert_eq!(example.placement_count, 45);
+        assert_eq!(example.combo, 0);
+        assert!(!example.back_to_back);
+        assert_eq!(example.next_hidden_piece_probs.len(), 7);
+        assert_eq!(example.column_heights.len(), 10);
+        assert_eq!(example.max_column_height, 0.0);
+        assert_eq!(example.min_column_height, 0.0);
+        assert_eq!(example.row_fill_counts.len(), 20);
+        assert_eq!(example.total_blocks, 0.0);
+        assert_eq!(example.bumpiness, 0.0);
+        assert_eq!(example.holes, 0.0);
         assert_eq!(example.policy.len(), NUM_ACTIONS);
         assert!((example.value - 10.5).abs() < 0.001);
         assert!((example.raw_value - 13.0).abs() < 0.001);
@@ -466,6 +516,16 @@ mod tests {
                 next_queue: vec![],
                 move_number: 0,
                 placement_count: 0,
+                combo: 0,
+                back_to_back: false,
+                next_hidden_piece_probs: vec![0.0; 7],
+                column_heights: vec![0.0; 10],
+                max_column_height: 0.0,
+                min_column_height: 0.0,
+                row_fill_counts: vec![0.0; 20],
+                total_blocks: 0.0,
+                bumpiness: 0.0,
+                holes: 0.0,
                 policy: vec![],
                 value: 0.0,
                 raw_value: 0.0,
@@ -488,6 +548,16 @@ mod tests {
             next_queue: vec![],
             move_number: 0,
             placement_count: 0,
+            combo: 0,
+            back_to_back: false,
+            next_hidden_piece_probs: vec![0.0; 7],
+            column_heights: vec![0.0; 10],
+            max_column_height: 0.0,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; 20],
+            total_blocks: 0.0,
+            bumpiness: 0.0,
+            holes: 0.0,
             policy: vec![],
             value: 0.0,
             raw_value: 0.0,
@@ -509,6 +579,16 @@ mod tests {
             next_queue: vec![],
             move_number: 0,
             placement_count: 0,
+            combo: 0,
+            back_to_back: false,
+            next_hidden_piece_probs: vec![0.0; 7],
+            column_heights: vec![0.0; 10],
+            max_column_height: 0.0,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; 20],
+            total_blocks: 0.0,
+            bumpiness: 0.0,
+            holes: 0.0,
             policy: vec![],
             value: 0.0,
             raw_value: 0.0,
@@ -531,6 +611,16 @@ mod tests {
             next_queue: vec![6, 0, 1],
             move_number: 99,
             placement_count: 75,
+            combo: 4,
+            back_to_back: true,
+            next_hidden_piece_probs: vec![0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0],
+            column_heights: vec![0.2, 0.2, 0.15, 0.15, 0.1, 0.1, 0.05, 0.05, 0.0, 0.0],
+            max_column_height: 0.2,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; 20],
+            total_blocks: 0.1,
+            bumpiness: 0.03,
+            holes: 0.12,
             policy: vec![0.1; NUM_ACTIONS],
             value: 25.0,
             raw_value: 28.0,
@@ -548,6 +638,19 @@ mod tests {
         assert_eq!(cloned.next_queue, example.next_queue);
         assert_eq!(cloned.move_number, example.move_number);
         assert_eq!(cloned.placement_count, example.placement_count);
+        assert_eq!(cloned.combo, example.combo);
+        assert_eq!(cloned.back_to_back, example.back_to_back);
+        assert_eq!(
+            cloned.next_hidden_piece_probs,
+            example.next_hidden_piece_probs
+        );
+        assert_eq!(cloned.column_heights, example.column_heights);
+        assert_eq!(cloned.max_column_height, example.max_column_height);
+        assert_eq!(cloned.min_column_height, example.min_column_height);
+        assert_eq!(cloned.row_fill_counts, example.row_fill_counts);
+        assert_eq!(cloned.total_blocks, example.total_blocks);
+        assert_eq!(cloned.bumpiness, example.bumpiness);
+        assert_eq!(cloned.holes, example.holes);
         assert_eq!(cloned.value, example.value);
         assert_eq!(cloned.raw_value, example.raw_value);
         assert_eq!(cloned.overhang_fields, example.overhang_fields);
@@ -586,6 +689,16 @@ mod tests {
             next_queue: vec![1, 2, 3, 4, 5],
             move_number: 0,
             placement_count: 0,
+            combo: 0,
+            back_to_back: false,
+            next_hidden_piece_probs: vec![0.0; 7],
+            column_heights: vec![0.0; 10],
+            max_column_height: 0.0,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; 20],
+            total_blocks: 0.0,
+            bumpiness: 0.0,
+            holes: 0.0,
             policy: vec![0.0; NUM_ACTIONS],
             value: 100.0,
             raw_value: 105.0,
@@ -603,6 +716,16 @@ mod tests {
             next_queue: vec![2, 3, 4, 5, 6],
             move_number: 1,
             placement_count: 1,
+            combo: 1,
+            back_to_back: false,
+            next_hidden_piece_probs: vec![0.0; 7],
+            column_heights: vec![0.0; 10],
+            max_column_height: 0.0,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; 20],
+            total_blocks: 0.0,
+            bumpiness: 0.0,
+            holes: 0.0,
             policy: vec![0.0; NUM_ACTIONS],
             value: 95.0,
             raw_value: 99.0,
@@ -703,6 +826,16 @@ mod tests {
             next_queue: vec![],
             move_number: 0,
             placement_count: 0,
+            combo: 0,
+            back_to_back: false,
+            next_hidden_piece_probs: vec![0.0; 7],
+            column_heights: vec![0.0; 10],
+            max_column_height: 0.0,
+            min_column_height: 0.0,
+            row_fill_counts: vec![0.0; 20],
+            total_blocks: 0.0,
+            bumpiness: 0.0,
+            holes: 0.0,
             policy: policy.clone(),
             value: 0.0,
             raw_value: 0.0,

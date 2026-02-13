@@ -140,6 +140,7 @@ impl MCTSAgent {
         let mut states: Vec<(TetrisEnv, u32, u32, Vec<f32>, Vec<bool>)> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
         let mut overhang_fields: Vec<u32> = Vec::new();
+        let mut hole_counts: Vec<u32> = Vec::new();
         let mut stats = GameStats::default();
         let mut valid_moves_sum: u32 = 0;
         let mut max_valid_moves: u32 = 0;
@@ -209,7 +210,9 @@ impl MCTSAgent {
                 .execute_action_index(result.action)
                 .expect("MCTS selected action is not executable");
             attacks.push(attack);
-            overhang_fields.push(super::utils::count_overhang_fields(&env));
+            let (overhang_count, hole_count) = super::utils::count_overhang_fields_and_holes(&env);
+            overhang_fields.push(overhang_count);
+            hole_counts.push(hole_count);
             if result.action != HOLD_ACTION_INDEX {
                 placement_count += 1;
             }
@@ -274,6 +277,11 @@ impl MCTSAgent {
             overhang_fields.len(),
             "States and overhang fields should have same length"
         );
+        debug_assert_eq!(
+            states.len(),
+            hole_counts.len(),
+            "States and hole counts should have same length"
+        );
 
         let values = compute_value_targets(
             &attacks,
@@ -305,6 +313,27 @@ impl MCTSAgent {
 
             let hold_available = !state.is_hold_used();
             let next_queue = state.get_queue(5);
+            let next_hidden_piece_probs = crate::nn::next_hidden_piece_distribution(state);
+            let raw_bumpiness = super::utils::compute_bumpiness(&state.column_heights);
+            let column_heights =
+                super::utils::normalize_column_heights(&state.column_heights, state.height);
+            let row_fill_counts =
+                super::utils::normalize_row_fill_counts(&state.row_fill_counts, state.width);
+            let total_blocks =
+                super::utils::normalize_total_blocks(state.total_blocks, state.width, state.height);
+            let bumpiness =
+                super::utils::normalize_bumpiness(raw_bumpiness, state.width, state.height);
+            let holes = super::utils::normalize_holes(hole_counts[i], state.width, state.height);
+            let max_column_height = column_heights
+                .iter()
+                .copied()
+                .reduce(f32::max)
+                .unwrap_or(0.0);
+            let min_column_height = column_heights
+                .iter()
+                .copied()
+                .reduce(f32::min)
+                .unwrap_or(0.0);
 
             examples.push(TrainingExample {
                 board,
@@ -314,6 +343,16 @@ impl MCTSAgent {
                 next_queue,
                 move_number: frame_idx,
                 placement_count: placement_idx,
+                combo: state.combo,
+                back_to_back: state.back_to_back,
+                next_hidden_piece_probs,
+                column_heights,
+                max_column_height,
+                min_column_height,
+                row_fill_counts,
+                total_blocks,
+                bumpiness,
+                holes,
                 policy: policy.clone(),
                 value: values[i],
                 raw_value: raw_values[i],

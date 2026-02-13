@@ -233,6 +233,17 @@ def print_game_buffer_vectors(data: np.lib.npyio.NpzFile, start: int, end: int) 
         "policy_targets",
         "move_numbers",
         "placement_counts",
+        "combos",
+        "back_to_back",
+        "next_hidden_piece_probs",
+        "column_heights",
+        "max_column_heights",
+        "min_column_heights",
+        "row_fill_counts",
+        "total_blocks",
+        "bumpiness",
+        "holes",
+        "overhang_fields",
     ]
 
     console.rule("[bold]Replay Buffer Slice[/bold]")
@@ -389,6 +400,8 @@ def main(args: ScriptArgs) -> None:
                 get_piece_type(data["next_queue"][i][j]) for j in range(QUEUE_SIZE)
             ]
             can_hold = bool(data["hold_available"][i])
+            combo = int(data["combos"][i])
+            back_to_back = bool(data["back_to_back"][i])
             move_number = frame_idx  # Use frame index as move number
             value_target = float(data["value_targets"][i])
             value_pred = None
@@ -401,6 +414,9 @@ def main(args: ScriptArgs) -> None:
                     hold_available=float(data["hold_available"][i]),
                     next_queue=data["next_queue"][i],
                     placement_count=float(data["placement_counts"][i]),
+                    combo=float(data["combos"][i]),
+                    back_to_back=float(data["back_to_back"][i]),
+                    next_hidden_piece_probs=data["next_hidden_piece_probs"][i],
                 )
 
             # Build piece info
@@ -417,7 +433,8 @@ def main(args: ScriptArgs) -> None:
                 value_pred=value_pred,
                 info_text=(
                     f"Can hold: {'y' if can_hold else 'n'}"
-                    f"  value_target: {value_target:.2f}"
+                    f"  value_target: {value_target:.2f}\n"
+                    f"Combo: {combo}  B2B: {'y' if back_to_back else 'n'}"
                 ),
                 show_piece_info=True,
                 current_piece_name=current_name,
