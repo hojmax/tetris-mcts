@@ -65,9 +65,9 @@ class TrainingConfig:
     learning_rate: float = 0.0005
     weight_decay: float = 1e-4
     grad_clip_norm: float = 5.0
-    lr_schedule: str = "cosine"  # 'cosine', 'step', 'none'
-    lr_decay_steps: int = 100_000
-    lr_min_factor: float = 0.5  # Minimum LR as fraction of initial (for cosine)
+    lr_schedule: str = "linear"  # 'linear', 'cosine', 'step', 'none'
+    lr_decay_steps: int = 200_000
+    lr_min_factor: float = 0.2  # Final LR as fraction of initial (for linear/cosine)
     lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
     lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
@@ -85,8 +85,8 @@ class TrainingConfig:
     add_noise: bool = (  # Whether to add Dirichlet noise at the MCTS root during self-play
         True
     )
-    ignore_nn_value_head: bool = (  # If True, MCTS uses NN policy priors but forces NN value estimates to 0.0
-        False
+    nn_value_weight: float = (  # Scale factor for NN value output in MCTS (0.0 ignores value head)
+        0.01
     )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
@@ -158,15 +158,20 @@ class TrainingConfig:
                 "visit_sampling_epsilon must be in [0, 1] "
                 f"(got {self.visit_sampling_epsilon})"
             )
+        if self.nn_value_weight < 0.0:
+            raise ValueError(
+                f"nn_value_weight must be >= 0 (got {self.nn_value_weight})"
+            )
         if self.model_sync_interval <= 0:
             raise ValueError("model_sync_interval must be > 0")
         if self.model_promotion_eval_games <= 0:
             raise ValueError("model_promotion_eval_games must be > 0")
         if self.bootstrap_num_simulations <= 0:
             raise ValueError("bootstrap_num_simulations must be > 0")
-        if self.lr_schedule not in {"cosine", "step", "none"}:
+        if self.lr_schedule not in {"linear", "cosine", "step", "none"}:
             raise ValueError(
-                f"lr_schedule must be one of cosine, step, none (got {self.lr_schedule})"
+                "lr_schedule must be one of linear, cosine, step, none "
+                f"(got {self.lr_schedule})"
             )
         if self.lr_decay_steps <= 0:
             raise ValueError("lr_decay_steps must be > 0")

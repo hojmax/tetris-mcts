@@ -220,12 +220,12 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 
 From `config.py` TrainingConfig defaults:
 
-- **MCTS**: 1000 simulations, c_puct=1.5, temperature=1.5
-- **Training**: batch_size=1024, lr=0.0005, cosine schedule, weight_decay=1e-4
+- **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
+- **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
 - **Architecture**: Conv(1→4→8), FC(1652→128), 735 policy outputs, 1 value output
 - **Buffer**: 500K examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
-- **NN Value Override**: `ignore_nn_value_head=false` by default; when true, MCTS uses NN policy priors but forces NN value estimates to 0
+- **NN Value Scaling**: `nn_value_weight=1.0` by default; set to `0.0` to ignore NN value head or a small value (for example `0.01`) for weak value guidance
 - **Model Promotion Gate**: candidate window=30 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 

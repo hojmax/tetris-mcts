@@ -3,6 +3,7 @@
 - [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
 - [ ] What AWS instance would be well suited for this workload?
 - [ ] Try running this with just the policy head, no value head. Must be better?
+- [ ] What if we just scale the value head way way down? Sure there is noise, but probably better then nothing. The issue is that it overpowers the feedback from the environment, like the overhang penalty, raw attack, and death penalty.
 - [ ] Do online learning experiments. Things to validate:
   - Learning rate and scheduler
   - Model size
@@ -12,6 +13,7 @@
   - Optimizer
   - Architecture choices
 
+- [ ] Should the network be predicting the overhang penalty? Or is that just a search heuristic?
 - [ ] Adding hand crafted heuristics to offload work off the neural network
   - Column heights
   - Number of holes

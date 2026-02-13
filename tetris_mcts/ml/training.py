@@ -104,7 +104,7 @@ class Trainer:
             overhang_penalty_weight=config.overhang_penalty_weight,
             eval_seeds=config.eval_seeds,
             eval_mcts_seed=config.eval_mcts_seed,
-            ignore_nn_value_head=config.ignore_nn_value_head,
+            nn_value_weight=config.nn_value_weight,
         )
 
         # Training state
@@ -116,7 +116,14 @@ class Trainer:
         config.data_dir.mkdir(parents=True, exist_ok=True)
 
     def _create_scheduler(self):
-        if self.config.lr_schedule == "cosine":
+        if self.config.lr_schedule == "linear":
+            return torch.optim.lr_scheduler.LinearLR(
+                self.optimizer,
+                start_factor=1.0,
+                end_factor=self.config.lr_min_factor,
+                total_iters=self.config.lr_decay_steps,
+            )
+        elif self.config.lr_schedule == "cosine":
             return torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=self.config.lr_decay_steps,
@@ -141,7 +148,13 @@ class Trainer:
         # LR settings while keeping global step alignment.
         self.scheduler.last_epoch = step
 
-        if self.config.lr_schedule == "cosine":
+        if self.config.lr_schedule == "linear":
+            assert isinstance(self.scheduler, torch.optim.lr_scheduler.LinearLR)
+            total_iters = self.config.lr_decay_steps
+            progress = min(step, total_iters) / total_iters
+            factor = 1.0 + (self.config.lr_min_factor - 1.0) * progress
+            lrs = [base_lr * factor for base_lr in self.scheduler.base_lrs]
+        elif self.config.lr_schedule == "cosine":
             assert isinstance(
                 self.scheduler, torch.optim.lr_scheduler.CosineAnnealingLR
             )
@@ -323,7 +336,7 @@ class Trainer:
         mcts_config.max_placements = self.config.max_placements
         mcts_config.death_penalty = self.config.death_penalty
         mcts_config.overhang_penalty_weight = self.config.overhang_penalty_weight
-        mcts_config.ignore_nn_value_head = self.config.ignore_nn_value_head
+        mcts_config.nn_value_weight = self.config.nn_value_weight
 
         # Start background game generator
         training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME

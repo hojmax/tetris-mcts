@@ -1609,7 +1609,7 @@ mod tests {
         config.temperature = 1.5;
         config.dirichlet_alpha = 0.02;
         config.dirichlet_epsilon = 0.3;
-        config.ignore_nn_value_head = true;
+        config.nn_value_weight = 0.123;
 
         let network_config = GameGenerator::build_rollout_config(&config, true, 999);
         assert_eq!(network_config.num_simulations, 123);
@@ -1617,7 +1617,7 @@ mod tests {
         assert_eq!(network_config.temperature, 1.5);
         assert_eq!(network_config.dirichlet_alpha, 0.02);
         assert_eq!(network_config.dirichlet_epsilon, 0.3);
-        assert!(network_config.ignore_nn_value_head);
+        assert_eq!(network_config.nn_value_weight, 0.123);
 
         let bootstrap_config = GameGenerator::build_rollout_config(&config, false, 999);
         assert_eq!(bootstrap_config.num_simulations, 999);
@@ -1625,7 +1625,7 @@ mod tests {
         assert_eq!(bootstrap_config.temperature, 1.5);
         assert_eq!(bootstrap_config.dirichlet_alpha, 0.02);
         assert_eq!(bootstrap_config.dirichlet_epsilon, 0.3);
-        assert!(bootstrap_config.ignore_nn_value_head);
+        assert_eq!(bootstrap_config.nn_value_weight, 0.123);
     }
 
     #[test]
