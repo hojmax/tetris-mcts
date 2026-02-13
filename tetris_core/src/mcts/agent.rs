@@ -61,6 +61,16 @@ fn compute_value_targets(
     values
 }
 
+fn compute_raw_value_targets(attacks: &[u32]) -> Vec<f32> {
+    let mut values = vec![0.0f32; attacks.len()];
+    let mut cumulative = 0.0f32;
+    for i in (0..attacks.len()).rev() {
+        cumulative += attacks[i] as f32;
+        values[i] = cumulative;
+    }
+    values
+}
+
 #[pymethods]
 impl MCTSAgent {
     #[new]
@@ -274,6 +284,7 @@ impl MCTSAgent {
             self.config.death_penalty,
             self.config.overhang_penalty_weight,
         );
+        let raw_values = compute_raw_value_targets(&attacks);
 
         // Build training examples (use all moves)
         let mut examples = Vec::with_capacity(num_states);
@@ -305,6 +316,7 @@ impl MCTSAgent {
                 placement_count: placement_idx,
                 policy: policy.clone(),
                 value: values[i],
+                raw_value: raw_values[i],
                 action_mask: mask.clone(),
                 overhang_fields: overhang_fields[i],
                 game_number: 0,
@@ -643,5 +655,15 @@ mod tests {
                 expected_offset
             );
         }
+    }
+
+    #[test]
+    fn test_compute_raw_value_targets() {
+        let attacks = vec![1, 2, 3];
+        let values = compute_raw_value_targets(&attacks);
+        assert_eq!(values.len(), 3);
+        assert!((values[0] - 6.0).abs() < 1e-6);
+        assert!((values[1] - 5.0).abs() < 1e-6);
+        assert!((values[2] - 3.0).abs() < 1e-6);
     }
 }

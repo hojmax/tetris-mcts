@@ -13,7 +13,7 @@ Total input: 200 + 7 + 8 + 1 + 35 + 1 = 252 features
 
 Output:
 - Policy head: 735 outputs (softmax over actions: 734 placements + hold)
-- Value head: 1 output (predicted cumulative attack)
+- Value head: 1 output (predicted scalar value target)
 """
 
 import torch
@@ -115,7 +115,7 @@ class TetrisNet(nn.Module):
         Returns:
             policy_logits: Shape (batch, 735) - raw logits (caller should apply
                 action mask before softmax to mask invalid actions)
-            value: Shape (batch, 1) - predicted cumulative attack
+            value: Shape (batch, 1) - predicted scalar value target
         """
         # Conv layers
         x = F.relu(self.bn1(self.conv1(board)))

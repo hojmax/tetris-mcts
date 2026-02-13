@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import statistics
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -11,17 +10,31 @@ from pathlib import Path
 
 import structlog
 from PIL import Image, ImageDraw, ImageFont
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 from simple_parsing import parse
 
-from tetris_core import MCTSConfig, evaluate_model
+from tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
 from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     LATEST_ONNX_FILENAME,
+    NUM_ACTIONS,
     TRAINING_RUNS_DIR,
 )
 
 logger = structlog.get_logger()
+HOLD_ACTION_INDEX = NUM_ACTIONS - 1
+WORKER_AGENT: MCTSAgent | None = None
+WORKER_MAX_PLACEMENTS: int | None = None
 
 
 @dataclass
@@ -40,6 +53,8 @@ class ScriptArgs:
     overhang_penalty_weight: float | None = None
     mcts_seed: int | None = None
     workers: int | None = None
+    show_progress: bool = True
+    log_each_game: bool = False
 
     output_json: Path | None = None
     output_plot: Path | None = None
@@ -124,26 +139,18 @@ def build_mcts_config(
     return config
 
 
-def split_seed_chunks(seeds: list[int], workers: int) -> list[list[int]]:
-    if workers <= 0:
-        raise ValueError(f"workers must be > 0 (got {workers})")
-    worker_count = min(workers, len(seeds))
-    chunks = [[] for _ in range(worker_count)]
-    for i, seed in enumerate(seeds):
-        chunks[i % worker_count].append(seed)
-    return [chunk for chunk in chunks if chunk]
-
-
-def evaluate_weight_chunk(
+def initialize_worker_agent(
     model_path: str,
-    seeds: list[int],
     num_simulations: int,
     c_puct: float,
     max_placements: int,
     overhang_penalty_weight: float,
     mcts_seed: int | None,
     nn_value_weight: float,
-) -> dict:
+) -> None:
+    global WORKER_AGENT
+    global WORKER_MAX_PLACEMENTS
+
     config = build_mcts_config(
         num_simulations=num_simulations,
         c_puct=c_puct,
@@ -152,50 +159,73 @@ def evaluate_weight_chunk(
         mcts_seed=mcts_seed,
         nn_value_weight=nn_value_weight,
     )
-    result = evaluate_model(
-        model_path=model_path,
-        seeds=[int(seed) for seed in seeds],
-        config=config,
-        max_placements=max_placements,
-    )
-    game_rows = []
-    for seed, (attack, moves) in zip(seeds, result.game_results):
-        game_rows.append(
-            {
-                "seed": int(seed),
-                "attack": int(attack),
-                "moves": int(moves),
-            }
+    config.temperature = 0.0
+
+    agent = MCTSAgent(config)
+    if not agent.load_model(model_path):
+        raise RuntimeError(f"Failed to load model in worker: {model_path}")
+
+    WORKER_AGENT = agent
+    WORKER_MAX_PLACEMENTS = max_placements
+
+
+def evaluate_single_seed(
+    seed: int,
+) -> dict:
+    if WORKER_AGENT is None or WORKER_MAX_PLACEMENTS is None:
+        raise RuntimeError("Worker agent not initialized")
+
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, int(seed))
+    placement_count = 0
+    game_attack = 0
+    game_lines = 0
+    game_moves = 0
+
+    while placement_count < WORKER_MAX_PLACEMENTS:
+        if env.game_over:
+            break
+
+        result = WORKER_AGENT.select_action(
+            env=env,
+            add_noise=False,
+            placement_count=placement_count,
         )
+        if result is None:
+            break
+
+        action = int(result.action)
+        attack = env.execute_action_index(action)
+        if attack is None:
+            raise RuntimeError(
+                f"MCTS selected non-executable action for seed={seed}: {action}"
+            )
+        game_attack += int(attack)
+
+        if action != HOLD_ACTION_INDEX:
+            placement_count += 1
+            game_moves += 1
+
+        attack_result = env.get_last_attack_result()
+        if attack_result is not None:
+            game_lines += int(attack_result.lines_cleared)
+
     return {
-        "num_games": int(result.num_games),
-        "total_attack": int(result.total_attack),
-        "max_attack": int(result.max_attack),
-        "total_lines": int(result.total_lines),
-        "max_lines": int(result.max_lines),
-        "total_moves": int(result.total_moves),
-        "game_results": game_rows,
+        "seed": int(seed),
+        "attack": int(game_attack),
+        "moves": int(game_moves),
+        "lines": int(game_lines),
     }
 
 
-def aggregate_weight_chunks(nn_value_weight: float, chunk_results: list[dict]) -> dict:
-    game_rows = []
-    total_attack = 0
-    max_attack = 0
-    total_lines = 0
-    max_lines = 0
-    total_moves = 0
-
-    for chunk in chunk_results:
-        total_attack += int(chunk["total_attack"])
-        max_attack = max(max_attack, int(chunk["max_attack"]))
-        total_lines += int(chunk["total_lines"])
-        max_lines = max(max_lines, int(chunk["max_lines"]))
-        total_moves += int(chunk["total_moves"])
-        game_rows.extend(chunk["game_results"])
-
+def aggregate_weight_results(nn_value_weight: float, game_rows: list[dict]) -> dict:
     game_rows.sort(key=lambda row: row["seed"])
     num_games = len(game_rows)
+    total_attack = sum(int(row["attack"]) for row in game_rows)
+    max_attack = max((int(row["attack"]) for row in game_rows), default=0)
+    total_lines = sum(int(row["lines"]) for row in game_rows)
+    max_lines = max((int(row["lines"]) for row in game_rows), default=0)
+    total_moves = sum(int(row["moves"]) for row in game_rows)
+
     avg_attack = total_attack / num_games if num_games > 0 else 0.0
     avg_lines = total_lines / num_games if num_games > 0 else 0.0
     avg_moves = total_moves / num_games if num_games > 0 else 0.0
@@ -237,45 +267,69 @@ def evaluate_weight(
     mcts_seed: int | None,
     nn_value_weight: float,
     workers: int,
+    show_progress: bool,
+    log_each_game: bool,
 ) -> dict:
-    chunks = split_seed_chunks(seeds, workers)
-    model_path_str = str(model_path)
+    effective_workers = max(1, min(workers, len(seeds)))
+    game_rows = []
 
-    if len(chunks) == 1:
-        chunk_results = [
-            evaluate_weight_chunk(
-                model_path=model_path_str,
-                seeds=chunks[0],
-                num_simulations=num_simulations,
-                c_puct=c_puct,
-                max_placements=max_placements,
-                overhang_penalty_weight=overhang_penalty_weight,
-                mcts_seed=mcts_seed,
-                nn_value_weight=nn_value_weight,
-            )
-        ]
-        return aggregate_weight_chunks(nn_value_weight, chunk_results)
+    progress = None
+    task_id = None
+    if show_progress:
+        progress = Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+        )
+        progress.start()
+        task_id = progress.add_task(
+            description=f"nn_value_weight={nn_value_weight:g}", total=len(seeds)
+        )
 
-    chunk_results = []
-    with ProcessPoolExecutor(max_workers=len(chunks)) as executor:
-        futures = [
-            executor.submit(
-                evaluate_weight_chunk,
-                model_path_str,
-                chunk,
+    try:
+        with ProcessPoolExecutor(
+            max_workers=effective_workers,
+            initializer=initialize_worker_agent,
+            initargs=(
+                str(model_path),
                 num_simulations,
                 c_puct,
                 max_placements,
                 overhang_penalty_weight,
                 mcts_seed,
                 nn_value_weight,
-            )
-            for chunk in chunks
-        ]
-        for future in as_completed(futures):
-            chunk_results.append(future.result())
+            ),
+        ) as executor:
+            futures = {
+                executor.submit(
+                    evaluate_single_seed,
+                    seed,
+                ): seed
+                for seed in seeds
+            }
+            for future in as_completed(futures):
+                row = future.result()
+                game_rows.append(row)
 
-    return aggregate_weight_chunks(nn_value_weight, chunk_results)
+                if progress is not None and task_id is not None:
+                    progress.update(task_id, advance=1)
+
+                if log_each_game:
+                    logger.info(
+                        "Completed game",
+                        nn_value_weight=nn_value_weight,
+                        seed=row["seed"],
+                        attack=row["attack"],
+                        lines=row["lines"],
+                        moves=row["moves"],
+                    )
+    finally:
+        if progress is not None:
+            progress.stop()
+
+    return aggregate_weight_results(nn_value_weight, game_rows)
 
 
 def text_size(
@@ -499,6 +553,8 @@ def main(args: ScriptArgs) -> None:
         overhang_penalty_weight=overhang_penalty_weight,
         mcts_seed=mcts_seed,
         workers=effective_workers,
+        show_progress=args.show_progress,
+        log_each_game=args.log_each_game,
     )
 
     results = []
@@ -514,6 +570,8 @@ def main(args: ScriptArgs) -> None:
             mcts_seed=mcts_seed,
             nn_value_weight=nn_value_weight,
             workers=effective_workers,
+            show_progress=args.show_progress,
+            log_each_game=args.log_each_game,
         )
         results.append(result_row)
         logger.info(

@@ -188,11 +188,20 @@ class Trainer:
         """Execute one training step."""
         self.model.train()
 
-        boards, aux, policy_targets, value_targets, overhang_fields, masks = batch
+        (
+            boards,
+            aux,
+            policy_targets,
+            value_targets,
+            raw_value_targets,
+            overhang_fields,
+            masks,
+        ) = batch
         boards = boards.to(self.device)
         aux = aux.to(self.device)
         policy_targets = policy_targets.to(self.device)
         value_targets = value_targets.to(self.device)
+        raw_value_targets = raw_value_targets.to(self.device)
         overhang_fields = overhang_fields.to(self.device)
         masks = masks.to(self.device)
 
@@ -237,6 +246,7 @@ class Trainer:
             "train/grad_norm": grad_norm.item(),
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
             "batch/value_target_mean": value_targets.mean().item(),
+            "batch/raw_value_target_mean": raw_value_targets.mean().item(),
             "batch/overhang_fields_mean": overhang_fields.mean().item(),
             "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         }
@@ -473,9 +483,15 @@ class Trainer:
                 session_step = self.step - start_step
 
                 # Convert numpy arrays to torch tensors
-                boards, aux, policy_targets, value_targets, overhang_fields, masks = (
-                    result
-                )
+                (
+                    boards,
+                    aux,
+                    policy_targets,
+                    value_targets,
+                    raw_value_targets,
+                    overhang_fields,
+                    masks,
+                ) = result
                 batch = (
                     torch.from_numpy(boards).reshape(
                         -1, 1, BOARD_HEIGHT, BOARD_WIDTH
@@ -483,6 +499,7 @@ class Trainer:
                     torch.from_numpy(aux),
                     torch.from_numpy(policy_targets),
                     torch.from_numpy(value_targets),
+                    torch.from_numpy(raw_value_targets),
                     torch.from_numpy(overhang_fields),
                     torch.from_numpy(masks),
                 )

@@ -735,7 +735,15 @@ impl GameGenerator {
     /// Sample a batch of training data from the replay buffer.
     ///
     /// Returns a tuple of numpy arrays:
-    /// (boards, aux_features, policy_targets, value_targets, overhang_fields, action_masks)
+    /// (
+    ///   boards,
+    ///   aux_features,
+    ///   policy_targets,
+    ///   value_targets,
+    ///   raw_value_targets,
+    ///   overhang_fields,
+    ///   action_masks,
+    /// )
     ///
     /// Returns None if the buffer is empty.
     #[pyo3(signature = (batch_size, max_placements))]
@@ -749,6 +757,7 @@ impl GameGenerator {
             &'py PyArray2<f32>,
             &'py PyArray2<f32>,
             &'py PyArray2<f32>,
+            &'py PyArray1<f32>,
             &'py PyArray1<f32>,
             &'py PyArray1<f32>,
             &'py PyArray2<f32>,
@@ -789,6 +798,7 @@ impl GameGenerator {
         let mut aux = vec![0.0f32; actual_batch * aux_features_size];
         let mut policies = vec![0.0f32; actual_batch * num_actions];
         let mut values = vec![0.0f32; actual_batch];
+        let mut raw_values = vec![0.0f32; actual_batch];
         let mut overhangs = vec![0.0f32; actual_batch];
         let mut masks = vec![0.0f32; actual_batch * num_actions];
         let move_norm_denominator = max_placements as f32;
@@ -825,6 +835,7 @@ impl GameGenerator {
 
             // Copy value
             values[i] = ex.value;
+            raw_values[i] = ex.raw_value;
 
             // Copy overhang fields
             overhangs[i] = ex.overhang_fields as f32;
@@ -846,6 +857,7 @@ impl GameGenerator {
             .reshape([actual_batch, num_actions])
             .unwrap();
         let values_arr = PyArray1::from_vec(py, values);
+        let raw_values_arr = PyArray1::from_vec(py, raw_values);
         let overhangs_arr = PyArray1::from_vec(py, overhangs);
         let masks_arr = PyArray1::from_vec(py, masks)
             .reshape([actual_batch, num_actions])
@@ -856,6 +868,7 @@ impl GameGenerator {
             aux_arr,
             policies_arr,
             values_arr,
+            raw_values_arr,
             overhangs_arr,
             masks_arr,
         )))
@@ -1047,10 +1060,8 @@ impl GameGenerator {
                     && global_games_generated >= next_snapshot_game_threshold
                 {
                     Self::persist_buffer_snapshot(&training_data_path, &buffer, max_placements);
-                    next_snapshot_game_threshold = Self::next_snapshot_game_threshold(
-                        global_games_generated,
-                        games_per_save,
-                    );
+                    next_snapshot_game_threshold =
+                        Self::next_snapshot_game_threshold(global_games_generated, games_per_save);
                 }
             }
         }
@@ -1519,6 +1530,7 @@ mod tests {
             placement_count: move_number,
             policy,
             value: move_number as f32,
+            raw_value: move_number as f32,
             action_mask,
             overhang_fields: move_number,
             game_number: 0,

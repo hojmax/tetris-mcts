@@ -94,7 +94,7 @@ def compute_loss(
         boards: (batch, 1, 20, 10)
         aux_features: (batch, 52)
         policy_targets: (batch, 735) - MCTS policy targets
-        value_targets: (batch,) - discounted attack targets
+        value_targets: (batch,) - scalar value targets from replay data
         action_masks: (batch, 735) - valid action masks
         value_loss_weight: Scale factor applied to value loss in total loss
 

@@ -55,6 +55,9 @@ pub struct TrainingExample {
     /// Value target (cumulative attack - overhang penalty - death penalty)
     #[pyo3(get)]
     pub value: f32,
+    /// Raw value target (cumulative attack only, no penalties)
+    #[pyo3(get)]
+    pub raw_value: f32,
     /// Action mask (NUM_ACTIONS values, true = valid)
     #[pyo3(get)]
     pub action_mask: Vec<bool>,
@@ -431,6 +434,7 @@ mod tests {
             placement_count: 45,
             policy: vec![0.0; NUM_ACTIONS],
             value: 10.5,
+            raw_value: 13.0,
             action_mask: vec![false; NUM_ACTIONS],
             overhang_fields: 0,
             game_number: 0,
@@ -446,6 +450,7 @@ mod tests {
         assert_eq!(example.placement_count, 45);
         assert_eq!(example.policy.len(), NUM_ACTIONS);
         assert!((example.value - 10.5).abs() < 0.001);
+        assert!((example.raw_value - 13.0).abs() < 0.001);
         assert_eq!(example.action_mask.len(), NUM_ACTIONS);
     }
 
@@ -463,6 +468,7 @@ mod tests {
                 placement_count: 0,
                 policy: vec![],
                 value: 0.0,
+                raw_value: 0.0,
                 action_mask: vec![],
                 overhang_fields: 0,
                 game_number: 0,
@@ -484,6 +490,7 @@ mod tests {
             placement_count: 0,
             policy: vec![],
             value: 0.0,
+            raw_value: 0.0,
             action_mask: vec![],
             overhang_fields: 0,
             game_number: 0,
@@ -504,6 +511,7 @@ mod tests {
             placement_count: 0,
             policy: vec![],
             value: 0.0,
+            raw_value: 0.0,
             action_mask: vec![],
             overhang_fields: 0,
             game_number: 0,
@@ -525,6 +533,7 @@ mod tests {
             placement_count: 75,
             policy: vec![0.1; NUM_ACTIONS],
             value: 25.0,
+            raw_value: 28.0,
             action_mask: vec![true; NUM_ACTIONS],
             overhang_fields: 12,
             game_number: 0,
@@ -540,6 +549,7 @@ mod tests {
         assert_eq!(cloned.move_number, example.move_number);
         assert_eq!(cloned.placement_count, example.placement_count);
         assert_eq!(cloned.value, example.value);
+        assert_eq!(cloned.raw_value, example.raw_value);
         assert_eq!(cloned.overhang_fields, example.overhang_fields);
     }
 
@@ -578,6 +588,7 @@ mod tests {
             placement_count: 0,
             policy: vec![0.0; NUM_ACTIONS],
             value: 100.0,
+            raw_value: 105.0,
             action_mask: vec![true; NUM_ACTIONS],
             overhang_fields: 5,
             game_number: 0,
@@ -594,6 +605,7 @@ mod tests {
             placement_count: 1,
             policy: vec![0.0; NUM_ACTIONS],
             value: 95.0,
+            raw_value: 99.0,
             action_mask: vec![true; NUM_ACTIONS],
             overhang_fields: 4,
             game_number: 0,
@@ -693,6 +705,7 @@ mod tests {
             placement_count: 0,
             policy: policy.clone(),
             value: 0.0,
+            raw_value: 0.0,
             action_mask: action_mask.clone(),
             overhang_fields: 0,
             game_number: 0,
