@@ -55,14 +55,14 @@ class ScriptArgs:
     conv_kernel_size: int = 3
     conv_padding: int = 1
 
-    match_aux_hidden_min: int = 32
+    match_aux_hidden_min: int = 8
     match_aux_hidden_max: int = 256
     match_aux_hidden_step: int = 8
     match_fusion_hidden_min: int = 32
     match_fusion_hidden_max: int = 384
     match_fusion_hidden_step: int = 8
     match_num_fusion_blocks_options: list[int] = field(
-        default_factory=lambda: [1, 2, 3]
+        default_factory=lambda: [0, 1, 2, 3]
     )
     match_param_tolerance: float = 0.01  # Relative tolerance
     match_flop_tolerance: float = (  # Relative tolerance on cache-weighted FLOPs
@@ -135,8 +135,8 @@ class GatedFusionTetrisNet(nn.Module):
             raise ValueError(
                 f"Expected exactly 2 convolutional filters, got {len(conv_filters)}"
             )
-        if num_fusion_blocks <= 0:
-            raise ValueError("num_fusion_blocks must be > 0")
+        if num_fusion_blocks < 0:
+            raise ValueError("num_fusion_blocks must be >= 0")
 
         conv0 = conv_filters[0]
         conv1 = conv_filters[1]
@@ -442,8 +442,8 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError("match_aux_hidden_min must be <= match_aux_hidden_max")
     if args.match_fusion_hidden_min > args.match_fusion_hidden_max:
         raise ValueError("match_fusion_hidden_min must be <= match_fusion_hidden_max")
-    if any(blocks <= 0 for blocks in args.match_num_fusion_blocks_options):
-        raise ValueError("match_num_fusion_blocks_options must contain only positive values")
+    if any(blocks < 0 for blocks in args.match_num_fusion_blocks_options):
+        raise ValueError("match_num_fusion_blocks_options must contain only >= 0 values")
     if args.match_param_tolerance <= 0:
         raise ValueError("match_param_tolerance must be > 0")
     if args.match_flop_tolerance <= 0:

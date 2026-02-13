@@ -72,6 +72,7 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 # Logs all per-step losses and final comparison to WandB.
 # Gated model is auto-matched to baseline by parameter count and forward FLOPs
 # within configurable relative tolerances (cache-weighted with hit-rate default 0.96).
+# Matching search may choose 0+ fusion residual blocks depending on fairness constraints.
 python tetris_mcts/scripts/compare_offline_architectures.py \
     --data_path training_runs/v17/training_data.npz
 ```
