@@ -1,8 +1,7 @@
 # Next Steps
 
-- [ ] Sweep over best value head weighting.
 - [ ] Deeper search depth potentially.
-- [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
+- [ ] Better architecture choice with model fusion.
 - [ ] What AWS instance would be well suited for this workload?
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler
@@ -14,22 +13,12 @@
   - Architecture choices
   - Huber loss vs. MSE loss
 
+- [ ] Run with updated feature set, integrate all the new features.
 - [ ] Should the network be predicting the overhang penalty? Or is that just a search heuristic?
-- [ ] Adding hand crafted heuristics to offload work off the neural network
-  - Column heights
-  - Number of holes
-  - Overhang fields
-  - Fill of rows
-  - Fill of columns (not sure?)
-  - Bumpiness of terrain
-  - max of column heights / min of column heights
-  - can t-spin filter?
-- [ ] Try to handcraft great Tetris bot heuristics.
-- [ ] All the steps setttings depend on batch size which is kind of annoying. Maybe wall clock is nicer for all these settings?
-- [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
 - [ ] Another round of benchmarking and optimizing?
+- [ ] Benchmark conv net depth impact on speed, since caching so high. 96% caching.
 - [ ] Adding in alpha downweighting of value loss?
-- [ ] Maybe beefier conv network is fine since cache rate is soo high? Might be quite cheap. 80% caching would mean that making it 2x as slow is not a big deal in the total GPU time budget.
+- [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
 
 # Deep Review
 
@@ -70,6 +59,12 @@ In progress: 🟨
 - [ ] Stress test next possible pieces with unit tests, like that it can do wild twists and stuff and that it correctly decides those possible locations
 - [ ] Benchmarking and improving speed of MCTS search
 - [ ] Testing speed on different hardware then the Macbook Air
+- [ ] Sweep over best value head weighting.
+- [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
+- [ ] Adding hand crafted heuristics to offload work off the neural network
+  - can t-spin filter?
+- [ ] Try to handcraft great Tetris bot.
+- [ ] All the steps setttings depend on batch size which is kind of annoying. Maybe wall clock is nicer for all these settings?
 
 ## Test Environment State
 
