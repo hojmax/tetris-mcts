@@ -86,7 +86,7 @@ class TrainingConfig:
         True
     )
     nn_value_weight: float = (  # Scale factor for NN value output in MCTS (0.0 ignores value head)
-        0.001
+        0.025
     )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0

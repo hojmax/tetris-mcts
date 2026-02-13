@@ -65,6 +65,17 @@ python tetris_mcts/train.py \
 python tetris_mcts/train.py --resume-dir training_runs/v0
 ```
 
+### Offline Architecture Comparison
+
+```bash
+# Compare current concat+FC model vs gated-fusion model on a fixed NPZ snapshot.
+# Logs all per-step losses and final comparison to WandB.
+# Gated model is auto-matched to baseline by parameter count and forward FLOPs
+# within configurable relative tolerances (cache-weighted with hit-rate default 0.96).
+python tetris_mcts/scripts/compare_offline_architectures.py \
+    --data_path training_runs/v17/training_data.npz
+```
+
 ### Performance Profiling
 
 **Timing Benchmarks** (saves results to JSONL):

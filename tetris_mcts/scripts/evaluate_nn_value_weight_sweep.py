@@ -40,9 +40,7 @@ WORKER_MAX_PLACEMENTS: int | None = None
 @dataclass
 class ScriptArgs:
     run_dir: Path = TRAINING_RUNS_DIR / "v17"
-    nn_value_weights: list[float] = field(
-        default_factory=lambda: [0.001, 0.01, 0.05, 0.1]
-    )
+    nn_value_weights: list[float] = field(default_factory=lambda: [0.005, 0.025, 0.075])
     num_games: int = 50
     seed_start: int = 1
 
