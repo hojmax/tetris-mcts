@@ -148,11 +148,6 @@ pub fn count_overhang_fields(env: &TetrisEnv) -> u32 {
     count_overhang_fields_and_holes(env).0
 }
 
-/// Count holes (overhang fields not reachable from top-row air).
-pub fn count_holes(env: &TetrisEnv) -> u32 {
-    count_overhang_fields_and_holes(env).1
-}
-
 /// Compute normalized overhang penalty magnitude from raw overhang count.
 pub fn compute_overhang_penalty(overhang_fields: u32, overhang_penalty_weight: f32) -> f32 {
     (overhang_fields as f32 / OVERHANG_NORMALIZATION_DENOMINATOR) * overhang_penalty_weight
@@ -267,7 +262,6 @@ mod tests {
         let (overhang, holes) = count_overhang_fields_and_holes(&env);
         assert_eq!(overhang, 2);
         assert_eq!(holes, 2);
-        assert_eq!(count_holes(&env), 2);
     }
 
     #[test]
