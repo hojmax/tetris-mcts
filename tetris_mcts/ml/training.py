@@ -280,6 +280,29 @@ def optional_model_artifact_paths(onnx_path: Path) -> list[Path]:
     ]
 
 
+def _fix_onnx_external_data_references(onnx_path: Path) -> None:
+    """Patch external data location references in an ONNX file to match its filename.
+
+    When an ONNX file with external data (e.g. candidate_step_1000.conv.onnx) is
+    copied to a new name (e.g. incumbent.conv.onnx), the protobuf still references
+    the original data filename. This rewrites those references so tract/onnxruntime
+    can find the co-located .data file.
+    """
+    import onnx
+
+    model = onnx.load(str(onnx_path), load_external_data=False)
+    expected_data_filename = onnx_path.name + ".data"
+    changed = False
+    for tensor in model.graph.initializer:
+        if tensor.data_location == onnx.TensorProto.EXTERNAL:
+            for entry in tensor.external_data:
+                if entry.key == "location" and entry.value != expected_data_filename:
+                    entry.value = expected_data_filename
+                    changed = True
+    if changed:
+        onnx.save_model(model, str(onnx_path))
+
+
 def copy_model_artifact_bundle(
     source_onnx_path: Path, destination_onnx_path: Path
 ) -> None:
@@ -298,6 +321,16 @@ def copy_model_artifact_bundle(
             shutil.copy2(source_path, destination_path)
         else:
             destination_path.unlink(missing_ok=True)
+
+    # Fix external data references in copied ONNX files — the protobuf embeds
+    # the original source filename (e.g. "candidate_step_68937.conv.onnx.data")
+    # which becomes stale after renaming to incumbent/latest.
+    onnx_files = [destination_onnx_path]
+    dest_conv, dest_heads, _ = split_model_paths(destination_onnx_path)
+    onnx_files.extend([dest_conv, dest_heads])
+    for onnx_file in onnx_files:
+        if onnx_file.exists():
+            _fix_onnx_external_data_references(onnx_file)
 
 
 def roll_interval_deadline(deadline_s: float, interval_s: float, now_s: float) -> float:
