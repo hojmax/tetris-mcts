@@ -338,12 +338,13 @@ From `config.py` TrainingConfig defaults:
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
 - **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
-- **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=8` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=16` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
+- **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=1` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=1` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
 - **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default.
-- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=10800` (`0` disables periodic snapshot saves).
+- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1800` (`0` disables periodic snapshot saves).
+- **Training-loop logging defaults**: full scalar train-step metrics are collected every `train_step_metrics_interval=16` steps, expensive extra diagnostics (`compute_metrics` forward pass for policy entropy/accuracy) are disabled by default with `compute_extra_train_metrics_on_log=false`, and completed-game logs are aggregated per log tick by default (`log_individual_games_to_wandb=false`).
 - **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
@@ -462,7 +463,7 @@ Step-alignment rule for resumed runs:
 
 - Any metric namespace/key that should continue on checkpoint `step` must be explicitly mapped with `wandb.define_metric(..., step_metric="trainer_step")`. If a key is not mapped, WandB uses internal `_step`, which resets in new resumed runs.
 - Current trainer mappings include `train/*`, `batch/*`, `eval/*`, `timing/*`, `replay/*`, `throughput/*`, `incumbent/*`, `model_gate/*`, and scalar keys `policy_entropy`, `value_error`, `top1_accuracy`, `top3_accuracy`.
-- Per-game metrics remain mapped to `game_number` via `wandb.define_metric("game/*", step_metric="game_number")`.
+- Per-game metrics remain mapped to `game_number` via `wandb.define_metric("game/*", step_metric="game_number")`, but individual game rows are only emitted when `log_individual_games_to_wandb=true`. Default training logs aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step`.
 
 ### Training Metrics
 
@@ -472,6 +473,7 @@ Step-alignment rule for resumed runs:
 - `buffer_size` - Current examples in memory
 - `throughput/games_per_second` and `throughput/steps_per_second` are windowed rates computed from counter deltas divided by elapsed wall-clock seconds since the previous training log tick.
 - Candidate evaluator games are only added to `replay/games_generated` if the candidate is promoted. During rejection-heavy periods, evaluator work still consumes compute but does not increment this counter, which can make generation throughput look lower.
+- Aggregated replay completion metrics are logged as `replay/completed_games_*` each training log tick (count, first/last game number in the drained window, averages/maxes for attack/lines/moves, and averaged attack-per-move/hold-rate).
 
 ### Per-Game Metrics (step_metric="game_number")
 
