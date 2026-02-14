@@ -90,7 +90,9 @@ python tetris_mcts/scripts/compare_offline_architectures.py \
 ```bash
 # Compare gated-fusion variants with extra board-state diagnostics:
 # no-extra, all-extra, and all-minus-one ablations.
-# Logs per-step metrics for each variant plus overlay charts to WandB.
+# Logs per-step metrics for each variant, per-step comparison curves under
+# `comparison/curves/*`, a main line-series chart under
+# `comparison/charts/eval_val_total_loss_main`, plus Plotly overlay charts.
 # Requires NPZ snapshots that include:
 # column_heights, max_column_heights, min_column_heights,
 # row_fill_counts, total_blocks, bumpiness (and optionally move_numbers).
@@ -286,6 +288,7 @@ From `config.py` TrainingConfig defaults:
 
 - **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
+- **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=8` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=16` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
@@ -306,7 +309,8 @@ Temperature behavior:
 
 ```python
 policy_loss = -sum(target_policy * log(masked_policy))  # Cross-entropy
-value_loss = MSE(predicted_value, target_value)
+value_loss = Huber(predicted_value, target_value)  # default
+# or MSE when use_huber_value_loss = false
 total_loss = policy_loss + value_loss
 ```
 

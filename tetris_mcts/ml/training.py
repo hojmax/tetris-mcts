@@ -402,7 +402,9 @@ class Trainer:
             policy_targets=batch.policy_targets.to(
                 self.device, non_blocking=non_blocking
             ),
-            value_targets=batch.value_targets.to(self.device, non_blocking=non_blocking),
+            value_targets=batch.value_targets.to(
+                self.device, non_blocking=non_blocking
+            ),
             overhang_fields=batch.overhang_fields.to(
                 self.device, non_blocking=non_blocking
             ),
@@ -473,9 +475,7 @@ class Trainer:
         return staged_batch.split(self.config.batch_size)
 
     def _use_device_replay_mirror(self) -> bool:
-        return (
-            self.config.mirror_replay_on_accelerator and self.device.type != "cpu"
-        )
+        return self.config.mirror_replay_on_accelerator and self.device.type != "cpu"
 
     def _load_replay_mirror(self, generator: GameGenerator) -> ReplayMirror | None:
         result = generator.replay_buffer_snapshot(self.config.max_placements)
@@ -636,7 +636,9 @@ class Trainer:
             aux=mirror.batch.aux.index_select(0, sample_indices),
             policy_targets=mirror.batch.policy_targets.index_select(0, sample_indices),
             value_targets=mirror.batch.value_targets.index_select(0, sample_indices),
-            overhang_fields=mirror.batch.overhang_fields.index_select(0, sample_indices),
+            overhang_fields=mirror.batch.overhang_fields.index_select(
+                0, sample_indices
+            ),
             masks=mirror.batch.masks.index_select(0, sample_indices),
         )
 
@@ -666,6 +668,7 @@ class Trainer:
             value_targets,
             masks,
             value_loss_weight,
+            self.config.use_huber_value_loss,
         )
         total_loss.backward()
 
@@ -1013,7 +1016,9 @@ class Trainer:
                             generator=generator,
                             staged_batch_size=staged_batch_size,
                         )
-                        sample_batch_elapsed_s = time.perf_counter() - sample_batch_start
+                        sample_batch_elapsed_s = (
+                            time.perf_counter() - sample_batch_start
+                        )
                         if prefetched_batches is None:
                             if not pending_batches:
                                 time.sleep(0.1)
@@ -1083,18 +1088,14 @@ class Trainer:
                     metrics["replay/examples_generated"] = (
                         generator.examples_generated()
                     )
-                    metrics["replay/source"] = (
-                        1.0 if use_device_replay_mirror else 0.0
-                    )
+                    metrics["replay/source"] = 1.0 if use_device_replay_mirror else 0.0
                     if use_device_replay_mirror:
                         if replay_mirror is None:
                             raise RuntimeError(
                                 "Replay mirror mode active but replay_mirror is missing"
                             )
                         metrics["replay/mirror_size"] = replay_mirror.size
-                        metrics["replay/mirror_start_index"] = (
-                            replay_mirror.start_index
-                        )
+                        metrics["replay/mirror_start_index"] = replay_mirror.start_index
                     metrics["incumbent/model_step"] = generator.incumbent_model_step()
                     metrics["incumbent/uses_network"] = (
                         generator.incumbent_uses_network()
@@ -1257,7 +1258,9 @@ class Trainer:
                         }
                         # Log trajectory as animated GIF
                         if trajectory_frames:
-                            eval_video, _ = self._create_wandb_gif_video(trajectory_frames)
+                            eval_video, _ = self._create_wandb_gif_video(
+                                trajectory_frames
+                            )
                             if eval_video is not None:
                                 log_data["eval/trajectory"] = eval_video
                         wandb.log(log_data)

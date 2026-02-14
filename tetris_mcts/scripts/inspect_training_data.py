@@ -158,9 +158,7 @@ class ScriptArgs:
     wandb_game_number: int = (
         -1  # Select by WandB game_number (1-indexed); ignored when -1
     )
-    print_buffer_vectors: bool = (
-        True  # Print replay vectors/matrices for selected game (policy_targets is truncated)
-    )
+    print_buffer_vectors: bool = True  # Print replay vectors/matrices for selected game (policy_targets is truncated)
     policy_targets_edge_items: int = (
         6  # Number of edge items per axis when truncating policy_targets display
     )
@@ -404,6 +402,14 @@ def main(args: ScriptArgs) -> None:
                     combo_feature=combo_feature,
                     back_to_back=float(data["back_to_back"][i]),
                     next_hidden_piece_probs=data["next_hidden_piece_probs"][i],
+                    column_heights=data["column_heights"][i],
+                    max_column_height=float(data["max_column_heights"][i]),
+                    min_column_height=float(data["min_column_heights"][i]),
+                    row_fill_counts=data["row_fill_counts"][i],
+                    total_blocks=float(data["total_blocks"][i]),
+                    bumpiness=float(data["bumpiness"][i]),
+                    holes=float(data["holes"][i]),
+                    overhang_fields=float(data["overhang_fields"][i]),
                 )
 
             # Build piece info

@@ -68,7 +68,9 @@ def analyze_combo_values(combos: np.ndarray, epsilon: float) -> ComboStats:
     near_one = np.isclose(combos, 1.0, atol=epsilon)
     only_zero_or_one = bool(np.all(near_zero | near_one))
 
-    has_intermediate_values = bool(np.any((combos > epsilon) & (combos < (1.0 - epsilon))))
+    has_intermediate_values = bool(
+        np.any((combos > epsilon) & (combos < (1.0 - epsilon)))
+    )
 
     appears_normalized = (
         min_value >= -epsilon
@@ -97,7 +99,9 @@ def normalize_combos(combos: np.ndarray) -> np.ndarray:
     return (combos / 12.0).astype(np.float32, copy=False)
 
 
-def rewrite_npz_with_combos(source_path: Path, target_path: Path, combos: np.ndarray) -> None:
+def rewrite_npz_with_combos(
+    source_path: Path, target_path: Path, combos: np.ndarray
+) -> None:
     combos_member_name = "combos.npy"
     replaced = False
     with zipfile.ZipFile(source_path, "r") as source_zip:
@@ -114,7 +118,9 @@ def rewrite_npz_with_combos(source_path: Path, target_path: Path, combos: np.nda
                 member_name = source_info.filename
                 if member_name == combos_member_name:
                     with target_zip.open(member_name, mode="w", force_zip64=True) as f:
-                        npy_format.write_array(f, np.asarray(combos), allow_pickle=False)
+                        npy_format.write_array(
+                            f, np.asarray(combos), allow_pickle=False
+                        )
                     replaced = True
                     continue
 
@@ -137,7 +143,9 @@ def verify_combos(npz_path: Path, expected: np.ndarray, epsilon: float) -> None:
             f"Patched combos shape mismatch: expected {expected.shape}, got {actual.shape}"
         )
     if not np.allclose(actual, expected, atol=epsilon, rtol=0.0):
-        raise ValueError("Patched combos values do not match expected normalized values")
+        raise ValueError(
+            "Patched combos values do not match expected normalized values"
+        )
 
 
 def build_backup_path(npz_path: Path, backup_suffix: str) -> Path:

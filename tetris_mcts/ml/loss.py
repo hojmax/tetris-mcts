@@ -4,7 +4,7 @@ Loss and Metrics Computation
 Implements:
 - Action masking for invalid actions
 - Policy cross-entropy loss
-- Value MSE loss
+- Value Huber/MSE loss
 - Training metrics (entropy, accuracy)
 """
 
@@ -84,6 +84,7 @@ def compute_loss(
     value_targets: torch.Tensor,
     action_masks: torch.Tensor,
     value_loss_weight: float,
+    use_huber_value_loss: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute combined policy and value loss.
@@ -96,6 +97,7 @@ def compute_loss(
         value_targets: (batch,) - scalar value targets from replay data
         action_masks: (batch, 735) - valid action masks
         value_loss_weight: Scale factor applied to value loss in total loss
+        use_huber_value_loss: If True, use Huber value loss; otherwise use MSE
 
     Returns:
         total_loss, policy_loss, value_loss
@@ -117,8 +119,12 @@ def compute_loss(
     # -sum(target * log(pred))
     policy_loss = -torch.sum(policy_targets * log_policy, dim=1).mean()
 
-    # Value loss: MSE
-    value_loss = F.mse_loss(value_pred.squeeze(-1), value_targets)
+    # Value loss: Huber (default) or MSE
+    value_pred_flat = value_pred.squeeze(-1)
+    if use_huber_value_loss:
+        value_loss = F.huber_loss(value_pred_flat, value_targets, delta=1.0)
+    else:
+        value_loss = F.mse_loss(value_pred_flat, value_targets)
 
     # Total loss with configurable value-loss scaling.
     total_loss = policy_loss + (value_loss_weight * value_loss)

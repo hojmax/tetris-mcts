@@ -75,7 +75,9 @@ def main(args: ScriptArgs) -> None:
         # Bootstrap a new run from an existing run directory.
         source_run_dir = args.resume_dir
         if not source_run_dir.exists():
-            raise FileNotFoundError(f"Resume directory does not exist: {source_run_dir}")
+            raise FileNotFoundError(
+                f"Resume directory does not exist: {source_run_dir}"
+            )
         if not source_run_dir.is_dir():
             raise NotADirectoryError(
                 f"Resume directory is not a directory: {source_run_dir}"

@@ -3,6 +3,7 @@
 - [ ] Run with updated feature set, integrate all the new features. (try offline with and without and see loss curves)
 - [ ] Another round of benchmarking and optimizing?
 - [ ] Deeper search depth potentially.
+- [ ] Make sure all the features are scaled correctly.
 - [ ] What AWS instance would be well suited for this workload?
 - [ ] Benchmark conv net depth impact on speed, since caching so high. 96% caching.
 - [ ] What is the right value head weighting for a good network?
@@ -12,6 +13,7 @@
   - Train with Huber loss
   - Train with "n-step bootstrapped return"
 
+- Make nn_value_weight adaptive, not fixed: ramp it up only when value quality is decent (you already log train/value_explained_variance)
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler
   - Model size

@@ -73,6 +73,9 @@ class TrainingConfig:
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
         2000
     )
+    use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
+        True
+    )
 
     # MCTS / Self-play
     num_simulations: int = 1000  # MCTS simulations per move

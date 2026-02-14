@@ -641,15 +641,21 @@ def build_aux_batch_from_npz(
     next_hidden_piece_probs = data["next_hidden_piece_probs"][global_indices].astype(
         np.float32, copy=False
     )
-    column_heights = data["column_heights"][global_indices].astype(np.float32, copy=False)
+    column_heights = data["column_heights"][global_indices].astype(
+        np.float32, copy=False
+    )
     max_column_heights = (
         data["max_column_heights"][global_indices].astype(np.float32).reshape(-1, 1)
     )
     min_column_heights = (
         data["min_column_heights"][global_indices].astype(np.float32).reshape(-1, 1)
     )
-    row_fill_counts = data["row_fill_counts"][global_indices].astype(np.float32, copy=False)
-    total_blocks = data["total_blocks"][global_indices].astype(np.float32).reshape(-1, 1)
+    row_fill_counts = data["row_fill_counts"][global_indices].astype(
+        np.float32, copy=False
+    )
+    total_blocks = (
+        data["total_blocks"][global_indices].astype(np.float32).reshape(-1, 1)
+    )
     bumpiness = data["bumpiness"][global_indices].astype(np.float32).reshape(-1, 1)
     holes = data["holes"][global_indices].astype(np.float32).reshape(-1, 1)
     overhang_fields = (

@@ -754,6 +754,15 @@ def train_offline_variant(
             f"variants/{variant.wandb_prefix}/eval_val_value_loss": row[
                 "val_value_loss"
             ],
+            f"comparison/curves/eval_val_total_loss/{variant.wandb_prefix}": row[
+                "val_total_loss"
+            ],
+            f"comparison/curves/eval_val_policy_loss/{variant.wandb_prefix}": row[
+                "val_policy_loss"
+            ],
+            f"comparison/curves/eval_val_value_loss/{variant.wandb_prefix}": row[
+                "val_value_loss"
+            ],
             f"variants/{variant.wandb_prefix}/eval_seconds": eval_seconds,
             f"variants/{variant.wandb_prefix}/eval_examples_per_sec": eval_examples_per_sec,
             f"variants/{variant.wandb_prefix}/elapsed_sec": elapsed_sec,
@@ -920,30 +929,73 @@ def normalize_args_for_wandb(
     return normalized
 
 
+def extract_variant_series(
+    results: list[dict], history_key: str
+) -> tuple[list[int], list[list[float]], list[str]]:
+    if not results:
+        return [], [], []
+    steps = [int(row["step"]) for row in results[0]["history"]]
+    line_values_by_variant: list[list[float]] = []
+    variant_names: list[str] = []
+    for result in results:
+        variant_steps = [int(row["step"]) for row in result["history"]]
+        if variant_steps != steps:
+            raise ValueError(
+                "Variant eval step schedules differ; expected identical schedules for "
+                "comparison charts"
+            )
+        line_values_by_variant.append(
+            [float(row[history_key]) for row in result["history"]]
+        )
+        variant_names.append(str(result["variant_name"]))
+    return steps, line_values_by_variant, variant_names
+
+
+def log_main_comparison_chart(
+    results: list[dict],
+    history_key: str,
+    chart_key: str,
+    chart_title: str,
+) -> None:
+    steps, line_values_by_variant, variant_names = extract_variant_series(
+        results=results,
+        history_key=history_key,
+    )
+    if not steps:
+        return
+    wandb.log(
+        {
+            chart_key: wandb.plot.line_series(
+                xs=steps,
+                ys=line_values_by_variant,
+                keys=variant_names,
+                title=chart_title,
+                xname="offline_step",
+            )
+        }
+    )
+
+
 def log_overlay_chart(
     results: list[dict],
     history_key: str,
     chart_key: str,
     chart_title: str,
 ) -> None:
-    if not results:
+    steps, line_values_by_variant, variant_names = extract_variant_series(
+        results=results,
+        history_key=history_key,
+    )
+    if not steps:
         return
-    steps = [int(row["step"]) for row in results[0]["history"]]
     figure = go.Figure()
-    for result in results:
-        variant_steps = [int(row["step"]) for row in result["history"]]
-        if variant_steps != steps:
-            raise ValueError(
-                "Variant eval step schedules differ; expected identical schedules for "
-                "overlay charts"
-            )
-        line_values = [float(row[history_key]) for row in result["history"]]
+    for variant_name, line_values in zip(variant_names, line_values_by_variant):
         figure.add_trace(
             go.Scatter(
                 x=steps,
                 y=line_values,
                 mode="lines",
-                name=str(result["variant_name"]),
+                name=variant_name,
                 hovertemplate=(
                     "variant=%{fullData.name}<br>"
                     "offline_step=%{x}<br>"
@@ -998,6 +1050,15 @@ def main(args: ScriptArgs) -> None:
         raise RuntimeError("wandb.init did not create a run")
     wandb.define_metric("offline_step")
     wandb.define_metric("variants/*", step_metric="offline_step")
+    wandb.define_metric(
+        "comparison/curves/eval_val_total_loss/*", step_metric="offline_step"
+    )
+    wandb.define_metric(
+        "comparison/curves/eval_val_policy_loss/*", step_metric="offline_step"
+    )
+    wandb.define_metric(
+        "comparison/curves/eval_val_value_loss/*", step_metric="offline_step"
+    )
 
     npz = np.load(args.data_path, mmap_mode="r")
     try:
@@ -1162,6 +1223,24 @@ def main(args: ScriptArgs) -> None:
             ]["train_total_loss"]
         wandb.log(comparison_log)
 
+        log_main_comparison_chart(
+            results=results,
+            history_key="val_total_loss",
+            chart_key="comparison/charts/eval_val_total_loss_main",
+            chart_title="Eval Val Total Loss by Feature Variant (Main)",
+        )
+        log_main_comparison_chart(
+            results=results,
+            history_key="val_policy_loss",
+            chart_key="comparison/charts/eval_val_policy_loss_main",
+            chart_title="Eval Val Policy Loss by Feature Variant (Main)",
+        )
+        log_main_comparison_chart(
+            results=results,
+            history_key="val_value_loss",
+            chart_key="comparison/charts/eval_val_value_loss_main",
+            chart_title="Eval Val Value Loss by Feature Variant (Main)",
+        )
         log_overlay_chart(
             results=results,
             history_key="val_total_loss",
