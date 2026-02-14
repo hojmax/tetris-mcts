@@ -187,6 +187,7 @@ struct ModelEvalEvent {
     promoted_nn_value_weight: f32,
     promoted: bool,
     auto_promoted: bool,
+    evaluation_seconds: f32,
 }
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
@@ -861,6 +862,10 @@ impl GameGenerator {
                 "auto_promoted".to_string(),
                 if event.auto_promoted { 1.0 } else { 0.0 },
             );
+            d.insert(
+                "evaluation_seconds".to_string(),
+                event.evaluation_seconds as f64,
+            );
             drained.push(d);
         }
         drained
@@ -1477,6 +1482,8 @@ impl GameGenerator {
             return 0;
         };
 
+        let eval_start = Instant::now();
+
         // Each play_game call creates a fresh TetrisEnv::new(...) with a new RNG seed.
         // Candidate gating therefore evaluates on randomized games, not a fixed seed list.
         let mut candidate_results: Vec<GameResult> = Vec::with_capacity(candidate_eval_games);
@@ -1599,6 +1606,8 @@ impl GameGenerator {
             0
         };
 
+        let evaluation_seconds = eval_start.elapsed().as_secs_f32();
+
         model_eval_events
             .write()
             .unwrap()
@@ -1615,6 +1624,7 @@ impl GameGenerator {
                 promoted_nn_value_weight,
                 promoted,
                 auto_promoted,
+                evaluation_seconds,
             });
 
         committed_games

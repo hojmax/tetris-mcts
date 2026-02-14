@@ -1251,6 +1251,7 @@ class Trainer:
                         promoted_nn_value_weight=promoted_nn_value_weight,
                         promoted=promoted,
                         auto_promoted=bool(event["auto_promoted"]),
+                        evaluation_seconds=event["evaluation_seconds"],
                     )
                     if log_to_wandb:
                         wandb.log(
@@ -1274,6 +1275,9 @@ class Trainer:
                                 "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
                                 "model_gate/promoted": event["promoted"],
                                 "model_gate/auto_promoted": event["auto_promoted"],
+                                "model_gate/evaluation_seconds": event[
+                                    "evaluation_seconds"
+                                ],
                             }
                         )
 
