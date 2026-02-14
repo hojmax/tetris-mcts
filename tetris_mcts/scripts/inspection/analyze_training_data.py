@@ -1,128 +1,239 @@
-"""Analyze training data statistics."""
-
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from simple_parsing import parse
 
+EXPECTED_NUM_COLUMNS = 10
+EXPECTED_NUM_ROWS = 20
+EXPECTED_NUM_PIECES = 7
+PERCENTILES = [0, 10, 25, 50, 75, 90, 100]
+EPSILON = 1e-6
+REQUIRED_KEYS = (
+    "boards",
+    "move_numbers",
+    "placement_counts",
+    "combos",
+    "back_to_back",
+    "next_hidden_piece_probs",
+    "column_heights",
+    "max_column_heights",
+    "min_column_heights",
+    "row_fill_counts",
+    "total_blocks",
+    "bumpiness",
+    "holes",
+    "overhang_fields",
+    "value_targets",
+    "game_numbers",
+    "game_total_attacks",
+)
 
-def find_game_boundaries(move_numbers: np.ndarray) -> list[tuple[int, int]]:
-    """Find start/end indices for each game (where move_number resets to 0)."""
-    game_starts = np.where(move_numbers < 0.001)[0]
-    games = []
-    for i, start in enumerate(game_starts):
-        end = game_starts[i + 1] if i + 1 < len(game_starts) else len(move_numbers)
-        games.append((start, end))
-    return games
+
+def print_section(title: str) -> None:
+    print(f"\n{title}")
+    print("-" * len(title))
 
 
-def print_histogram(values: np.ndarray, bins: int = 10, title: str = "") -> None:
-    """Print a simple text histogram."""
-    if title:
-        print(f"\n{title}")
-        print("-" * len(title))
-
+def print_histogram(values: np.ndarray, bins: int = 10) -> None:
     counts, edges = np.histogram(values, bins=bins)
-    max_count = max(counts)
+    max_count = int(np.max(counts)) if counts.size else 0
     bar_width = 40
-
     for i, count in enumerate(counts):
         left = edges[i]
         right = edges[i + 1]
         bar_len = int(count / max_count * bar_width) if max_count > 0 else 0
-        bar = "█" * bar_len
-        print(f"  {left:6.1f} - {right:6.1f}: {bar} ({count})")
+        bar = "#" * bar_len
+        print(f"  {left:10.4f} - {right:10.4f}: {bar} ({int(count)})")
 
 
-def print_percentiles(values: np.ndarray, title: str = "") -> None:
-    """Print percentile statistics."""
-    if title:
-        print(f"\n{title}")
-        print("-" * len(title))
+def print_percentiles(values: np.ndarray) -> None:
+    vals = np.percentile(values, PERCENTILES)
+    for percentile, value in zip(PERCENTILES, vals):
+        print(f"  p{percentile:3d}: {value:10.4f}")
 
-    percentiles = [0, 10, 25, 50, 75, 90, 100]
-    vals = np.percentile(values, percentiles)
-    for p, v in zip(percentiles, vals):
-        print(f"  p{p:3d}: {v:8.2f}")
+
+def print_distribution(name: str, values: np.ndarray, bins: int = 10) -> None:
+    flattened = values.astype(np.float64, copy=False).reshape(-1)
+    print_section(name)
+    print(f"  shape: {values.shape}")
+    print(f"  mean:  {flattened.mean():10.4f}")
+    print(f"  std:   {flattened.std():10.4f}")
+    print(f"  min:   {flattened.min():10.4f}")
+    print(f"  max:   {flattened.max():10.4f}")
+    print_percentiles(flattened)
+    print_histogram(flattened, bins=bins)
+
+
+def print_normalized_range_check(name: str, values: np.ndarray) -> None:
+    flattened = values.astype(np.float64, copy=False).reshape(-1)
+    below_zero = int(np.count_nonzero(flattened < -EPSILON))
+    above_one = int(np.count_nonzero(flattened > 1.0 + EPSILON))
+    total = flattened.size
+    print(
+        f"  {name:<24} out_of_[0,1]: {below_zero + above_one:>8,} / {total:,} "
+        f"(below_zero={below_zero:,}, above_one={above_one:,})"
+    )
+
+
+def validate_array_lengths(data: np.lib.npyio.NpzFile, n_examples: int) -> None:
+    for key in REQUIRED_KEYS:
+        if key not in data:
+            raise KeyError(f"missing required key: {key}")
+        if len(data[key]) != n_examples:
+            raise ValueError(
+                f"{key} length does not match boards length: {len(data[key])} != {n_examples}"
+            )
+
+
+def validate_shapes(data: np.lib.npyio.NpzFile) -> None:
+    if data["next_hidden_piece_probs"].shape[1] != EXPECTED_NUM_PIECES:
+        raise ValueError(
+            "next_hidden_piece_probs second dimension must be 7, got "
+            f"{data['next_hidden_piece_probs'].shape[1]}"
+        )
+    if data["column_heights"].shape[1] != EXPECTED_NUM_COLUMNS:
+        raise ValueError(
+            "column_heights second dimension must be 10, got "
+            f"{data['column_heights'].shape[1]}"
+        )
+    if data["row_fill_counts"].shape[1] != EXPECTED_NUM_ROWS:
+        raise ValueError(
+            "row_fill_counts second dimension must be 20, got "
+            f"{data['row_fill_counts'].shape[1]}"
+        )
+
+
+def build_game_boundaries(game_numbers: np.ndarray) -> list[tuple[int, int]]:
+    boundaries = np.where(np.diff(game_numbers) != 0)[0] + 1
+    starts = np.concatenate(([0], boundaries))
+    ends = np.concatenate((boundaries, [len(game_numbers)]))
+    return [
+        (int(start), int(end))
+        for start, end in zip(starts, ends, strict=True)
+    ]
+
+
+def print_game_stats(
+    game_numbers: np.ndarray, game_total_attacks: np.ndarray, value_targets: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    games = build_game_boundaries(game_numbers)
+    if not games:
+        raise ValueError("no games found in dataset")
+
+    game_lengths = np.array([end - start for start, end in games], dtype=np.int32)
+    game_attacks = np.array(
+        [float(game_total_attacks[start]) for start, _ in games], dtype=np.float32
+    )
+    first_state_values = np.array(
+        [float(value_targets[start]) for start, _ in games], dtype=np.float32
+    )
+    mismatch_count = int(
+        np.count_nonzero(np.abs(game_attacks - first_state_values) > 1e-4)
+    )
+    unique_game_numbers = np.unique(game_numbers)
+    game_number_diffs = np.diff(unique_game_numbers)
+    has_gaps = bool(np.any(game_number_diffs != 1))
+
+    print_section("Games")
+    print(f"  total_games:             {len(games):,}")
+    print(f"  first_game_number:       {int(unique_game_numbers[0]):,}")
+    print(f"  last_game_number:        {int(unique_game_numbers[-1]):,}")
+    print(f"  contiguous_game_numbers: {not has_gaps}")
+    print(f"  attack/value_mismatches: {mismatch_count:,}")
+    print_distribution("Game Length (examples)", game_lengths, bins=10)
+    print_distribution("Game Total Attack", game_attacks, bins=10)
+    return game_lengths, game_attacks
 
 
 @dataclass
 class ScriptArgs:
-    """Analyze training data statistics."""
-
     data_path: Path  # Path to training_data.npz file
 
 
 def main(args: ScriptArgs) -> None:
     if not args.data_path.exists():
-        print(f"Error: File not found: {args.data_path}")
-        return
+        raise FileNotFoundError(f"file not found: {args.data_path}")
     if args.data_path.suffix != ".npz":
-        print(f"Error: Expected .npz file, got: {args.data_path}")
-        return
+        raise ValueError(f"expected .npz file, got: {args.data_path}")
 
-    # Load data
-    data = np.load(args.data_path)
-    n_examples = len(data["boards"])
-    move_numbers = data["move_numbers"]
-    value_targets = data["value_targets"]
-    if len(move_numbers) != n_examples:
-        raise ValueError("move_numbers length does not match boards length")
-    if len(value_targets) != n_examples:
-        raise ValueError("value_targets length does not match boards length")
+    with np.load(args.data_path) as data:
+        n_examples = len(data["boards"])
+        validate_array_lengths(data, n_examples)
+        validate_shapes(data)
 
-    # Find game boundaries
-    games = find_game_boundaries(move_numbers)
-    n_games = len(games)
+        move_numbers = data["move_numbers"]
+        placement_counts = data["placement_counts"]
+        combos = data["combos"]
+        back_to_back = data["back_to_back"]
+        next_hidden_piece_probs = data["next_hidden_piece_probs"]
+        column_heights = data["column_heights"]
+        max_column_heights = data["max_column_heights"]
+        min_column_heights = data["min_column_heights"]
+        row_fill_counts = data["row_fill_counts"]
+        total_blocks = data["total_blocks"]
+        bumpiness = data["bumpiness"]
+        holes = data["holes"]
+        overhang_fields = data["overhang_fields"]
+        value_targets = data["value_targets"]
+        game_numbers = data["game_numbers"].astype(np.int64)
+        game_total_attacks = data["game_total_attacks"].astype(np.float32)
 
-    # Basic stats
-    print("=" * 50)
-    print("TRAINING DATA ANALYSIS")
-    print("=" * 50)
-    print(f"\nFile: {args.data_path}")
-    print(f"Total examples: {n_examples:,}")
-    print(f"Total games: {n_games:,}")
-    print(f"Avg examples per game: {n_examples / n_games:.1f}")
+        print("=" * 56)
+        print("TRAINING DATA ANALYSIS")
+        print("=" * 56)
+        print(f"\nfile: {args.data_path}")
+        print(f"examples: {n_examples:,}")
+        print(f"fields_checked: {len(REQUIRED_KEYS)}")
 
-    # Per-game statistics
-    game_lengths = []
-    game_final_values = []
+        game_lengths, game_attacks = print_game_stats(
+            game_numbers=game_numbers,
+            game_total_attacks=game_total_attacks,
+            value_targets=value_targets,
+        )
 
-    for start, end in games:
-        length = end - start
-        game_lengths.append(length)
-        # First state's value target is cumulative future attack (= total game attack).
-        total_attack = value_targets[start]
-        game_final_values.append(total_attack)
+        print_section("Scalar Features")
+        print_distribution("Move Number (normalized)", move_numbers, bins=12)
+        print_distribution("Placement Count (normalized)", placement_counts, bins=12)
+        print_distribution("Combo Feature (normalized)", combos, bins=12)
+        print_distribution("Back-to-Back Flag", back_to_back.astype(np.float32), bins=2)
+        print_distribution("Value Targets", value_targets, bins=15)
+        print_distribution("Total Blocks (normalized)", total_blocks, bins=12)
+        print_distribution("Bumpiness (normalized)", bumpiness, bins=12)
+        print_distribution("Holes (normalized)", holes, bins=12)
+        print_distribution("Overhang Fields (normalized)", overhang_fields, bins=12)
 
-    game_lengths = np.array(game_lengths)
-    game_total_attacks = np.array(game_final_values)
+        print_section("Vector Features")
+        print_distribution("Next Hidden Piece Probabilities", next_hidden_piece_probs, bins=12)
+        print_distribution("Column Heights (normalized)", column_heights, bins=12)
+        print_distribution("Row Fill Counts (normalized)", row_fill_counts, bins=12)
+        print_distribution("Max Column Height (normalized)", max_column_heights, bins=12)
+        print_distribution("Min Column Height (normalized)", min_column_heights, bins=12)
 
-    # Game length stats
-    print_percentiles(game_lengths, "Game Length (moves)")
-    print_histogram(game_lengths, bins=10, title="Game Length Distribution")
+        print_section("Normalized Range Checks")
+        print_normalized_range_check("move_numbers", move_numbers)
+        print_normalized_range_check("placement_counts", placement_counts)
+        print_normalized_range_check("combos", combos)
+        print_normalized_range_check("next_hidden_piece_probs", next_hidden_piece_probs)
+        print_normalized_range_check("column_heights", column_heights)
+        print_normalized_range_check("row_fill_counts", row_fill_counts)
+        print_normalized_range_check("max_column_heights", max_column_heights)
+        print_normalized_range_check("min_column_heights", min_column_heights)
+        print_normalized_range_check("total_blocks", total_blocks)
+        print_normalized_range_check("bumpiness", bumpiness)
+        print_normalized_range_check("holes", holes)
+        print_normalized_range_check("overhang_fields", overhang_fields)
 
-    # Total attack per game stats
-    print_percentiles(game_total_attacks, "Total Attack Per Game")
-    print_histogram(game_total_attacks, bins=10, title="Total Attack Distribution")
-
-    # Value target distribution (all examples)
-    print_percentiles(value_targets, "Value Targets (all examples)")
-    print_histogram(value_targets, bins=15, title="Value Target Distribution")
-
-    # Summary table
-    print("\n" + "=" * 50)
-    print("SUMMARY")
-    print("=" * 50)
-    print(f"  Games:          {n_games:>10,}")
-    print(f"  Examples:       {n_examples:>10,}")
-    print(f"  Avg game len:   {np.mean(game_lengths):>10.1f}")
-    print(f"  Median attack:  {np.median(game_total_attacks):>10.1f}")
-    print(f"  Mean attack:    {np.mean(game_total_attacks):>10.1f}")
-    print(f"  Max attack:     {np.max(game_total_attacks):>10.1f}")
+        print("\n" + "=" * 56)
+        print("SUMMARY")
+        print("=" * 56)
+        print(f"  games:                 {len(game_lengths):>10,}")
+        print(f"  examples:              {n_examples:>10,}")
+        print(f"  avg_game_len:          {float(np.mean(game_lengths)):>10.2f}")
+        print(f"  median_game_attack:    {float(np.median(game_attacks)):>10.2f}")
+        print(f"  mean_game_attack:      {float(np.mean(game_attacks)):>10.2f}")
+        print(f"  max_game_attack:       {float(np.max(game_attacks)):>10.2f}")
 
 
 if __name__ == "__main__":
-    args = parse(ScriptArgs)
-    main(args)
+    main(parse(ScriptArgs))

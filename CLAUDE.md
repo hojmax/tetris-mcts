@@ -430,6 +430,8 @@ Current behavior: split-model Rust inference caches board embeddings as `board_p
 - `--wandb_game_number <N>` to select by WandB `game_number` when NPZ metadata is present
 - If NPZ metadata is missing (older snapshots), `--wandb_game_number` falls back to local index `N-1` with a warning
 
+`analyze_training_data.py` now targets the modern replay schema and fails fast when required keys are missing. Required keys include `placement_counts`, `combos`, `next_hidden_piece_probs`, `column_heights`, `max_column_heights`, `min_column_heights`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, `game_numbers`, and `game_total_attacks`.
+
 ## Training Directory Structure
 
 ```
