@@ -18,11 +18,6 @@ use crate::constants::{
     NUM_PIECE_TYPES, QUEUE_SIZE,
 };
 use crate::env::TetrisEnv;
-use crate::mcts::{
-    compute_bumpiness, count_overhang_fields_and_holes, normalize_bumpiness,
-    normalize_column_heights, normalize_holes, normalize_overhang_fields,
-    normalize_row_fill_counts, normalize_total_blocks,
-};
 
 /// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
@@ -154,7 +149,7 @@ impl TetrisNN {
         placement_count: usize,
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (board_f32, aux_vec) = encode_state_features(env, placement_count, max_placements)?;
+        let aux_vec = encode_aux_state_features(env, placement_count, max_placements)?;
 
         let board_embed = if self.cache_enabled.get() {
             let board_key = pack_board(env);
@@ -170,12 +165,14 @@ impl TetrisNN {
                 }
                 None => {
                     self.cache_misses.set(self.cache_misses.get() + 1);
+                    let board_f32 = encode_board_features(env);
                     let embed = self.compute_board_embedding_owned(board_f32)?;
                     self.insert_board_embedding_cache(board_key, embed.clone());
                     embed
                 }
             }
         } else {
+            let board_f32 = encode_board_features(env);
             self.compute_board_embedding_owned(board_f32)?
         };
 
@@ -431,43 +428,28 @@ pub fn encode_state_features(
     placement_count: usize,
     max_placements: usize,
 ) -> TractResult<(Vec<f32>, Vec<f32>)> {
-    if max_placements == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "max_placements must be > 0",
-        )
-        .into());
-    }
+    let aux = encode_aux_state_features(env, placement_count, max_placements)?;
+    let board_tensor = encode_board_features(env);
+    Ok((board_tensor, aux))
+}
 
+fn encode_board_features(env: &TetrisEnv) -> Vec<f32> {
     // Board tensor: binary (1 = filled, 0 = empty) - 200 values (will be reshaped to 1x20x10)
-    let board_tensor: Vec<f32> = env
-        .board_cells()
+    env.board_cells()
         .iter()
         .map(|&cell| if cell != 0 { 1.0 } else { 0.0 })
-        .collect();
+        .collect()
+}
 
+pub fn encode_aux_state_features(
+    env: &TetrisEnv,
+    placement_count: usize,
+    max_placements: usize,
+) -> TractResult<Vec<f32>> {
     let current_piece = env.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
     let hold_piece = env.get_hold_piece().map(|p| p.piece_type);
     let queue = env.get_queue(QUEUE_SIZE);
     let hidden_piece_distribution = next_hidden_piece_distribution(env);
-    let normalized_column_heights = normalize_column_heights(&env.column_heights, env.height);
-    let max_column_height = normalized_column_heights
-        .iter()
-        .copied()
-        .reduce(f32::max)
-        .unwrap_or(0.0);
-    let min_column_height = normalized_column_heights
-        .iter()
-        .copied()
-        .reduce(f32::min)
-        .unwrap_or(0.0);
-    let normalized_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts, env.width);
-    let normalized_total_blocks = normalize_total_blocks(env.total_blocks, env.width, env.height);
-    let raw_bumpiness = compute_bumpiness(&env.column_heights);
-    let normalized_bumpiness = normalize_bumpiness(raw_bumpiness, env.width, env.height);
-    let (raw_overhang_fields, raw_holes) = count_overhang_fields_and_holes(env);
-    let normalized_holes = normalize_holes(raw_holes, env.width, env.height);
-    let normalized_overhang_fields = normalize_overhang_fields(raw_overhang_fields);
     let mut aux = vec![0.0; AUX_FEATURES];
     encode_aux_features(
         &mut aux,
@@ -480,17 +462,9 @@ pub fn encode_state_features(
         env.combo,
         env.back_to_back,
         &hidden_piece_distribution,
-        &normalized_column_heights,
-        max_column_height,
-        min_column_height,
-        &normalized_row_fill_counts,
-        normalized_total_blocks,
-        normalized_bumpiness,
-        normalized_holes,
-        normalized_overhang_fields,
     )?;
 
-    Ok((board_tensor, aux))
+    Ok(aux)
 }
 
 pub fn normalize_combo_for_feature(combo: u32) -> f32 {
@@ -514,14 +488,6 @@ pub fn encode_aux_features(
     combo: u32,
     back_to_back: bool,
     next_hidden_piece_probs: &[f32],
-    column_heights: &[f32],
-    max_column_height: f32,
-    min_column_height: f32,
-    row_fill_counts: &[f32],
-    total_blocks: f32,
-    bumpiness: f32,
-    holes: f32,
-    overhang_fields: f32,
 ) -> TractResult<()> {
     if max_placements == 0 {
         return Err(std::io::Error::new(
@@ -570,28 +536,6 @@ pub fn encode_aux_features(
                 "next_hidden_piece_probs length must be {} (got {})",
                 NUM_PIECE_TYPES,
                 next_hidden_piece_probs.len()
-            ),
-        )
-        .into());
-    }
-    if column_heights.len() != BOARD_WIDTH {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "column_heights length must be {} (got {})",
-                BOARD_WIDTH,
-                column_heights.len()
-            ),
-        )
-        .into());
-    }
-    if row_fill_counts.len() != BOARD_HEIGHT {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "row_fill_counts length must be {} (got {})",
-                BOARD_HEIGHT,
-                row_fill_counts.len()
             ),
         )
         .into());
@@ -651,38 +595,6 @@ pub fn encode_aux_features(
     // Next hidden piece distribution from 7-bag (7)
     aux_out[aux_idx..aux_idx + NUM_PIECE_TYPES].copy_from_slice(next_hidden_piece_probs);
     aux_idx += NUM_PIECE_TYPES;
-
-    // Column heights (10)
-    aux_out[aux_idx..aux_idx + BOARD_WIDTH].copy_from_slice(column_heights);
-    aux_idx += BOARD_WIDTH;
-
-    // Max column height (1)
-    aux_out[aux_idx] = max_column_height;
-    aux_idx += 1;
-
-    // Min column height (1)
-    aux_out[aux_idx] = min_column_height;
-    aux_idx += 1;
-
-    // Row fill counts (20)
-    aux_out[aux_idx..aux_idx + BOARD_HEIGHT].copy_from_slice(row_fill_counts);
-    aux_idx += BOARD_HEIGHT;
-
-    // Total blocks (1)
-    aux_out[aux_idx] = total_blocks;
-    aux_idx += 1;
-
-    // Bumpiness (1)
-    aux_out[aux_idx] = bumpiness;
-    aux_idx += 1;
-
-    // Holes (1)
-    aux_out[aux_idx] = holes;
-    aux_idx += 1;
-
-    // Overhang fields (1)
-    aux_out[aux_idx] = overhang_fields;
-    aux_idx += 1;
 
     debug_assert_eq!(aux_idx, AUX_FEATURES);
     Ok(())
@@ -775,7 +687,6 @@ pub fn get_action_mask(env: &TetrisEnv) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     #[test]
     fn test_board_encoding_is_binary() {
@@ -828,9 +739,9 @@ mod tests {
             .expect("aux tensor should contain f32");
         let aux: Vec<f32> = aux_array.iter().copied().collect();
 
-        // Total size: 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 + 10 + 1 + 1 + 20 + 1 + 1 + 1 + 1 = 97
+        // Total size: 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 = 61
         assert_eq!(aux.len(), AUX_FEATURES);
-        assert_eq!(aux.len(), 97);
+        assert_eq!(aux.len(), 61);
 
         let mut idx = 0;
 
@@ -949,99 +860,6 @@ mod tests {
         }
         idx += NUM_PIECE_TYPES;
 
-        let expected_column_heights = normalize_column_heights(&env.column_heights, env.height);
-        let encoded_column_heights = &aux[idx..idx + BOARD_WIDTH];
-        for col in 0..BOARD_WIDTH {
-            assert!(
-                (encoded_column_heights[col] - expected_column_heights[col]).abs() < 1e-6,
-                "Column height mismatch at col {}: expected {}, got {}",
-                col,
-                expected_column_heights[col],
-                encoded_column_heights[col]
-            );
-        }
-        idx += BOARD_WIDTH;
-
-        let expected_max_column_height = expected_column_heights
-            .iter()
-            .copied()
-            .reduce(f32::max)
-            .unwrap_or(0.0);
-        assert!(
-            (aux[idx] - expected_max_column_height).abs() < 1e-6,
-            "Max column height should be {}, got {}",
-            expected_max_column_height,
-            aux[idx]
-        );
-        idx += 1;
-
-        let expected_min_column_height = expected_column_heights
-            .iter()
-            .copied()
-            .reduce(f32::min)
-            .unwrap_or(0.0);
-        assert!(
-            (aux[idx] - expected_min_column_height).abs() < 1e-6,
-            "Min column height should be {}, got {}",
-            expected_min_column_height,
-            aux[idx]
-        );
-        idx += 1;
-
-        let expected_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts, env.width);
-        let encoded_row_fill_counts = &aux[idx..idx + BOARD_HEIGHT];
-        for row in 0..BOARD_HEIGHT {
-            assert!(
-                (encoded_row_fill_counts[row] - expected_row_fill_counts[row]).abs() < 1e-6,
-                "Row fill count mismatch at row {}: expected {}, got {}",
-                row,
-                expected_row_fill_counts[row],
-                encoded_row_fill_counts[row]
-            );
-        }
-        idx += BOARD_HEIGHT;
-
-        let expected_total_blocks = normalize_total_blocks(env.total_blocks, env.width, env.height);
-        assert!(
-            (aux[idx] - expected_total_blocks).abs() < 1e-6,
-            "Total blocks should be {}, got {}",
-            expected_total_blocks,
-            aux[idx]
-        );
-        idx += 1;
-
-        let expected_bumpiness = normalize_bumpiness(
-            compute_bumpiness(&env.column_heights),
-            env.width,
-            env.height,
-        );
-        assert!(
-            (aux[idx] - expected_bumpiness).abs() < 1e-6,
-            "Bumpiness should be {}, got {}",
-            expected_bumpiness,
-            aux[idx]
-        );
-        idx += 1;
-
-        let (expected_overhang_raw, expected_holes_raw) = count_overhang_fields_and_holes(&env);
-        let expected_holes = normalize_holes(expected_holes_raw, env.width, env.height);
-        assert!(
-            (aux[idx] - expected_holes).abs() < 1e-6,
-            "Holes should be {}, got {}",
-            expected_holes,
-            aux[idx]
-        );
-        idx += 1;
-
-        let expected_overhang = normalize_overhang_fields(expected_overhang_raw);
-        assert!(
-            (aux[idx] - expected_overhang).abs() < 1e-6,
-            "Overhang fields should be {}, got {}",
-            expected_overhang,
-            aux[idx]
-        );
-        idx += 1;
-
         assert_eq!(
             idx, AUX_FEATURES,
             "Should consume all {} aux features",
@@ -1061,14 +879,6 @@ mod tests {
         // | Combo          | 1          | Normalized combo                 |
         // | Back-to-back   | 1          | Binary                           |
         // | Hidden piece   | 7          | 7-bag distribution               |
-        // | Column heights | 10         | normalized by board height       |
-        // | Max column h   | 1          | max normalized column height     |
-        // | Min column h   | 1          | min normalized column height     |
-        // | Row fill counts| 20         | normalized by board width        |
-        // | Total blocks   | 1          | normalized by board area         |
-        // | Bumpiness      | 1          | normalized bumpiness             |
-        // | Holes          | 1          | normalized hole count            |
-        // | Overhang       | 1          | normalized overhang count        |
 
         let env = TetrisEnv::new(10, 20);
         let (board, aux) = encode_state(&env, 50, 100).expect("encoding failed");
@@ -1084,8 +894,8 @@ mod tests {
         assert_eq!(board.len(), 20 * 10, "Board should be 20x10 = 200 values");
         assert_eq!(
             aux.len(),
-            7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 + 10 + 1 + 1 + 20 + 1 + 1 + 1 + 1,
-            "Aux should be 97 values"
+            7 + 8 + 1 + 35 + 1 + 1 + 1 + 7,
+            "Aux should be 7+8+1+35+1+1+1+7 = 61 values"
         );
 
         // Verify board is binary
@@ -1165,55 +975,6 @@ mod tests {
                 "Hidden-piece probabilities must be in [0, 1]"
             );
         }
-
-        let column_heights = &aux[61..71];
-        for &height in column_heights {
-            assert!(
-                (0.0..=1.0).contains(&height),
-                "Normalized column heights must be in [0, 1]"
-            );
-        }
-
-        let max_column_height = aux[71];
-        let min_column_height = aux[72];
-        assert!(
-            (0.0..=1.0).contains(&max_column_height),
-            "Max column height must be in [0, 1]"
-        );
-        assert!(
-            (0.0..=1.0).contains(&min_column_height),
-            "Min column height must be in [0, 1]"
-        );
-        assert!(
-            min_column_height <= max_column_height,
-            "Min column height must be <= max column height"
-        );
-
-        let row_fill_counts = &aux[73..93];
-        for &row_fill in row_fill_counts {
-            assert!(
-                (0.0..=1.0).contains(&row_fill),
-                "Normalized row fill counts must be in [0, 1]"
-            );
-        }
-
-        let total_blocks = aux[93];
-        let bumpiness = aux[94];
-        let holes = aux[95];
-        let overhang = aux[96];
-        assert!(
-            (0.0..=1.0).contains(&total_blocks),
-            "Total blocks must be in [0, 1]"
-        );
-        assert!(
-            (0.0..=1.0).contains(&bumpiness),
-            "Bumpiness must be in [0, 1]"
-        );
-        assert!((0.0..=1.0).contains(&holes), "Holes must be in [0, 1]");
-        assert!(
-            (0.0..=1.0).contains(&overhang),
-            "Overhang fields must be in [0, 1]"
-        );
     }
 
     #[test]
@@ -1234,104 +995,6 @@ mod tests {
             second_non_zero, NUM_PIECE_TYPES,
             "After one placement, hidden-piece distribution should reset to full-bag uncertainty"
         );
-    }
-
-    proptest! {
-        #[test]
-        fn prop_encoded_diagnostics_match_env_state(
-            seed in 0u64..10_000,
-            actions in prop::collection::vec(0u8..8, 0..80),
-            max_placements in 1usize..200,
-        ) {
-            let mut env = TetrisEnv::with_seed(10, 20, seed);
-
-            for (step_idx, action) in actions.iter().copied().enumerate() {
-                let placement_count = step_idx % max_placements;
-                let (_, aux_tensor) =
-                    encode_state(&env, placement_count, max_placements)
-                        .expect("encoding should succeed for valid max_placements");
-                let aux_array = aux_tensor
-                    .to_array_view::<f32>()
-                    .expect("aux tensor should contain f32");
-                let aux: Vec<f32> = aux_array.iter().copied().collect();
-                prop_assert_eq!(aux.len(), AUX_FEATURES);
-
-                let diagnostics_start = NUM_PIECE_TYPES
-                    + (NUM_PIECE_TYPES + 1)
-                    + 1
-                    + (QUEUE_SIZE * NUM_PIECE_TYPES)
-                    + 1
-                    + 1
-                    + 1
-                    + NUM_PIECE_TYPES;
-
-                let mut idx = diagnostics_start;
-
-                let expected_column_heights =
-                    normalize_column_heights(&env.column_heights, env.height);
-                for expected in expected_column_heights.iter().take(BOARD_WIDTH) {
-                    prop_assert!((aux[idx] - *expected).abs() < 1e-6);
-                    prop_assert!((0.0..=1.0).contains(&aux[idx]));
-                    idx += 1;
-                }
-
-                let expected_max_column_height = expected_column_heights
-                    .iter()
-                    .copied()
-                    .reduce(f32::max)
-                    .unwrap_or(0.0);
-                prop_assert!((aux[idx] - expected_max_column_height).abs() < 1e-6);
-                idx += 1;
-
-                let expected_min_column_height = expected_column_heights
-                    .iter()
-                    .copied()
-                    .reduce(f32::min)
-                    .unwrap_or(0.0);
-                prop_assert!((aux[idx] - expected_min_column_height).abs() < 1e-6);
-                idx += 1;
-
-                let expected_row_fill_counts =
-                    normalize_row_fill_counts(&env.row_fill_counts, env.width);
-                for expected in expected_row_fill_counts.iter().take(BOARD_HEIGHT) {
-                    prop_assert!((aux[idx] - *expected).abs() < 1e-6);
-                    prop_assert!((0.0..=1.0).contains(&aux[idx]));
-                    idx += 1;
-                }
-
-                let expected_total_blocks =
-                    normalize_total_blocks(env.total_blocks, env.width, env.height);
-                prop_assert!((aux[idx] - expected_total_blocks).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
-                idx += 1;
-
-                let expected_raw_bumpiness = compute_bumpiness(&env.column_heights);
-                let expected_bumpiness =
-                    normalize_bumpiness(expected_raw_bumpiness, env.width, env.height);
-                prop_assert!((aux[idx] - expected_bumpiness).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
-                idx += 1;
-
-                let (expected_raw_overhang, expected_raw_holes) =
-                    count_overhang_fields_and_holes(&env);
-                let expected_holes = normalize_holes(expected_raw_holes, env.width, env.height);
-                prop_assert!((aux[idx] - expected_holes).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
-                idx += 1;
-
-                let expected_overhang = normalize_overhang_fields(expected_raw_overhang);
-                prop_assert!((aux[idx] - expected_overhang).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
-                idx += 1;
-
-                prop_assert_eq!(idx, AUX_FEATURES);
-
-                if env.game_over {
-                    break;
-                }
-                env.step(action);
-            }
-        }
     }
 
     #[test]
