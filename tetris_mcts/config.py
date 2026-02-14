@@ -111,13 +111,13 @@ class TrainingConfig:
     buffer_size: int = 1_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
     save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
-        1200.0
+        10800
     )
 
     # Intervals (seconds)
     model_sync_interval_seconds: float = 300  # Seconds between ONNX exports
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
-    eval_interval_seconds: float = 3600  # Seconds between evaluations
+    eval_interval_seconds: float = 1800  # Seconds between evaluations
     log_interval_seconds: float = 10  # Seconds between logging
 
     # Evaluation
