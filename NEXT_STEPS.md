@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] What is so inherently noisy about the values? Why does it have such a high variance?
 - [ ] Turn off the nn value weight scheduele.
 - [ ] Deeper search depth potentially.
 - [ ] Make sure all the features are scaled correctly.

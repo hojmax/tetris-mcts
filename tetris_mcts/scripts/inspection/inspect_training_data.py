@@ -385,8 +385,10 @@ def main(args: ScriptArgs) -> None:
             combo_feature = float(data["combos"][i])
             combo = denormalize_combo_feature(combo_feature)
             back_to_back = bool(data["back_to_back"][i])
-            move_number = frame_idx  # Use frame index as move number
+            move_number = frame_idx
             value_target = float(data["value_targets"][i])
+            # Cumulative attack before this step (starts at 0, increases)
+            cumulative_attack = int(round(game_total_attack - value_target))
             value_pred = None
             if value_predictor is not None:
                 value_pred = value_predictor.predict_value(
@@ -410,7 +412,6 @@ def main(args: ScriptArgs) -> None:
                     overhang_fields=float(data["overhang_fields"][i]),
                 )
 
-            # Build piece info
             current_name = (
                 PIECE_NAMES[current_piece] if current_piece is not None else "?"
             )
@@ -420,13 +421,11 @@ def main(args: ScriptArgs) -> None:
             frame = render_board(
                 board=board,
                 move_number=move_number,
-                attack=game_total_attack,
+                attack=cumulative_attack,
                 value_pred=value_pred,
-                info_text=(
-                    f"Can hold: {'y' if can_hold else 'n'}"
-                    f"  value_target: {value_target:.2f}\n"
-                    f"Combo: {combo}  B2B: {'y' if back_to_back else 'n'}"
-                ),
+                can_hold=can_hold,
+                combo=combo,
+                back_to_back=back_to_back,
                 show_piece_info=True,
                 current_piece_name=current_name,
                 hold_piece_name=hold_name,
