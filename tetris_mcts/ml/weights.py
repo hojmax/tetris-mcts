@@ -285,6 +285,7 @@ class WeightManager:
         step: int,
         eval_metrics: Optional[dict] = None,
         export_for_rust: bool = True,
+        extra_checkpoint_state: dict[str, object] | None = None,
     ) -> dict[str, Path]:
         """
         Save checkpoint and optionally export for Rust.
@@ -295,17 +296,32 @@ class WeightManager:
 
         # Save PyTorch checkpoint
         ckpt_path = self.checkpoint_dir / f"{CHECKPOINT_FILENAME_PREFIX}_{step}.pt"
-        save_checkpoint(model, optimizer, scheduler, step, ckpt_path)
+        save_checkpoint(
+            model,
+            optimizer,
+            scheduler,
+            step,
+            ckpt_path,
+            **(extra_checkpoint_state or {}),
+        )
         paths["checkpoint"] = ckpt_path
 
         if export_for_rust:
             # Export ONNX (full model — used as watch sentinel for hot-swap)
             onnx_path = self.checkpoint_dir / LATEST_ONNX_FILENAME
-            export_onnx(model, onnx_path)
+            onnx_export_ok = export_onnx(model, onnx_path)
+            if not onnx_export_ok:
+                raise RuntimeError(
+                    "ONNX export failed due to missing dependencies while saving checkpoint"
+                )
             paths["onnx"] = onnx_path
 
             # Export split models for cached inference
-            export_split_models(model, onnx_path)
+            split_export_ok = export_split_models(model, onnx_path)
+            if not split_export_ok:
+                raise RuntimeError(
+                    "Split-model export failed due to missing dependencies while saving checkpoint"
+                )
 
         # Save metadata
         meta_path = self.checkpoint_dir / LATEST_METADATA_FILENAME

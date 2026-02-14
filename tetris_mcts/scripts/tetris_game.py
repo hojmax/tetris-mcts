@@ -90,7 +90,7 @@ class TetrisGame:
                     self.inspect_mode = not self.inspect_mode
                     if self.inspect_mode:
                         # Get all placements for current piece
-                        self.placements = self.env.get_all_placements()
+                        self.placements = self.env.get_possible_placements()
                         self.placement_index = 0
                     continue
 

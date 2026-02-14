@@ -120,6 +120,7 @@ class Trainer:
         # Training state
         self.step = 0
         self.loss_balancer = RunningLossBalancer(config.value_loss_weight_window)
+        self._pending_eval_gif_paths: list[Path] = []
 
         # Create directories
         config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -283,20 +284,37 @@ class Trainer:
         with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as f:
             gif_path = Path(f.name)
 
-        create_trajectory_gif(
-            frames=frames,
-            output_path=str(gif_path),
-            duration=DEFAULT_GIF_FRAME_DURATION_MS,
-        )
+        try:
+            create_trajectory_gif(
+                frames=frames,
+                output_path=str(gif_path),
+                duration=DEFAULT_GIF_FRAME_DURATION_MS,
+            )
 
-        video = wandb.Video(
-            str(gif_path),
-            fps=DEFAULT_GIF_FPS,
-            format="gif",
-        )
-        return video, gif_path
+            video = wandb.Video(
+                str(gif_path),
+                fps=DEFAULT_GIF_FPS,
+                format="gif",
+            )
+            self._pending_eval_gif_paths.append(gif_path)
+            return video, gif_path
+        except BaseException:
+            gif_path.unlink(missing_ok=True)
+            raise
 
-    def save(self):
+    def _cleanup_wandb_gif_files(self) -> None:
+        for gif_path in self._pending_eval_gif_paths:
+            try:
+                gif_path.unlink(missing_ok=True)
+            except OSError as error:
+                logger.warning(
+                    "Failed to delete temporary eval GIF",
+                    path=str(gif_path),
+                    error=str(error),
+                )
+        self._pending_eval_gif_paths.clear()
+
+    def save(self, extra_checkpoint_state: dict[str, object] | None = None):
         """Save model checkpoint."""
         paths = self.weight_manager.save(
             self.model,
@@ -304,6 +322,7 @@ class Trainer:
             self.scheduler,
             self.step,
             export_for_rust=True,
+            extra_checkpoint_state=extra_checkpoint_state,
         )
         logger.info(
             "Saved checkpoint",
@@ -725,9 +744,7 @@ class Trainer:
                         }
                         # Log trajectory as animated GIF
                         if trajectory_frames:
-                            eval_video, _ = self._create_wandb_gif_video(
-                                trajectory_frames
-                            )
+                            eval_video, _ = self._create_wandb_gif_video(trajectory_frames)
                             if eval_video is not None:
                                 log_data["eval/trajectory"] = eval_video
                         wandb.log(log_data)
@@ -740,7 +757,12 @@ class Trainer:
                 # Checkpoint
                 now_s = time.perf_counter()
                 if now_s >= next_checkpoint_time_s:
-                    self.save()
+                    self.save(
+                        extra_checkpoint_state={
+                            "incumbent_uses_network": generator.incumbent_uses_network(),
+                            "incumbent_model_step": generator.incumbent_model_step(),
+                        }
+                    )
                     next_checkpoint_time_s = roll_interval_deadline(
                         next_checkpoint_time_s,
                         self.config.checkpoint_interval_seconds,
@@ -768,10 +790,18 @@ class Trainer:
                 logger.exception("Failed to stop game generator cleanly")
 
             # Always save latest model state on shutdown/interruption.
-            final_saved_paths = self.save()
-            if log_to_wandb:
-                self._log_final_wandb_model_artifact(final_saved_paths)
-                wandb.finish()
+            final_saved_paths = self.save(
+                extra_checkpoint_state={
+                    "incumbent_uses_network": generator.incumbent_uses_network(),
+                    "incumbent_model_step": generator.incumbent_model_step(),
+                }
+            )
+            try:
+                if log_to_wandb:
+                    self._log_final_wandb_model_artifact(final_saved_paths)
+                    wandb.finish()
+            finally:
+                self._cleanup_wandb_gif_files()
 
         if pending_error is not None:
             raise pending_error

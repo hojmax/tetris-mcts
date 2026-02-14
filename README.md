@@ -46,10 +46,11 @@ python tetris_mcts/scripts/tetris_game.py
 | ----- | ------------------------ |
 | ← →   | Move left/right          |
 | ↓     | Soft drop                |
-| ↑ / X | Rotate clockwise         |
-| Z     | Rotate counter-clockwise |
+| ↑ / S | Rotate clockwise         |
+| A     | Rotate counter-clockwise |
 | Space | Hard drop                |
-| C     | Hold                     |
+| D     | Hold                     |
+| M     | Toggle inspect mode      |
 | P     | Pause                    |
 | R     | Restart                  |
 | ESC   | Quit                     |
@@ -99,7 +100,8 @@ Additional bonuses:
 ## Notes on MCTS Temperature
 
 `temperature` is used to shape the MCTS visit-count policy **training targets**.
-Executed moves are selected as the best move (argmax / most-visited child) in both training and evaluation.
+During training self-play, executed moves are sampled from visit-policy with probability `visit_sampling_epsilon` and otherwise selected by argmax.
+During evaluation, executed moves are selected by argmax.
 
 ## Project Structure
 

@@ -65,6 +65,9 @@ check:
 # Train a model (builds first if needed)
 # Usage: make train ARGS="--iterations 10 --games-per-iter 50"
 train: $(RELEASE_MARKER)
+	@if [ -z "$$TMUX" ]; then \
+		echo "Warning: tmux is not active. Training may stop if this terminal closes." >&2; \
+	fi
 	$(PYTHON) tetris_mcts/train.py $(ARGS)
 
 # Run W&B sweep over learning rate and model size (builds first if needed)

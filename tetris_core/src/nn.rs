@@ -4,7 +4,7 @@
 //! Caches board embeddings to skip conv + board projection on repeated board states.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -18,6 +18,8 @@ use crate::constants::{
 };
 use crate::env::TetrisEnv;
 
+const BOARD_CACHE_MAX_ENTRIES: usize = 1_000_000;
+
 /// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
     conv_model: Arc<TypedRunnableModel<TypedModel>>,
@@ -27,6 +29,8 @@ pub struct TetrisNN {
     board_hidden: usize,
     conv_out_size: usize,
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
+    cache_order: RefCell<VecDeque<[u64; 4]>>,
+    cache_capacity: usize,
     cache_hits: Cell<u64>,
     cache_misses: Cell<u64>,
     cache_enabled: Cell<bool>,
@@ -76,6 +80,8 @@ impl TetrisNN {
             board_hidden,
             conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
+            cache_order: RefCell::new(VecDeque::new()),
+            cache_capacity: BOARD_CACHE_MAX_ENTRIES,
             cache_hits: Cell::new(0),
             cache_misses: Cell::new(0),
             cache_enabled: Cell::new(true),
@@ -111,6 +117,27 @@ impl TetrisNN {
         Ok(self.board_proj_weight.dot(&conv_arr) + self.board_proj_bias.as_ref())
     }
 
+    fn insert_board_embedding_cache(&self, board_key: [u64; 4], embed: Array1<f32>) {
+        let mut cache = self.board_cache.borrow_mut();
+        let mut cache_order = self.cache_order.borrow_mut();
+
+        if cache.insert(board_key, embed).is_none() {
+            cache_order.push_back(board_key);
+        }
+
+        while cache.len() > self.cache_capacity {
+            let Some(oldest_key) = cache_order.pop_front() else {
+                break;
+            };
+            cache.remove(&oldest_key);
+        }
+    }
+
+    fn clear_board_embedding_cache(&self) {
+        self.board_cache.borrow_mut().clear();
+        self.cache_order.borrow_mut().clear();
+    }
+
     /// Run inference with action mask applied, using board embedding cache.
     pub fn predict_masked(
         &self,
@@ -136,9 +163,7 @@ impl TetrisNN {
                 None => {
                     self.cache_misses.set(self.cache_misses.get() + 1);
                     let embed = self.compute_board_embedding(&board_f32)?;
-                    self.board_cache
-                        .borrow_mut()
-                        .insert(board_key, embed.clone());
+                    self.insert_board_embedding_cache(board_key, embed.clone());
                     embed
                 }
             }
@@ -238,7 +263,7 @@ impl TetrisNN {
     pub fn set_board_cache_enabled(&self, enabled: bool) {
         self.cache_enabled.set(enabled);
         if !enabled {
-            self.board_cache.borrow_mut().clear();
+            self.clear_board_embedding_cache();
         }
     }
 
@@ -262,6 +287,8 @@ impl Clone for TetrisNN {
             board_hidden: self.board_hidden,
             conv_out_size: self.conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
+            cache_order: RefCell::new(VecDeque::new()),
+            cache_capacity: self.cache_capacity,
             cache_hits: Cell::new(0),
             cache_misses: Cell::new(0),
             cache_enabled: Cell::new(self.cache_enabled.get()),

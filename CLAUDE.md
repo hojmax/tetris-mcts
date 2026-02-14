@@ -61,7 +61,7 @@ python tetris_mcts/train.py \
     --training.num-simulations 800 \
     --training.learning-rate 0.0005
 
-# Resume from checkpoint
+# Resume from checkpoint (creates a new versioned run initialized from v0/latest.pt)
 python tetris_mcts/train.py --resume-dir training_runs/v0
 ```
 
@@ -249,7 +249,7 @@ From `config.py` TrainingConfig defaults:
 - **Buffer**: 1M examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default.
-- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=5`, `model_sync_interval_seconds=180`, `eval_interval_seconds=900`, `checkpoint_interval_seconds=2400`; replay snapshots use `save_interval_seconds=60` (`0` disables periodic snapshot saves).
+- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=3600`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1200` (`0` disables periodic snapshot saves).
 - **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
@@ -352,7 +352,9 @@ training_runs/
 - Automatic version incrementing
 - Each run isolated with its own checkpoints and config
 - Config saved as JSON for reproducibility
-- Resume preserves version number
+- `--resume-dir` creates a new versioned run (for example `v18`) and initializes it from `source_run/checkpoints/latest.pt` while copying `source_run/training_data.npz` when present
+- Resumed runs restore self-play startup mode from checkpoint field `incumbent_uses_network` (captured on periodic/final saves), so resume starts with NN only if the previous incumbent had been promoted
+- Older checkpoints that predate `incumbent_uses_network` default to starting with NN and emit a warning
 
 ## WandB Metrics
 

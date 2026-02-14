@@ -68,31 +68,26 @@ def main(args: ScriptArgs) -> None:
     resume_checkpoint: Path | None = None
 
     if args.resume_dir and args.init_checkpoint:
-        logger.error("Cannot use resume_dir and init_checkpoint together")
-        return
+        raise ValueError("Cannot use resume_dir and init_checkpoint together")
 
     # Set up run directory
     if args.resume_dir:
         # Bootstrap a new run from an existing run directory.
         source_run_dir = args.resume_dir
         if not source_run_dir.exists():
-            logger.error("Resume directory does not exist", path=str(source_run_dir))
-            return
+            raise FileNotFoundError(f"Resume directory does not exist: {source_run_dir}")
         if not source_run_dir.is_dir():
-            logger.error(
-                "Resume directory is not a directory", path=str(source_run_dir)
+            raise NotADirectoryError(
+                f"Resume directory is not a directory: {source_run_dir}"
             )
-            return
 
         source_checkpoint = (
             source_run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
         )
         if not source_checkpoint.exists():
-            logger.error(
-                "Resume checkpoint does not exist",
-                path=str(source_checkpoint),
+            raise FileNotFoundError(
+                f"Resume checkpoint does not exist: {source_checkpoint}"
             )
-            return
 
         config = setup_run_directory(config)
         logger.info(
@@ -156,6 +151,23 @@ def main(args: ScriptArgs) -> None:
             and not args.resume_restore_optimizer_scheduler
         ):
             trainer.align_scheduler_to_step(trainer.step)
+        incumbent_uses_network = state.get("incumbent_uses_network")
+        if incumbent_uses_network is None:
+            config.bootstrap_without_network = False
+            logger.warning(
+                "Checkpoint missing incumbent network state; starting self-play with network",
+                checkpoint=str(resume_checkpoint),
+                start_with_network=True,
+            )
+        else:
+            start_with_network = bool(incumbent_uses_network)
+            config.bootstrap_without_network = not start_with_network
+            logger.info(
+                "Restored self-play startup mode from checkpoint",
+                checkpoint=str(resume_checkpoint),
+                start_with_network=start_with_network,
+                incumbent_uses_network=start_with_network,
+            )
         logger.info(
             "Initialized new run from checkpoint",
             checkpoint=str(resume_checkpoint),
@@ -166,10 +178,9 @@ def main(args: ScriptArgs) -> None:
         )
     elif args.init_checkpoint:
         if not args.init_checkpoint.exists():
-            logger.error(
-                "Init checkpoint does not exist", path=str(args.init_checkpoint)
+            raise FileNotFoundError(
+                f"Init checkpoint does not exist: {args.init_checkpoint}"
             )
-            return
         state = load_checkpoint(
             args.init_checkpoint, model=trainer.model, optimizer=None
         )
