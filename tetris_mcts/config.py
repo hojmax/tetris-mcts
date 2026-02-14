@@ -131,15 +131,15 @@ class TrainingConfig:
     pin_memory_batches: bool = (  # If True, pin host tensors before CUDA transfer
         False
     )
-    save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
-        10800
-    )
 
     # Intervals (seconds)
     model_sync_interval_seconds: float = 300  # Seconds between ONNX exports
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
     eval_interval_seconds: float = 1800  # Seconds between evaluations
     log_interval_seconds: float = 10  # Seconds between logging
+    save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
+        1800
+    )
 
     # Evaluation
     eval_seeds: list[int] = field(default_factory=lambda: list(range(1)))
