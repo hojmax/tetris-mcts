@@ -356,6 +356,12 @@ training_runs/
 
 ## WandB Metrics
 
+Step-alignment rule for resumed runs:
+
+- Any metric namespace/key that should continue on checkpoint `step` must be explicitly mapped with `wandb.define_metric(..., step_metric="trainer_step")`. If a key is not mapped, WandB uses internal `_step`, which resets in new resumed runs.
+- Current trainer mappings include `train/*`, `batch/*`, `eval/*`, `timing/*`, `replay/*`, `throughput/*`, `incumbent/*`, `model_gate/*`, and scalar keys `policy_entropy`, `value_error`, `top1_accuracy`, `top3_accuracy`.
+- Per-game metrics remain mapped to `game_number` via `wandb.define_metric("game/*", step_metric="game_number")`.
+
 ### Training Metrics
 
 - `loss`, `policy_loss`, `value_loss` - Loss components
@@ -372,12 +378,14 @@ training_runs/
 - `game/max_combo` - Longest combo achieved
 - `game/back_to_back` - Back-to-back count
 
-### Evaluation Metrics (fixed seeds, 100 moves)
+### Evaluation Metrics (fixed seeds, up to `max_placements`)
 
 - `eval/avg_attack` - Average attack over eval games
 - `eval/max_attack` - Best single game
 - `eval/attack_per_piece` - Efficiency metric
 - Breakdown by clear types and T-spins
+- `eval/avg_moves` reflects played placements (hold actions excluded) up to `max_placements` (default 50)
+- `eval/trajectory` GIF renders the full first replay episode (all recorded actions plus a final post-action board frame), so length is no longer capped by a visualization frame limit
 
 ### WandB Artifacts
 

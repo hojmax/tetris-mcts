@@ -15,7 +15,6 @@ import structlog
 from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
-    DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
     EVAL_ONNX_FILENAME,
     EVAL_REPLAYS_FILENAME,
     PIECE_NAMES,
@@ -131,7 +130,6 @@ class Evaluator:
         if render_trajectory and self.eval_seeds:
             trajectory_frames = self.render_first_replay(
                 replay_path=replay_path,
-                max_frames=DEFAULT_EVAL_TRAJECTORY_MAX_FRAMES,
             )
 
         return result, trajectory_frames
@@ -139,7 +137,6 @@ class Evaluator:
     def render_first_replay(
         self,
         replay_path: Path,
-        max_frames: int,
     ) -> list:
         """Render first game trajectory from a replay JSONL file."""
         with replay_path.open() as f:
@@ -151,13 +148,11 @@ class Evaluator:
         replay = json.loads(first_line)
         return self.render_replay(
             replay=replay,
-            max_frames=max_frames,
         )
 
     def render_replay(
         self,
         replay: dict,
-        max_frames: int,
     ) -> list:
         """Render a replay dict (seed + moves) into trajectory frames."""
         from tetris_mcts.ml.visualization import render_board
@@ -169,7 +164,7 @@ class Evaluator:
         total_attack = 0
 
         for move_idx, move in enumerate(moves):
-            if env.game_over or len(frames) >= max_frames:
+            if env.game_over:
                 break
 
             # Get current state for rendering
@@ -213,37 +208,36 @@ class Evaluator:
                 raise ValueError(f"Invalid replay action index: {action}")
             total_attack += int(move["attack"])
 
-        if len(frames) < max_frames:
-            board = np.array(env.get_board())
-            board_piece_types = env.get_board_piece_types()
-            piece = env.get_current_piece()
-            hold_piece = env.get_hold_piece()
-            queue_piece_types = env.get_queue(QUEUE_SIZE)
-            can_hold = not env.is_hold_used()
-            piece_cells = piece.get_cells() if piece else None
-            piece_type = piece.piece_type if piece else None
-            ghost = env.get_ghost_piece()
-            ghost_cells = ghost.get_cells() if ghost else None
-            current_name = PIECE_NAMES[piece.piece_type] if piece else "?"
-            hold_name = PIECE_NAMES[hold_piece.piece_type] if hold_piece else "-"
-            queue_names = [PIECE_NAMES[piece_type] for piece_type in queue_piece_types]
-            frame = render_board(
-                board=board,
-                board_piece_types=board_piece_types,
-                current_piece_cells=piece_cells,
-                current_piece_type=piece_type,
-                ghost_cells=ghost_cells,
-                move_number=len(frames),
-                attack=total_attack,
-                info_text=(
-                    f"{'Terminal  ' if env.game_over else ''}Can hold: {'y' if can_hold else 'n'}\n"
-                    f"Combo: {env.combo}  B2B: {'y' if env.back_to_back else 'n'}"
-                ),
-                show_piece_info=True,
-                current_piece_name=current_name,
-                hold_piece_name=hold_name,
-                queue_pieces=queue_names,
-            )
-            frames.append(frame)
+        board = np.array(env.get_board())
+        board_piece_types = env.get_board_piece_types()
+        piece = env.get_current_piece()
+        hold_piece = env.get_hold_piece()
+        queue_piece_types = env.get_queue(QUEUE_SIZE)
+        can_hold = not env.is_hold_used()
+        piece_cells = piece.get_cells() if piece else None
+        piece_type = piece.piece_type if piece else None
+        ghost = env.get_ghost_piece()
+        ghost_cells = ghost.get_cells() if ghost else None
+        current_name = PIECE_NAMES[piece.piece_type] if piece else "?"
+        hold_name = PIECE_NAMES[hold_piece.piece_type] if hold_piece else "-"
+        queue_names = [PIECE_NAMES[piece_type] for piece_type in queue_piece_types]
+        frame = render_board(
+            board=board,
+            board_piece_types=board_piece_types,
+            current_piece_cells=piece_cells,
+            current_piece_type=piece_type,
+            ghost_cells=ghost_cells,
+            move_number=len(frames),
+            attack=total_attack,
+            info_text=(
+                f"{'Terminal  ' if env.game_over else ''}Can hold: {'y' if can_hold else 'n'}\n"
+                f"Combo: {env.combo}  B2B: {'y' if env.back_to_back else 'n'}"
+            ),
+            show_piece_info=True,
+            current_piece_name=current_name,
+            hold_piece_name=hold_name,
+            queue_pieces=queue_names,
+        )
+        frames.append(frame)
 
         return frames
