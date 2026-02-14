@@ -230,7 +230,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 - `Piece` - Tetromino (piece_type, x, y, rotation)
 - `MCTSAgent` - MCTS search coordinator
 - `MCTSConfig` - Search hyperparameters (num_simulations, c_puct, temperature, etc.)
-- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`)
+- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, where `holes`/`overhang_fields` are from the current state board)
 - `GameGenerator` - Background self-play worker
 
 ### Python
@@ -249,7 +249,7 @@ From `config.py` TrainingConfig defaults:
 - **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
-- **Buffer**: 1M examples (ring buffer), 7 parallel workers
+- **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=8` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=16` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default.
 - **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=10800` (`0` disables periodic snapshot saves).
@@ -289,8 +289,11 @@ Training uses parallel Rust game generation via `GameGenerator`:
 6. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
 7. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
 8. Training examples from accepted games are stored in a shared in-memory ring buffer
-9. Python samples directly via `generator.sample_batch(batch_size, max_placements)` returning `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` with periodic NPZ saves for resume only
-10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), normalized aux scalars (`move_numbers`, `placement_counts`, `combos` where combo is clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`) for exact replay/WandB alignment plus future feature experiments
+9. Python sampling has two modes:
+   - Default staged mode: `generator.sample_batch(batch_size * prefetch_batches, max_placements)`, then move staged tensors once to the training device, split into train-sized batches, and keep a queued cache up to `staged_batch_cache_batches` before consuming.
+   - Full mirror mode (CUDA/MPS only, `mirror_replay_on_accelerator=true`): `generator.replay_buffer_snapshot(max_placements)` initializes a full device mirror, then `generator.replay_buffer_delta(from_index, max_examples, max_placements)` incrementally appends only newly added examples (with occasional full resync only if FIFO eviction makes mirror state stale). Training samples indices directly from the mirrored device batch.
+   Both modes use `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` tensors; periodic NPZ saves remain resume-only.
+10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), normalized aux scalars (`move_numbers`, `placement_counts`, `combos` where combo is clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` computed from each example's current board) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing
 

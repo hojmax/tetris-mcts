@@ -738,6 +738,145 @@ impl GameGenerator {
         self.buffer.len()
     }
 
+    /// Snapshot the full replay buffer as numpy arrays plus the logical start index.
+    ///
+    /// The returned `start_index` is the global index (exclusive-end counter based)
+    /// of the first retained replay example in the current FIFO window.
+    ///
+    /// Returns None if the buffer is empty.
+    #[pyo3(signature = (max_placements))]
+    pub fn replay_buffer_snapshot<'py>(
+        &self,
+        py: Python<'py>,
+        max_placements: u32,
+    ) -> PyResult<
+        Option<(
+            u64,
+            &'py PyArray2<f32>,
+            &'py PyArray2<f32>,
+            &'py PyArray2<f32>,
+            &'py PyArray1<f32>,
+            &'py PyArray1<f32>,
+            &'py PyArray2<f32>,
+        )>,
+    > {
+        if max_placements == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_placements must be > 0",
+            ));
+        }
+
+        let (start_index, snapshot_examples): (u64, Vec<TrainingExample>) = {
+            let examples = self.buffer.examples.read().unwrap();
+            let n = examples.len();
+            if n == 0 {
+                return Ok(None);
+            }
+            let end_index = self.examples_generated.load(Ordering::SeqCst);
+            let start_index = end_index.saturating_sub(n as u64);
+            let snapshot = examples.iter().cloned().collect();
+            (start_index, snapshot)
+        };
+
+        let arrays = Self::examples_to_numpy(py, &snapshot_examples, max_placements)?;
+        Ok(Some((
+            start_index,
+            arrays.0,
+            arrays.1,
+            arrays.2,
+            arrays.3,
+            arrays.4,
+            arrays.5,
+        )))
+    }
+
+    /// Fetch a delta slice from the replay buffer's logical index space.
+    ///
+    /// Returns:
+    /// - `window_start_index`: global index of current FIFO window start
+    /// - `window_end_index`: global index one-past current FIFO window end
+    /// - `slice_start_index`: global index of first returned example
+    /// - tensor arrays for up to `max_examples` examples in `[slice_start_index, window_end_index)`
+    ///
+    /// Returns None if the buffer is empty.
+    #[pyo3(signature = (from_index, max_examples, max_placements))]
+    pub fn replay_buffer_delta<'py>(
+        &self,
+        py: Python<'py>,
+        from_index: u64,
+        max_examples: usize,
+        max_placements: u32,
+    ) -> PyResult<
+        Option<(
+            u64,
+            u64,
+            u64,
+            &'py PyArray2<f32>,
+            &'py PyArray2<f32>,
+            &'py PyArray2<f32>,
+            &'py PyArray1<f32>,
+            &'py PyArray1<f32>,
+            &'py PyArray2<f32>,
+        )>,
+    > {
+        if max_examples == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_examples must be > 0",
+            ));
+        }
+        if max_placements == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_placements must be > 0",
+            ));
+        }
+
+        let (window_start, window_end, slice_start, slice_examples): (
+            u64,
+            u64,
+            u64,
+            Vec<TrainingExample>,
+        ) = {
+            let examples = self.buffer.examples.read().unwrap();
+            let n = examples.len();
+            if n == 0 {
+                return Ok(None);
+            }
+
+            let window_end = self.examples_generated.load(Ordering::SeqCst);
+            let window_start = window_end.saturating_sub(n as u64);
+            let slice_start = from_index.max(window_start);
+            let slice_end = (slice_start + max_examples as u64).min(window_end);
+            let slice_len = slice_end.saturating_sub(slice_start) as usize;
+            let offset = slice_start.saturating_sub(window_start) as usize;
+
+            let slice_examples = if slice_len == 0 {
+                Vec::new()
+            } else {
+                examples
+                    .iter()
+                    .skip(offset)
+                    .take(slice_len)
+                    .cloned()
+                    .collect()
+            };
+
+            (window_start, window_end, slice_start, slice_examples)
+        };
+
+        let arrays = Self::examples_to_numpy(py, &slice_examples, max_placements)?;
+        Ok(Some((
+            window_start,
+            window_end,
+            slice_start,
+            arrays.0,
+            arrays.1,
+            arrays.2,
+            arrays.3,
+            arrays.4,
+            arrays.5,
+        )))
+    }
+
     /// Sample a batch of training data from the replay buffer.
     ///
     /// Returns a tuple of numpy arrays:
@@ -790,29 +929,45 @@ impl GameGenerator {
                 })
                 .collect()
         };
-        let actual_batch = sampled_examples.len();
+        let arrays = Self::examples_to_numpy(py, &sampled_examples, max_placements)?;
+        Ok(Some((
+            arrays.0, arrays.1, arrays.2, arrays.3, arrays.4, arrays.5,
+        )))
+    }
+}
 
-        // Allocate output arrays
+impl GameGenerator {
+    fn examples_to_numpy<'py>(
+        py: Python<'py>,
+        examples: &[TrainingExample],
+        max_placements: u32,
+    ) -> PyResult<(
+        &'py PyArray2<f32>,
+        &'py PyArray2<f32>,
+        &'py PyArray2<f32>,
+        &'py PyArray1<f32>,
+        &'py PyArray1<f32>,
+        &'py PyArray2<f32>,
+    )> {
+        let batch_size = examples.len();
         let board_height = 20usize;
         let board_width = 10usize;
         let num_actions = NUM_ACTIONS;
         let aux_features_size = AUX_FEATURES;
-
-        let mut boards = vec![0.0f32; actual_batch * board_height * board_width];
-        let mut aux = vec![0.0f32; actual_batch * aux_features_size];
-        let mut policies = vec![0.0f32; actual_batch * num_actions];
-        let mut values = vec![0.0f32; actual_batch];
-        let mut overhangs = vec![0.0f32; actual_batch];
-        let mut masks = vec![0.0f32; actual_batch * num_actions];
         let max_placements_usize = max_placements as usize;
 
-        for (i, ex) in sampled_examples.iter().enumerate() {
-            // Copy board (already flat u8, convert to f32)
+        let mut boards = vec![0.0f32; batch_size * board_height * board_width];
+        let mut aux = vec![0.0f32; batch_size * aux_features_size];
+        let mut policies = vec![0.0f32; batch_size * num_actions];
+        let mut values = vec![0.0f32; batch_size];
+        let mut overhangs = vec![0.0f32; batch_size];
+        let mut masks = vec![0.0f32; batch_size * num_actions];
+
+        for (i, ex) in examples.iter().enumerate() {
             for (j, &val) in ex.board.iter().enumerate() {
                 boards[i * board_height * board_width + j] = val as f32;
             }
 
-            // Build auxiliary features through the shared encoder used by Rust inference.
             let aux_offset = i * aux_features_size;
             let aux_slice = &mut aux[aux_offset..aux_offset + aux_features_size];
             let hold_piece = if ex.hold_piece < NUM_PIECE_TYPES {
@@ -839,51 +994,41 @@ impl GameGenerator {
                 ))
             })?;
 
-            // Copy policy
             for (j, &val) in ex.policy.iter().enumerate() {
                 policies[i * num_actions + j] = val;
             }
-
-            // Copy value
             values[i] = ex.value;
-
-            // Copy overhang fields
             overhangs[i] = ex.overhang_fields as f32;
-
-            // Copy mask
             for (j, &val) in ex.action_mask.iter().enumerate() {
                 masks[i * num_actions + j] = if val { 1.0 } else { 0.0 };
             }
         }
 
-        // Create numpy arrays
         let boards_arr = PyArray1::from_vec(py, boards)
-            .reshape([actual_batch, board_height * board_width])
+            .reshape([batch_size, board_height * board_width])
             .unwrap();
         let aux_arr = PyArray1::from_vec(py, aux)
-            .reshape([actual_batch, aux_features_size])
+            .reshape([batch_size, aux_features_size])
             .unwrap();
         let policies_arr = PyArray1::from_vec(py, policies)
-            .reshape([actual_batch, num_actions])
+            .reshape([batch_size, num_actions])
             .unwrap();
         let values_arr = PyArray1::from_vec(py, values);
         let overhangs_arr = PyArray1::from_vec(py, overhangs);
         let masks_arr = PyArray1::from_vec(py, masks)
-            .reshape([actual_batch, num_actions])
+            .reshape([batch_size, num_actions])
             .unwrap();
 
-        Ok(Some((
+        Ok((
             boards_arr,
             aux_arr,
             policies_arr,
             values_arr,
             overhangs_arr,
             masks_arr,
-        )))
+        ))
     }
-}
 
-impl GameGenerator {
     fn persist_snapshot_if_due(
         training_data_path: &PathBuf,
         buffer: &Arc<SharedBuffer>,

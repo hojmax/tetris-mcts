@@ -24,6 +24,16 @@ pub struct MCTSAgent {
     nn: Option<crate::nn::TetrisNN>,
 }
 
+struct StateSnapshot {
+    state: TetrisEnv,
+    frame_idx: u32,
+    placement_idx: u32,
+    policy: Vec<f32>,
+    mask: Vec<bool>,
+    overhang_fields: u32,
+    hole_count: u32,
+}
+
 fn compute_value_targets(attacks: &[u32]) -> Vec<f32> {
     let mut values = vec![0.0f32; attacks.len()];
     let mut cumulative = 0.0f32;
@@ -100,10 +110,8 @@ impl MCTSAgent {
     #[pyo3(signature = (max_placements=100, add_noise=true))]
     pub fn play_game(&self, max_placements: u32, add_noise: bool) -> Option<GameResult> {
         let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
-        let mut states: Vec<(TetrisEnv, u32, u32, Vec<f32>, Vec<bool>)> = Vec::new();
+        let mut states: Vec<StateSnapshot> = Vec::new();
         let mut attacks: Vec<u32> = Vec::new();
-        let mut overhang_fields: Vec<u32> = Vec::new();
-        let mut hole_counts: Vec<u32> = Vec::new();
         let mut stats = GameStats::default();
         let mut valid_moves_sum: u32 = 0;
         let mut max_valid_moves: u32 = 0;
@@ -160,22 +168,23 @@ impl MCTSAgent {
             }
 
             // Store state only after search succeeds so state/reward arrays stay aligned.
-            states.push((
-                env.clone(),
-                frame_index,
-                placement_count,
-                result.policy.clone(),
-                mask.clone(),
-            ));
+            // Capture board diagnostics from the same pre-action state as this training sample.
+            let (overhang_count, hole_count) = super::utils::count_overhang_fields_and_holes(&env);
+            states.push(StateSnapshot {
+                state: env.clone(),
+                frame_idx: frame_index,
+                placement_idx: placement_count,
+                policy: result.policy.clone(),
+                mask: mask.clone(),
+                overhang_fields: overhang_count,
+                hole_count,
+            });
 
             // Execute the selected action
             let attack = env
                 .execute_action_index(result.action)
                 .expect("MCTS selected action is not executable");
             attacks.push(attack);
-            let (overhang_count, hole_count) = super::utils::count_overhang_fields_and_holes(&env);
-            overhang_fields.push(overhang_count);
-            hole_counts.push(hole_count);
             if result.action != HOLD_ACTION_INDEX {
                 placement_count += 1;
             }
@@ -235,24 +244,14 @@ impl MCTSAgent {
             attacks.len(),
             "States and attacks should have same length"
         );
-        debug_assert_eq!(
-            states.len(),
-            overhang_fields.len(),
-            "States and overhang fields should have same length"
-        );
-        debug_assert_eq!(
-            states.len(),
-            hole_counts.len(),
-            "States and hole counts should have same length"
-        );
 
         let values = compute_value_targets(&attacks);
 
         // Build training examples (use all moves)
         let mut examples = Vec::with_capacity(num_states);
 
-        for i in 0..num_states {
-            let (ref state, frame_idx, placement_idx, ref policy, ref mask) = states[i];
+        for (snapshot, value) in states.iter().zip(values.iter().copied()) {
+            let state = &snapshot.state;
 
             // Convert board to binary (1 = filled, 0 = empty)
             let board: Vec<u8> = state
@@ -277,7 +276,8 @@ impl MCTSAgent {
                 super::utils::normalize_total_blocks(state.total_blocks, state.width, state.height);
             let bumpiness =
                 super::utils::normalize_bumpiness(raw_bumpiness, state.width, state.height);
-            let holes = super::utils::normalize_holes(hole_counts[i], state.width, state.height);
+            let holes =
+                super::utils::normalize_holes(snapshot.hole_count, state.width, state.height);
             let max_column_height = column_heights
                 .iter()
                 .copied()
@@ -295,8 +295,8 @@ impl MCTSAgent {
                 hold_piece,
                 hold_available,
                 next_queue,
-                move_number: frame_idx,
-                placement_count: placement_idx,
+                move_number: snapshot.frame_idx,
+                placement_count: snapshot.placement_idx,
                 combo: state.combo,
                 back_to_back: state.back_to_back,
                 next_hidden_piece_probs,
@@ -307,17 +307,17 @@ impl MCTSAgent {
                 total_blocks,
                 bumpiness,
                 holes,
-                policy: policy.clone(),
-                value: values[i],
-                action_mask: mask.clone(),
-                overhang_fields: overhang_fields[i],
+                policy: snapshot.policy.clone(),
+                value,
+                action_mask: snapshot.mask.clone(),
+                overhang_fields: snapshot.overhang_fields,
                 game_number: 0,
                 game_total_attack: 0,
             });
         }
 
         let total_attack: u32 = attacks.iter().sum();
-        let total_overhang_fields: u32 = overhang_fields.iter().sum();
+        let total_overhang_fields: u32 = states.iter().map(|s| s.overhang_fields).sum();
         let num_frames = states.len() as u32;
         let num_moves = placement_count;
         let avg_valid_moves = if num_frames > 0 {
@@ -604,5 +604,41 @@ mod tests {
         assert!((values[0] - 6.0).abs() < 1e-6);
         assert!((values[1] - 5.0).abs() < 1e-6);
         assert!((values[2] - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_play_game_examples_use_current_state_overhang_and_holes() {
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 5;
+        let agent = MCTSAgent::new(config);
+        let result = agent
+            .play_game(12, false)
+            .expect("play_game should return a result");
+        assert!(
+            !result.examples.is_empty(),
+            "play_game should generate at least one training example"
+        );
+
+        for example in result.examples.iter() {
+            let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
+            env.board = example.board.clone();
+            env.invalidate_board_analysis_cache();
+
+            let (expected_overhang, expected_holes_raw) =
+                super::super::utils::count_overhang_fields_and_holes(&env);
+            let expected_holes =
+                super::super::utils::normalize_holes(expected_holes_raw, env.width, env.height);
+
+            assert_eq!(
+                example.overhang_fields, expected_overhang,
+                "overhang_fields must match the saved board at move {}",
+                example.move_number
+            );
+            assert!(
+                (example.holes - expected_holes).abs() < 1e-6,
+                "holes must match the saved board at move {}",
+                example.move_number
+            );
+        }
     }
 }

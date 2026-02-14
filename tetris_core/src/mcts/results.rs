@@ -88,7 +88,7 @@ pub struct TrainingExample {
     /// Action mask (NUM_ACTIONS values, true = valid)
     #[pyo3(get)]
     pub action_mask: Vec<bool>,
-    /// Overhang fields in the post-action board used for this state's step penalty
+    /// Overhang fields in this state's board
     #[pyo3(get)]
     pub overhang_fields: u32,
     /// 1-indexed global game number used for WandB per-game metrics
@@ -238,10 +238,10 @@ pub struct GameResult {
     pub stats: GameStats,
     /// MCTS tree statistics aggregated across all moves
     pub tree_stats: GameTreeStats,
-    /// Sum of per-move overhang fields across the game
+    /// Sum of per-state overhang fields across the game
     #[pyo3(get)]
     pub total_overhang_fields: u32,
-    /// Average overhang fields per move across the game
+    /// Average overhang fields per state across the game
     #[pyo3(get)]
     pub avg_overhang_fields: f32,
     /// Board embedding cache hits during this game

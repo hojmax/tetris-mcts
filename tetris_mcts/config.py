@@ -110,6 +110,24 @@ class TrainingConfig:
     # Replay buffer
     buffer_size: int = 1_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
+    prefetch_batches: int = (  # Number of train batches sampled/staged per generator.sample_batch call
+        8
+    )
+    staged_batch_cache_batches: int = (  # Target number of train batches kept staged in memory/device queue
+        16
+    )
+    mirror_replay_on_accelerator: bool = (  # If True, mirror full replay buffer on CUDA/MPS and train from device-local samples
+        True
+    )
+    replay_mirror_refresh_seconds: float = (  # Seconds between full replay mirror refreshes while training from device-local replay
+        10.0
+    )
+    replay_mirror_delta_chunk_examples: int = (  # Max replay examples pulled per incremental mirror delta call
+        65_536
+    )
+    pin_memory_batches: bool = (  # If True, pin host tensors before CUDA transfer
+        True
+    )
     save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
         10800
     )
@@ -153,6 +171,17 @@ class TrainingConfig:
                 "min_buffer_size must be <= buffer_size "
                 f"(got {self.min_buffer_size} > {self.buffer_size})"
             )
+        if self.prefetch_batches <= 0:
+            raise ValueError("prefetch_batches must be > 0")
+        if self.staged_batch_cache_batches <= 0:
+            raise ValueError("staged_batch_cache_batches must be > 0")
+        if (
+            not math.isfinite(self.replay_mirror_refresh_seconds)
+            or self.replay_mirror_refresh_seconds <= 0
+        ):
+            raise ValueError("replay_mirror_refresh_seconds must be finite and > 0")
+        if self.replay_mirror_delta_chunk_examples <= 0:
+            raise ValueError("replay_mirror_delta_chunk_examples must be > 0")
         if (
             not math.isfinite(self.save_interval_seconds)
             or self.save_interval_seconds < 0
