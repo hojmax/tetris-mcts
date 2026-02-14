@@ -15,6 +15,7 @@ from tetris_mcts.config import (
     DEFAULT_GIF_FRAME_DURATION_MS,
     LATEST_CHECKPOINT_FILENAME,
     PIECE_NAMES,
+    PROJECT_ROOT,
     QUEUE_SIZE,
 )
 from tetris_mcts.ml.network import denormalize_combo_feature
@@ -138,12 +139,9 @@ def estimate_total_attack_from_value_targets(game: GameSlice) -> int:
 class ScriptArgs:
     """Inspect training data by rendering games as GIFs."""
 
-    data_path: Path = (
-        Path(__file__).parent.parent.parent
-        / "training_runs"
-        / "v0"
-        / "training_data.npz"
-    )  # Path to training_data.npz file
+    data_path: Path = (  # Path to training_data.npz file
+        PROJECT_ROOT / "training_runs" / "v28" / "training_data.npz"
+    )
     checkpoint_path: (  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
         Path | None
     ) = None
