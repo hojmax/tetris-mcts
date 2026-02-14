@@ -11,12 +11,13 @@ from simple_parsing import parse
 
 from tetris_mcts.config import (
     CHECKPOINT_DIRNAME,
+    INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
     TRAINING_DATA_FILENAME,
     TrainingConfig,
     setup_run_directory,
 )
-from tetris_mcts.ml.training import Trainer
+from tetris_mcts.ml.training import Trainer, copy_model_artifact_bundle
 from tetris_mcts.ml.weights import load_checkpoint
 
 logger = structlog.get_logger()
@@ -66,6 +67,7 @@ class ScriptArgs:
 def main(args: ScriptArgs) -> None:
     config = args.training
     resume_checkpoint: Path | None = None
+    resume_incumbent_model_path: Path | None = None
 
     if args.resume_dir and args.init_checkpoint:
         raise ValueError("Cannot use resume_dir and init_checkpoint together")
@@ -116,6 +118,30 @@ def main(args: ScriptArgs) -> None:
                 expected_path=str(source_training_data),
             )
 
+        source_incumbent_model_path = (
+            source_run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
+        )
+        if source_incumbent_model_path.exists():
+            assert config.checkpoint_dir is not None
+            destination_incumbent_model_path = (
+                config.checkpoint_dir / INCUMBENT_ONNX_FILENAME
+            )
+            copy_model_artifact_bundle(
+                source_incumbent_model_path,
+                destination_incumbent_model_path,
+            )
+            resume_incumbent_model_path = destination_incumbent_model_path
+            logger.info(
+                "Copied incumbent model artifact bundle for resume",
+                source=str(source_incumbent_model_path),
+                destination=str(destination_incumbent_model_path),
+            )
+        else:
+            logger.warning(
+                "Resume directory has no incumbent model artifact bundle",
+                expected_path=str(source_incumbent_model_path),
+            )
+
         resume_checkpoint = source_checkpoint
     else:
         # Create new versioned run
@@ -134,6 +160,7 @@ def main(args: ScriptArgs) -> None:
     )
 
     if resume_checkpoint is not None:
+        start_with_network = True
         load_optimizer = trainer.optimizer
         load_scheduler = (
             trainer.scheduler if args.resume_restore_optimizer_scheduler else None
@@ -156,6 +183,7 @@ def main(args: ScriptArgs) -> None:
         incumbent_uses_network = state.get("incumbent_uses_network")
         if incumbent_uses_network is None:
             config.bootstrap_without_network = False
+            start_with_network = True
             logger.warning(
                 "Checkpoint missing incumbent network state; starting self-play with network",
                 checkpoint=str(resume_checkpoint),
@@ -169,6 +197,81 @@ def main(args: ScriptArgs) -> None:
                 checkpoint=str(resume_checkpoint),
                 start_with_network=start_with_network,
                 incumbent_uses_network=start_with_network,
+            )
+        incumbent_nn_value_weight = state.get("incumbent_nn_value_weight")
+        if incumbent_nn_value_weight is None:
+            logger.warning(
+                "Checkpoint missing incumbent nn_value_weight; using config value",
+                checkpoint=str(resume_checkpoint),
+                nn_value_weight=config.nn_value_weight,
+            )
+        else:
+            restored_nn_value_weight = float(incumbent_nn_value_weight)
+            if restored_nn_value_weight < 0.0:
+                raise ValueError(
+                    "Checkpoint incumbent_nn_value_weight must be >= 0 "
+                    f"(got {restored_nn_value_weight})"
+                )
+            config.nn_value_weight = restored_nn_value_weight
+            trainer.evaluator.nn_value_weight = restored_nn_value_weight
+            logger.info(
+                "Restored incumbent nn_value_weight from checkpoint",
+                checkpoint=str(resume_checkpoint),
+                nn_value_weight=restored_nn_value_weight,
+            )
+        incumbent_lifetime_games = state.get("incumbent_lifetime_games")
+        if incumbent_lifetime_games is None:
+            restored_incumbent_lifetime_games = 0
+            logger.warning(
+                "Checkpoint missing incumbent_lifetime_games; using zero",
+                checkpoint=str(resume_checkpoint),
+                incumbent_lifetime_games=restored_incumbent_lifetime_games,
+            )
+        else:
+            restored_incumbent_lifetime_games = int(incumbent_lifetime_games)
+            if restored_incumbent_lifetime_games < 0:
+                raise ValueError(
+                    "Checkpoint incumbent_lifetime_games must be >= 0 "
+                    f"(got {restored_incumbent_lifetime_games})"
+                )
+
+        incumbent_lifetime_attack = state.get("incumbent_lifetime_attack")
+        if incumbent_lifetime_attack is None:
+            restored_incumbent_lifetime_attack = 0
+            logger.warning(
+                "Checkpoint missing incumbent_lifetime_attack; using zero",
+                checkpoint=str(resume_checkpoint),
+                incumbent_lifetime_attack=restored_incumbent_lifetime_attack,
+            )
+        else:
+            restored_incumbent_lifetime_attack = int(incumbent_lifetime_attack)
+            if restored_incumbent_lifetime_attack < 0:
+                raise ValueError(
+                    "Checkpoint incumbent_lifetime_attack must be >= 0 "
+                    f"(got {restored_incumbent_lifetime_attack})"
+                )
+        trainer.initial_incumbent_lifetime_games = restored_incumbent_lifetime_games
+        trainer.initial_incumbent_lifetime_attack = restored_incumbent_lifetime_attack
+        logger.info(
+            "Restored incumbent lifetime promotion baseline from checkpoint",
+            checkpoint=str(resume_checkpoint),
+            incumbent_lifetime_games=restored_incumbent_lifetime_games,
+            incumbent_lifetime_attack=restored_incumbent_lifetime_attack,
+        )
+        if start_with_network and resume_incumbent_model_path is not None:
+            trainer.initial_incumbent_model_path = resume_incumbent_model_path
+            logger.info(
+                "Configured resumed incumbent model artifact for generator startup",
+                path=str(resume_incumbent_model_path),
+            )
+        elif start_with_network:
+            logger.warning(
+                "Resuming with network but no incumbent model artifact bundle; falling back to trainer checkpoint model",
+                expected_path=(
+                    str(config.checkpoint_dir / INCUMBENT_ONNX_FILENAME)
+                    if config.checkpoint_dir is not None
+                    else None
+                ),
             )
         logger.info(
             "Initialized new run from checkpoint",

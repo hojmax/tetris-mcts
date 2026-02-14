@@ -171,6 +171,7 @@ struct LastGameInfo {
 struct CandidateModelRequest {
     model_path: PathBuf,
     model_step: u64,
+    nn_value_weight: f32,
 }
 
 struct ModelEvalEvent {
@@ -178,9 +179,12 @@ struct ModelEvalEvent {
     incumbent_uses_network: bool,
     incumbent_games: u64,
     incumbent_avg_attack: f32,
+    incumbent_nn_value_weight: f32,
     candidate_step: u64,
     candidate_games: u64,
     candidate_avg_attack: f32,
+    candidate_nn_value_weight: f32,
+    promoted_nn_value_weight: f32,
     promoted: bool,
     auto_promoted: bool,
 }
@@ -337,6 +341,8 @@ pub struct GameGenerator {
     incumbent_model_step: Arc<AtomicU64>,
     /// Incremented whenever a candidate is promoted and workers should reload.
     incumbent_model_version: Arc<AtomicU64>,
+    /// Current nn_value_weight used by incumbent NN-guided rollouts.
+    incumbent_nn_value_weight: Arc<AtomicU32>,
     /// Lifetime game count for the currently deployed incumbent model.
     incumbent_lifetime_games: Arc<AtomicU64>,
     /// Lifetime total attack for the currently deployed incumbent model.
@@ -348,7 +354,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_lifetime_games=0, initial_incumbent_lifetime_attack=0))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -362,6 +368,8 @@ impl GameGenerator {
         candidate_eval_games: usize,
         start_with_network: bool,
         non_network_num_simulations: u32,
+        initial_incumbent_lifetime_games: u64,
+        initial_incumbent_lifetime_attack: u64,
     ) -> PyResult<Self> {
         if max_placements == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -396,6 +404,12 @@ impl GameGenerator {
 
         let mut resolved_config = config.unwrap_or_default();
         resolved_config.max_placements = max_placements;
+        if !resolved_config.nn_value_weight.is_finite() || resolved_config.nn_value_weight < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "config.nn_value_weight must be finite and >= 0",
+            ));
+        }
+        let initial_nn_value_weight_bits = resolved_config.nn_value_weight.to_bits();
         let bootstrap_model_path = PathBuf::from(model_path);
 
         Ok(GameGenerator {
@@ -421,8 +435,11 @@ impl GameGenerator {
             incumbent_uses_network: Arc::new(AtomicBool::new(start_with_network)),
             incumbent_model_step: Arc::new(AtomicU64::new(initial_model_step)),
             incumbent_model_version: Arc::new(AtomicU64::new(0)),
-            incumbent_lifetime_games: Arc::new(AtomicU64::new(0)),
-            incumbent_lifetime_attack: Arc::new(AtomicU64::new(0)),
+            incumbent_nn_value_weight: Arc::new(AtomicU32::new(initial_nn_value_weight_bits)),
+            incumbent_lifetime_games: Arc::new(AtomicU64::new(initial_incumbent_lifetime_games)),
+            incumbent_lifetime_attack: Arc::new(AtomicU64::new(
+                initial_incumbent_lifetime_attack,
+            )),
             thread_handles: Vec::new(),
         })
     }
@@ -524,6 +541,7 @@ impl GameGenerator {
             let incumbent_uses_network = Arc::clone(&self.incumbent_uses_network);
             let incumbent_model_step = Arc::clone(&self.incumbent_model_step);
             let incumbent_model_version = Arc::clone(&self.incumbent_model_version);
+            let incumbent_nn_value_weight = Arc::clone(&self.incumbent_nn_value_weight);
             let incumbent_lifetime_games = Arc::clone(&self.incumbent_lifetime_games);
             let incumbent_lifetime_attack = Arc::clone(&self.incumbent_lifetime_attack);
 
@@ -553,6 +571,7 @@ impl GameGenerator {
                     incumbent_uses_network,
                     incumbent_model_step,
                     incumbent_model_version,
+                    incumbent_nn_value_weight,
                     incumbent_lifetime_games,
                     incumbent_lifetime_attack,
                 );
@@ -606,12 +625,24 @@ impl GameGenerator {
         self.incumbent_model_step.load(Ordering::SeqCst)
     }
 
+    pub fn incumbent_model_path(&self) -> String {
+        self.incumbent_model_path
+            .read()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    }
+
     pub fn incumbent_uses_network(&self) -> bool {
         self.incumbent_uses_network.load(Ordering::SeqCst)
     }
 
     pub fn incumbent_lifetime_games(&self) -> u64 {
         self.incumbent_lifetime_games.load(Ordering::SeqCst)
+    }
+
+    pub fn incumbent_lifetime_attack(&self) -> u64 {
+        self.incumbent_lifetime_attack.load(Ordering::SeqCst)
     }
 
     pub fn incumbent_lifetime_avg_attack(&self) -> f32 {
@@ -622,12 +653,26 @@ impl GameGenerator {
         self.incumbent_lifetime_attack.load(Ordering::SeqCst) as f32 / games as f32
     }
 
+    pub fn incumbent_nn_value_weight(&self) -> f32 {
+        Self::load_atomic_f32(&self.incumbent_nn_value_weight)
+    }
+
     /// Queue a candidate model for evaluator-worker gating.
     ///
     /// If another candidate is already pending, it is dropped in favor of this one.
     /// Returns True when the candidate is queued, False when ignored as stale.
-    pub fn queue_candidate_model(&self, model_path: String, model_step: u64) -> PyResult<bool> {
+    pub fn queue_candidate_model(
+        &self,
+        model_path: String,
+        model_step: u64,
+        nn_value_weight: f32,
+    ) -> PyResult<bool> {
         let candidate_path = PathBuf::from(model_path);
+        if !nn_value_weight.is_finite() || nn_value_weight < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "nn_value_weight must be finite and >= 0",
+            ));
+        }
         if !candidate_path.exists() {
             return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
                 "Candidate model does not exist: {}",
@@ -650,6 +695,7 @@ impl GameGenerator {
         let request = CandidateModelRequest {
             model_path: candidate_path.clone(),
             model_step,
+            nn_value_weight,
         };
         let replaced = {
             let mut pending = self.pending_candidate.write().unwrap();
@@ -692,6 +738,10 @@ impl GameGenerator {
         stats.insert(
             "incumbent_lifetime_games".to_string(),
             self.incumbent_lifetime_games.load(Ordering::SeqCst),
+        );
+        stats.insert(
+            "incumbent_lifetime_attack".to_string(),
+            self.incumbent_lifetime_attack.load(Ordering::SeqCst),
         );
         stats
     }
@@ -785,11 +835,23 @@ impl GameGenerator {
                 "incumbent_avg_attack".to_string(),
                 event.incumbent_avg_attack as f64,
             );
+            d.insert(
+                "incumbent_nn_value_weight".to_string(),
+                event.incumbent_nn_value_weight as f64,
+            );
             d.insert("candidate_step".to_string(), event.candidate_step as f64);
             d.insert("candidate_games".to_string(), event.candidate_games as f64);
             d.insert(
                 "candidate_avg_attack".to_string(),
                 event.candidate_avg_attack as f64,
+            );
+            d.insert(
+                "candidate_nn_value_weight".to_string(),
+                event.candidate_nn_value_weight as f64,
+            );
+            d.insert(
+                "promoted_nn_value_weight".to_string(),
+                event.promoted_nn_value_weight as f64,
             );
             d.insert(
                 "promoted".to_string(),
@@ -975,6 +1037,14 @@ impl GameGenerator {
 }
 
 impl GameGenerator {
+    fn load_atomic_f32(value: &AtomicU32) -> f32 {
+        f32::from_bits(value.load(Ordering::SeqCst))
+    }
+
+    fn store_atomic_f32(target: &AtomicU32, value: f32) {
+        target.store(value.to_bits(), Ordering::SeqCst);
+    }
+
     fn examples_to_numpy<'py>(
         py: Python<'py>,
         examples: &[TrainingExample],
@@ -1127,6 +1197,7 @@ impl GameGenerator {
         incumbent_uses_network: Arc<AtomicBool>,
         incumbent_model_step: Arc<AtomicU64>,
         incumbent_model_version: Arc<AtomicU64>,
+        incumbent_nn_value_weight: Arc<AtomicU32>,
         incumbent_lifetime_games: Arc<AtomicU64>,
         incumbent_lifetime_attack: Arc<AtomicU64>,
     ) {
@@ -1144,6 +1215,7 @@ impl GameGenerator {
                 &incumbent_uses_network,
                 &incumbent_model_step,
                 &incumbent_model_version,
+                &incumbent_nn_value_weight,
                 &mut loaded_model_version,
                 &mut loaded_model_step,
                 &mut loaded_with_network,
@@ -1172,6 +1244,7 @@ impl GameGenerator {
                 &incumbent_uses_network,
                 &incumbent_model_step,
                 &incumbent_model_version,
+                &incumbent_nn_value_weight,
                 &mut loaded_model_version,
                 &mut loaded_model_step,
                 &mut loaded_with_network,
@@ -1225,6 +1298,7 @@ impl GameGenerator {
                         &incumbent_uses_network,
                         &incumbent_model_step,
                         &incumbent_model_version,
+                        &incumbent_nn_value_weight,
                         &incumbent_lifetime_games,
                         &incumbent_lifetime_attack,
                     );
@@ -1302,6 +1376,7 @@ impl GameGenerator {
         incumbent_uses_network: &Arc<AtomicBool>,
         incumbent_model_step: &Arc<AtomicU64>,
         incumbent_model_version: &Arc<AtomicU64>,
+        incumbent_nn_value_weight: &Arc<AtomicU32>,
         loaded_model_version: &mut u64,
         loaded_model_step: &mut u64,
         loaded_with_network: &mut bool,
@@ -1319,10 +1394,12 @@ impl GameGenerator {
         } else {
             None
         };
+        let target_nn_value_weight = Self::load_atomic_f32(incumbent_nn_value_weight);
         let Some(new_agent) = Self::create_rollout_agent(
             config,
             target_uses_network,
             non_network_num_simulations,
+            target_nn_value_weight,
             model_path.as_ref(),
             worker_id,
             "incumbent",
@@ -1334,8 +1411,8 @@ impl GameGenerator {
         if worker_id == 0 {
             if target_uses_network {
                 eprintln!(
-                    "[GameGenerator] Loaded incumbent NN model step {} ({} workers, sims={})",
-                    *loaded_model_step, num_workers, config.num_simulations
+                    "[GameGenerator] Loaded incumbent NN model step {} ({} workers, sims={}, nn_value_weight={:.6})",
+                    *loaded_model_step, num_workers, config.num_simulations, target_nn_value_weight
                 );
             } else {
                 eprintln!(
@@ -1371,6 +1448,7 @@ impl GameGenerator {
         incumbent_uses_network: &Arc<AtomicBool>,
         incumbent_model_step: &Arc<AtomicU64>,
         incumbent_model_version: &Arc<AtomicU64>,
+        incumbent_nn_value_weight: &Arc<AtomicU32>,
         incumbent_lifetime_games: &Arc<AtomicU64>,
         incumbent_lifetime_attack: &Arc<AtomicU64>,
     ) -> usize {
@@ -1378,6 +1456,7 @@ impl GameGenerator {
             config,
             true,
             non_network_num_simulations,
+            candidate.nn_value_weight,
             Some(&candidate.model_path),
             worker_id,
             "candidate",
@@ -1442,10 +1521,16 @@ impl GameGenerator {
         } else {
             0.0
         };
+        let incumbent_nn_value_weight_before = Self::load_atomic_f32(incumbent_nn_value_weight);
         let incumbent_uses_network_before = incumbent_uses_network.load(Ordering::SeqCst);
         let incumbent_step_before = incumbent_model_step.load(Ordering::SeqCst);
         let auto_promoted = incumbent_games == 0;
         let promoted = auto_promoted || candidate_avg_attack > incumbent_avg_attack;
+        let promoted_nn_value_weight = if promoted {
+            candidate.nn_value_weight
+        } else {
+            incumbent_nn_value_weight_before
+        };
 
         let committed_games = if promoted {
             let previous_incumbent_path = incumbent_model_path.read().unwrap().clone();
@@ -1455,6 +1540,7 @@ impl GameGenerator {
             }
             incumbent_uses_network.store(true, Ordering::SeqCst);
             incumbent_model_step.store(candidate.model_step, Ordering::SeqCst);
+            Self::store_atomic_f32(incumbent_nn_value_weight, candidate.nn_value_weight);
             incumbent_model_version.fetch_add(1, Ordering::SeqCst);
             incumbent_lifetime_games.store(0, Ordering::SeqCst);
             incumbent_lifetime_attack.store(0, Ordering::SeqCst);
@@ -1483,8 +1569,13 @@ impl GameGenerator {
             );
 
             eprintln!(
-                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={})",
-                candidate.model_step, candidate_avg_attack, incumbent_avg_attack, candidate_games
+                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={}, nn_value_weight {:.6} -> {:.6})",
+                candidate.model_step,
+                candidate_avg_attack,
+                incumbent_avg_attack,
+                candidate_games,
+                incumbent_nn_value_weight_before,
+                candidate.nn_value_weight
             );
             committed
         } else {
@@ -1497,8 +1588,13 @@ impl GameGenerator {
             );
 
             eprintln!(
-                "[GameGenerator] Rejected candidate step {} (avg_attack {:.3} <= incumbent {:.3}, games={})",
-                candidate.model_step, candidate_avg_attack, incumbent_avg_attack, candidate_games
+                "[GameGenerator] Rejected candidate step {} (avg_attack {:.3} <= incumbent {:.3}, games={}, candidate_nn_value_weight {:.6}, incumbent_nn_value_weight {:.6})",
+                candidate.model_step,
+                candidate_avg_attack,
+                incumbent_avg_attack,
+                candidate_games,
+                candidate.nn_value_weight,
+                incumbent_nn_value_weight_before
             );
             0
         };
@@ -1511,9 +1607,12 @@ impl GameGenerator {
                 incumbent_uses_network: incumbent_uses_network_before,
                 incumbent_games,
                 incumbent_avg_attack,
+                incumbent_nn_value_weight: incumbent_nn_value_weight_before,
                 candidate_step: candidate.model_step,
                 candidate_games,
                 candidate_avg_attack,
+                candidate_nn_value_weight: candidate.nn_value_weight,
+                promoted_nn_value_weight,
                 promoted,
                 auto_promoted,
             });
@@ -1525,6 +1624,7 @@ impl GameGenerator {
         base_config: &MCTSConfig,
         uses_network: bool,
         non_network_num_simulations: u32,
+        nn_value_weight: f32,
     ) -> MCTSConfig {
         let mut rollout_config = base_config.clone();
         rollout_config.num_simulations = if uses_network {
@@ -1532,6 +1632,7 @@ impl GameGenerator {
         } else {
             non_network_num_simulations
         };
+        rollout_config.nn_value_weight = nn_value_weight;
         rollout_config
     }
 
@@ -1539,14 +1640,19 @@ impl GameGenerator {
         base_config: &MCTSConfig,
         uses_network: bool,
         non_network_num_simulations: u32,
+        nn_value_weight: f32,
         model_path: Option<&PathBuf>,
         worker_id: usize,
         role: &str,
     ) -> Option<MCTSAgent> {
         // Keep rollout behavior consistent across training and evaluator code paths,
         // including visit_sampling_epsilon and all other shared MCTS settings.
-        let rollout_config =
-            Self::build_rollout_config(base_config, uses_network, non_network_num_simulations);
+        let rollout_config = Self::build_rollout_config(
+            base_config,
+            uses_network,
+            non_network_num_simulations,
+            nn_value_weight,
+        );
         let mut agent = MCTSAgent::new(rollout_config);
         if uses_network {
             let model_path = model_path.expect("network rollout requires model path");
@@ -1889,7 +1995,7 @@ mod tests {
         config.dirichlet_epsilon = 0.3;
         config.nn_value_weight = 0.123;
 
-        let network_config = GameGenerator::build_rollout_config(&config, true, 999);
+        let network_config = GameGenerator::build_rollout_config(&config, true, 999, 0.123);
         assert_eq!(network_config.num_simulations, 123);
         assert_eq!(network_config.visit_sampling_epsilon, 0.42);
         assert_eq!(network_config.temperature, 1.5);
@@ -1897,13 +2003,13 @@ mod tests {
         assert_eq!(network_config.dirichlet_epsilon, 0.3);
         assert_eq!(network_config.nn_value_weight, 0.123);
 
-        let bootstrap_config = GameGenerator::build_rollout_config(&config, false, 999);
+        let bootstrap_config = GameGenerator::build_rollout_config(&config, false, 999, 0.456);
         assert_eq!(bootstrap_config.num_simulations, 999);
         assert_eq!(bootstrap_config.visit_sampling_epsilon, 0.42);
         assert_eq!(bootstrap_config.temperature, 1.5);
         assert_eq!(bootstrap_config.dirichlet_alpha, 0.02);
         assert_eq!(bootstrap_config.dirichlet_epsilon, 0.3);
-        assert_eq!(bootstrap_config.nn_value_weight, 0.123);
+        assert_eq!(bootstrap_config.nn_value_weight, 0.456);
     }
 
     #[test]
@@ -1981,6 +2087,8 @@ mod tests {
             1,
             true,
             10,
+            0,
+            0,
         )
         .expect("generator should construct");
 
@@ -1998,6 +2106,7 @@ mod tests {
             *pending = Some(CandidateModelRequest {
                 model_path: pending_path.clone(),
                 model_step: 1,
+                nn_value_weight: 0.1,
             });
         }
         {
@@ -2005,6 +2114,7 @@ mod tests {
             *evaluating = Some(CandidateModelRequest {
                 model_path: evaluating_path.clone(),
                 model_step: 2,
+                nn_value_weight: 0.2,
             });
         }
 

@@ -24,6 +24,7 @@ CHECKPOINT_DIRNAME = "checkpoints"
 MODEL_CANDIDATES_DIRNAME = "model_candidates"
 CONFIG_FILENAME = "config.json"
 PARALLEL_ONNX_FILENAME = "parallel.onnx"
+INCUMBENT_ONNX_FILENAME = "incumbent.onnx"
 EVAL_ONNX_FILENAME = "eval.onnx"
 EVAL_REPLAYS_FILENAME = "eval_replays.jsonl"
 TRAINING_DATA_FILENAME = "training_data.npz"
@@ -99,6 +100,15 @@ class TrainingConfig:
     )
     nn_value_weight: float = (  # Scale factor for NN value output in MCTS (0.0 ignores value head)
         0.025
+    )
+    nn_value_weight_promotion_multiplier: float = (  # Multiplier for additive promotion delta: delta = current * multiplier
+        1.4
+    )
+    nn_value_weight_promotion_max_delta: float = (  # Hard cap on per-promotion absolute increase in nn_value_weight
+        0.10
+    )
+    nn_value_weight_cap: float = (  # Maximum allowed nn_value_weight during promotion ramp
+        1.0
     )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
@@ -207,6 +217,32 @@ class TrainingConfig:
         if self.nn_value_weight < 0.0:
             raise ValueError(
                 f"nn_value_weight must be >= 0 (got {self.nn_value_weight})"
+            )
+        if (
+            not math.isfinite(self.nn_value_weight_promotion_multiplier)
+            or self.nn_value_weight_promotion_multiplier < 0.0
+        ):
+            raise ValueError(
+                "nn_value_weight_promotion_multiplier must be finite and >= 0 "
+                f"(got {self.nn_value_weight_promotion_multiplier})"
+            )
+        if (
+            not math.isfinite(self.nn_value_weight_promotion_max_delta)
+            or self.nn_value_weight_promotion_max_delta < 0.0
+        ):
+            raise ValueError(
+                "nn_value_weight_promotion_max_delta must be finite and >= 0 "
+                f"(got {self.nn_value_weight_promotion_max_delta})"
+            )
+        if not math.isfinite(self.nn_value_weight_cap) or self.nn_value_weight_cap < 0.0:
+            raise ValueError(
+                "nn_value_weight_cap must be finite and >= 0 "
+                f"(got {self.nn_value_weight_cap})"
+            )
+        if self.nn_value_weight > self.nn_value_weight_cap:
+            raise ValueError(
+                "nn_value_weight must be <= nn_value_weight_cap "
+                f"(got {self.nn_value_weight} > {self.nn_value_weight_cap})"
             )
         if (
             not math.isfinite(self.model_sync_interval_seconds)
