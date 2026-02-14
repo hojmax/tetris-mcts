@@ -77,12 +77,30 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 # Throughput and system metrics are logged (batches/sec, examples/sec, eval throughput,
 # step time, grad norm, and CUDA memory where available).
 python tetris_mcts/scripts/compare_offline_architectures.py \
-    --data_path training_runs/v17/training_data.npz
+    --data_path training_runs/v32/training_data.npz
 
 # Optional: preload selected examples to GPU once to reduce per-batch transfer overhead
 python tetris_mcts/scripts/compare_offline_architectures.py \
-    --data_path training_runs/v17/training_data.npz \
+    --data_path training_runs/v32/training_data.npz \
     --preload_to_gpu true
+```
+
+### Offline Feature Ablation (State Features)
+
+```bash
+# Compare gated-fusion variants with extra board-state diagnostics:
+# no-extra, all-extra, and all-minus-one ablations.
+# Logs per-step metrics for each variant plus overlay charts to WandB.
+# Requires NPZ snapshots that include:
+# column_heights, max_column_heights, min_column_heights,
+# row_fill_counts, total_blocks, bumpiness (and optionally move_numbers).
+python tetris_mcts/scripts/compare_offline_feature_ablation.py \
+    --data_path training_runs/v32/training_data.npz
+
+# Optional: include move_numbers as an additional ablation group
+python tetris_mcts/scripts/compare_offline_feature_ablation.py \
+    --data_path training_runs/v32/training_data.npz \
+    --include_move_number_feature true
 ```
 
 ### Performance Profiling
@@ -188,6 +206,8 @@ tetris_mcts/                 # Python package
     ├── buffer_viewer.py            # Inspect GameGenerator's in-memory buffer
     ├── inspect_training_data.py    # View contents of NPZ files
     ├── analyze_training_data.py    # Compute statistics over training data
+    ├── compare_offline_architectures.py  # Baseline vs gated offline architecture benchmark
+    ├── compare_offline_feature_ablation.py  # Offline sweep over state-feature ablations
     ├── count_reachable_states.py  # Enumerate 734 valid placements
     └── profile_games.py            # Performance profiling of game generation
 ```

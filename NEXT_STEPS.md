@@ -7,6 +7,10 @@
 - [ ] Benchmark conv net depth impact on speed, since caching so high. 96% caching.
 - [ ] What is the right value head weighting for a good network?
 - [ ] Adding in alpha downweighting of value loss?
+- [ ] What the hell do we do about the extreme about of noise in the value head? Also the policy is waay too myopic right now.
+  - Maybe the training loop could in the background run tests on what value head weight to use, and so it could slowly rise over time as the network gets more calibrated?
+  - Train with Huber loss
+  - Train with "n-step bootstrapped return"
 
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler
