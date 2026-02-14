@@ -103,6 +103,23 @@ python tetris_mcts/scripts/compare_offline_feature_ablation.py \
     --include_move_number_feature true
 ```
 
+### Replay Buffer Combo Patch
+
+```bash
+# Patch older replay buffers where combos are not normalized.
+# Rules used by the script:
+# - If max(combos) > 1.0 => not normalized
+# - If combos contain only 0/1 and no intermediate values => not normalized
+# Then it rewrites the NPZ in-place with combos = combos / 12.
+python tetris_mcts/scripts/normalize_combo_feature_npz.py \
+    --data_path training_runs/v17/training_data.npz
+
+# Dry-run check (no file rewrite)
+python tetris_mcts/scripts/normalize_combo_feature_npz.py \
+    --data_path training_runs/v17/training_data.npz \
+    --dry_run true
+```
+
 ### Performance Profiling
 
 **Timing Benchmarks** (saves results to JSONL):
@@ -208,6 +225,7 @@ tetris_mcts/                 # Python package
     ├── analyze_training_data.py    # Compute statistics over training data
     ├── compare_offline_architectures.py  # Baseline vs gated offline architecture benchmark
     ├── compare_offline_feature_ablation.py  # Offline sweep over state-feature ablations
+    ├── normalize_combo_feature_npz.py  # In-place combo normalization patch for old NPZ buffers
     ├── count_reachable_states.py  # Enumerate 734 valid placements
     └── profile_games.py            # Performance profiling of game generation
 ```
