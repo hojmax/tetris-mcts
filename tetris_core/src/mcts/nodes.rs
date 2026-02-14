@@ -75,6 +75,15 @@ pub struct DecisionNode {
 }
 
 impl DecisionNode {
+    fn normalize_action_priors(&mut self) {
+        let sum: f32 = self.action_priors.iter().sum();
+        if sum > 0.0 {
+            for prior in &mut self.action_priors {
+                *prior /= sum;
+            }
+        }
+    }
+
     pub fn new(state: TetrisEnv, move_number: u32) -> Self {
         let is_terminal = state.game_over;
 
@@ -102,15 +111,21 @@ impl DecisionNode {
     /// Set priors and value from neural network output
     pub fn set_nn_output(&mut self, policy: &[f32], value: f32) {
         self.action_priors = self.valid_actions.iter().map(|&idx| policy[idx]).collect();
+        self.normalize_action_priors();
+        self.nn_value = value;
+    }
 
-        // Normalize priors over valid actions
-        let sum: f32 = self.action_priors.iter().sum();
-        if sum > 0.0 {
-            for p in &mut self.action_priors {
-                *p /= sum;
-            }
-        }
-
+    /// Set priors and value from action priors already aligned with valid_actions.
+    pub fn set_nn_output_for_valid_actions(&mut self, action_priors: &[f32], value: f32) {
+        assert_eq!(
+            action_priors.len(),
+            self.valid_actions.len(),
+            "NN action priors len {} does not match valid actions len {}",
+            action_priors.len(),
+            self.valid_actions.len()
+        );
+        self.action_priors = action_priors.to_vec();
+        self.normalize_action_priors();
         self.nn_value = value;
     }
 
@@ -193,8 +208,8 @@ pub struct ChanceNode {
     pub bag_remaining: Vec<usize>,
     /// Raw neural network value estimate (stored when node is expanded)
     pub nn_value: f32,
-    /// Cached policy from NN (shared by all DecisionNode children)
-    pub cached_policy: Vec<f32>,
+    /// Cached priors over valid actions (shared by all DecisionNode children)
+    pub cached_action_priors: Vec<f32>,
     /// All backed-up total values that contributed to value_sum (only when track_value_history=true)
     pub value_history: Option<Vec<f32>>,
 }
@@ -207,7 +222,7 @@ impl ChanceNode {
         move_number: u32,
         bag_remaining: Vec<usize>,
         nn_value: f32,
-        cached_policy: Vec<f32>,
+        cached_action_priors: Vec<f32>,
     ) -> Self {
         ChanceNode {
             state,
@@ -219,7 +234,7 @@ impl ChanceNode {
             move_number,
             bag_remaining,
             nn_value,
-            cached_policy,
+            cached_action_priors,
             value_history: None,
         }
     }
@@ -300,6 +315,24 @@ mod tests {
         assert_eq!(node.action_priors.len(), node.valid_actions.len());
 
         // NN value should be stored
+        assert!((node.nn_value - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_decision_node_set_nn_output_for_valid_actions() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env, 0);
+
+        let action_priors = vec![1.0; node.valid_actions.len()];
+        node.set_nn_output_for_valid_actions(&action_priors, 0.5);
+
+        let sum: f32 = node.action_priors.iter().sum();
+        assert!(
+            (sum - 1.0).abs() < 0.01,
+            "Priors should sum to 1, got {}",
+            sum
+        );
+        assert_eq!(node.action_priors.len(), node.valid_actions.len());
         assert!((node.nn_value - 0.5).abs() < 0.01);
     }
 
@@ -419,7 +452,7 @@ mod tests {
         assert_eq!(node.overhang_fields, 0);
         assert!(node.children.is_empty());
         assert_eq!(node.bag_remaining, bag);
-        assert_eq!(node.cached_policy.len(), NUM_ACTIONS);
+        assert_eq!(node.cached_action_priors.len(), policy.len());
     }
 
     #[test]

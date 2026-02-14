@@ -260,8 +260,8 @@ impl TetrisNN {
             .into());
         }
 
-        let policy = masked_softmax_from_valid_actions(&policy_logits, valid_actions);
-        Ok((policy, value))
+        let action_priors = softmax_over_valid_actions(&policy_logits, valid_actions);
+        Ok((action_priors, value))
     }
 
     pub fn predict_masked_from_tensors(
@@ -738,8 +738,10 @@ pub fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
 }
 
 /// Softmax over precomputed valid action indices.
-pub fn masked_softmax_from_valid_actions(logits: &[f32], valid_actions: &[usize]) -> Vec<f32> {
-    let mut result = vec![0.0; logits.len()];
+///
+/// Returns priors aligned with `valid_actions` order.
+pub fn softmax_over_valid_actions(logits: &[f32], valid_actions: &[usize]) -> Vec<f32> {
+    let mut result = vec![0.0; valid_actions.len()];
     if valid_actions.is_empty() {
         return result;
     }
@@ -750,15 +752,15 @@ pub fn masked_softmax_from_valid_actions(logits: &[f32], valid_actions: &[usize]
     }
 
     let mut sum = 0.0;
-    for &action_idx in valid_actions {
+    for (i, &action_idx) in valid_actions.iter().enumerate() {
         let exp_val = (logits[action_idx] - max_logit).exp();
-        result[action_idx] = exp_val;
+        result[i] = exp_val;
         sum += exp_val;
     }
 
     if sum > 0.0 {
-        for &action_idx in valid_actions {
-            result[action_idx] /= sum;
+        for prior in &mut result {
+            *prior /= sum;
         }
     }
 

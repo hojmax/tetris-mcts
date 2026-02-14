@@ -371,7 +371,7 @@ Tests are in:
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
 
-Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board))`. `fc.bin` stores `board_proj` weights/bias only, and Rust validates that `conv.onnx` output width matches `fc.bin` columns, so changing `conv_filters[-1]` still does not require a Rust constant edit. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
+Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board))`. `fc.bin` stores `board_proj` weights/bias only, and Rust validates that `conv.onnx` output width matches `fc.bin` columns, so changing `conv_filters[-1]` still does not require a Rust constant edit. MCTS leaf expansion now keeps NN priors sparse (aligned to valid actions) instead of materializing dense 735-action vectors for chance-node caching. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
 
 ### Training a model
 

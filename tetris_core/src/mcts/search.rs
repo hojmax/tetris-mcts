@@ -38,19 +38,12 @@ fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> 
         .map(|(idx, _)| idx)
 }
 
-#[cfg(test)]
-fn uniform_policy_from_valid_actions(valid_actions: &[usize]) -> Vec<f32> {
-    let mut policy = vec![0.0; NUM_ACTIONS];
-    if valid_actions.is_empty() {
-        return policy;
+fn uniform_action_priors_for_valid_actions(valid_action_count: usize) -> Vec<f32> {
+    if valid_action_count == 0 {
+        return Vec::new();
     }
 
-    let probability = 1.0 / valid_actions.len() as f32;
-    for &action_idx in valid_actions {
-        debug_assert!(action_idx < policy.len());
-        policy[action_idx] = probability;
-    }
-    policy
+    vec![1.0 / valid_action_count as f32; valid_action_count]
 }
 
 fn scale_nn_value(value: f32, nn_value_weight: f32) -> f32 {
@@ -106,8 +99,11 @@ impl LeafEvaluator for BootstrapLeafEvaluator {
         _move_number: u32,
         _max_placements: u32,
     ) -> Option<(Vec<f32>, f32)> {
-        let uniform_policy = state.get_cached_uniform_policy();
-        Some((uniform_policy.as_ref().clone(), 0.0))
+        let valid_actions = state.get_cached_valid_action_indices_arc();
+        Some((
+            uniform_action_priors_for_valid_actions(valid_actions.len()),
+            0.0,
+        ))
     }
 }
 
@@ -298,7 +294,7 @@ fn expand_action<E: LeafEvaluator>(
     let overhang_fields = super::utils::count_overhang_fields(&new_state);
     new_state.truncate_queue(QUEUE_SIZE);
     let bag_remaining = new_state.get_possible_next_pieces();
-    let (policy, value) = evaluator.evaluate(&new_state, move_number, max_placements)?;
+    let (action_priors, value) = evaluator.evaluate(&new_state, move_number, max_placements)?;
 
     Some(MCTSNode::Chance(ChanceNode::new(
         new_state,
@@ -307,7 +303,7 @@ fn expand_action<E: LeafEvaluator>(
         move_number,
         bag_remaining,
         value,
-        policy,
+        action_priors,
     )))
 }
 
@@ -328,9 +324,9 @@ fn expand_chance(parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNod
 
     let mut node = DecisionNode::new(new_state, move_number);
 
-    // Use cached policy and value from parent ChanceNode
+    // Use cached action priors and value from parent ChanceNode
     // (All children see the same visible state - only the hidden 6th queue piece differs)
-    node.set_nn_output(&parent.cached_policy, parent.nn_value);
+    node.set_nn_output_for_valid_actions(&parent.cached_action_priors, parent.nn_value);
 
     MCTSNode::Decision(node)
 }
@@ -621,7 +617,7 @@ mod tests {
         ) -> Option<(Vec<f32>, f32)> {
             let valid_actions = state.get_cached_valid_action_indices_arc();
             Some((
-                uniform_policy_from_valid_actions(valid_actions.as_slice()),
+                uniform_action_priors_for_valid_actions(valid_actions.len()),
                 self.value,
             ))
         }
