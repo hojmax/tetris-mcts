@@ -1643,6 +1643,9 @@ impl GameGenerator {
             non_network_num_simulations
         };
         rollout_config.nn_value_weight = nn_value_weight;
+        if !uses_network {
+            rollout_config.q_scale = None;
+        }
         rollout_config
     }
 
@@ -2004,6 +2007,7 @@ mod tests {
         config.dirichlet_alpha = 0.02;
         config.dirichlet_epsilon = 0.3;
         config.nn_value_weight = 0.123;
+        config.q_scale = Some(7.5);
 
         let network_config = GameGenerator::build_rollout_config(&config, true, 999, 0.123);
         assert_eq!(network_config.num_simulations, 123);
@@ -2012,6 +2016,7 @@ mod tests {
         assert_eq!(network_config.dirichlet_alpha, 0.02);
         assert_eq!(network_config.dirichlet_epsilon, 0.3);
         assert_eq!(network_config.nn_value_weight, 0.123);
+        assert_eq!(network_config.q_scale, Some(7.5));
 
         let bootstrap_config = GameGenerator::build_rollout_config(&config, false, 999, 0.456);
         assert_eq!(bootstrap_config.num_simulations, 999);
@@ -2020,6 +2025,7 @@ mod tests {
         assert_eq!(bootstrap_config.dirichlet_alpha, 0.02);
         assert_eq!(bootstrap_config.dirichlet_epsilon, 0.3);
         assert_eq!(bootstrap_config.nn_value_weight, 0.456);
+        assert_eq!(bootstrap_config.q_scale, None);
     }
 
     #[test]

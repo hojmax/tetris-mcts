@@ -18,10 +18,13 @@ const Q_NORMALIZATION_EPSILON: f32 = 1e-6;
 fn normalize_q_value(q: f32, q_min: f32, q_max: f32) -> f32 {
     let range = q_max - q_min;
     if range.abs() < Q_NORMALIZATION_EPSILON {
-        // If all sibling Q values are effectively identical, keep this term neutral.
         return 0.5;
     }
     (q - q_min) / range
+}
+
+fn squash_q_value(q: f32, q_scale: f32) -> f32 {
+    (q / q_scale).tanh()
 }
 
 /// MCTS Node types
@@ -137,8 +140,10 @@ impl DecisionNode {
         }
     }
 
-    /// Select best action using PUCT formula with sibling min-max normalized Q values.
-    pub fn select_action(&self, c_puct: f32) -> usize {
+    /// Select best action using PUCT formula.
+    /// When `q_scale` is `Some(scale)`, uses tanh Q squashing (NN mode).
+    /// When `q_scale` is `None`, uses sibling min-max Q normalization (bootstrap mode).
+    pub fn select_action(&self, c_puct: f32, q_scale: Option<f32>) -> usize {
         let sqrt_total = (self.visit_count as f32).sqrt();
         let mut q_min = f32::INFINITY;
         let mut q_max = f32::NEG_INFINITY;
@@ -152,8 +157,10 @@ impl DecisionNode {
             } else {
                 (0.0, 0)
             };
-            q_min = q_min.min(q);
-            q_max = q_max.max(q);
+            if q_scale.is_none() {
+                q_min = q_min.min(q);
+                q_max = q_max.max(q);
+            }
             action_stats.push((action_idx, prior, q, n));
         }
 
@@ -161,12 +168,13 @@ impl DecisionNode {
         let mut best_value = f32::NEG_INFINITY;
 
         for (action_idx, prior, q, n) in action_stats {
-            let normalized_q = normalize_q_value(q, q_min, q_max);
-            // PUCT formula: Q_norm + c * P * sqrt(N_parent) / (1 + N_child)
+            let transformed_q = match q_scale {
+                Some(scale) => squash_q_value(q, scale),
+                None => normalize_q_value(q, q_min, q_max),
+            };
             let u = c_puct * prior * sqrt_total / (1.0 + n as f32);
-            let value = normalized_q + u;
+            let value = transformed_q + u;
 
-            // Use action_idx as tiebreaker for more consistent selection
             if value > best_value || (value == best_value && action_idx < best_action) {
                 best_value = value;
                 best_action = action_idx;
@@ -413,8 +421,11 @@ mod tests {
         let policy = vec![1.0; NUM_ACTIONS];
         node.set_nn_output(&policy, 0.0);
 
-        // With no visits, selection should return a valid action
-        let action = node.select_action(1.0);
+        // With no visits, selection should return a valid action (tanh mode)
+        let action = node.select_action(1.0, Some(8.0));
+        assert!(node.valid_actions.contains(&action));
+        // Also with min-max mode
+        let action = node.select_action(1.0, None);
         assert!(node.valid_actions.contains(&action));
     }
 
@@ -435,7 +446,7 @@ mod tests {
         node.children.insert(action_idx, MCTSNode::Chance(child));
 
         // Selection should consider the child's value
-        let selected = node.select_action(1.0);
+        let selected = node.select_action(1.0, Some(8.0));
         assert!(node.valid_actions.contains(&selected));
     }
 
@@ -581,7 +592,7 @@ mod tests {
         node.visit_count = 1;
 
         // With high c_puct, should explore high-prior actions
-        let action = node.select_action(10.0);
+        let action = node.select_action(10.0, Some(8.0));
         assert!(node.valid_actions.contains(&action));
     }
 
@@ -618,9 +629,56 @@ mod tests {
         node.children
             .insert(high_prior_action, MCTSNode::Chance(high_prior_child));
 
-        // Raw-Q PUCT would choose high_q_action; normalized-Q PUCT should
+        // Raw-Q PUCT would choose high_q_action; min-max normalized-Q PUCT should
         // let the strong prior/exploration term win here.
-        let selected = node.select_action(1.0);
+        let selected = node.select_action(1.0, None);
+        assert_eq!(selected, high_prior_action);
+    }
+
+    #[test]
+    fn test_squash_q_value_zero_centered_and_symmetric() {
+        assert!((squash_q_value(0.0, 8.0) - 0.0).abs() < 1e-6);
+        assert!((squash_q_value(4.0, 8.0) + squash_q_value(-4.0, 8.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_squash_q_value_clips_extremes() {
+        let high = squash_q_value(1000.0, 8.0);
+        let low = squash_q_value(-1000.0, 8.0);
+        assert!(high > 0.999);
+        assert!(low < -0.999);
+    }
+
+    #[test]
+    fn test_decision_node_select_action_uses_tanh_q_squashing() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env.clone(), 0);
+
+        let high_q_action = node.valid_actions[0];
+        let high_prior_action = node.valid_actions[1];
+        node.valid_actions = vec![high_q_action, high_prior_action];
+
+        let mut policy = vec![0.0; NUM_ACTIONS];
+        policy[high_q_action] = 0.01;
+        policy[high_prior_action] = 0.99;
+        node.set_nn_output(&policy, 0.0);
+        node.visit_count = 100;
+
+        let mut high_q_child = ChanceNode::new(env.clone(), 0, 0, 0, vec![], 0.0, vec![]);
+        high_q_child.visit_count = 10;
+        high_q_child.value_sum = 2000.0; // mean Q = 200
+        node.children
+            .insert(high_q_action, MCTSNode::Chance(high_q_child));
+
+        let mut high_prior_child = ChanceNode::new(env, 0, 0, 0, vec![], 0.0, vec![]);
+        high_prior_child.visit_count = 1;
+        high_prior_child.value_sum = 100.0; // mean Q = 100
+        node.children
+            .insert(high_prior_action, MCTSNode::Chance(high_prior_child));
+
+        // With tanh Q squashing both Q terms saturate near +1, so the strong
+        // prior/exploration term should dominate this comparison.
+        let selected = node.select_action(1.0, Some(8.0));
         assert_eq!(selected, high_prior_action);
     }
 

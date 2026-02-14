@@ -359,6 +359,7 @@ class Trainer:
             eval_seeds=config.eval_seeds,
             eval_mcts_seed=config.eval_mcts_seed,
             nn_value_weight=config.nn_value_weight,
+            q_scale=config.q_scale,
         )
 
         # Training state
@@ -1051,6 +1052,7 @@ class Trainer:
         mcts_config.death_penalty = self.config.death_penalty
         mcts_config.overhang_penalty_weight = self.config.overhang_penalty_weight
         mcts_config.nn_value_weight = self.config.nn_value_weight
+        mcts_config.q_scale = self.config.q_scale
 
         # Start background game generator
         training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME
