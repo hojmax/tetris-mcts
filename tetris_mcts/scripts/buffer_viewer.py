@@ -96,6 +96,14 @@ class BufferViewer:
         combo_feature = float(self.data["combos"][i])
         back_to_back_raw = float(self.data["back_to_back"][i])
         next_hidden_piece_probs_raw = self.data["next_hidden_piece_probs"][i]
+        column_heights_raw = self.data["column_heights"][i]
+        max_column_height_raw = float(self.data["max_column_heights"][i])
+        min_column_height_raw = float(self.data["min_column_heights"][i])
+        row_fill_counts_raw = self.data["row_fill_counts"][i]
+        total_blocks_raw = float(self.data["total_blocks"][i])
+        bumpiness_raw = float(self.data["bumpiness"][i])
+        holes_raw = float(self.data["holes"][i])
+        overhang_fields_raw = float(self.data["overhang_fields"][i])
         current_piece = get_piece_type(self.data["current_pieces"][i])
         hold_piece = get_piece_type(self.data["hold_pieces"][i])
         next_queue = [
@@ -117,6 +125,14 @@ class BufferViewer:
                 combo_feature=combo_feature,
                 back_to_back=back_to_back_raw,
                 next_hidden_piece_probs=next_hidden_piece_probs_raw,
+                column_heights=column_heights_raw,
+                max_column_height=max_column_height_raw,
+                min_column_height=min_column_height_raw,
+                row_fill_counts=row_fill_counts_raw,
+                total_blocks=total_blocks_raw,
+                bumpiness=bumpiness_raw,
+                holes=holes_raw,
+                overhang_fields=overhang_fields_raw,
             )
 
         return {

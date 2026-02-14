@@ -31,7 +31,26 @@ from tetris_mcts.config import (
     TRAINING_DATA_FILENAME,
     TrainingConfig,
 )
-from tetris_mcts.ml.network import TetrisNet
+from tetris_mcts.ml.network import (
+    AUX_FEATURES,
+    BACK_TO_BACK_FEATURES,
+    BUMPINESS_FEATURES,
+    COLUMN_HEIGHT_FEATURES,
+    COMBO_FEATURES,
+    CURRENT_PIECE_FEATURES,
+    HIDDEN_PIECE_DISTRIBUTION_FEATURES,
+    HOLD_AVAILABLE_FEATURES,
+    HOLD_PIECE_FEATURES,
+    HOLES_FEATURES,
+    MAX_COLUMN_HEIGHT_FEATURES,
+    MIN_COLUMN_HEIGHT_FEATURES,
+    MOVE_NUMBER_FEATURES,
+    OVERHANG_FIELDS_FEATURES,
+    QUEUE_FEATURES,
+    ROW_FILL_COUNT_FEATURES,
+    TOTAL_BLOCKS_FEATURES,
+    TetrisNet,
+)
 from tetris_mcts.ml.weights import (
     WeightManager,
     export_onnx,
@@ -97,6 +116,94 @@ class ReplayMirror:
     @property
     def device(self) -> torch.device:
         return self.batch.device
+
+
+@dataclass(frozen=True)
+class AuxFeatureLayout:
+    column_heights: slice
+    max_column_height: int
+    min_column_height: int
+    row_fill_counts: slice
+    total_blocks: int
+    bumpiness: int
+    holes: int
+    overhang_fields: int
+
+
+def build_aux_feature_layout() -> AuxFeatureLayout:
+    aux_idx = 0
+    aux_idx += CURRENT_PIECE_FEATURES
+    aux_idx += HOLD_PIECE_FEATURES
+    aux_idx += HOLD_AVAILABLE_FEATURES
+    aux_idx += QUEUE_FEATURES
+    aux_idx += MOVE_NUMBER_FEATURES
+    aux_idx += COMBO_FEATURES
+    aux_idx += BACK_TO_BACK_FEATURES
+    aux_idx += HIDDEN_PIECE_DISTRIBUTION_FEATURES
+
+    column_heights = slice(aux_idx, aux_idx + COLUMN_HEIGHT_FEATURES)
+    aux_idx += COLUMN_HEIGHT_FEATURES
+    max_column_height = aux_idx
+    aux_idx += MAX_COLUMN_HEIGHT_FEATURES
+    min_column_height = aux_idx
+    aux_idx += MIN_COLUMN_HEIGHT_FEATURES
+    row_fill_counts = slice(aux_idx, aux_idx + ROW_FILL_COUNT_FEATURES)
+    aux_idx += ROW_FILL_COUNT_FEATURES
+    total_blocks = aux_idx
+    aux_idx += TOTAL_BLOCKS_FEATURES
+    bumpiness = aux_idx
+    aux_idx += BUMPINESS_FEATURES
+    holes = aux_idx
+    aux_idx += HOLES_FEATURES
+    overhang_fields = aux_idx
+    aux_idx += OVERHANG_FIELDS_FEATURES
+
+    if aux_idx != AUX_FEATURES:
+        raise ValueError(
+            f"Aux feature layout mismatch: computed {aux_idx}, expected {AUX_FEATURES}"
+        )
+
+    return AuxFeatureLayout(
+        column_heights=column_heights,
+        max_column_height=max_column_height,
+        min_column_height=min_column_height,
+        row_fill_counts=row_fill_counts,
+        total_blocks=total_blocks,
+        bumpiness=bumpiness,
+        holes=holes,
+        overhang_fields=overhang_fields,
+    )
+
+
+AUX_FEATURE_LAYOUT = build_aux_feature_layout()
+
+
+def compute_batch_feature_metrics(
+    boards: torch.Tensor,
+    aux: torch.Tensor,
+    value_targets: torch.Tensor,
+    overhang_fields: torch.Tensor,
+    masks: torch.Tensor,
+) -> dict[str, float]:
+    layout = AUX_FEATURE_LAYOUT
+    row_fill_counts = aux[:, layout.row_fill_counts]
+    max_column_heights = aux[:, layout.max_column_height]
+    min_column_heights = aux[:, layout.min_column_height]
+    total_blocks = aux[:, layout.total_blocks]
+    bumpiness = aux[:, layout.bumpiness]
+    holes = aux[:, layout.holes]
+
+    return {
+        "batch/value_target_mean": value_targets.mean().item(),
+        "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
+        "batch/board_fill_mean": total_blocks.mean().item(),
+        "batch/max_height_mean": max_column_heights.mean().item(),
+        "batch/min_height_mean": min_column_heights.mean().item(),
+        "batch/row_fill_mean": row_fill_counts.mean().item(),
+        "batch/bumpiness_mean": bumpiness.mean().item(),
+        "batch/holes_mean": holes.mean().item(),
+        "batch/overhang_fields_mean": overhang_fields.mean().item(),
+    }
 
 
 def assert_rust_inference_artifacts(onnx_path: Path) -> None:
@@ -585,10 +692,16 @@ class Trainer:
             "train/value_loss_weight": value_loss_weight,
             "train/grad_norm": grad_norm.item(),
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
-            "batch/value_target_mean": value_targets.mean().item(),
-            "batch/overhang_fields_mean": overhang_fields.mean().item(),
-            "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         }
+        metrics.update(
+            compute_batch_feature_metrics(
+                boards=boards,
+                aux=aux,
+                value_targets=value_targets,
+                overhang_fields=overhang_fields,
+                masks=masks,
+            )
+        )
         return metrics
 
     def _compute_extra_train_metrics(self, batch: TrainingBatch) -> dict:

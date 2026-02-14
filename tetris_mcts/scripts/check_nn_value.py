@@ -4,13 +4,13 @@ import numpy as np
 import onnxruntime as ort
 
 from tetris_mcts.config import PROJECT_ROOT
+from tetris_mcts.ml.network import AUX_FEATURES
 
 # Piece name -> index mapping (matches constants.rs / config.py PIECE_NAMES)
 PIECE_INDEX = {"I": 0, "O": 1, "T": 2, "S": 3, "Z": 4, "J": 5, "L": 6}
 NUM_PIECE_TYPES = 7
 BOARD_HEIGHT = 20
 BOARD_WIDTH = 10
-AUX_FEATURES = 61  # 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7
 MAX_PLACEMENTS = 100
 COMBO_NORMALIZATION_MAX = 12.0
 
@@ -33,6 +33,20 @@ BOARD[17, 0] = 1.0  # row 17, col 0
 BOARD[18, 0] = 1.0  # row 18, col 0
 BOARD[18, 1] = 1.0  # row 18, col 1
 BOARD[19, 0] = 1.0  # row 19, col 0
+COLUMN_HEIGHTS = np.array(
+    [0.15, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    dtype=np.float32,
+)
+MAX_COLUMN_HEIGHT = 0.15
+MIN_COLUMN_HEIGHT = 0.0
+ROW_FILL_COUNTS = np.array(
+    [0.0] * 17 + [0.1, 0.2, 0.1],
+    dtype=np.float32,
+)
+TOTAL_BLOCKS = 0.02
+BUMPINESS = 5.0 / 3600.0
+HOLES = 0.0
+OVERHANG_FIELDS = 1.0 / 190.0
 
 EXPECTED_VALUE = 0.567
 MODEL_PATH = PROJECT_ROOT / "training_runs" / "v6" / "checkpoints" / "parallel.onnx"
@@ -51,6 +65,14 @@ def encode_aux(
     combo: int,
     back_to_back: bool,
     next_hidden_piece_probs: list[float],
+    column_heights: np.ndarray,
+    max_column_height: float,
+    min_column_height: float,
+    row_fill_counts: np.ndarray,
+    total_blocks: float,
+    bumpiness: float,
+    holes: float,
+    overhang_fields: float,
 ) -> np.ndarray:
     if len(next_hidden_piece_probs) != NUM_PIECE_TYPES:
         raise ValueError(
@@ -99,6 +121,30 @@ def encode_aux(
     )
     idx += NUM_PIECE_TYPES
 
+    aux[idx : idx + BOARD_WIDTH] = column_heights.astype(np.float32)
+    idx += BOARD_WIDTH
+
+    aux[idx] = max_column_height
+    idx += 1
+
+    aux[idx] = min_column_height
+    idx += 1
+
+    aux[idx : idx + BOARD_HEIGHT] = row_fill_counts.astype(np.float32)
+    idx += BOARD_HEIGHT
+
+    aux[idx] = total_blocks
+    idx += 1
+
+    aux[idx] = bumpiness
+    idx += 1
+
+    aux[idx] = holes
+    idx += 1
+
+    aux[idx] = overhang_fields
+    idx += 1
+
     assert idx == AUX_FEATURES
     return aux.reshape(1, AUX_FEATURES)
 
@@ -114,6 +160,14 @@ def main() -> None:
         COMBO,
         BACK_TO_BACK,
         NEXT_HIDDEN_PIECE_PROBS,
+        COLUMN_HEIGHTS,
+        MAX_COLUMN_HEIGHT,
+        MIN_COLUMN_HEIGHT,
+        ROW_FILL_COUNTS,
+        TOTAL_BLOCKS,
+        BUMPINESS,
+        HOLES,
+        OVERHANG_FIELDS,
     )
 
     print(f"Board tensor shape: {board_tensor.shape}")
@@ -141,6 +195,13 @@ def main() -> None:
     print(f"Encoded combo:         {aux[52]} (raw {COMBO})")
     print(f"Encoded back-to-back:  {aux[53]}")
     print(f"Encoded hidden dist:   {aux[54:61].tolist()}")
+    print(f"Encoded column heights:{aux[61:71].tolist()}")
+    print(f"Encoded max/min h:     {aux[71]:.4f} / {aux[72]:.4f}")
+    print(f"Encoded row fills:     {aux[73:93].tolist()}")
+    print(f"Encoded total blocks:  {aux[93]:.4f}")
+    print(f"Encoded bumpiness:     {aux[94]:.4f}")
+    print(f"Encoded holes:         {aux[95]:.4f}")
+    print(f"Encoded overhang:      {aux[96]:.4f}")
     print()
 
     # Load ONNX and run inference

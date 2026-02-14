@@ -15,7 +15,6 @@ from simple_parsing import parse
 
 from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, PROJECT_ROOT
 from tetris_mcts.ml.loss import compute_loss
-from tetris_mcts.ml.network import AUX_FEATURES
 
 logger = structlog.get_logger()
 
@@ -33,6 +32,8 @@ REQUIRED_NPZ_BASE_KEYS = (
     "value_targets",
     "action_masks",
 )
+
+BASE_AUX_FEATURES = 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,16 @@ CORE_EXTRA_FEATURE_GROUPS = (
     ExtraFeatureGroup(
         name="bumpiness",
         npz_key="bumpiness",
+        width=1,
+    ),
+    ExtraFeatureGroup(
+        name="holes",
+        npz_key="holes",
+        width=1,
+    ),
+    ExtraFeatureGroup(
+        name="overhang_fields",
+        npz_key="overhang_fields",
         width=1,
     ),
 )
@@ -250,7 +261,7 @@ def build_feature_variants(
             name="no_extra_features",
             wandb_prefix="no_extra_features",
             included_groups=tuple(),
-            aux_features=AUX_FEATURES,
+            aux_features=BASE_AUX_FEATURES,
         )
     ]
 
@@ -260,7 +271,7 @@ def build_feature_variants(
             name="all_extra_features",
             wandb_prefix="all_extra_features",
             included_groups=extra_feature_groups,
-            aux_features=AUX_FEATURES + all_width,
+            aux_features=BASE_AUX_FEATURES + all_width,
         )
     )
 
@@ -271,7 +282,7 @@ def build_feature_variants(
                 name=f"all_without_{group.name}",
                 wandb_prefix=f"all_without_{group.name}",
                 included_groups=included_groups,
-                aux_features=AUX_FEATURES + sum(g.width for g in included_groups),
+                aux_features=BASE_AUX_FEATURES + sum(g.width for g in included_groups),
             )
         )
 
@@ -1041,7 +1052,7 @@ def main(args: ScriptArgs) -> None:
                 "dataset/val_eval_examples": len(val_eval_local_indices),
                 "dataset/preload_mode": preload_mode,
                 "dataset/num_feature_variants": len(variants),
-                "dataset/base_aux_features": AUX_FEATURES,
+                "dataset/base_aux_features": BASE_AUX_FEATURES,
             }
         )
 
@@ -1094,7 +1105,7 @@ def main(args: ScriptArgs) -> None:
                 ),
                 f"variants/{variant.wandb_prefix}/aux_features": variant.aux_features,
                 f"variants/{variant.wandb_prefix}/extra_aux_features": (
-                    variant.aux_features - AUX_FEATURES
+                    variant.aux_features - BASE_AUX_FEATURES
                 ),
                 f"variants/{variant.wandb_prefix}/num_extra_feature_groups": len(
                     variant.included_groups

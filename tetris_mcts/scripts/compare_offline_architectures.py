@@ -28,6 +28,14 @@ REQUIRED_NPZ_KEYS = (
     "combos",
     "back_to_back",
     "next_hidden_piece_probs",
+    "column_heights",
+    "max_column_heights",
+    "min_column_heights",
+    "row_fill_counts",
+    "total_blocks",
+    "bumpiness",
+    "holes",
+    "overhang_fields",
     "policy_targets",
     "value_targets",
     "action_masks",
@@ -547,6 +555,22 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
         raise ValueError("next_queue must have shape (N, 5, 7)")
     if data["next_hidden_piece_probs"].shape[1] != 7:
         raise ValueError("next_hidden_piece_probs must have shape (N, 7)")
+    if data["column_heights"].shape != (n, BOARD_WIDTH):
+        raise ValueError(f"column_heights must have shape ({n}, {BOARD_WIDTH})")
+    if data["max_column_heights"].shape != (n,):
+        raise ValueError("max_column_heights must have shape (N,)")
+    if data["min_column_heights"].shape != (n,):
+        raise ValueError("min_column_heights must have shape (N,)")
+    if data["row_fill_counts"].shape != (n, BOARD_HEIGHT):
+        raise ValueError(f"row_fill_counts must have shape ({n}, {BOARD_HEIGHT})")
+    if data["total_blocks"].shape != (n,):
+        raise ValueError("total_blocks must have shape (N,)")
+    if data["bumpiness"].shape != (n,):
+        raise ValueError("bumpiness must have shape (N,)")
+    if data["holes"].shape != (n,):
+        raise ValueError("holes must have shape (N,)")
+    if data["overhang_fields"].shape != (n,):
+        raise ValueError("overhang_fields must have shape (N,)")
     if data["policy_targets"].shape[1] != NUM_ACTIONS:
         raise ValueError(f"policy_targets must have shape (N, {NUM_ACTIONS})")
     if data["action_masks"].shape[1] != NUM_ACTIONS:
@@ -561,6 +585,14 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
         "combos",
         "back_to_back",
         "next_hidden_piece_probs",
+        "column_heights",
+        "max_column_heights",
+        "min_column_heights",
+        "row_fill_counts",
+        "total_blocks",
+        "bumpiness",
+        "holes",
+        "overhang_fields",
         "policy_targets",
         "value_targets",
         "action_masks",
@@ -609,6 +641,20 @@ def build_aux_batch_from_npz(
     next_hidden_piece_probs = data["next_hidden_piece_probs"][global_indices].astype(
         np.float32, copy=False
     )
+    column_heights = data["column_heights"][global_indices].astype(np.float32, copy=False)
+    max_column_heights = (
+        data["max_column_heights"][global_indices].astype(np.float32).reshape(-1, 1)
+    )
+    min_column_heights = (
+        data["min_column_heights"][global_indices].astype(np.float32).reshape(-1, 1)
+    )
+    row_fill_counts = data["row_fill_counts"][global_indices].astype(np.float32, copy=False)
+    total_blocks = data["total_blocks"][global_indices].astype(np.float32).reshape(-1, 1)
+    bumpiness = data["bumpiness"][global_indices].astype(np.float32).reshape(-1, 1)
+    holes = data["holes"][global_indices].astype(np.float32).reshape(-1, 1)
+    overhang_fields = (
+        data["overhang_fields"][global_indices].astype(np.float32).reshape(-1, 1)
+    )
     return np.concatenate(
         [
             current_pieces,
@@ -619,6 +665,14 @@ def build_aux_batch_from_npz(
             combos,
             back_to_back,
             next_hidden_piece_probs,
+            column_heights,
+            max_column_heights,
+            min_column_heights,
+            row_fill_counts,
+            total_blocks,
+            bumpiness,
+            holes,
+            overhang_fields,
         ],
         axis=1,
     )

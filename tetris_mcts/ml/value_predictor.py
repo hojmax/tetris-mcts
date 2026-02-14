@@ -43,6 +43,14 @@ class ValuePredictor:
         combo_feature: float,
         back_to_back: float,
         next_hidden_piece_probs: np.ndarray,
+        column_heights: np.ndarray,
+        max_column_height: float,
+        min_column_height: float,
+        row_fill_counts: np.ndarray,
+        total_blocks: float,
+        bumpiness: float,
+        holes: float,
+        overhang_fields: float,
     ) -> float:
         if index in self.value_cache:
             return self.value_cache[index]
@@ -59,6 +67,14 @@ class ValuePredictor:
             combo_feature=combo_feature,
             back_to_back=back_to_back,
             next_hidden_piece_probs=next_hidden_piece_probs,
+            column_heights=column_heights,
+            max_column_height=max_column_height,
+            min_column_height=min_column_height,
+            row_fill_counts=row_fill_counts,
+            total_blocks=total_blocks,
+            bumpiness=bumpiness,
+            holes=holes,
+            overhang_fields=overhang_fields,
         )
         aux_tensor = torch.from_numpy(aux).reshape(1, -1)
 

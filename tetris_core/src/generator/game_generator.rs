@@ -1024,6 +1024,14 @@ impl GameGenerator {
                 ex.combo,
                 ex.back_to_back,
                 &ex.next_hidden_piece_probs,
+                &ex.column_heights,
+                ex.max_column_height,
+                ex.min_column_height,
+                &ex.row_fill_counts,
+                ex.total_blocks,
+                ex.bumpiness,
+                ex.holes,
+                ex.overhang_fields,
             )
             .map_err(|error| {
                 PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(

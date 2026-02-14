@@ -247,7 +247,7 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 
 ### Neural Network (TetrisNet)
 
-- **Input**: 261 features (200 board cells + 61 auxiliary: current piece, hold, queue, move number, combo, back-to-back, hidden-piece distribution for the piece after the visible 5-queue horizon)
+- **Input**: 297 features (200 board cells + 97 auxiliary: current piece, hold, queue, placement count, combo, back-to-back, hidden-piece distribution for the piece after the visible 5-queue horizon, plus board diagnostics: column heights, max/min column height, row fill counts, total blocks, bumpiness, holes, overhang fields)
 - **Architecture**: Conv2d(1→4→8) + board projection + aux-conditioned gated fusion + optional fusion residual blocks + policy/value heads
 - **Output**: Policy probabilities over 735 actions (734 placements + hold), value (trained on raw cumulative-attack `value_targets`)
 

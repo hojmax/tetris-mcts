@@ -11,8 +11,16 @@ Input representation:
 - Combo: 1 (normalized, capped)
 - Back-to-back: 1 (binary)
 - Next hidden piece distribution: 7 (7-bag probabilities)
+- Column heights: 10 (normalized)
+- Max column height: 1 (normalized)
+- Min column height: 1 (normalized)
+- Row fill counts: 20 (normalized)
+- Total blocks: 1 (normalized)
+- Bumpiness: 1 (normalized)
+- Holes: 1 (normalized)
+- Overhang fields: 1 (normalized)
 
-Total input: 200 board + 61 aux = 261 features.
+Total input: 200 board + 97 aux = 297 features.
 
 Output:
 - Policy head: 735 outputs (734 placements + hold)
@@ -43,6 +51,14 @@ MOVE_NUMBER_FEATURES = 1
 COMBO_FEATURES = 1
 BACK_TO_BACK_FEATURES = 1
 HIDDEN_PIECE_DISTRIBUTION_FEATURES = NUM_PIECE_TYPES  # 7
+COLUMN_HEIGHT_FEATURES = BOARD_WIDTH  # 10
+MAX_COLUMN_HEIGHT_FEATURES = 1
+MIN_COLUMN_HEIGHT_FEATURES = 1
+ROW_FILL_COUNT_FEATURES = BOARD_HEIGHT  # 20
+TOTAL_BLOCKS_FEATURES = 1
+BUMPINESS_FEATURES = 1
+HOLES_FEATURES = 1
+OVERHANG_FIELDS_FEATURES = 1
 
 AUX_FEATURES = (
     CURRENT_PIECE_FEATURES
@@ -53,7 +69,15 @@ AUX_FEATURES = (
     + COMBO_FEATURES
     + BACK_TO_BACK_FEATURES
     + HIDDEN_PIECE_DISTRIBUTION_FEATURES
-)  # 61
+    + COLUMN_HEIGHT_FEATURES
+    + MAX_COLUMN_HEIGHT_FEATURES
+    + MIN_COLUMN_HEIGHT_FEATURES
+    + ROW_FILL_COUNT_FEATURES
+    + TOTAL_BLOCKS_FEATURES
+    + BUMPINESS_FEATURES
+    + HOLES_FEATURES
+    + OVERHANG_FIELDS_FEATURES
+)  # 97
 
 COMBO_NORMALIZATION_MAX = 12.0
 
@@ -75,6 +99,14 @@ def build_aux_features(
     combo_feature: float,
     back_to_back: float,
     next_hidden_piece_probs: np.ndarray,
+    column_heights: np.ndarray,
+    max_column_height: float,
+    min_column_height: float,
+    row_fill_counts: np.ndarray,
+    total_blocks: float,
+    bumpiness: float,
+    holes: float,
+    overhang_fields: float,
 ) -> np.ndarray:
     hold_available_feature = np.array([hold_available], dtype=np.float32)
     placement_count_feature = np.array([placement_count], dtype=np.float32)
@@ -83,6 +115,12 @@ def build_aux_features(
         dtype=np.float32,
     )
     back_to_back_feature = np.array([back_to_back], dtype=np.float32)
+    max_column_height_feature = np.array([max_column_height], dtype=np.float32)
+    min_column_height_feature = np.array([min_column_height], dtype=np.float32)
+    total_blocks_feature = np.array([total_blocks], dtype=np.float32)
+    bumpiness_feature = np.array([bumpiness], dtype=np.float32)
+    holes_feature = np.array([holes], dtype=np.float32)
+    overhang_fields_feature = np.array([overhang_fields], dtype=np.float32)
     return np.concatenate(
         [
             current_piece.astype(np.float32),
@@ -93,6 +131,14 @@ def build_aux_features(
             combo_feature_array,
             back_to_back_feature,
             next_hidden_piece_probs.astype(np.float32).reshape(-1),
+            column_heights.astype(np.float32).reshape(-1),
+            max_column_height_feature,
+            min_column_height_feature,
+            row_fill_counts.astype(np.float32).reshape(-1),
+            total_blocks_feature,
+            bumpiness_feature,
+            holes_feature,
+            overhang_fields_feature,
         ]
     )
 
@@ -180,7 +226,7 @@ class TetrisNet(nn.Module):
 
         Args:
             board: Shape (batch, 1, 20, 10) - binary board state
-            aux_features: Shape (batch, 61) - auxiliary features
+            aux_features: Shape (batch, 97) - auxiliary features
 
         Returns:
             policy_logits: Shape (batch, 735) - raw logits (caller should apply

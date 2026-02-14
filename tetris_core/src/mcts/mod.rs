@@ -26,4 +26,9 @@ pub use results::{
     GameResult, GameStats, GameTreeStats, MCTSResult, MCTSTreeExport, TrainingExample,
     TreeNodeExport,
 };
-pub use utils::{normalize_overhang_fields, sample_dirichlet, OVERHANG_NORMALIZATION_DENOMINATOR};
+pub use utils::{
+    compute_bumpiness, count_overhang_fields_and_holes, normalize_bumpiness,
+    normalize_column_heights, normalize_holes, normalize_overhang_fields,
+    normalize_row_fill_counts, normalize_total_blocks, sample_dirichlet,
+    OVERHANG_NORMALIZATION_DENOMINATOR,
+};
