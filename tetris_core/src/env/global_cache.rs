@@ -21,6 +21,7 @@ pub(crate) struct PlacementLookupKey {
     x: i8,
     y: i8,
     rotation: u8,
+    hold_available: bool,
 }
 
 #[derive(Default)]
@@ -63,6 +64,7 @@ pub(crate) fn build_board_key(env: &TetrisEnv) -> Option<PackedBoardKey> {
 pub(crate) fn build_placement_lookup_key(
     env: &TetrisEnv,
     piece: &Piece,
+    hold_available: bool,
 ) -> Option<PlacementLookupKey> {
     let board = build_board_key(env)?;
     let piece_type = u8::try_from(piece.piece_type).ok()?;
@@ -76,6 +78,7 @@ pub(crate) fn build_placement_lookup_key(
         x,
         y,
         rotation,
+        hold_available,
     })
 }
 

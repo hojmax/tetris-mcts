@@ -4,6 +4,7 @@
 mod tests {
     use crate::constants::{I_PIECE, T_PIECE};
     use crate::env::TetrisEnv;
+    use crate::mcts::HOLD_ACTION_INDEX;
     use crate::piece::Piece;
 
     #[test]
@@ -161,6 +162,28 @@ mod tests {
         env.hold();
         let result = env.hold();
         assert!(!result);
+    }
+
+    #[test]
+    fn test_cached_valid_actions_respect_hold_availability() {
+        let env_with_hold = TetrisEnv::with_seed(10, 20, 42);
+        let mut env_without_hold = env_with_hold.clone();
+        env_without_hold.hold_used = true;
+
+        env_with_hold.invalidate_placement_cache();
+        env_without_hold.invalidate_placement_cache();
+
+        let valid_with_hold = env_with_hold.get_cached_valid_action_indices();
+        let valid_without_hold = env_without_hold.get_cached_valid_action_indices();
+
+        assert!(
+            valid_with_hold.contains(&HOLD_ACTION_INDEX),
+            "Hold action should be available when hold is unused"
+        );
+        assert!(
+            !valid_without_hold.contains(&HOLD_ACTION_INDEX),
+            "Hold action should be unavailable when hold is already used"
+        );
     }
 
     #[test]

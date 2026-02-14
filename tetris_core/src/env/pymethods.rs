@@ -552,7 +552,8 @@ impl TetrisEnv {
             return;
         };
         let piece = piece.clone();
-        let global_cache_key = build_placement_lookup_key(self, &piece);
+        let hold_is_available = !self.game_over && !self.is_hold_used();
+        let global_cache_key = build_placement_lookup_key(self, &piece, hold_is_available);
 
         if let Some(cache_key) = global_cache_key {
             if let Some(global_cached) = get_cached_placements(cache_key) {
@@ -579,8 +580,6 @@ impl TetrisEnv {
         placement_action_indices.sort_unstable();
         placement_action_indices.dedup();
 
-        let hold_is_available =
-            !self.game_over && !self.is_hold_used() && self.current_piece.is_some();
         let mut valid_action_indices = placement_action_indices.clone();
         if hold_is_available {
             valid_action_indices.push(HOLD_ACTION_INDEX);

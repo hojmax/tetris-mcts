@@ -380,7 +380,11 @@ class Trainer:
         )
 
     def _pin_batch_if_needed(self, batch: TrainingBatch) -> TrainingBatch:
-        should_pin = self.device.type == "cuda" and self.config.pin_memory_batches
+        should_pin = (
+            self.device.type == "cuda"
+            and self.config.pin_memory_batches
+            and batch.device.type == "cpu"
+        )
         if not should_pin:
             return batch
         return TrainingBatch(
@@ -392,8 +396,18 @@ class Trainer:
             masks=batch.masks.pin_memory(),
         )
 
+    def _is_batch_on_training_device(self, batch: TrainingBatch) -> bool:
+        batch_device = batch.device
+        if batch_device.type != self.device.type:
+            return False
+        if self.device.type != "cuda":
+            return True
+        if self.device.index is None:
+            return True
+        return batch_device.index == self.device.index
+
     def _to_training_device(self, batch: TrainingBatch) -> TrainingBatch:
-        if batch.device == self.device:
+        if self._is_batch_on_training_device(batch):
             return batch
         batch = self._pin_batch_if_needed(batch)
         non_blocking = self.device.type == "cuda"
