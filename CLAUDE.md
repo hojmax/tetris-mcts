@@ -137,6 +137,9 @@ make profile MODEL_PROFILE=<path-to-existing-onnx>  # Override model path explic
 If the default `MODEL_PROFILE` path does not exist in your local checkout, pass an explicit
 existing ONNX path (for example `training_runs/v32/checkpoints/latest.onnx`).
 
+For optimization validation on a busy desktop machine, run baseline and candidate back-to-back
+with identical flags and a fixed `--mcts_seed` (for example `123`) to reduce run-to-run variance.
+
 Results saved to `benchmarks/profile_results.jsonl` with timing data for comparison across runs.
 
 **Interactive Profiling** (requires [samply](https://github.com/mstange/samply)):

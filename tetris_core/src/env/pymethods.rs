@@ -545,7 +545,9 @@ impl TetrisEnv {
             *self.placements_cache.borrow_mut() = Some(PlacementCache {
                 placements: Arc::new(Vec::new()),
                 action_to_placement_idx: Arc::new(vec![None; crate::mcts::NUM_ACTIONS]),
-                placement_action_indices: Arc::new(Vec::new()),
+                valid_action_indices: Arc::new(Vec::new()),
+                action_mask: Arc::new(vec![false; crate::mcts::NUM_ACTIONS]),
+                uniform_policy: Arc::new(vec![0.0; crate::mcts::NUM_ACTIONS]),
             });
             return;
         };
@@ -577,10 +579,34 @@ impl TetrisEnv {
         placement_action_indices.sort_unstable();
         placement_action_indices.dedup();
 
+        let hold_is_available =
+            !self.game_over && !self.is_hold_used() && self.current_piece.is_some();
+        let mut valid_action_indices = placement_action_indices.clone();
+        if hold_is_available {
+            valid_action_indices.push(HOLD_ACTION_INDEX);
+        }
+
+        let mut action_mask = vec![false; crate::mcts::NUM_ACTIONS];
+        for &action_idx in &valid_action_indices {
+            debug_assert!(action_idx < action_mask.len());
+            action_mask[action_idx] = true;
+        }
+
+        let mut uniform_policy = vec![0.0; crate::mcts::NUM_ACTIONS];
+        if !valid_action_indices.is_empty() {
+            let probability = 1.0 / valid_action_indices.len() as f32;
+            for &action_idx in &valid_action_indices {
+                debug_assert!(action_idx < uniform_policy.len());
+                uniform_policy[action_idx] = probability;
+            }
+        }
+
         let cache_entry = PlacementCache {
             placements: Arc::new(placements),
             action_to_placement_idx: Arc::new(action_to_placement_idx),
-            placement_action_indices: Arc::new(placement_action_indices),
+            valid_action_indices: Arc::new(valid_action_indices),
+            action_mask: Arc::new(action_mask),
+            uniform_policy: Arc::new(uniform_policy),
         };
 
         if let Some(cache_key) = global_cache_key {
@@ -614,34 +640,39 @@ impl TetrisEnv {
         ))
     }
 
-    pub(crate) fn fill_cached_action_mask(&self, mask: &mut [bool]) {
-        debug_assert_eq!(mask.len(), crate::mcts::NUM_ACTIONS);
-        mask.fill(false);
-
+    pub(crate) fn get_cached_action_mask(&self) -> Arc<Vec<bool>> {
         if self.game_over {
-            return;
+            return Arc::new(vec![false; crate::mcts::NUM_ACTIONS]);
         }
 
         self.ensure_placements_cache();
-
         let cache_ref = self.placements_cache.borrow();
         let cache = cache_ref
             .as_ref()
             .expect("placements cache should exist after ensure_placements_cache");
-        for &action_idx in cache.placement_action_indices.iter() {
-            mask[action_idx] = true;
+        cache.action_mask.clone()
+    }
+
+    pub(crate) fn get_cached_valid_action_indices_arc(&self) -> Arc<Vec<usize>> {
+        if self.game_over {
+            return Arc::new(Vec::new());
         }
 
-        let hold_is_available =
-            !self.game_over && !self.is_hold_used() && self.current_piece.is_some();
-        if hold_is_available {
-            mask[HOLD_ACTION_INDEX] = true;
-        }
+        self.ensure_placements_cache();
+        let cache_ref = self.placements_cache.borrow();
+        let cache = cache_ref
+            .as_ref()
+            .expect("placements cache should exist after ensure_placements_cache");
+        cache.valid_action_indices.clone()
     }
 
     pub(crate) fn get_cached_valid_action_indices(&self) -> Vec<usize> {
+        self.get_cached_valid_action_indices_arc().as_ref().clone()
+    }
+
+    pub(crate) fn get_cached_uniform_policy(&self) -> Arc<Vec<f32>> {
         if self.game_over {
-            return Vec::new();
+            return Arc::new(vec![0.0; crate::mcts::NUM_ACTIONS]);
         }
 
         self.ensure_placements_cache();
@@ -649,12 +680,6 @@ impl TetrisEnv {
         let cache = cache_ref
             .as_ref()
             .expect("placements cache should exist after ensure_placements_cache");
-
-        let mut valid_actions = cache.placement_action_indices.as_ref().clone();
-        let hold_is_available = !self.is_hold_used() && self.current_piece.is_some();
-        if hold_is_available {
-            valid_actions.push(HOLD_ACTION_INDEX);
-        }
-        valid_actions
+        cache.uniform_policy.clone()
     }
 }

@@ -38,18 +38,17 @@ fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> 
         .map(|(idx, _)| idx)
 }
 
-fn uniform_policy_from_mask(mask: &[bool]) -> Vec<f32> {
+#[cfg(test)]
+fn uniform_policy_from_valid_actions(valid_actions: &[usize]) -> Vec<f32> {
     let mut policy = vec![0.0; NUM_ACTIONS];
-    let valid_count = mask.iter().filter(|&&is_valid| is_valid).count();
-    if valid_count == 0 {
+    if valid_actions.is_empty() {
         return policy;
     }
 
-    let probability = 1.0 / valid_count as f32;
-    for (action_idx, is_valid) in mask.iter().enumerate() {
-        if *is_valid {
-            policy[action_idx] = probability;
-        }
+    let probability = 1.0 / valid_actions.len() as f32;
+    for &action_idx in valid_actions {
+        debug_assert!(action_idx < policy.len());
+        policy[action_idx] = probability;
     }
     policy
 }
@@ -79,11 +78,13 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
         move_number: u32,
         max_placements: u32,
     ) -> Option<(Vec<f32>, f32)> {
-        let mask = crate::nn::get_action_mask(state);
-        match self
-            .nn
-            .predict_masked(state, move_number as usize, &mask, max_placements as usize)
-        {
+        let valid_actions = state.get_cached_valid_action_indices_arc();
+        match self.nn.predict_with_valid_actions(
+            state,
+            move_number as usize,
+            valid_actions.as_slice(),
+            max_placements as usize,
+        ) {
             Ok((policy, value)) => Some((policy, scale_nn_value(value, self.nn_value_weight))),
             Err(error) => {
                 eprintln!(
@@ -105,8 +106,8 @@ impl LeafEvaluator for BootstrapLeafEvaluator {
         _move_number: u32,
         _max_placements: u32,
     ) -> Option<(Vec<f32>, f32)> {
-        let mask = crate::nn::get_action_mask(state);
-        Some((uniform_policy_from_mask(&mask), 0.0))
+        let uniform_policy = state.get_cached_uniform_policy();
+        Some((uniform_policy.as_ref().clone(), 0.0))
     }
 }
 
@@ -585,8 +586,7 @@ pub(crate) fn search_internal_without_nn(
     add_noise: bool,
     move_number: u32,
 ) -> (MCTSResult, DecisionNode, TreeStats) {
-    let root_mask = crate::nn::get_action_mask(env);
-    let root_policy = uniform_policy_from_mask(&root_mask);
+    let root_policy = env.get_cached_uniform_policy().as_ref().clone();
     let evaluator = BootstrapLeafEvaluator;
     search_internal_with_evaluator(
         config,
@@ -619,8 +619,11 @@ mod tests {
             _move_number: u32,
             _max_placements: u32,
         ) -> Option<(Vec<f32>, f32)> {
-            let mask = crate::nn::get_action_mask(state);
-            Some((uniform_policy_from_mask(&mask), self.value))
+            let valid_actions = state.get_cached_valid_action_indices_arc();
+            Some((
+                uniform_policy_from_valid_actions(valid_actions.as_slice()),
+                self.value,
+            ))
         }
     }
 

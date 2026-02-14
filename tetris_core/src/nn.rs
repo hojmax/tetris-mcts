@@ -148,12 +148,10 @@ impl TetrisNN {
         self.cache_order.borrow_mut().clear();
     }
 
-    /// Run inference with action mask applied, using board embedding cache.
-    pub fn predict_masked(
+    fn predict_logits_and_value(
         &self,
         env: &TetrisEnv,
         placement_count: usize,
-        action_mask: &[bool],
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
         let (board_f32, aux_vec) = encode_state_features(env, placement_count, max_placements)?;
@@ -198,6 +196,27 @@ impl TetrisNN {
             .copied()
             .collect();
 
+        let value = heads_output[1]
+            .to_array_view::<f32>()?
+            .iter()
+            .next()
+            .copied()
+            .expect("NN value output tensor is empty - model is malformed");
+
+        Ok((policy_logits, value))
+    }
+
+    /// Run inference with action mask applied, using board embedding cache.
+    pub fn predict_masked(
+        &self,
+        env: &TetrisEnv,
+        placement_count: usize,
+        action_mask: &[bool],
+        max_placements: usize,
+    ) -> TractResult<(Vec<f32>, f32)> {
+        let (policy_logits, value) =
+            self.predict_logits_and_value(env, placement_count, max_placements)?;
+
         if policy_logits.len() != action_mask.len() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -210,15 +229,38 @@ impl TetrisNN {
             .into());
         }
 
-        let value = heads_output[1]
-            .to_array_view::<f32>()?
-            .iter()
-            .next()
-            .copied()
-            .expect("NN value output tensor is empty - model is malformed");
-
         let policy = masked_softmax(&policy_logits, action_mask);
 
+        Ok((policy, value))
+    }
+
+    /// Run inference with precomputed valid action indices.
+    pub fn predict_with_valid_actions(
+        &self,
+        env: &TetrisEnv,
+        placement_count: usize,
+        valid_actions: &[usize],
+        max_placements: usize,
+    ) -> TractResult<(Vec<f32>, f32)> {
+        let (policy_logits, value) =
+            self.predict_logits_and_value(env, placement_count, max_placements)?;
+
+        if let Some(&invalid_action) = valid_actions
+            .iter()
+            .find(|&&action_idx| action_idx >= policy_logits.len())
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "Valid action index {} out of range for policy logits len {}",
+                    invalid_action,
+                    policy_logits.len()
+                ),
+            )
+            .into());
+        }
+
+        let policy = masked_softmax_from_valid_actions(&policy_logits, valid_actions);
         Ok((policy, value))
     }
 
@@ -695,12 +737,37 @@ pub fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
     result
 }
 
+/// Softmax over precomputed valid action indices.
+pub fn masked_softmax_from_valid_actions(logits: &[f32], valid_actions: &[usize]) -> Vec<f32> {
+    let mut result = vec![0.0; logits.len()];
+    if valid_actions.is_empty() {
+        return result;
+    }
+
+    let mut max_logit = f32::NEG_INFINITY;
+    for &action_idx in valid_actions {
+        max_logit = max_logit.max(logits[action_idx]);
+    }
+
+    let mut sum = 0.0;
+    for &action_idx in valid_actions {
+        let exp_val = (logits[action_idx] - max_logit).exp();
+        result[action_idx] = exp_val;
+        sum += exp_val;
+    }
+
+    if sum > 0.0 {
+        for &action_idx in valid_actions {
+            result[action_idx] /= sum;
+        }
+    }
+
+    result
+}
+
 /// Get action mask from environment
 pub fn get_action_mask(env: &TetrisEnv) -> Vec<bool> {
-    use crate::mcts::NUM_ACTIONS;
-    let mut mask = vec![false; NUM_ACTIONS];
-    env.fill_cached_action_mask(&mut mask);
-    mask
+    env.get_cached_action_mask().as_ref().clone()
 }
 
 #[cfg(test)]
