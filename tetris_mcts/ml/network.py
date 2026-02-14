@@ -110,10 +110,7 @@ def build_aux_features(
 ) -> np.ndarray:
     hold_available_feature = np.array([hold_available], dtype=np.float32)
     placement_count_feature = np.array([placement_count], dtype=np.float32)
-    combo_feature_array = np.array(
-        [min(max(combo_feature, 0.0), 1.0)],
-        dtype=np.float32,
-    )
+    combo_feature_array = np.array([combo_feature], dtype=np.float32)
     back_to_back_feature = np.array([back_to_back], dtype=np.float32)
     max_column_height_feature = np.array([max_column_height], dtype=np.float32)
     min_column_height_feature = np.array([min_column_height], dtype=np.float32)
