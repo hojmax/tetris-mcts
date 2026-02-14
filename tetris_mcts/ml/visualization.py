@@ -172,9 +172,7 @@ def render_board(
             can_hold is not None and combo is not None and back_to_back is not None
         )
         if has_standard_status:
-            status_line = (
-                f"{'Terminal  ' if is_terminal else ''}Can hold: {'y' if can_hold else 'n'}"
-            )
+            status_line = f"{'Terminal  ' if is_terminal else ''}Can hold: {'y' if can_hold else 'n'}"
             combo_line = f"Combo: {combo}  B2B: {'y' if back_to_back else 'n'}"
         else:
             status_line = (info_text or "").replace("\n", "  ")

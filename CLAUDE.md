@@ -344,7 +344,7 @@ From `config.py` TrainingConfig defaults:
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default. Promotion ramp is event-driven on accepted candidates with multiplicative targets and additive updates: `delta = min(current * (nn_value_weight_promotion_multiplier - 1.0), nn_value_weight_promotion_max_delta)` then `next = min(nn_value_weight_cap, current + delta)`. Defaults: multiplier `1.4` (adds 40%), max delta `0.10`, cap `1.0`.
 - **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1800` (`0` disables periodic snapshot saves).
-- **Training-loop logging defaults**: full scalar train-step metrics are collected every `train_step_metrics_interval=16` steps, expensive extra diagnostics (`compute_metrics` forward pass for policy entropy/accuracy) are disabled by default with `compute_extra_train_metrics_on_log=false`, and completed-game logs are aggregated per log tick by default (`log_individual_games_to_wandb=false`).
+- **Training-loop logging defaults**: full scalar train-step metrics are collected every `train_step_metrics_interval=16` steps, extra diagnostics (`compute_metrics` forward pass for policy entropy/accuracy) are enabled by default with `compute_extra_train_metrics_on_log=true` (overhead tracked as `timing/extra_metrics_ms`), and individual per-game rows are logged by default (`log_individual_games_to_wandb=true`). Aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step` are always logged.
 - **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default; candidate evaluation carries an explicit `candidate_nn_value_weight`, and promotion atomically updates `(incumbent model, incumbent nn_value_weight)` together
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
@@ -469,7 +469,7 @@ Step-alignment rule for resumed runs:
 
 - Any metric namespace/key that should continue on checkpoint `step` must be explicitly mapped with `wandb.define_metric(..., step_metric="trainer_step")`. If a key is not mapped, WandB uses internal `_step`, which resets in new resumed runs.
 - Current trainer mappings include `train/*`, `batch/*`, `eval/*`, `timing/*`, `replay/*`, `throughput/*`, `incumbent/*`, `model_gate/*`, and scalar keys `policy_entropy`, `value_error`, `top1_accuracy`, `top3_accuracy`.
-- Per-game metrics remain mapped to `game_number` via `wandb.define_metric("game/*", step_metric="game_number")`, but individual game rows are only emitted when `log_individual_games_to_wandb=true`. Default training logs aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step`.
+- Per-game metrics are mapped to `game_number` via `wandb.define_metric("game/*", step_metric="game_number")` and individual game rows are emitted by default (`log_individual_games_to_wandb=true`). Aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step` are always logged.
 
 ### Training Metrics
 

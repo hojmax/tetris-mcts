@@ -108,10 +108,7 @@ def build_game_boundaries(game_numbers: np.ndarray) -> list[tuple[int, int]]:
     boundaries = np.where(np.diff(game_numbers) != 0)[0] + 1
     starts = np.concatenate(([0], boundaries))
     ends = np.concatenate((boundaries, [len(game_numbers)]))
-    return [
-        (int(start), int(end))
-        for start, end in zip(starts, ends, strict=True)
-    ]
+    return [(int(start), int(end)) for start, end in zip(starts, ends, strict=True)]
 
 
 def print_game_stats(
@@ -204,11 +201,17 @@ def main(args: ScriptArgs) -> None:
         print_distribution("Overhang Fields (normalized)", overhang_fields, bins=12)
 
         print_section("Vector Features")
-        print_distribution("Next Hidden Piece Probabilities", next_hidden_piece_probs, bins=12)
+        print_distribution(
+            "Next Hidden Piece Probabilities", next_hidden_piece_probs, bins=12
+        )
         print_distribution("Column Heights (normalized)", column_heights, bins=12)
         print_distribution("Row Fill Counts (normalized)", row_fill_counts, bins=12)
-        print_distribution("Max Column Height (normalized)", max_column_heights, bins=12)
-        print_distribution("Min Column Height (normalized)", min_column_heights, bins=12)
+        print_distribution(
+            "Max Column Height (normalized)", max_column_heights, bins=12
+        )
+        print_distribution(
+            "Min Column Height (normalized)", min_column_heights, bins=12
+        )
 
         print_section("Normalized Range Checks")
         print_normalized_range_check("move_numbers", move_numbers)

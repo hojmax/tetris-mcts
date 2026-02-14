@@ -78,10 +78,10 @@ class TrainingConfig:
         16
     )
     compute_extra_train_metrics_on_log: bool = (  # If True, run an extra forward pass at log ticks for diagnostics (policy entropy, accuracy)
-        False
+        True
     )
     log_individual_games_to_wandb: bool = (  # If True, log one WandB row per completed game instead of aggregated replay summaries
-        False
+        True
     )
     use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
         True

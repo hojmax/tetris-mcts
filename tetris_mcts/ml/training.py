@@ -280,7 +280,9 @@ def optional_model_artifact_paths(onnx_path: Path) -> list[Path]:
     ]
 
 
-def copy_model_artifact_bundle(source_onnx_path: Path, destination_onnx_path: Path) -> None:
+def copy_model_artifact_bundle(
+    source_onnx_path: Path, destination_onnx_path: Path
+) -> None:
     assert_rust_inference_artifacts(source_onnx_path)
     destination_onnx_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -447,9 +449,7 @@ class Trainer:
         config: TrainingConfig,
     ) -> float:
         if current_weight < 0.0:
-            raise ValueError(
-                f"current_weight must be >= 0 (got {current_weight})"
-            )
+            raise ValueError(f"current_weight must be >= 0 (got {current_weight})")
         promotion_delta = current_weight * (
             config.nn_value_weight_promotion_multiplier - 1.0
         )
@@ -758,7 +758,9 @@ class Trainer:
             masks=mirror.batch.masks.index_select(0, sample_indices),
         )
 
-    def train_step(self, batch: TrainingBatch, collect_metrics: bool) -> dict[str, float]:
+    def train_step(
+        self, batch: TrainingBatch, collect_metrics: bool
+    ) -> dict[str, float]:
         """Execute one training step."""
         self.model.train()
 
@@ -976,8 +978,8 @@ class Trainer:
         if incumbent_onnx_path.exists():
             assert_rust_inference_artifacts(incumbent_onnx_path)
             files_to_upload.append(incumbent_onnx_path)
-            incumbent_conv_path, incumbent_heads_path, incumbent_fc_path = split_model_paths(
-                incumbent_onnx_path
+            incumbent_conv_path, incumbent_heads_path, incumbent_fc_path = (
+                split_model_paths(incumbent_onnx_path)
             )
             files_to_upload.extend(
                 [incumbent_conv_path, incumbent_heads_path, incumbent_fc_path]
@@ -1233,8 +1235,12 @@ class Trainer:
 
                 for event in generator.drain_model_eval_events():
                     promoted = bool(event["promoted"])
-                    candidate_nn_value_weight = float(event["candidate_nn_value_weight"])
-                    incumbent_nn_value_weight = float(event["incumbent_nn_value_weight"])
+                    candidate_nn_value_weight = float(
+                        event["candidate_nn_value_weight"]
+                    )
+                    incumbent_nn_value_weight = float(
+                        event["incumbent_nn_value_weight"]
+                    )
                     promoted_nn_value_weight = float(event["promoted_nn_value_weight"])
                     logger.info(
                         "Model evaluation decision",
@@ -1290,7 +1296,11 @@ class Trainer:
                         )
                     metrics = dict(latest_train_metrics)
                     if self.config.compute_extra_train_metrics_on_log:
+                        extra_metrics_start = time.perf_counter()
                         metrics.update(self._compute_extra_train_metrics(batch))
+                        metrics["timing/extra_metrics_ms"] = 1000.0 * (
+                            time.perf_counter() - extra_metrics_start
+                        )
                     games = generator.games_generated()
                     window_elapsed_s = now_s - throughput_window_start_s
                     games_delta = games - throughput_window_start_games
@@ -1469,7 +1479,9 @@ class Trainer:
                 # Evaluate
                 now_s = time.perf_counter()
                 if now_s >= next_eval_time_s:
-                    self.evaluator.nn_value_weight = generator.incumbent_nn_value_weight()
+                    self.evaluator.nn_value_weight = (
+                        generator.incumbent_nn_value_weight()
+                    )
                     # Render trajectory every evaluation for visualization
                     eval_start = time.perf_counter()
                     eval_result, trajectory_frames = self.evaluate(

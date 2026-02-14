@@ -817,7 +817,10 @@ mod tests {
                 "T-spin placement selected by MCTS should end on a rotation input"
             );
             assert!(
-                placement.moves.iter().any(|&action| action == 4 || action == 5),
+                placement
+                    .moves
+                    .iter()
+                    .any(|&action| action == 4 || action == 5),
                 "T-spin placement path should include at least one rotation action"
             );
             assert_eq!(result.total_attack, 4);

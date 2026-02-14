@@ -444,9 +444,9 @@ def main(args: ScriptArgs) -> None:
             comparison_log[f"comparison/final_elapsed_sec/{prefix}"] = result[
                 "elapsed_sec"
             ]
-            comparison_log[f"comparison/final_train_batches_per_sec/{prefix}"] = (
-                final["train_batches_per_sec"]
-            )
+            comparison_log[f"comparison/final_train_batches_per_sec/{prefix}"] = final[
+                "train_batches_per_sec"
+            ]
             comparison_log[f"comparison/final_train_examples_per_sec/{prefix}"] = (
                 final["train_batches_per_sec"] * args.batch_size
             )

@@ -438,9 +438,7 @@ impl GameGenerator {
             incumbent_model_version: Arc::new(AtomicU64::new(0)),
             incumbent_nn_value_weight: Arc::new(AtomicU32::new(initial_nn_value_weight_bits)),
             incumbent_lifetime_games: Arc::new(AtomicU64::new(initial_incumbent_lifetime_games)),
-            incumbent_lifetime_attack: Arc::new(AtomicU64::new(
-                initial_incumbent_lifetime_attack,
-            )),
+            incumbent_lifetime_attack: Arc::new(AtomicU64::new(initial_incumbent_lifetime_attack)),
             thread_handles: Vec::new(),
         })
     }
