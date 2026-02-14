@@ -87,6 +87,14 @@ Key metrics:
 - `moves_per_second` - Throughput metric
 - Compare across runs to detect regressions
 
+NN-first optimization rule:
+- Prioritize ONNX-network benchmarks for optimization decisions; dummy-network numbers are secondary sanity checks.
+
+Recent benchmark note (February 14, 2026):
+- Tested allocation-free `DecisionNode::select_action` plus reduced child lookup overhead in MCTS traversal.
+- NN benchmark setup: 6 runs before/after, `--simulations 1000 --num_games 20 --seed_start 42 --mcts_seed 123`.
+- Result was effectively noise-level (`moves_per_second` mean +0.20%, median -0.30%), so this change was not treated as a clear NN speedup.
+
 ### Flamegraphs (samply)
 
 Width = time spent in function. Look for:

@@ -9,6 +9,15 @@ Treat this document as a living resource, not static documentation.
 - Make small, iterative improvements continuously so future agents inherit accurate context.
 - When handing off work, call out any updates you made here and suggest follow-up updates if context is still incomplete.
 
+## Feature Worktree Policy (All Agents)
+
+- For any feature work that changes code, create a dedicated git worktree under:
+  `/Users/axelhojmark/Desktop/tetris-mcts-worktrees/`
+- Do not implement feature changes directly in the primary checkout at:
+  `/Users/axelhojmark/Desktop/tetris-mcts`
+- Use a feature branch with `git worktree add -b <branch-name> /Users/axelhojmark/Desktop/tetris-mcts-worktrees/<worktree-name> <base-ref>`
+- Keep each feature isolated to its own worktree; merge to `main` only after validation.
+
 ## Project Overview
 
 This is **tetris-mcts**, an AlphaZero-style reinforcement learning system for Tetris that combines:
@@ -330,6 +339,7 @@ From `config.py` TrainingConfig defaults:
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=8` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=16` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
+- **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default.
 - **Q Squash Scale**: `q_scale=8.0` by default; PUCT uses `tanh(Q / q_scale)` for the Q term.
