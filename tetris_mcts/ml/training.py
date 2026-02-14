@@ -450,8 +450,11 @@ class Trainer:
             raise ValueError(
                 f"current_weight must be >= 0 (got {current_weight})"
             )
+        promotion_delta = current_weight * (
+            config.nn_value_weight_promotion_multiplier - 1.0
+        )
         delta = min(
-            current_weight * config.nn_value_weight_promotion_multiplier,
+            promotion_delta,
             config.nn_value_weight_promotion_max_delta,
         )
         return min(config.nn_value_weight_cap, current_weight + delta)
