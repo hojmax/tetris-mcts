@@ -149,7 +149,7 @@ fn simulate<E: LeafEvaluator>(
             return;
         }
 
-        let action_idx = node.select_action(config.c_puct);
+        let action_idx = node.select_action(config.c_puct, config.q_scale);
         let next_move_number = node.move_number
             + if action_idx == HOLD_ACTION_INDEX {
                 0

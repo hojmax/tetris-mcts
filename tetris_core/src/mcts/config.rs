@@ -43,6 +43,9 @@ pub struct MCTSConfig {
     /// Scale factor applied to neural value-head output during search (0 = ignore value head)
     #[pyo3(get, set)]
     pub nn_value_weight: f32,
+    /// Scale for tanh Q squashing in PUCT selection (Q' = tanh(Q / q_scale))
+    #[pyo3(get, set)]
+    pub q_scale: f32,
 }
 
 #[pymethods]
@@ -62,6 +65,7 @@ impl MCTSConfig {
             death_penalty: 0.0,
             overhang_penalty_weight: 0.0,
             nn_value_weight: 1.0,
+            q_scale: 8.0,
         }
     }
 }
@@ -91,5 +95,6 @@ mod tests {
         assert_eq!(config.death_penalty, 0.0);
         assert_eq!(config.overhang_penalty_weight, 0.0);
         assert_eq!(config.nn_value_weight, 1.0);
+        assert_eq!(config.q_scale, 8.0);
     }
 }
