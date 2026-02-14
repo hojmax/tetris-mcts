@@ -29,6 +29,7 @@ make test       # Run Rust tests (cargo test)
 make check      # Run ruff + pyright linting
 make sweep-lr-model  # Run W&B sweep for learning rate + model size
 make eval-nn-value-weight  # Evaluate fixed network at multiple nn_value_weight values
+make compare-offline-network-scaling  # Compare default vs scaled network variants offline
 make rebuild    # Force clean rebuild (slow, only when needed)
 ```
 
@@ -76,13 +77,31 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 # Default uses all examples in the NPZ (`max_examples=0`) and 400 training steps.
 # Throughput and system metrics are logged (batches/sec, examples/sec, eval throughput,
 # step time, grad norm, and CUDA memory where available).
-python tetris_mcts/scripts/compare_offline_architectures.py \
+python tetris_mcts/scripts/abalations/compare_offline_architectures.py \
     --data_path training_runs/v32/training_data.npz
 
 # Optional: preload selected examples to GPU once to reduce per-batch transfer overhead
-python tetris_mcts/scripts/compare_offline_architectures.py \
+python tetris_mcts/scripts/abalations/compare_offline_architectures.py \
     --data_path training_runs/v32/training_data.npz \
     --preload_to_gpu true
+```
+
+### Offline Network Scaling Comparison
+
+```bash
+# Compare three gated-fusion variants on a fixed NPZ snapshot:
+# 1) default model
+# 2) 2x board trunk (cached conv path)
+# 3) 2x post-fusion hidden size
+# Logs losses, throughput, parameter counts, and cache-weighted FLOPs to WandB.
+python tetris_mcts/scripts/abalations/compare_offline_network_scaling.py \
+    --data_path training_runs/v32/training_data.npz
+
+# Optional: tune multipliers (defaults are both 2)
+python tetris_mcts/scripts/abalations/compare_offline_network_scaling.py \
+    --data_path training_runs/v32/training_data.npz \
+    --board_trunk_multiplier 2 \
+    --post_fusion_multiplier 2
 ```
 
 ### Offline Feature Ablation (State Features)
@@ -96,11 +115,11 @@ python tetris_mcts/scripts/compare_offline_architectures.py \
 # Requires NPZ snapshots that include:
 # column_heights, max_column_heights, min_column_heights,
 # row_fill_counts, total_blocks, bumpiness (and optionally move_numbers).
-python tetris_mcts/scripts/compare_offline_feature_ablation.py \
+python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
     --data_path training_runs/v32/training_data.npz
 
 # Optional: include move_numbers as an additional ablation group
-python tetris_mcts/scripts/compare_offline_feature_ablation.py \
+python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
     --data_path training_runs/v32/training_data.npz \
     --include_move_number_feature true
 ```
@@ -113,11 +132,11 @@ python tetris_mcts/scripts/compare_offline_feature_ablation.py \
 # - If max(combos) > 1.0 => not normalized
 # - If combos contain only 0/1 and no intermediate values => not normalized
 # Then it rewrites the NPZ in-place with combos = combos / 12.
-python tetris_mcts/scripts/normalize_combo_feature_npz.py \
+python tetris_mcts/scripts/utilities/normalize_combo_feature_npz.py \
     --data_path training_runs/v17/training_data.npz
 
 # Dry-run check (no file rewrite)
-python tetris_mcts/scripts/normalize_combo_feature_npz.py \
+python tetris_mcts/scripts/utilities/normalize_combo_feature_npz.py \
     --data_path training_runs/v17/training_data.npz \
     --dry_run true
 ```
@@ -152,7 +171,7 @@ cargo install samply
 make profile-samply SIMS=50
 
 # Or run directly
-samply record python tetris_mcts/scripts/profile_games.py --num_games 3 --simulations 50
+samply record python tetris_mcts/scripts/inspection/profile_games.py --num_games 3 --simulations 50
 ```
 
 Opens interactive flamegraph viewer showing ALL function calls automatically. Best for finding bottlenecks during development.
@@ -160,7 +179,7 @@ Opens interactive flamegraph viewer showing ALL function calls automatically. Be
 **macOS native profiling** (Instruments):
 
 ```bash
-instruments -t "Time Profiler" python tetris_mcts/scripts/profile_games.py --num_games 3
+instruments -t "Time Profiler" python tetris_mcts/scripts/inspection/profile_games.py --num_games 3
 ```
 
 ## Architecture
@@ -226,16 +245,28 @@ tetris_mcts/                 # Python package
 │   └── visualization.py     # Board rendering for eval trajectories
 └── scripts/
     ├── tetris_game.py              # Interactive Pygame game
-    ├── mcts_visualizer.py          # Dash tree visualization (localhost:8050)
-    ├── replay_viewer.py            # View saved game replays
-    ├── buffer_viewer.py            # Inspect GameGenerator's in-memory buffer
-    ├── inspect_training_data.py    # View contents of NPZ files
-    ├── analyze_training_data.py    # Compute statistics over training data
-    ├── compare_offline_architectures.py  # Baseline vs gated offline architecture benchmark
-    ├── compare_offline_feature_ablation.py  # Offline sweep over state-feature ablations
-    ├── normalize_combo_feature_npz.py  # In-place combo normalization patch for old NPZ buffers
-    ├── count_reachable_states.py  # Enumerate 734 valid placements
-    └── profile_games.py            # Performance profiling of game generation
+    ├── abalations/                 # Network ablation/architecture experiments
+    │   ├── average_value_target.py
+    │   ├── benchmark_batch_size.py
+    │   ├── check_nn_value.py
+    │   ├── compare_offline_architectures.py
+    │   ├── compare_offline_feature_ablation.py
+    │   ├── compare_offline_network_scaling.py
+    │   ├── evaluate_nn_value_weight_sweep.py
+    │   └── wandb_sweep_lr_model_size.py
+    ├── inspection/                 # Data/MCTS inspection and debugging tools
+    │   ├── analyze_training_data.py
+    │   ├── audit_mcts_tree.py
+    │   ├── buffer_viewer.py
+    │   ├── count_reachable_states.py
+    │   ├── inspect_dirichlet_noise.py
+    │   ├── inspect_onnx_model.py
+    │   ├── inspect_training_data.py
+    │   ├── mcts_visualizer.py
+    │   ├── profile_games.py
+    │   └── replay_viewer.py
+    └── utilities/
+        └── normalize_combo_feature_npz.py
 ```
 
 ## Key Concepts

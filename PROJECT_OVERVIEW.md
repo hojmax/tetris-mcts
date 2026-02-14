@@ -718,16 +718,23 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 ### Visualization
 
 - **`tetris_game.py`** - Interactive Pygame Tetris (manual play or MCTS agent)
-- **`mcts_visualizer.py`** - Dash app for MCTS tree visualization (port 8050)
-- **`replay_viewer.py`** - View saved game replays
-- **`buffer_viewer.py`** - Inspect GameGenerator's in-memory training buffer
+- **`scripts/inspection/mcts_visualizer.py`** - Dash app for MCTS tree visualization (port 8050)
+- **`scripts/inspection/replay_viewer.py`** - View saved game replays
+- **`scripts/inspection/buffer_viewer.py`** - Inspect GameGenerator's in-memory training buffer
 
 ### Data Analysis
 
-- **`inspect_training_data.py`** - View contents of training_data.npz files
-- **`analyze_training_data.py`** - Compute statistics over training data
-- **`count_reachable_states.py`** - Enumerate all 734 valid piece placements
-- **`profile_games.py`** - Performance profiling of game generation
+- **`scripts/inspection/inspect_training_data.py`** - View contents of training_data.npz files
+- **`scripts/inspection/analyze_training_data.py`** - Compute statistics over training data
+- **`scripts/inspection/count_reachable_states.py`** - Enumerate all 734 valid piece placements
+- **`scripts/inspection/profile_games.py`** - Performance profiling of game generation
+
+### Ablations & Utilities
+
+- **`scripts/abalations/compare_offline_architectures.py`** - Baseline vs gated offline architecture benchmark
+- **`scripts/abalations/compare_offline_feature_ablation.py`** - Offline sweep over state-feature ablations
+- **`scripts/abalations/compare_offline_network_scaling.py`** - Default vs scaled trunk/post-fusion offline benchmark
+- **`scripts/utilities/normalize_combo_feature_npz.py`** - In-place combo normalization patch for old NPZ buffers
 
 **Quick access via Makefile:**
 
