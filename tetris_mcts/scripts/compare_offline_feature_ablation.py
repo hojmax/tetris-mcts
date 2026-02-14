@@ -84,13 +84,13 @@ MOVE_NUMBER_EXTRA_FEATURE_GROUP = ExtraFeatureGroup(
 @dataclass
 class ScriptArgs:
     data_path: Path = (
-        PROJECT_ROOT / "training_runs" / "v32" / "training_data.npz"
+        PROJECT_ROOT / "training_data_v22.npz"
     )  # Path to offline replay buffer NPZ
     device: str = "auto"  # auto/cpu/cuda/mps
     seed: int = 123
     max_examples: int = 0  # 0 = use all examples in NPZ
     train_fraction: float = 0.9
-    steps: int = 400
+    steps: int = 10000
     batch_size: int = 1024
     eval_interval: int = 20
     eval_examples: int = 32_768  # Max examples to use per train/val eval pass
@@ -734,11 +734,15 @@ def train_offline_variant(
             f"variants/{variant.wandb_prefix}/eval_train_value_loss": row[
                 "train_value_loss"
             ],
-            f"variants/{variant.wandb_prefix}/eval_val_total_loss": row["val_total_loss"],
+            f"variants/{variant.wandb_prefix}/eval_val_total_loss": row[
+                "val_total_loss"
+            ],
             f"variants/{variant.wandb_prefix}/eval_val_policy_loss": row[
                 "val_policy_loss"
             ],
-            f"variants/{variant.wandb_prefix}/eval_val_value_loss": row["val_value_loss"],
+            f"variants/{variant.wandb_prefix}/eval_val_value_loss": row[
+                "val_value_loss"
+            ],
             f"variants/{variant.wandb_prefix}/eval_seconds": eval_seconds,
             f"variants/{variant.wandb_prefix}/eval_examples_per_sec": eval_examples_per_sec,
             f"variants/{variant.wandb_prefix}/elapsed_sec": elapsed_sec,
@@ -862,9 +866,9 @@ def train_offline_variant(
                 log_data[f"variants/{variant.wandb_prefix}/gpu_mem_reserved_mb"] = (
                     torch.cuda.memory_reserved(device) / (1024.0 * 1024.0)
                 )
-                log_data[f"variants/{variant.wandb_prefix}/gpu_mem_max_allocated_mb"] = (
-                    torch.cuda.max_memory_allocated(device) / (1024.0 * 1024.0)
-                )
+                log_data[
+                    f"variants/{variant.wandb_prefix}/gpu_mem_max_allocated_mb"
+                ] = torch.cuda.max_memory_allocated(device) / (1024.0 * 1024.0)
             wandb.log(log_data)
             window_train_seconds = 0.0
             window_batches = 0
@@ -1133,15 +1137,15 @@ def main(args: ScriptArgs) -> None:
         }
         for result in results:
             prefix = result["wandb_prefix"]
-            comparison_log[f"comparison/final_val_total_loss/{prefix}"] = result["final"][
-                "val_total_loss"
-            ]
+            comparison_log[f"comparison/final_val_total_loss/{prefix}"] = result[
+                "final"
+            ]["val_total_loss"]
             comparison_log[f"comparison/final_val_policy_loss/{prefix}"] = result[
                 "final"
             ]["val_policy_loss"]
-            comparison_log[f"comparison/final_val_value_loss/{prefix}"] = result["final"][
-                "val_value_loss"
-            ]
+            comparison_log[f"comparison/final_val_value_loss/{prefix}"] = result[
+                "final"
+            ]["val_value_loss"]
             comparison_log[f"comparison/final_train_total_loss/{prefix}"] = result[
                 "final"
             ]["train_total_loss"]
