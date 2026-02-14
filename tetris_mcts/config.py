@@ -99,7 +99,7 @@ class TrainingConfig:
         True
     )
     nn_value_weight: float = (  # Scale factor for NN value output in MCTS (0.0 ignores value head)
-        0.025
+        0.01
     )
     nn_value_weight_promotion_multiplier: float = (  # Multiplicative growth target per accepted promotion (e.g. 1.4 means +40%)
         1.4
@@ -234,7 +234,10 @@ class TrainingConfig:
                 "nn_value_weight_promotion_max_delta must be finite and >= 0 "
                 f"(got {self.nn_value_weight_promotion_max_delta})"
             )
-        if not math.isfinite(self.nn_value_weight_cap) or self.nn_value_weight_cap < 0.0:
+        if (
+            not math.isfinite(self.nn_value_weight_cap)
+            or self.nn_value_weight_cap < 0.0
+        ):
             raise ValueError(
                 "nn_value_weight_cap must be finite and >= 0 "
                 f"(got {self.nn_value_weight_cap})"
