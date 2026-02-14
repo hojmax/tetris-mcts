@@ -40,10 +40,10 @@ pub const DEFAULT_LOCK_DELAY_MS: u32 = 500;
 pub const DEFAULT_LOCK_MOVES: u32 = 15;
 
 /// Max number of placement-cache entries in each worker thread's global cache.
-pub const PLACEMENT_CACHE_MAX_ENTRIES: usize = 10_000;
+pub const PLACEMENT_CACHE_MAX_ENTRIES: usize = 1_000_000;
 
 /// Max number of board-analysis entries in each worker thread's global cache.
-pub const BOARD_ANALYSIS_CACHE_MAX_ENTRIES: usize = 500_000;
+pub const BOARD_ANALYSIS_CACHE_MAX_ENTRIES: usize = 1_000_000;
 
 /// Max number of board-embedding entries in Rust NN inference cache.
 pub const BOARD_CACHE_MAX_ENTRIES: usize = 1_000_000;
