@@ -555,7 +555,9 @@ pub fn encode_aux_features(
 
 /// Probability distribution over the next hidden queue piece implied by the 7-bag state.
 pub fn next_hidden_piece_distribution(env: &TetrisEnv) -> Vec<f32> {
-    let possible_pieces = env.get_possible_next_pieces();
+    let mut visible_state = env.clone();
+    visible_state.truncate_queue(QUEUE_SIZE);
+    let possible_pieces = visible_state.get_possible_next_pieces();
     if possible_pieces.is_empty() {
         panic!("Possible hidden-piece set must never be empty");
     }
@@ -899,6 +901,26 @@ mod tests {
                 "Hidden-piece probabilities must be in [0, 1]"
             );
         }
+    }
+
+    #[test]
+    fn test_hidden_distribution_changes_with_visible_queue_horizon() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        let first = next_hidden_piece_distribution(&env);
+        let first_non_zero = first.iter().filter(|&&p| p > 0.0).count();
+        assert_eq!(
+            first_non_zero, 1,
+            "At game start, hidden-piece distribution should be deterministic for the next hidden piece"
+        );
+
+        env.hard_drop();
+        let second = next_hidden_piece_distribution(&env);
+        let second_non_zero = second.iter().filter(|&&p| p > 0.0).count();
+        assert_eq!(
+            second_non_zero, NUM_PIECE_TYPES,
+            "After one placement, hidden-piece distribution should reset to full-bag uncertainty"
+        );
     }
 
     #[test]

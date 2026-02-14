@@ -416,6 +416,7 @@ impl MCTSTreeExport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcts::normalize_overhang_fields;
     use crate::mcts::NUM_ACTIONS;
 
     #[test]
@@ -616,7 +617,7 @@ mod tests {
             policy: vec![0.1; NUM_ACTIONS],
             value: 25.0,
             action_mask: vec![true; NUM_ACTIONS],
-            overhang_fields: 12.0,
+            overhang_fields: normalize_overhang_fields(12),
             game_number: 0,
             game_total_attack: 0,
         };
@@ -692,7 +693,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 100.0,
             action_mask: vec![true; NUM_ACTIONS],
-            overhang_fields: 5.0,
+            overhang_fields: normalize_overhang_fields(5),
             game_number: 0,
             game_total_attack: 0,
         };
@@ -718,7 +719,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 95.0,
             action_mask: vec![true; NUM_ACTIONS],
-            overhang_fields: 4.0,
+            overhang_fields: normalize_overhang_fields(4),
             game_number: 0,
             game_total_attack: 0,
         };

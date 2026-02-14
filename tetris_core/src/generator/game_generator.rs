@@ -1746,7 +1746,7 @@ mod tests {
             policy,
             value: move_number as f32,
             action_mask,
-            overhang_fields: move_number as f32,
+            overhang_fields: crate::mcts::normalize_overhang_fields(move_number),
             game_number: 0,
             game_total_attack: 0,
         }

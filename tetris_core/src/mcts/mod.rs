@@ -26,4 +26,4 @@ pub use results::{
     GameResult, GameStats, GameTreeStats, MCTSResult, MCTSTreeExport, TrainingExample,
     TreeNodeExport,
 };
-pub use utils::sample_dirichlet;
+pub use utils::{normalize_overhang_fields, sample_dirichlet, OVERHANG_NORMALIZATION_DENOMINATOR};

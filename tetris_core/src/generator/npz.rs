@@ -427,6 +427,13 @@ pub fn read_examples_from_npz(
                 i, combo_feature
             ));
         }
+        let overhang_feature = overhang_fields[i];
+        if !overhang_feature.is_finite() || !(0.0..=1.0).contains(&overhang_feature) {
+            return Err(format!(
+                "overhang_fields[{}] must be finite and in [0, 1], got {}",
+                i, overhang_feature
+            ));
+        }
 
         let board_start = i * board_size;
         let board_end = board_start + board_size;
@@ -488,7 +495,7 @@ pub fn read_examples_from_npz(
                 .iter()
                 .map(|value| *value != 0)
                 .collect(),
-            overhang_fields: overhang_fields[i],
+            overhang_fields: overhang_feature,
             game_number: game_numbers[i],
             game_total_attack: game_total_attacks[i],
         });
@@ -662,7 +669,7 @@ mod tests {
             policy,
             value: 3.5,
             action_mask,
-            overhang_fields: 17.0,
+            overhang_fields: crate::mcts::normalize_overhang_fields(17),
             game_number: 123,
             game_total_attack: 37,
         }
