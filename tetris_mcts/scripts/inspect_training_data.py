@@ -159,7 +159,10 @@ class ScriptArgs:
         -1  # Select by WandB game_number (1-indexed); ignored when -1
     )
     print_buffer_vectors: bool = (
-        True  # Print full literal vectors/matrices for selected game
+        True  # Print replay vectors/matrices for selected game (policy_targets is truncated)
+    )
+    policy_targets_edge_items: int = (
+        6  # Number of edge items per axis when truncating policy_targets display
     )
     config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
 
@@ -187,7 +190,22 @@ def format_array(arr: np.ndarray) -> str:
     )
 
 
-def print_game_buffer_vectors(data: np.lib.npyio.NpzFile, start: int, end: int) -> None:
+def format_policy_targets_preview(arr: np.ndarray, edge_items: int) -> str:
+    if edge_items <= 0:
+        raise ValueError("policy_targets_edge_items must be > 0")
+    threshold = edge_items * 4
+    return np.array2string(
+        arr,
+        separator=", ",
+        threshold=threshold,
+        edgeitems=edge_items,
+        max_line_width=160,
+    )
+
+
+def print_game_buffer_vectors(
+    data: np.lib.npyio.NpzFile, start: int, end: int, policy_targets_edge_items: int
+) -> None:
     """Print full game slice vectors and matrices from the replay buffer."""
     game_slice = slice(start, end)
     dump_keys = [
@@ -219,7 +237,13 @@ def print_game_buffer_vectors(data: np.lib.npyio.NpzFile, start: int, end: int) 
             logger.warning("Buffer key missing, skipping dump", key=key)
             continue
         console.print(f"[bold]{key}[/bold]")
-        console.print(format_array(data[key][game_slice]))
+        key_data = data[key][game_slice]
+        if key == "policy_targets":
+            console.print(
+                format_policy_targets_preview(key_data, policy_targets_edge_items)
+            )
+        else:
+            console.print(format_array(key_data))
         console.print()
 
 
@@ -350,7 +374,7 @@ def main(args: ScriptArgs) -> None:
         )
 
         if args.print_buffer_vectors:
-            print_game_buffer_vectors(data, start, end)
+            print_game_buffer_vectors(data, start, end, args.policy_targets_edge_items)
 
         # Render each frame
         frames = []

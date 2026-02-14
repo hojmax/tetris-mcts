@@ -1036,7 +1036,7 @@ impl GameGenerator {
                 policies[i * num_actions + j] = val;
             }
             values[i] = ex.value;
-            overhangs[i] = ex.overhang_fields as f32;
+            overhangs[i] = ex.overhang_fields;
             for (j, &val) in ex.action_mask.iter().enumerate() {
                 masks[i * num_actions + j] = if val { 1.0 } else { 0.0 };
             }
@@ -1746,7 +1746,7 @@ mod tests {
             policy,
             value: move_number as f32,
             action_mask,
-            overhang_fields: move_number,
+            overhang_fields: move_number as f32,
             game_number: 0,
             game_total_attack: 0,
         }

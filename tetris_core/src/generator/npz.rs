@@ -38,7 +38,7 @@ use crate::nn::{denormalize_combo_feature, normalize_combo_for_feature};
 /// - policy_targets: (N, 735) float32
 /// - value_targets: (N,) float32
 /// - action_masks: (N, 735) bool
-/// - overhang_fields: (N,) uint32
+/// - overhang_fields: (N,) float32 normalized by maximum possible overhang fields
 /// - game_numbers: (N,) uint64 (1-indexed game IDs aligned with WandB game_number)
 /// - game_total_attacks: (N,) uint32 (raw total attack for each example's source game)
 pub fn write_examples_to_npz(
@@ -72,7 +72,7 @@ pub fn write_examples_to_npz(
     let mut policy_targets: Vec<f32> = Vec::with_capacity(n * NUM_ACTIONS);
     let mut value_targets: Vec<f32> = Vec::with_capacity(n);
     let mut action_masks: Vec<u8> = Vec::with_capacity(n * NUM_ACTIONS);
-    let mut overhang_fields: Vec<u32> = Vec::with_capacity(n);
+    let mut overhang_fields: Vec<f32> = Vec::with_capacity(n);
     let mut game_numbers: Vec<u64> = Vec::with_capacity(n);
     let mut game_total_attacks: Vec<u32> = Vec::with_capacity(n);
 
@@ -347,7 +347,7 @@ pub fn read_examples_from_npz(
     let (action_masks, action_masks_shape) =
         read_npy_array_bool_like(&mut archive, "action_masks.npy")?;
     let (overhang_fields, overhang_fields_shape) =
-        read_npy_array::<u32>(&mut archive, "overhang_fields.npy")?;
+        read_npy_array::<f32>(&mut archive, "overhang_fields.npy")?;
     let (game_numbers, game_numbers_shape) =
         read_npy_array::<u64>(&mut archive, "game_numbers.npy")?;
     let (game_total_attacks, game_total_attacks_shape) =
@@ -662,7 +662,7 @@ mod tests {
             policy,
             value: 3.5,
             action_mask,
-            overhang_fields: 17,
+            overhang_fields: 17.0,
             game_number: 123,
             game_total_attack: 37,
         }

@@ -278,6 +278,7 @@ impl MCTSAgent {
                 super::utils::normalize_bumpiness(raw_bumpiness, state.width, state.height);
             let holes =
                 super::utils::normalize_holes(snapshot.hole_count, state.width, state.height);
+            let overhang_fields = super::utils::normalize_overhang_fields(snapshot.overhang_fields);
             let max_column_height = column_heights
                 .iter()
                 .copied()
@@ -310,7 +311,7 @@ impl MCTSAgent {
                 policy: snapshot.policy.clone(),
                 value,
                 action_mask: snapshot.mask.clone(),
-                overhang_fields: snapshot.overhang_fields,
+                overhang_fields,
                 game_number: 0,
                 game_total_attack: 0,
             });
@@ -626,11 +627,13 @@ mod tests {
 
             let (expected_overhang, expected_holes_raw) =
                 super::super::utils::count_overhang_fields_and_holes(&env);
+            let expected_normalized_overhang =
+                super::super::utils::normalize_overhang_fields(expected_overhang);
             let expected_holes =
                 super::super::utils::normalize_holes(expected_holes_raw, env.width, env.height);
 
-            assert_eq!(
-                example.overhang_fields, expected_overhang,
+            assert!(
+                (example.overhang_fields - expected_normalized_overhang).abs() < 1e-6,
                 "overhang_fields must match the saved board at move {}",
                 example.move_number
             );

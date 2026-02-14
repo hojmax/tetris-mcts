@@ -88,9 +88,9 @@ pub struct TrainingExample {
     /// Action mask (NUM_ACTIONS values, true = valid)
     #[pyo3(get)]
     pub action_mask: Vec<bool>,
-    /// Overhang fields in this state's board
+    /// Overhang fields normalized by maximum possible overhang count
     #[pyo3(get)]
-    pub overhang_fields: u32,
+    pub overhang_fields: f32,
     /// 1-indexed global game number used for WandB per-game metrics
     #[pyo3(get)]
     pub game_number: u64,
@@ -472,7 +472,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 10.5,
             action_mask: vec![false; NUM_ACTIONS],
-            overhang_fields: 0,
+            overhang_fields: 0.0,
             game_number: 0,
             game_total_attack: 0,
         };
@@ -524,7 +524,7 @@ mod tests {
                 policy: vec![],
                 value: 0.0,
                 action_mask: vec![],
-                overhang_fields: 0,
+                overhang_fields: 0.0,
                 game_number: 0,
                 game_total_attack: 0,
             };
@@ -555,7 +555,7 @@ mod tests {
             policy: vec![],
             value: 0.0,
             action_mask: vec![],
-            overhang_fields: 0,
+            overhang_fields: 0.0,
             game_number: 0,
             game_total_attack: 0,
         };
@@ -585,7 +585,7 @@ mod tests {
             policy: vec![],
             value: 0.0,
             action_mask: vec![],
-            overhang_fields: 0,
+            overhang_fields: 0.0,
             game_number: 0,
             game_total_attack: 0,
         };
@@ -616,7 +616,7 @@ mod tests {
             policy: vec![0.1; NUM_ACTIONS],
             value: 25.0,
             action_mask: vec![true; NUM_ACTIONS],
-            overhang_fields: 12,
+            overhang_fields: 12.0,
             game_number: 0,
             game_total_attack: 0,
         };
@@ -692,7 +692,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 100.0,
             action_mask: vec![true; NUM_ACTIONS],
-            overhang_fields: 5,
+            overhang_fields: 5.0,
             game_number: 0,
             game_total_attack: 0,
         };
@@ -718,7 +718,7 @@ mod tests {
             policy: vec![0.0; NUM_ACTIONS],
             value: 95.0,
             action_mask: vec![true; NUM_ACTIONS],
-            overhang_fields: 4,
+            overhang_fields: 4.0,
             game_number: 0,
             game_total_attack: 0,
         };
@@ -827,7 +827,7 @@ mod tests {
             policy: policy.clone(),
             value: 0.0,
             action_mask: action_mask.clone(),
-            overhang_fields: 0,
+            overhang_fields: 0.0,
             game_number: 0,
             game_total_attack: 0,
         };

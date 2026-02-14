@@ -268,7 +268,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 - `Piece` - Tetromino (piece_type, x, y, rotation)
 - `MCTSAgent` - MCTS search coordinator
 - `MCTSConfig` - Search hyperparameters (num_simulations, c_puct, temperature, etc.)
-- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, where `holes`/`overhang_fields` are from the current state board)
+- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, where `holes`/`overhang_fields` are normalized from the current state board)
 - `GameGenerator` - Background self-play worker
 
 ### Python
@@ -331,7 +331,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
    - Default staged mode: `generator.sample_batch(batch_size * prefetch_batches, max_placements)`, then move staged tensors once to the training device, split into train-sized batches, and keep a queued cache up to `staged_batch_cache_batches` before consuming.
    - Full mirror mode (CUDA/MPS only, `mirror_replay_on_accelerator=true`): `generator.replay_buffer_snapshot(max_placements)` initializes a full device mirror, then `generator.replay_buffer_delta(from_index, max_examples, max_placements)` incrementally appends new examples and drops evicted prefix rows to match FIFO windowing. Rust now snapshots replay rows and logical index bounds atomically from a shared replay state (`SharedBufferState`), so Python deltas stay aligned with FIFO index space under concurrent generation.
    Both modes use `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` tensors; periodic NPZ saves remain resume-only.
-10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), normalized aux scalars (`move_numbers`, `placement_counts`, `combos` where combo is clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` computed from each example's current board) for exact replay/WandB alignment plus future feature experiments
+10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), normalized aux scalars (`move_numbers`, `placement_counts`, `combos` where combo is clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` normalized from each example's current board) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing
 

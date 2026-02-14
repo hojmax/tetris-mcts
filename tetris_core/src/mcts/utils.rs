@@ -168,9 +168,13 @@ pub fn count_overhang_fields(env: &TetrisEnv) -> u32 {
     count_overhang_fields_and_holes(env).0
 }
 
+pub fn normalize_overhang_fields(overhang_fields: u32) -> f32 {
+    overhang_fields as f32 / OVERHANG_NORMALIZATION_DENOMINATOR
+}
+
 /// Compute normalized overhang penalty magnitude from raw overhang count.
 pub fn compute_overhang_penalty(overhang_fields: u32, overhang_penalty_weight: f32) -> f32 {
-    (overhang_fields as f32 / OVERHANG_NORMALIZATION_DENOMINATOR) * overhang_penalty_weight
+    normalize_overhang_fields(overhang_fields) * overhang_penalty_weight
 }
 
 /// Compute terrain bumpiness as the sum of squared adjacent column-height deltas.
