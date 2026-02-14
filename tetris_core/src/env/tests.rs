@@ -2,10 +2,57 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::constants::{I_PIECE, T_PIECE};
+    use crate::constants::{I_PIECE, L_PIECE, O_PIECE, S_PIECE, T_PIECE, Z_PIECE};
     use crate::env::TetrisEnv;
     use crate::mcts::HOLD_ACTION_INDEX;
     use crate::piece::Piece;
+
+    const HANDCRAFTED_TSPIN_BOARD: [&str; 20] = [
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "..........",
+        "....LLL...",
+        "LL...LLLLL",
+        "LLL.LLLLLL",
+    ];
+
+    fn set_board_from_ascii(env: &mut TetrisEnv, rows: &[&str]) {
+        assert_eq!(rows.len(), env.height);
+        let board = rows
+            .iter()
+            .map(|row| {
+                assert_eq!(row.len(), env.width);
+                row.chars()
+                    .map(|cell| if cell == '.' { 0 } else { 1 })
+                    .collect::<Vec<u8>>()
+            })
+            .collect::<Vec<Vec<u8>>>();
+        env.set_board(board)
+            .expect("handcrafted board should be a valid 10x20 binary board");
+    }
+
+    fn setup_handcrafted_tspin_env() -> TetrisEnv {
+        let mut env = TetrisEnv::new(10, 20);
+        set_board_from_ascii(&mut env, &HANDCRAFTED_TSPIN_BOARD);
+        env.spawn_piece_from_type(T_PIECE);
+        env.set_queue(vec![I_PIECE, O_PIECE, L_PIECE, S_PIECE, Z_PIECE])
+            .expect("handcrafted queue should be valid");
+        env
+    }
 
     #[test]
     fn test_env_creation() {
@@ -640,6 +687,149 @@ mod tests {
         let (is_tspin, is_mini) = env.check_tspin(&piece);
         assert!(is_tspin, "Should detect T-spin in rotation 1");
         assert!(!is_mini, "Both front corners filled should be full T-spin");
+    }
+
+    #[test]
+    fn test_handcrafted_board_tspin_double_attack_with_final_counterclockwise_twist() {
+        let mut env = setup_handcrafted_tspin_env();
+
+        // Sequence mirrors the intended real move:
+        // 1) move into the hole,
+        // 2) rotate once CCW as the final input to twist,
+        // 3) lock.
+        assert!(
+            env.rotate_ccw(),
+            "should rotate once before entering the cavity"
+        );
+        assert!(env.move_left(), "should move toward cavity");
+        while env.move_down() {}
+        assert!(
+            env.rotate_ccw(),
+            "final counterclockwise twist should be valid at the cavity"
+        );
+
+        let active = env
+            .current_piece
+            .as_ref()
+            .expect("piece should still be active before lock");
+        assert_eq!(active.x, 2);
+        assert_eq!(active.y, 17);
+        assert_eq!(active.rotation, 2);
+
+        let attack_before_lock = env.attack;
+        let drop_distance = env.hard_drop();
+
+        // Piece is already grounded after the final twist. Keeping drop distance 0 is important:
+        // hard_drop only clears last_move_was_rotation when it moves the piece down.
+        assert_eq!(drop_distance, 0);
+        let attack_delta = env.attack - attack_before_lock;
+
+        assert_eq!(attack_delta, 4);
+        assert_eq!(env.attack, 4);
+        assert_eq!(env.lines_cleared, 2);
+        assert_eq!(env.combo, 1);
+        assert!(env.back_to_back);
+
+        let result = env
+            .last_attack_result
+            .as_ref()
+            .expect("T-spin double should produce an attack result");
+        assert_eq!(result.lines_cleared, 2);
+        assert_eq!(result.base_attack, 4);
+        assert_eq!(result.combo_attack, 0);
+        assert_eq!(result.back_to_back_attack, 0);
+        assert_eq!(result.total_attack, 4);
+        assert!(result.is_tspin);
+        assert!(result.back_to_back_active);
+        assert!(!result.is_perfect_clear);
+
+        let next_piece = env
+            .current_piece
+            .as_ref()
+            .expect("A new piece should spawn after placement");
+        assert_eq!(next_piece.piece_type, I_PIECE);
+    }
+
+    #[test]
+    fn test_handcrafted_board_tspin_mini_single_attack() {
+        let mut env = setup_handcrafted_tspin_env();
+
+        // Same board, but rotation=0 has only one filled front corner at lock.
+        // That should classify as a mini single (base 0 attack).
+        let attack_delta = env.place_piece_internal_with_kick(2, 17, 0, true, 0);
+
+        assert_eq!(attack_delta, 0);
+        assert_eq!(env.attack, 0);
+        assert_eq!(env.lines_cleared, 1);
+        assert_eq!(env.combo, 1);
+        assert!(env.back_to_back);
+
+        let result = env
+            .last_attack_result
+            .as_ref()
+            .expect("T-spin mini single should produce an attack result");
+        assert_eq!(result.lines_cleared, 1);
+        assert_eq!(result.base_attack, 0);
+        assert_eq!(result.combo_attack, 0);
+        assert_eq!(result.back_to_back_attack, 0);
+        assert_eq!(result.total_attack, 0);
+        assert!(result.is_tspin);
+        assert!(result.back_to_back_active);
+        assert!(!result.is_perfect_clear);
+
+        let next_piece = env
+            .current_piece
+            .as_ref()
+            .expect("A new piece should spawn after placement");
+        assert_eq!(next_piece.piece_type, I_PIECE);
+    }
+
+    #[test]
+    fn test_handcrafted_board_has_mcts_placement_for_tspin_double_attack() {
+        let env = setup_handcrafted_tspin_env();
+        let placements = env.get_possible_placements();
+        assert!(
+            !placements.is_empty(),
+            "Expected at least one legal placement from handcrafted board"
+        );
+
+        let mut found_tspin_double = false;
+
+        for placement in placements {
+            let mut sim = env.clone_state();
+            let attack_delta = sim.execute_placement(&placement);
+
+            if attack_delta != 4 {
+                continue;
+            }
+
+            let result = sim
+                .last_attack_result
+                .as_ref()
+                .expect("Line clear with non-zero attack should have an attack result");
+
+            if !(result.is_tspin && result.lines_cleared == 2 && result.base_attack == 4) {
+                continue;
+            }
+
+            assert!(
+                placement.last_move_was_rotation,
+                "T-spin placement selected by MCTS should end on a rotation input"
+            );
+            assert!(
+                placement.moves.iter().any(|&action| action == 4 || action == 5),
+                "T-spin placement path should include at least one rotation action"
+            );
+            assert_eq!(result.total_attack, 4);
+
+            found_tspin_double = true;
+            break;
+        }
+
+        assert!(
+            found_tspin_double,
+            "Expected at least one MCTS placement to produce a 4-attack T-spin double"
+        );
     }
 
     // ==================== Line Clearing Tests ====================
