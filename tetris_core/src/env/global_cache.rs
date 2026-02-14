@@ -1,13 +1,11 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 
+use crate::constants::{BOARD_ANALYSIS_CACHE_MAX_ENTRIES, PLACEMENT_CACHE_MAX_ENTRIES};
 use crate::piece::Piece;
 
 use super::state::PlacementCache;
 use super::TetrisEnv;
-
-const PLACEMENT_CACHE_MAX_ENTRIES: usize = 10_000;
-const BOARD_ANALYSIS_CACHE_MAX_ENTRIES: usize = 500_000;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PackedBoardKey {

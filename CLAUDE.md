@@ -291,15 +291,15 @@ Training uses parallel Rust game generation via `GameGenerator`:
 8. Training examples from accepted games are stored in a shared in-memory ring buffer
 9. Python sampling has two modes:
    - Default staged mode: `generator.sample_batch(batch_size * prefetch_batches, max_placements)`, then move staged tensors once to the training device, split into train-sized batches, and keep a queued cache up to `staged_batch_cache_batches` before consuming.
-   - Full mirror mode (CUDA/MPS only, `mirror_replay_on_accelerator=true`): `generator.replay_buffer_snapshot(max_placements)` initializes a full device mirror, then `generator.replay_buffer_delta(from_index, max_examples, max_placements)` incrementally appends only newly added examples (with occasional full resync only if FIFO eviction makes mirror state stale). Training samples indices directly from the mirrored device batch.
+   - Full mirror mode (CUDA/MPS only, `mirror_replay_on_accelerator=true`): `generator.replay_buffer_snapshot(max_placements)` initializes a full device mirror, then `generator.replay_buffer_delta(from_index, max_examples, max_placements)` incrementally appends new examples and drops evicted prefix rows to match FIFO windowing. Rust now snapshots replay rows and logical index bounds atomically from a shared replay state (`SharedBufferState`), so Python deltas stay aligned with FIFO index space under concurrent generation.
    Both modes use `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` tensors; periodic NPZ saves remain resume-only.
 10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), normalized aux scalars (`move_numbers`, `placement_counts`, `combos` where combo is clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` computed from each example's current board) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing
 
 ```bash
-make test           # Run Rust tests
-cargo test -p tetris_core  # Equivalent
+make test  # Run Rust tests + Python tests (recommended)
+cd tetris_core && PYO3_PYTHON=../.venv/bin/python cargo test  # Rust-only equivalent
 ```
 
 Tests are in:

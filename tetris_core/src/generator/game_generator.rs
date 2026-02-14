@@ -187,37 +187,107 @@ struct ModelEvalEvent {
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
 struct SharedBuffer {
-    /// Training examples (circular buffer with FIFO eviction)
-    examples: RwLock<VecDeque<TrainingExample>>,
+    /// Training examples and logical index space, updated atomically under one lock.
+    state: RwLock<SharedBufferState>,
     /// Maximum buffer size
     max_size: usize,
+}
+
+struct SharedBufferState {
+    examples: VecDeque<TrainingExample>,
+    end_index: u64,
 }
 
 impl SharedBuffer {
     fn new(max_size: usize) -> Self {
         SharedBuffer {
-            examples: RwLock::new(VecDeque::with_capacity(max_size)),
+            state: RwLock::new(SharedBufferState {
+                examples: VecDeque::with_capacity(max_size),
+                end_index: 0,
+            }),
             max_size,
         }
     }
 
     /// Add examples to the buffer, evicting oldest if over capacity.
     fn add_examples(&self, new_examples: Vec<TrainingExample>) {
-        let mut examples = self.examples.write().unwrap();
-        examples.extend(new_examples);
-        while examples.len() > self.max_size {
-            examples.pop_front();
+        if new_examples.is_empty() {
+            return;
+        }
+        let added_count = new_examples.len() as u64;
+        let mut state = self.state.write().unwrap();
+        state.end_index = state.end_index.saturating_add(added_count);
+        state.examples.extend(new_examples);
+        while state.examples.len() > self.max_size {
+            state.examples.pop_front();
         }
     }
 
     /// Get current buffer size.
     fn len(&self) -> usize {
-        self.examples.read().unwrap().len()
+        self.state.read().unwrap().examples.len()
     }
 
     /// Get a copy of all examples (for disk saves).
     fn get_all(&self) -> Vec<TrainingExample> {
-        self.examples.read().unwrap().iter().cloned().collect()
+        self.state
+            .read()
+            .unwrap()
+            .examples
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Return the logical one-past-end index in replay index space.
+    fn window_end_index(&self) -> u64 {
+        self.state.read().unwrap().end_index
+    }
+
+    /// Snapshot the current replay FIFO window atomically.
+    fn logical_window_snapshot(&self) -> Option<(u64, u64, Vec<TrainingExample>)> {
+        let state = self.state.read().unwrap();
+        let n = state.examples.len();
+        if n == 0 {
+            return None;
+        }
+        let window_end = state.end_index;
+        let window_start = window_end.saturating_sub(n as u64);
+        let snapshot = state.examples.iter().cloned().collect();
+        Some((window_start, window_end, snapshot))
+    }
+
+    /// Fetch a replay delta slice atomically from logical replay index space.
+    fn logical_delta_slice(
+        &self,
+        from_index: u64,
+        max_examples: usize,
+    ) -> Option<(u64, u64, u64, Vec<TrainingExample>)> {
+        let state = self.state.read().unwrap();
+        let n = state.examples.len();
+        if n == 0 {
+            return None;
+        }
+
+        let window_end = state.end_index;
+        let window_start = window_end.saturating_sub(n as u64);
+        let slice_start = from_index.max(window_start);
+        let slice_end = (slice_start + max_examples as u64).min(window_end);
+        let slice_len = slice_end.saturating_sub(slice_start) as usize;
+        let offset = slice_start.saturating_sub(window_start) as usize;
+        let slice_examples = if slice_len == 0 {
+            Vec::new()
+        } else {
+            state
+                .examples
+                .iter()
+                .skip(offset)
+                .take(slice_len)
+                .cloned()
+                .collect()
+        };
+
+        Some((window_start, window_end, slice_start, slice_examples))
     }
 }
 
@@ -404,10 +474,11 @@ impl GameGenerator {
                     .unwrap_or(0);
                 self.buffer.add_examples(loaded_examples);
                 let retained_examples_count = self.buffer.len();
+                let replay_end_index = self.buffer.window_end_index();
                 self.games_generated
                     .store(loaded_max_game_number, Ordering::SeqCst);
                 self.examples_generated
-                    .store(retained_examples_count as u64, Ordering::SeqCst);
+                    .store(replay_end_index, Ordering::SeqCst);
                 eprintln!(
                     "[GameGenerator] Loaded {} replay examples from {} (max_game_number={})",
                     retained_examples_count,
@@ -766,16 +837,10 @@ impl GameGenerator {
             ));
         }
 
-        let (start_index, snapshot_examples): (u64, Vec<TrainingExample>) = {
-            let examples = self.buffer.examples.read().unwrap();
-            let n = examples.len();
-            if n == 0 {
-                return Ok(None);
-            }
-            let end_index = self.examples_generated.load(Ordering::SeqCst);
-            let start_index = end_index.saturating_sub(n as u64);
-            let snapshot = examples.iter().cloned().collect();
-            (start_index, snapshot)
+        let Some((start_index, _end_index, snapshot_examples)) =
+            self.buffer.logical_window_snapshot()
+        else {
+            return Ok(None);
         };
 
         let arrays = Self::examples_to_numpy(py, &snapshot_examples, max_placements)?;
@@ -830,37 +895,10 @@ impl GameGenerator {
             ));
         }
 
-        let (window_start, window_end, slice_start, slice_examples): (
-            u64,
-            u64,
-            u64,
-            Vec<TrainingExample>,
-        ) = {
-            let examples = self.buffer.examples.read().unwrap();
-            let n = examples.len();
-            if n == 0 {
-                return Ok(None);
-            }
-
-            let window_end = self.examples_generated.load(Ordering::SeqCst);
-            let window_start = window_end.saturating_sub(n as u64);
-            let slice_start = from_index.max(window_start);
-            let slice_end = (slice_start + max_examples as u64).min(window_end);
-            let slice_len = slice_end.saturating_sub(slice_start) as usize;
-            let offset = slice_start.saturating_sub(window_start) as usize;
-
-            let slice_examples = if slice_len == 0 {
-                Vec::new()
-            } else {
-                examples
-                    .iter()
-                    .skip(offset)
-                    .take(slice_len)
-                    .cloned()
-                    .collect()
-            };
-
-            (window_start, window_end, slice_start, slice_examples)
+        let Some((window_start, window_end, slice_start, slice_examples)) =
+            self.buffer.logical_delta_slice(from_index, max_examples)
+        else {
+            return Ok(None);
         };
 
         let arrays = Self::examples_to_numpy(py, &slice_examples, max_placements)?;
@@ -914,8 +952,8 @@ impl GameGenerator {
 
         // Snapshot sampled examples under lock, then release lock before heavy work.
         let sampled_examples: Vec<TrainingExample> = {
-            let examples = self.buffer.examples.read().unwrap();
-            let n = examples.len();
+            let state = self.buffer.state.read().unwrap();
+            let n = state.examples.len();
             if n == 0 {
                 return Ok(None);
             }
@@ -925,7 +963,7 @@ impl GameGenerator {
             (0..actual_batch)
                 .map(|_| {
                     let idx = rng.gen_range(0..n);
-                    examples[idx].clone()
+                    state.examples[idx].clone()
                 })
                 .collect()
         };
@@ -1737,6 +1775,48 @@ mod tests {
         assert_eq!(kept.len(), 3);
         let move_numbers: Vec<u32> = kept.iter().map(|e| e.move_number).collect();
         assert_eq!(move_numbers, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn test_shared_buffer_logical_indices_follow_fifo_window() {
+        let buffer = SharedBuffer::new(3);
+        assert!(buffer.logical_window_snapshot().is_none());
+
+        buffer.add_examples(vec![make_example(1), make_example(2)]);
+        let (window_start, window_end, snapshot) = buffer
+            .logical_window_snapshot()
+            .expect("snapshot should exist after adding examples");
+        assert_eq!(window_start, 0);
+        assert_eq!(window_end, 2);
+        let move_numbers: Vec<u32> = snapshot.iter().map(|e| e.move_number).collect();
+        assert_eq!(move_numbers, vec![1, 2]);
+
+        buffer.add_examples(vec![make_example(3), make_example(4)]);
+        let (window_start, window_end, snapshot) = buffer
+            .logical_window_snapshot()
+            .expect("snapshot should exist after eviction");
+        assert_eq!(window_start, 1);
+        assert_eq!(window_end, 4);
+        let move_numbers: Vec<u32> = snapshot.iter().map(|e| e.move_number).collect();
+        assert_eq!(move_numbers, vec![2, 3, 4]);
+
+        let (window_start, window_end, slice_start, slice) = buffer
+            .logical_delta_slice(2, 10)
+            .expect("delta should exist");
+        assert_eq!(window_start, 1);
+        assert_eq!(window_end, 4);
+        assert_eq!(slice_start, 2);
+        let move_numbers: Vec<u32> = slice.iter().map(|e| e.move_number).collect();
+        assert_eq!(move_numbers, vec![3, 4]);
+
+        let (window_start, window_end, slice_start, slice) = buffer
+            .logical_delta_slice(0, 2)
+            .expect("delta should clamp to window start");
+        assert_eq!(window_start, 1);
+        assert_eq!(window_end, 4);
+        assert_eq!(slice_start, 1);
+        let move_numbers: Vec<u32> = slice.iter().map(|e| e.move_number).collect();
+        assert_eq!(move_numbers, vec![2, 3]);
     }
 
     #[test]

@@ -14,11 +14,10 @@ use ndarray::{Array1, Array2, ArrayView1};
 use tract_onnx::prelude::*;
 
 use crate::constants::{
-    AUX_FEATURES, BOARD_HEIGHT, BOARD_WIDTH, COMBO_NORMALIZATION_MAX, NUM_PIECE_TYPES, QUEUE_SIZE,
+    AUX_FEATURES, BOARD_CACHE_MAX_ENTRIES, BOARD_HEIGHT, BOARD_WIDTH, COMBO_NORMALIZATION_MAX,
+    NUM_PIECE_TYPES, QUEUE_SIZE,
 };
 use crate::env::TetrisEnv;
-
-const BOARD_CACHE_MAX_ENTRIES: usize = 1_000_000;
 
 /// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
