@@ -115,13 +115,13 @@ class TrainingConfig:
     buffer_size: int = 1_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
     prefetch_batches: int = (  # Number of train batches sampled/staged per generator.sample_batch call
-        8
+        1
     )
     staged_batch_cache_batches: int = (  # Target number of train batches kept staged in memory/device queue
-        16
+        1
     )
     mirror_replay_on_accelerator: bool = (  # If True, mirror full replay buffer on CUDA/MPS and train from device-local samples
-        True
+        False
     )
     replay_mirror_refresh_seconds: float = (  # Seconds between full replay mirror refreshes while training from device-local replay
         10.0
@@ -130,7 +130,7 @@ class TrainingConfig:
         65_536
     )
     pin_memory_batches: bool = (  # If True, pin host tensors before CUDA transfer
-        True
+        False
     )
     save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
         10800
@@ -201,9 +201,7 @@ class TrainingConfig:
                 f"nn_value_weight must be >= 0 (got {self.nn_value_weight})"
             )
         if not math.isfinite(self.q_scale) or self.q_scale <= 0.0:
-            raise ValueError(
-                f"q_scale must be finite and > 0 (got {self.q_scale})"
-            )
+            raise ValueError(f"q_scale must be finite and > 0 (got {self.q_scale})")
         if (
             not math.isfinite(self.model_sync_interval_seconds)
             or self.model_sync_interval_seconds <= 0
