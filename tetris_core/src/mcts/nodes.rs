@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::constants::NUM_PIECE_TYPES;
 use crate::env::TetrisEnv;
 
+#[cfg(test)]
 use super::action_space::NUM_ACTIONS;
 use super::utils::sample_dirichlet;
 
@@ -247,14 +248,7 @@ impl ChanceNode {
 
 /// Get valid action indices for a state
 pub fn get_valid_action_indices(env: &TetrisEnv) -> Vec<usize> {
-    let mut valid = vec![false; NUM_ACTIONS];
-    env.fill_cached_action_mask(&mut valid);
-
-    valid
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, is_valid)| if *is_valid { Some(idx) } else { None })
-        .collect()
+    env.get_cached_valid_action_indices()
 }
 
 #[cfg(test)]

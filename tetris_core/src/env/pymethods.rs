@@ -545,6 +545,7 @@ impl TetrisEnv {
             *self.placements_cache.borrow_mut() = Some(PlacementCache {
                 placements: Arc::new(Vec::new()),
                 action_to_placement_idx: Arc::new(vec![None; crate::mcts::NUM_ACTIONS]),
+                placement_action_indices: Arc::new(Vec::new()),
             });
             return;
         };
@@ -562,14 +563,24 @@ impl TetrisEnv {
         let placements = find_all_placements(&board, piece.piece_type, piece.x, piece.y);
 
         let mut action_to_placement_idx = vec![None; crate::mcts::NUM_ACTIONS];
+        let mut placement_action_indices = Vec::with_capacity(placements.len());
         for (placement_idx, placement) in placements.iter().enumerate() {
             debug_assert!(placement.action_index < action_to_placement_idx.len());
+            debug_assert!(
+                action_to_placement_idx[placement.action_index].is_none(),
+                "Duplicate action index {} in placement list",
+                placement.action_index
+            );
             action_to_placement_idx[placement.action_index] = Some(placement_idx);
+            placement_action_indices.push(placement.action_index);
         }
+        placement_action_indices.sort_unstable();
+        placement_action_indices.dedup();
 
         let cache_entry = PlacementCache {
             placements: Arc::new(placements),
             action_to_placement_idx: Arc::new(action_to_placement_idx),
+            placement_action_indices: Arc::new(placement_action_indices),
         };
 
         if let Some(cache_key) = global_cache_key {
@@ -617,10 +628,8 @@ impl TetrisEnv {
         let cache = cache_ref
             .as_ref()
             .expect("placements cache should exist after ensure_placements_cache");
-        for (action_idx, placement_idx) in cache.action_to_placement_idx.iter().enumerate() {
-            if placement_idx.is_some() {
-                mask[action_idx] = true;
-            }
+        for &action_idx in cache.placement_action_indices.iter() {
+            mask[action_idx] = true;
         }
 
         let hold_is_available =
@@ -628,5 +637,24 @@ impl TetrisEnv {
         if hold_is_available {
             mask[HOLD_ACTION_INDEX] = true;
         }
+    }
+
+    pub(crate) fn get_cached_valid_action_indices(&self) -> Vec<usize> {
+        if self.game_over {
+            return Vec::new();
+        }
+
+        self.ensure_placements_cache();
+        let cache_ref = self.placements_cache.borrow();
+        let cache = cache_ref
+            .as_ref()
+            .expect("placements cache should exist after ensure_placements_cache");
+
+        let mut valid_actions = cache.placement_action_indices.as_ref().clone();
+        let hold_is_available = !self.is_hold_used() && self.current_piece.is_some();
+        if hold_is_available {
+            valid_actions.push(HOLD_ACTION_INDEX);
+        }
+        valid_actions
     }
 }

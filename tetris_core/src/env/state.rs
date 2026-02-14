@@ -17,6 +17,7 @@ use crate::scoring::AttackResult;
 pub(crate) struct PlacementCache {
     pub placements: Arc<Vec<Placement>>,
     pub action_to_placement_idx: Arc<Vec<Option<usize>>>,
+    pub placement_action_indices: Arc<Vec<usize>>,
 }
 
 #[pyclass]

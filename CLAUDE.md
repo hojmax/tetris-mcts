@@ -134,6 +134,9 @@ make profile SIMS=4000 PROFILE_ARGS="--use_dummy_network"  # No-network bootstra
 make profile MODEL_PROFILE=<path-to-existing-onnx>  # Override model path explicitly
 ```
 
+If the default `MODEL_PROFILE` path does not exist in your local checkout, pass an explicit
+existing ONNX path (for example `training_runs/v32/checkpoints/latest.onnx`).
+
 Results saved to `benchmarks/profile_results.jsonl` with timing data for comparison across runs.
 
 **Interactive Profiling** (requires [samply](https://github.com/mstange/samply)):
@@ -239,6 +242,7 @@ tetris_mcts/                 # Python package
 All valid (x, y, rotation) placements are enumerated. The `ActionSpace` struct maps between action indices and placements.
 
 Placement metadata includes `last_move_was_rotation` and `last_kick_index` for T-spin scoring when executing action indices directly. If multiple shortest input paths reach the same placement, move generation prefers paths whose last move is **not** a rotation to avoid accidental T-spin attribution from arbitrary path tie breaks.
+Per-state placement caching now also stores a precomputed sorted list of placement action indices, so valid-action lookup no longer rescans all 735 slots on cache hits; hold availability is still added dynamically per state.
 
 ### MCTS with Chance Nodes
 

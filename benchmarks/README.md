@@ -4,7 +4,7 @@ This directory contains performance profiling tools and results for tracking reg
 
 ## Files
 
-- `models/parallel.onnx` - Fixed benchmark model (checked into git)
+- `models/` - Optional benchmark model directory (may be empty in local clones)
 - `profile_results.jsonl` - Timing results from `make profile` (tracked history of benchmark runs)
 
 ## Quick Start
@@ -25,6 +25,9 @@ make profile SIMS=200
 
 # Bootstrap/dummy-network profiling (no ONNX inference), e.g. 4000 simulations
 make profile SIMS=4000 PROFILE_ARGS="--use_dummy_network"
+
+# If Makefile's default MODEL_PROFILE path is missing, set one explicitly
+make profile MODEL_PROFILE=training_runs/v32/checkpoints/latest.onnx
 ```
 
 Results are saved to `profile_results.jsonl` with:
@@ -98,11 +101,9 @@ Typical hotspots:
 
 ## Benchmark Model
 
-The model at `benchmarks/models/parallel.onnx` is:
-- Checked into git (with `.data` file)
-- Fixed across all profiling runs
-- Used with deterministic seeds (42-51)
-- Ensures consistent, reproducible results
+If `benchmarks/models/parallel.onnx` exists in your checkout, you can use it as a fixed model.
+If not, pass an explicit existing checkpoint path with `MODEL_PROFILE=...` and keep it consistent
+across comparison runs.
 
 To update the benchmark model:
 ```bash
