@@ -337,13 +337,13 @@ From `config.py` TrainingConfig defaults:
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
 - **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
-- **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=8` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=16` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
+- **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=1` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=1` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
 - **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
-- **NN Value Scaling**: `nn_value_weight=0.025` by default.
-- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=10800` (`0` disables periodic snapshot saves).
-- **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default
+- **NN Value Scaling**: `nn_value_weight=0.025` by default. Promotion ramp is event-driven on accepted candidates with additive updates: `delta = min(current * nn_value_weight_promotion_multiplier, nn_value_weight_promotion_max_delta)` then `next = min(nn_value_weight_cap, current + delta)`. Defaults: multiplier `1.4`, max delta `0.10`, cap `1.0`.
+- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1800` (`0` disables periodic snapshot saves).
+- **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default; candidate evaluation carries an explicit `candidate_nn_value_weight`, and promotion atomically updates `(incumbent model, incumbent nn_value_weight)` together
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
@@ -376,15 +376,16 @@ Training uses parallel Rust game generation via `GameGenerator`:
 2. One dedicated evaluator worker tests queued candidate ONNX models over a fixed game window (default 50 games)
 3. Candidate evaluation games use fresh random environment seeds (not a fixed seed list)
 4. Candidates are compared against incumbent lifetime average attack; if better, evaluator commits candidate games then promotes the model globally
-5. If candidate is worse, evaluator discards candidate games and keeps incumbent
-6. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
-7. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
-8. Training examples from accepted games are stored in a shared in-memory ring buffer
-9. Python sampling has two modes:
+5. Promotion is atomic for `(model, nn_value_weight)`: evaluator runs candidate games with the queued candidate weight, and if promoted, workers switch to that exact weight with the model
+6. If candidate is worse, evaluator discards candidate games and keeps incumbent
+7. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
+8. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
+9. Training examples from accepted games are stored in a shared in-memory ring buffer
+10. Python sampling has two modes:
    - Default staged mode: `generator.sample_batch(batch_size * prefetch_batches, max_placements)`, then move staged tensors once to the training device, split into train-sized batches, and keep a queued cache up to `staged_batch_cache_batches` before consuming.
    - Full mirror mode (CUDA/MPS only, `mirror_replay_on_accelerator=true`): `generator.replay_buffer_snapshot(max_placements)` initializes a full device mirror, then `generator.replay_buffer_delta(from_index, max_examples, max_placements)` incrementally appends new examples and drops evicted prefix rows to match FIFO windowing. Rust now snapshots replay rows and logical index bounds atomically from a shared replay state (`SharedBufferState`), so Python deltas stay aligned with FIFO index space under concurrent generation.
    Both modes use `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` tensors; periodic NPZ saves remain resume-only.
-10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), normalized aux scalars (`move_numbers`, `placement_counts`, `combos` where combo is clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` normalized from each example's current board) for exact replay/WandB alignment plus future feature experiments
+11. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), normalized aux scalars (`move_numbers`, `placement_counts`, `combos` where combo is clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` normalized from each example's current board) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing
 
@@ -420,7 +421,7 @@ Current behavior: split-model Rust inference caches board embeddings as `board_p
 1. Run `python tetris_mcts/train.py --training.total-steps N`
 2. Creates versioned directory: `training_runs/v0/`, `v1/`, etc.
 3. Checkpoints saved to `training_runs/vN/checkpoints/checkpoint_*.pt` with `latest.pt` symlink
-4. ONNX exported in `training_runs/vN/checkpoints/` (`latest.onnx` and `parallel.onnx`)
+4. ONNX exported in `training_runs/vN/checkpoints/` (`latest.onnx`, `parallel.onnx`, and incumbent snapshot `incumbent.onnx` + split artifacts when NN incumbent is active)
 5. Training data backed up to `training_runs/vN/training_data.npz` (periodic saves)
 6. Resume with `--resume-dir training_runs/vN`
 
@@ -441,7 +442,8 @@ training_runs/
 │       ├── checkpoint_1000.pt
 │       ├── latest.pt
 │       ├── latest.onnx
-│       └── parallel.onnx
+│       ├── parallel.onnx
+│       └── incumbent.onnx
 ├── v1/                          # Second run
 └── v2/                          # And so on...
 ```
@@ -450,7 +452,9 @@ training_runs/
 - Each run isolated with its own checkpoints and config
 - Config saved as JSON for reproducibility
 - `--resume-dir` creates a new versioned run (for example `v18`) and initializes it from `source_run/checkpoints/latest.pt` while copying `source_run/training_data.npz` when present
+- Resumed runs also copy `source_run/checkpoints/incumbent.onnx` (+ split artifacts) when present, so self-play can restart from the saved incumbent artifact instead of the trainer's latest checkpoint export
 - Resumed runs restore self-play startup mode from checkpoint field `incumbent_uses_network` (captured on periodic/final saves), so resume starts with NN only if the previous incumbent had been promoted
+- Resumed runs restore incumbent promotion baseline counters (`incumbent_lifetime_games`, `incumbent_lifetime_attack`) from checkpoint, so evaluator gating continues against the same incumbent lifetime average instead of resetting to auto-promote mode
 - Older checkpoints that predate `incumbent_uses_network` default to starting with NN and emit a warning
 
 ## WandB Metrics

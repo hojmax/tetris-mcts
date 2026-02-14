@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import tempfile
 import time
 from typing import Optional
@@ -25,6 +26,7 @@ from tetris_mcts.config import (
     BOARD_WIDTH,
     DEFAULT_GIF_FPS,
     DEFAULT_GIF_FRAME_DURATION_MS,
+    INCUMBENT_ONNX_FILENAME,
     LATEST_ONNX_FILENAME,
     MODEL_CANDIDATES_DIRNAME,
     PARALLEL_ONNX_FILENAME,
@@ -217,6 +219,38 @@ def assert_rust_inference_artifacts(onnx_path: Path) -> None:
         )
 
 
+def required_model_artifact_paths(onnx_path: Path) -> list[Path]:
+    conv_path, heads_path, fc_path = split_model_paths(onnx_path)
+    return [onnx_path, conv_path, heads_path, fc_path]
+
+
+def optional_model_artifact_paths(onnx_path: Path) -> list[Path]:
+    conv_path, heads_path, _ = split_model_paths(onnx_path)
+    return [
+        onnx_path.with_suffix(".onnx.data"),
+        conv_path.with_suffix(".onnx.data"),
+        heads_path.with_suffix(".onnx.data"),
+    ]
+
+
+def copy_model_artifact_bundle(source_onnx_path: Path, destination_onnx_path: Path) -> None:
+    assert_rust_inference_artifacts(source_onnx_path)
+    destination_onnx_path.parent.mkdir(parents=True, exist_ok=True)
+
+    source_required = required_model_artifact_paths(source_onnx_path)
+    destination_required = required_model_artifact_paths(destination_onnx_path)
+    for source_path, destination_path in zip(source_required, destination_required):
+        shutil.copy2(source_path, destination_path)
+
+    source_optional = optional_model_artifact_paths(source_onnx_path)
+    destination_optional = optional_model_artifact_paths(destination_onnx_path)
+    for source_path, destination_path in zip(source_optional, destination_optional):
+        if source_path.exists():
+            shutil.copy2(source_path, destination_path)
+        else:
+            destination_path.unlink(missing_ok=True)
+
+
 def roll_interval_deadline(deadline_s: float, interval_s: float, now_s: float) -> float:
     if interval_s <= 0:
         raise ValueError(f"interval_s must be > 0 (got {interval_s})")
@@ -284,6 +318,9 @@ class Trainer:
         self.step = 0
         self.loss_balancer = RunningLossBalancer(config.value_loss_weight_window)
         self._pending_eval_gif_paths: list[Path] = []
+        self.initial_incumbent_model_path: Path | None = None
+        self.initial_incumbent_lifetime_games: int = 0
+        self.initial_incumbent_lifetime_attack: int = 0
 
         # Create directories
         config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -356,6 +393,21 @@ class Trainer:
         for param_group, lr in zip(self.optimizer.param_groups, lrs):
             param_group["lr"] = lr
         self.scheduler._last_lr = lrs
+
+    @staticmethod
+    def _compute_candidate_nn_value_weight(
+        current_weight: float,
+        config: TrainingConfig,
+    ) -> float:
+        if current_weight < 0.0:
+            raise ValueError(
+                f"current_weight must be >= 0 (got {current_weight})"
+            )
+        delta = min(
+            current_weight * config.nn_value_weight_promotion_multiplier,
+            config.nn_value_weight_promotion_max_delta,
+        )
+        return min(config.nn_value_weight_cap, current_weight + delta)
 
     def _build_training_batch(
         self,
@@ -736,6 +788,40 @@ class Trainer:
         """Evaluate current model using MCTS on fixed seeds."""
         return self.evaluator.evaluate(render_trajectory)
 
+    def _persist_incumbent_model_artifacts(
+        self, generator: GameGenerator
+    ) -> tuple[Path | None, str]:
+        if not generator.incumbent_uses_network():
+            source_path_string = generator.incumbent_model_path()
+            return None, source_path_string
+        if self.config.checkpoint_dir is None:
+            raise RuntimeError("checkpoint_dir is not set on training config")
+        destination_path = self.config.checkpoint_dir / INCUMBENT_ONNX_FILENAME
+        source_path_string = ""
+        for attempt in range(2):
+            source_path = Path(generator.incumbent_model_path())
+            source_path_string = str(source_path)
+            try:
+                copy_model_artifact_bundle(source_path, destination_path)
+                return destination_path, source_path_string
+            except (FileNotFoundError, RuntimeError) as error:
+                latest_source_path = Path(generator.incumbent_model_path())
+                if attempt == 0 and latest_source_path != source_path:
+                    logger.warning(
+                        "Incumbent artifact changed while checkpointing; retrying copy",
+                        source_path=source_path_string,
+                        latest_source_path=str(latest_source_path),
+                    )
+                    continue
+                raise RuntimeError(
+                    "Failed to persist incumbent model artifacts for checkpoint "
+                    f"(source={source_path_string})"
+                ) from error
+        raise RuntimeError(
+            "Failed to persist incumbent model artifacts after retry "
+            f"(source={source_path_string})"
+        )
+
     def _create_wandb_gif_video(
         self,
         frames: list,
@@ -830,6 +916,20 @@ class Trainer:
                 f"(expected {expected_onnx_path})"
             )
 
+        checkpoint_dir = self.config.checkpoint_dir
+        if checkpoint_dir is None:
+            raise RuntimeError("checkpoint_dir is not set on training config")
+        incumbent_onnx_path = checkpoint_dir / INCUMBENT_ONNX_FILENAME
+        if incumbent_onnx_path.exists():
+            assert_rust_inference_artifacts(incumbent_onnx_path)
+            files_to_upload.append(incumbent_onnx_path)
+            incumbent_conv_path, incumbent_heads_path, incumbent_fc_path = split_model_paths(
+                incumbent_onnx_path
+            )
+            files_to_upload.extend(
+                [incumbent_conv_path, incumbent_heads_path, incumbent_fc_path]
+            )
+
         for file_path in files_to_upload:
             if not file_path.exists():
                 raise FileNotFoundError(
@@ -881,6 +981,10 @@ class Trainer:
         if not split_export_ok:
             raise RuntimeError("Split-model export failed due to missing dependencies")
         assert_rust_inference_artifacts(onnx_path)
+        generator_model_path = onnx_path
+        if self.initial_incumbent_model_path is not None:
+            assert_rust_inference_artifacts(self.initial_incumbent_model_path)
+            generator_model_path = self.initial_incumbent_model_path
 
         # Create MCTS config for generator
         mcts_config = MCTSConfig()
@@ -898,7 +1002,7 @@ class Trainer:
         # Start background game generator
         training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME
         generator = GameGenerator(
-            model_path=str(onnx_path),
+            model_path=str(generator_model_path),
             training_data_path=str(training_data_path),
             config=mcts_config,
             max_placements=self.config.max_placements,
@@ -910,17 +1014,26 @@ class Trainer:
             candidate_eval_games=self.config.model_promotion_eval_games,
             start_with_network=not self.config.bootstrap_without_network,
             non_network_num_simulations=self.config.bootstrap_num_simulations,
+            initial_incumbent_lifetime_games=self.initial_incumbent_lifetime_games,
+            initial_incumbent_lifetime_attack=self.initial_incumbent_lifetime_attack,
         )
         generator.start()
         logger.info(
             "Started background game generator",
-            model_path=str(onnx_path),
+            model_path=str(generator_model_path),
+            trainer_parallel_model_path=str(onnx_path),
             training_data_path=str(training_data_path),
             num_workers=self.config.num_workers,
             add_noise=self.config.add_noise,
             candidate_eval_games=self.config.model_promotion_eval_games,
             bootstrap_without_network=self.config.bootstrap_without_network,
             bootstrap_num_simulations=self.config.bootstrap_num_simulations,
+            incumbent_nn_value_weight=self.config.nn_value_weight,
+            initial_incumbent_lifetime_games=self.initial_incumbent_lifetime_games,
+            initial_incumbent_lifetime_attack=self.initial_incumbent_lifetime_attack,
+            nn_value_weight_promotion_multiplier=self.config.nn_value_weight_promotion_multiplier,
+            nn_value_weight_promotion_max_delta=self.config.nn_value_weight_promotion_max_delta,
+            nn_value_weight_cap=self.config.nn_value_weight_cap,
         )
 
         # Wait for minimum buffer size
@@ -1054,16 +1167,22 @@ class Trainer:
 
                 for event in generator.drain_model_eval_events():
                     promoted = bool(event["promoted"])
+                    candidate_nn_value_weight = float(event["candidate_nn_value_weight"])
+                    incumbent_nn_value_weight = float(event["incumbent_nn_value_weight"])
+                    promoted_nn_value_weight = float(event["promoted_nn_value_weight"])
                     logger.info(
                         "Model evaluation decision",
                         trainer_step=self.step,
                         candidate_step=int(event["candidate_step"]),
                         candidate_games=int(event["candidate_games"]),
                         candidate_avg_attack=event["candidate_avg_attack"],
+                        candidate_nn_value_weight=candidate_nn_value_weight,
                         incumbent_step=int(event["incumbent_step"]),
                         incumbent_uses_network=bool(event["incumbent_uses_network"]),
                         incumbent_games=int(event["incumbent_games"]),
                         incumbent_avg_attack=event["incumbent_avg_attack"],
+                        incumbent_nn_value_weight=incumbent_nn_value_weight,
+                        promoted_nn_value_weight=promoted_nn_value_weight,
                         promoted=promoted,
                         auto_promoted=bool(event["auto_promoted"]),
                     )
@@ -1076,6 +1195,7 @@ class Trainer:
                                 "model_gate/candidate_avg_attack": event[
                                     "candidate_avg_attack"
                                 ],
+                                "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
                                 "model_gate/incumbent_step": event["incumbent_step"],
                                 "model_gate/incumbent_uses_network": event[
                                     "incumbent_uses_network"
@@ -1084,6 +1204,8 @@ class Trainer:
                                 "model_gate/incumbent_avg_attack": event[
                                     "incumbent_avg_attack"
                                 ],
+                                "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
+                                "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
                                 "model_gate/promoted": event["promoted"],
                                 "model_gate/auto_promoted": event["auto_promoted"],
                             }
@@ -1119,6 +1241,9 @@ class Trainer:
                     )
                     metrics["incumbent/lifetime_avg_attack"] = (
                         generator.incumbent_lifetime_avg_attack()
+                    )
+                    metrics["incumbent/nn_value_weight"] = (
+                        generator.incumbent_nn_value_weight()
                     )
                     metrics["throughput/games_per_second"] = (
                         games_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
@@ -1224,9 +1349,15 @@ class Trainer:
                         )
                     assert_rust_inference_artifacts(candidate_onnx_path)
                     onnx_export_ms = 1000.0 * (time.perf_counter() - onnx_export_start)
+                    incumbent_nn_value_weight = generator.incumbent_nn_value_weight()
+                    candidate_nn_value_weight = self._compute_candidate_nn_value_weight(
+                        current_weight=incumbent_nn_value_weight,
+                        config=self.config,
+                    )
                     queued = generator.queue_candidate_model(
                         str(candidate_onnx_path),
                         self.step,
+                        candidate_nn_value_weight,
                     )
                     logger.info(
                         "Queued candidate model for evaluator",
@@ -1234,12 +1365,15 @@ class Trainer:
                         path=str(candidate_onnx_path),
                         queued=queued,
                         onnx_export_ms=onnx_export_ms,
+                        incumbent_nn_value_weight=incumbent_nn_value_weight,
+                        candidate_nn_value_weight=candidate_nn_value_weight,
                     )
                     if log_to_wandb:
                         wandb.log(
                             {
                                 "trainer_step": self.step,
                                 "timing/onnx_export_ms": onnx_export_ms,
+                                "model_gate/queued_candidate_nn_value_weight": candidate_nn_value_weight,
                             }
                         )
                     next_model_sync_time_s = roll_interval_deadline(
@@ -1251,6 +1385,7 @@ class Trainer:
                 # Evaluate
                 now_s = time.perf_counter()
                 if now_s >= next_eval_time_s:
+                    self.evaluator.nn_value_weight = generator.incumbent_nn_value_weight()
                     # Render trajectory every evaluation for visualization
                     eval_start = time.perf_counter()
                     eval_result, trajectory_frames = self.evaluate(
@@ -1267,6 +1402,7 @@ class Trainer:
                             "eval/avg_moves": eval_result.avg_moves,
                             "eval/attack_per_piece": eval_result.attack_per_piece,
                             "eval/lines_per_piece": eval_result.lines_per_piece,
+                            "eval/nn_value_weight": self.evaluator.nn_value_weight,
                             "timing/eval_ms": eval_ms,
                             "trainer_step": self.step,
                         }
@@ -1287,10 +1423,23 @@ class Trainer:
                 # Checkpoint
                 now_s = time.perf_counter()
                 if now_s >= next_checkpoint_time_s:
+                    (
+                        incumbent_model_artifact,
+                        incumbent_model_source_path,
+                    ) = self._persist_incumbent_model_artifacts(generator)
                     self.save(
                         extra_checkpoint_state={
                             "incumbent_uses_network": generator.incumbent_uses_network(),
                             "incumbent_model_step": generator.incumbent_model_step(),
+                            "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
+                            "incumbent_lifetime_games": generator.incumbent_lifetime_games(),
+                            "incumbent_lifetime_attack": generator.incumbent_lifetime_attack(),
+                            "incumbent_model_source_path": incumbent_model_source_path,
+                            "incumbent_model_artifact": (
+                                incumbent_model_artifact.name
+                                if incumbent_model_artifact is not None
+                                else None
+                            ),
                         }
                     )
                     next_checkpoint_time_s = roll_interval_deadline(
@@ -1320,10 +1469,23 @@ class Trainer:
                 logger.exception("Failed to stop game generator cleanly")
 
             # Always save latest model state on shutdown/interruption.
+            (
+                incumbent_model_artifact,
+                incumbent_model_source_path,
+            ) = self._persist_incumbent_model_artifacts(generator)
             final_saved_paths = self.save(
                 extra_checkpoint_state={
                     "incumbent_uses_network": generator.incumbent_uses_network(),
                     "incumbent_model_step": generator.incumbent_model_step(),
+                    "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
+                    "incumbent_lifetime_games": generator.incumbent_lifetime_games(),
+                    "incumbent_lifetime_attack": generator.incumbent_lifetime_attack(),
+                    "incumbent_model_source_path": incumbent_model_source_path,
+                    "incumbent_model_artifact": (
+                        incumbent_model_artifact.name
+                        if incumbent_model_artifact is not None
+                        else None
+                    ),
                 }
             )
             try:
