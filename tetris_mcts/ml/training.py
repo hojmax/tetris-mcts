@@ -482,12 +482,14 @@ class Trainer:
             config=str(self.config),
         )
 
-        train_start_time = time.time()
         sample_batch_time_s = 0.0
         sample_batch_count = 0
         train_step_time_s = 0.0
         train_step_count = 0
         interval_anchor_s = time.perf_counter()
+        throughput_window_start_s = interval_anchor_s
+        throughput_window_start_games = generator.games_generated()
+        throughput_window_start_steps = 0
         next_log_time_s = interval_anchor_s + self.config.log_interval_seconds
         next_model_sync_time_s = (
             interval_anchor_s + self.config.model_sync_interval_seconds
@@ -586,8 +588,10 @@ class Trainer:
                 now_s = time.perf_counter()
                 if now_s >= next_log_time_s:
                     metrics.update(self._compute_extra_train_metrics(batch))
-                    elapsed = time.time() - train_start_time
                     games = generator.games_generated()
+                    window_elapsed_s = now_s - throughput_window_start_s
+                    games_delta = games - throughput_window_start_games
+                    steps_delta = session_step - throughput_window_start_steps
                     metrics["replay/buffer_size"] = generator.buffer_size()
                     metrics["replay/games_generated"] = games
                     metrics["replay/examples_generated"] = (
@@ -604,11 +608,14 @@ class Trainer:
                         generator.incumbent_lifetime_avg_attack()
                     )
                     metrics["throughput/games_per_second"] = (
-                        games / elapsed if elapsed > 0 else 0
+                        games_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
                     )
                     metrics["throughput/steps_per_second"] = (
-                        session_step / elapsed if elapsed > 0 else 0
+                        steps_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
                     )
+                    throughput_window_start_s = now_s
+                    throughput_window_start_games = games
+                    throughput_window_start_steps = session_step
                     metrics["timing/sample_batch_ms"] = (
                         1000.0 * sample_batch_time_s / sample_batch_count
                         if sample_batch_count > 0

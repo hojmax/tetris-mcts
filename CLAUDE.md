@@ -370,6 +370,8 @@ Step-alignment rule for resumed runs:
 - `learning_rate` - Current LR (with scheduling)
 - `policy_entropy` - Policy distribution entropy
 - `buffer_size` - Current examples in memory
+- `throughput/games_per_second` and `throughput/steps_per_second` are windowed rates computed from counter deltas divided by elapsed wall-clock seconds since the previous training log tick.
+- Candidate evaluator games are only added to `replay/games_generated` if the candidate is promoted. During rejection-heavy periods, evaluator work still consumes compute but does not increment this counter, which can make generation throughput look lower.
 
 ### Per-Game Metrics (step_metric="game_number")
 
