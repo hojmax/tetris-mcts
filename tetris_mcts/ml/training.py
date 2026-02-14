@@ -54,6 +54,15 @@ def assert_rust_inference_artifacts(onnx_path: Path) -> None:
         )
 
 
+def roll_interval_deadline(deadline_s: float, interval_s: float, now_s: float) -> float:
+    if interval_s <= 0:
+        raise ValueError(f"interval_s must be > 0 (got {interval_s})")
+    if now_s < deadline_s:
+        return deadline_s
+    elapsed_intervals = int((now_s - deadline_s) // interval_s) + 1
+    return deadline_s + elapsed_intervals * interval_s
+
+
 class Trainer:
     """Main training class."""
 
@@ -250,15 +259,18 @@ class Trainer:
             "batch/overhang_fields_mean": overhang_fields.mean().item(),
             "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         }
-
-        # Compute additional metrics periodically
-        if self.step % self.config.log_interval == 0:
-            extra_metrics = compute_metrics(
-                self.model, boards, aux, policy_targets, value_targets, masks
-            )
-            metrics.update(extra_metrics)
-
         return metrics
+
+    def _compute_extra_train_metrics(self, batch: tuple) -> dict:
+        boards, aux, policy_targets, value_targets, _, _, masks = batch
+        return compute_metrics(
+            self.model,
+            boards.to(self.device),
+            aux.to(self.device),
+            policy_targets.to(self.device),
+            value_targets.to(self.device),
+            masks.to(self.device),
+        )
 
     def evaluate(self, render_trajectory: bool = False):
         """Evaluate current model using MCTS on fixed seeds."""
@@ -361,8 +373,8 @@ class Trainer:
 
         The Rust GameGenerator runs in a background thread, continuously
         generating games into a shared in-memory buffer. Python samples
-        directly from the buffer via generator.sample_batch(). Every
-        model_sync_interval steps, a new ONNX model is exported for the
+        directly from the buffer via generator.sample_batch(). At regular
+        wall-clock intervals, a new ONNX model is exported for the
         generator to pick up.
 
         Args:
@@ -376,7 +388,6 @@ class Trainer:
                 current_step=self.step,
             )
             return
-        model_sync_interval = self.config.model_sync_interval
         # Paths for parallel training (validated in __init__)
         assert self.config.checkpoint_dir is not None
         assert self.config.data_dir is not None
@@ -415,7 +426,7 @@ class Trainer:
             max_placements=self.config.max_placements,
             add_noise=self.config.add_noise,
             max_examples=self.config.buffer_size,
-            games_per_save=self.config.games_per_save,
+            save_interval_seconds=self.config.save_interval_seconds,
             num_workers=self.config.num_workers,
             initial_model_step=self.step,
             candidate_eval_games=self.config.model_promotion_eval_games,
@@ -460,6 +471,15 @@ class Trainer:
         sample_batch_count = 0
         train_step_time_s = 0.0
         train_step_count = 0
+        interval_anchor_s = time.perf_counter()
+        next_log_time_s = interval_anchor_s + self.config.log_interval_seconds
+        next_model_sync_time_s = (
+            interval_anchor_s + self.config.model_sync_interval_seconds
+        )
+        next_eval_time_s = interval_anchor_s + self.config.eval_interval_seconds
+        next_checkpoint_time_s = (
+            interval_anchor_s + self.config.checkpoint_interval_seconds
+        )
 
         interrupted = False
         pending_error: BaseException | None = None
@@ -549,7 +569,9 @@ class Trainer:
                         )
 
                 # Log metrics
-                if self.step % self.config.log_interval == 0:
+                now_s = time.perf_counter()
+                if now_s >= next_log_time_s:
+                    metrics.update(self._compute_extra_train_metrics(batch))
                     elapsed = time.time() - train_start_time
                     games = generator.games_generated()
                     metrics["replay/buffer_size"] = generator.buffer_size()
@@ -633,9 +655,15 @@ class Trainer:
                         sample_batch_ms=metrics["timing/sample_batch_ms"],
                         train_step_ms=metrics["timing/train_step_ms"],
                     )
+                    next_log_time_s = roll_interval_deadline(
+                        next_log_time_s,
+                        self.config.log_interval_seconds,
+                        now_s,
+                    )
 
                 # Export updated model for generator
-                if self.step % model_sync_interval == 0:
+                now_s = time.perf_counter()
+                if now_s >= next_model_sync_time_s:
                     candidate_onnx_path = (
                         candidate_model_dir / f"candidate_step_{self.step}.onnx"
                     )
@@ -672,9 +700,15 @@ class Trainer:
                                 "timing/onnx_export_ms": onnx_export_ms,
                             }
                         )
+                    next_model_sync_time_s = roll_interval_deadline(
+                        next_model_sync_time_s,
+                        self.config.model_sync_interval_seconds,
+                        time.perf_counter(),
+                    )
 
                 # Evaluate
-                if self.step % self.config.eval_interval == 0:
+                now_s = time.perf_counter()
+                if now_s >= next_eval_time_s:
                     # Render trajectory every evaluation for visualization
                     eval_start = time.perf_counter()
                     eval_result, trajectory_frames = self.evaluate(
@@ -682,7 +716,6 @@ class Trainer:
                     )
                     eval_ms = 1000.0 * (time.perf_counter() - eval_start)
                     if log_to_wandb:
-                        eval_gif_path: Optional[Path] = None
                         log_data = {
                             "eval/num_games": eval_result.num_games,
                             "eval/avg_attack": eval_result.avg_attack,
@@ -697,16 +730,27 @@ class Trainer:
                         }
                         # Log trajectory as animated GIF
                         if trajectory_frames:
-                            eval_video, eval_gif_path = self._create_wandb_gif_video(
+                            eval_video, _ = self._create_wandb_gif_video(
                                 trajectory_frames
                             )
                             if eval_video is not None:
                                 log_data["eval/trajectory"] = eval_video
                         wandb.log(log_data)
+                    next_eval_time_s = roll_interval_deadline(
+                        next_eval_time_s,
+                        self.config.eval_interval_seconds,
+                        time.perf_counter(),
+                    )
 
                 # Checkpoint
-                if self.step % self.config.checkpoint_interval == 0:
+                now_s = time.perf_counter()
+                if now_s >= next_checkpoint_time_s:
                     self.save()
+                    next_checkpoint_time_s = roll_interval_deadline(
+                        next_checkpoint_time_s,
+                        self.config.checkpoint_interval_seconds,
+                        time.perf_counter(),
+                    )
 
         except KeyboardInterrupt:
             interrupted = True

@@ -1,6 +1,7 @@
 """Training configuration for Tetris AlphaZero."""
 
 import json
+import math
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
@@ -110,13 +111,15 @@ class TrainingConfig:
     # Replay buffer
     buffer_size: int = 1_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
-    games_per_save: int = 100  # Games between disk saves (0 to disable)
+    save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
+        1200.0
+    )
 
-    # Intervals
-    model_sync_interval: int = 5000  # Steps between ONNX exports
-    checkpoint_interval: int = 80000  # Steps between checkpoints
-    eval_interval: int = 30000  # Steps between evaluations
-    log_interval: int = 100  # Steps between logging
+    # Intervals (seconds)
+    model_sync_interval_seconds: float = 300  # Seconds between ONNX exports
+    checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
+    eval_interval_seconds: float = 3600  # Seconds between evaluations
+    log_interval_seconds: float = 10  # Seconds between logging
 
     # Evaluation
     eval_seeds: list[int] = field(default_factory=lambda: list(range(1)))
@@ -151,8 +154,11 @@ class TrainingConfig:
                 "min_buffer_size must be <= buffer_size "
                 f"(got {self.min_buffer_size} > {self.buffer_size})"
             )
-        if self.games_per_save < 0:
-            raise ValueError("games_per_save must be >= 0")
+        if (
+            not math.isfinite(self.save_interval_seconds)
+            or self.save_interval_seconds < 0
+        ):
+            raise ValueError("save_interval_seconds must be finite and >= 0")
         if not 0.0 <= self.visit_sampling_epsilon <= 1.0:
             raise ValueError(
                 "visit_sampling_epsilon must be in [0, 1] "
@@ -162,8 +168,26 @@ class TrainingConfig:
             raise ValueError(
                 f"nn_value_weight must be >= 0 (got {self.nn_value_weight})"
             )
-        if self.model_sync_interval <= 0:
-            raise ValueError("model_sync_interval must be > 0")
+        if (
+            not math.isfinite(self.model_sync_interval_seconds)
+            or self.model_sync_interval_seconds <= 0
+        ):
+            raise ValueError("model_sync_interval_seconds must be finite and > 0")
+        if (
+            not math.isfinite(self.checkpoint_interval_seconds)
+            or self.checkpoint_interval_seconds <= 0
+        ):
+            raise ValueError("checkpoint_interval_seconds must be finite and > 0")
+        if (
+            not math.isfinite(self.eval_interval_seconds)
+            or self.eval_interval_seconds <= 0
+        ):
+            raise ValueError("eval_interval_seconds must be finite and > 0")
+        if (
+            not math.isfinite(self.log_interval_seconds)
+            or self.log_interval_seconds <= 0
+        ):
+            raise ValueError("log_interval_seconds must be finite and > 0")
         if self.model_promotion_eval_games <= 0:
             raise ValueError("model_promotion_eval_games must be > 0")
         if self.bootstrap_num_simulations <= 0:

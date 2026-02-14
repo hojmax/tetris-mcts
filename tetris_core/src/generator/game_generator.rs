@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::constants::{AUX_FEATURES, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::mcts::GameStats;
@@ -233,8 +233,8 @@ pub struct GameGenerator {
     max_placements: u32,
     /// Whether to add Dirichlet noise
     add_noise: bool,
-    /// Number of games between disk saves (for resume capability)
-    games_per_save: usize,
+    /// Wall-clock interval between disk saves (for resume capability)
+    save_interval_seconds: f64,
     /// Number of worker threads
     num_workers: usize,
     /// Number of games the evaluator worker plays per candidate model.
@@ -278,7 +278,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, games_per_save=100, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -286,7 +286,7 @@ impl GameGenerator {
         max_placements: u32,
         add_noise: bool,
         max_examples: usize,
-        games_per_save: usize,
+        save_interval_seconds: f64,
         num_workers: usize,
         initial_model_step: u64,
         candidate_eval_games: usize,
@@ -301,6 +301,11 @@ impl GameGenerator {
         if max_examples == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "max_examples must be > 0",
+            ));
+        }
+        if !save_interval_seconds.is_finite() || save_interval_seconds < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "save_interval_seconds must be finite and >= 0",
             ));
         }
         if num_workers == 0 {
@@ -329,7 +334,7 @@ impl GameGenerator {
             config: resolved_config,
             max_placements,
             add_noise,
-            games_per_save,
+            save_interval_seconds,
             num_workers,
             candidate_eval_games,
             non_network_num_simulations,
@@ -430,7 +435,7 @@ impl GameGenerator {
             let config = self.config.clone();
             let max_placements = self.max_placements;
             let add_noise = self.add_noise;
-            let games_per_save = self.games_per_save;
+            let save_interval_seconds = self.save_interval_seconds;
             let candidate_eval_games = self.candidate_eval_games;
             let non_network_num_simulations = self.non_network_num_simulations;
             let num_workers = self.num_workers;
@@ -461,7 +466,7 @@ impl GameGenerator {
                     config,
                     max_placements,
                     add_noise,
-                    games_per_save,
+                    save_interval_seconds,
                     candidate_eval_games,
                     non_network_num_simulations,
                     buffer,
@@ -904,15 +909,30 @@ impl GameGenerator {
 }
 
 impl GameGenerator {
-    fn next_snapshot_game_threshold(games_generated: u64, games_per_save: usize) -> u64 {
-        if games_per_save == 0 {
-            return u64::MAX;
+    fn persist_snapshot_if_due(
+        training_data_path: &PathBuf,
+        buffer: &Arc<SharedBuffer>,
+        max_placements: u32,
+        save_interval_seconds: f64,
+        next_snapshot_deadline: &mut Option<Instant>,
+    ) {
+        if save_interval_seconds <= 0.0 {
+            return;
         }
-        let interval = games_per_save as u64;
-        let completed_intervals = games_generated / interval;
-        completed_intervals
-            .saturating_add(1)
-            .saturating_mul(interval)
+        let interval = Duration::from_secs_f64(save_interval_seconds);
+        let now = Instant::now();
+        let deadline = *next_snapshot_deadline.get_or_insert_with(|| now + interval);
+        if now < deadline {
+            return;
+        }
+
+        Self::persist_buffer_snapshot(training_data_path, buffer, max_placements);
+
+        let mut next_deadline = deadline + interval;
+        while next_deadline <= now {
+            next_deadline += interval;
+        }
+        *next_snapshot_deadline = Some(next_deadline);
     }
 
     /// Worker thread main loop.
@@ -925,7 +945,7 @@ impl GameGenerator {
         config: MCTSConfig,
         max_placements: u32,
         add_noise: bool,
-        games_per_save: usize,
+        save_interval_seconds: f64,
         candidate_eval_games: usize,
         non_network_num_simulations: u32,
         buffer: Arc<SharedBuffer>,
@@ -970,10 +990,11 @@ impl GameGenerator {
 
         // Only worker 0 handles disk saves to avoid race conditions
         let is_save_worker = worker_id == 0;
-        let mut next_snapshot_game_threshold = Self::next_snapshot_game_threshold(
-            games_generated.load(Ordering::SeqCst),
-            games_per_save,
-        );
+        let mut next_snapshot_deadline = if save_interval_seconds > 0.0 {
+            Some(Instant::now() + Duration::from_secs_f64(save_interval_seconds))
+        } else {
+            None
+        };
 
         // Main generation loop
         while running.load(Ordering::SeqCst) {
@@ -1049,15 +1070,13 @@ impl GameGenerator {
                     loaded_model_version = u64::MAX;
                     loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
 
-                    let global_games_generated = games_generated.load(Ordering::SeqCst);
-                    if is_save_worker
-                        && games_per_save > 0
-                        && global_games_generated >= next_snapshot_game_threshold
-                    {
-                        Self::persist_buffer_snapshot(&training_data_path, &buffer, max_placements);
-                        next_snapshot_game_threshold = Self::next_snapshot_game_threshold(
-                            global_games_generated,
-                            games_per_save,
+                    if is_save_worker {
+                        Self::persist_snapshot_if_due(
+                            &training_data_path,
+                            &buffer,
+                            max_placements,
+                            save_interval_seconds,
+                            &mut next_snapshot_deadline,
                         );
                     }
                     continue;
@@ -1081,15 +1100,15 @@ impl GameGenerator {
                 );
 
                 // Periodically save to disk for resume capability based on
-                // global game count across all workers.
-                let global_games_generated = games_generated.load(Ordering::SeqCst);
-                if is_save_worker
-                    && games_per_save > 0
-                    && global_games_generated >= next_snapshot_game_threshold
-                {
-                    Self::persist_buffer_snapshot(&training_data_path, &buffer, max_placements);
-                    next_snapshot_game_threshold =
-                        Self::next_snapshot_game_threshold(global_games_generated, games_per_save);
+                // wall-clock time.
+                if is_save_worker {
+                    Self::persist_snapshot_if_due(
+                        &training_data_path,
+                        &buffer,
+                        max_placements,
+                        save_interval_seconds,
+                        &mut next_snapshot_deadline,
+                    );
                 }
             }
         }

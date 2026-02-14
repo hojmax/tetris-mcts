@@ -248,7 +248,8 @@ From `config.py` TrainingConfig defaults:
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 1M examples (ring buffer), 7 parallel workers
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
-- **NN Value Scaling**: `nn_value_weight=0.001` by default; value head currently has very low influence during search unless this is increased.
+- **NN Value Scaling**: `nn_value_weight=0.025` by default.
+- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=5`, `model_sync_interval_seconds=180`, `eval_interval_seconds=900`, `checkpoint_interval_seconds=2400`; replay snapshots use `save_interval_seconds=60` (`0` disables periodic snapshot saves).
 - **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
