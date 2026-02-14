@@ -15,6 +15,8 @@ CELL_SIZE = 20
 PADDING = 10
 INFO_HEIGHT_BASIC = 36
 INFO_HEIGHT_EXTENDED = 106
+INFO_TOP_Y = 10
+INFO_LINE_SPACING = 20
 
 
 def render_board(
@@ -156,12 +158,12 @@ def render_board(
         )
 
     if show_piece_info:
-        # 4 lines: Move/Attack, Piece/Hold, Queue, Can hold/Vpred
+        # 5 lines: Move/Attack, Piece/Hold, Queue, Can hold, Combo/B2B/Vpred
         current = current_piece_name or "?"
         hold = hold_piece_name or "-"
         queue = " ".join(queue_pieces) if queue_pieces else ""
         draw.text(
-            (PADDING, 10),
+            (PADDING, INFO_TOP_Y + INFO_LINE_SPACING * 0),
             f"Move: {move_number}  Attack: {attack}",
             fill=(200, 200, 200),
             font=font,
@@ -170,26 +172,46 @@ def render_board(
             can_hold is not None and combo is not None and back_to_back is not None
         )
         if has_standard_status:
-            second_line = (
-                f"{'Terminal  ' if is_terminal else ''}Can hold: {'y' if can_hold else 'n'}\n"
-                f"Combo: {combo}  B2B: {'y' if back_to_back else 'n'}"
+            status_line = (
+                f"{'Terminal  ' if is_terminal else ''}Can hold: {'y' if can_hold else 'n'}"
             )
+            combo_line = f"Combo: {combo}  B2B: {'y' if back_to_back else 'n'}"
         else:
-            second_line = info_text or ""
+            status_line = (info_text or "").replace("\n", "  ")
+            combo_line = ""
         if resolved_value_pred is not None:
-            if second_line:
-                second_line += f"  Vpred: {resolved_value_pred:.2f}"
+            if combo_line:
+                combo_line += f"  Vpred: {resolved_value_pred:.2f}"
+            elif status_line:
+                status_line += f"  Vpred: {resolved_value_pred:.2f}"
             else:
-                second_line = f"Vpred: {resolved_value_pred:.2f}"
+                status_line = f"Vpred: {resolved_value_pred:.2f}"
         draw.text(
-            (PADDING, 30),
+            (PADDING, INFO_TOP_Y + INFO_LINE_SPACING * 1),
             f"Piece: {current}  Hold: {hold}",
             fill=(200, 200, 200),
             font=font,
         )
-        draw.text((PADDING, 50), f"Queue: {queue}", fill=(200, 200, 200), font=font)
-        if second_line:
-            draw.text((PADDING, 70), second_line, fill=(200, 200, 200), font=font)
+        draw.text(
+            (PADDING, INFO_TOP_Y + INFO_LINE_SPACING * 2),
+            f"Queue: {queue}",
+            fill=(200, 200, 200),
+            font=font,
+        )
+        if status_line:
+            draw.text(
+                (PADDING, INFO_TOP_Y + INFO_LINE_SPACING * 3),
+                status_line,
+                fill=(200, 200, 200),
+                font=font,
+            )
+        if combo_line:
+            draw.text(
+                (PADDING, INFO_TOP_Y + INFO_LINE_SPACING * 4),
+                combo_line,
+                fill=(200, 200, 200),
+                font=font,
+            )
     else:
         # Single line
         text = f"Move: {move_number}  Attack: {attack}"
