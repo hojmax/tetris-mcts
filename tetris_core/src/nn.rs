@@ -154,7 +154,7 @@ impl TetrisNN {
         placement_count: usize,
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (board_f32, aux_vec) = encode_state_features(env, placement_count, max_placements)?;
+        let aux_vec = encode_aux_state_features(env, placement_count, max_placements)?;
 
         let board_embed = if self.cache_enabled.get() {
             let board_key = pack_board(env);
@@ -170,12 +170,14 @@ impl TetrisNN {
                 }
                 None => {
                     self.cache_misses.set(self.cache_misses.get() + 1);
+                    let board_f32 = encode_board_features(env);
                     let embed = self.compute_board_embedding_owned(board_f32)?;
                     self.insert_board_embedding_cache(board_key, embed.clone());
                     embed
                 }
             }
         } else {
+            let board_f32 = encode_board_features(env);
             self.compute_board_embedding_owned(board_f32)?
         };
 
@@ -431,6 +433,24 @@ pub fn encode_state_features(
     placement_count: usize,
     max_placements: usize,
 ) -> TractResult<(Vec<f32>, Vec<f32>)> {
+    let aux = encode_aux_state_features(env, placement_count, max_placements)?;
+    let board_tensor = encode_board_features(env);
+    Ok((board_tensor, aux))
+}
+
+fn encode_board_features(env: &TetrisEnv) -> Vec<f32> {
+    // Board tensor: binary (1 = filled, 0 = empty) - 200 values (will be reshaped to 1x20x10)
+    env.board_cells()
+        .iter()
+        .map(|&cell| if cell != 0 { 1.0 } else { 0.0 })
+        .collect()
+}
+
+pub fn encode_aux_state_features(
+    env: &TetrisEnv,
+    placement_count: usize,
+    max_placements: usize,
+) -> TractResult<Vec<f32>> {
     if max_placements == 0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -438,13 +458,6 @@ pub fn encode_state_features(
         )
         .into());
     }
-
-    // Board tensor: binary (1 = filled, 0 = empty) - 200 values (will be reshaped to 1x20x10)
-    let board_tensor: Vec<f32> = env
-        .board_cells()
-        .iter()
-        .map(|&cell| if cell != 0 { 1.0 } else { 0.0 })
-        .collect();
 
     let current_piece = env.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
     let hold_piece = env.get_hold_piece().map(|p| p.piece_type);
@@ -490,7 +503,7 @@ pub fn encode_state_features(
         normalized_overhang_fields,
     )?;
 
-    Ok((board_tensor, aux))
+    Ok(aux)
 }
 
 pub fn normalize_combo_for_feature(combo: u32) -> f32 {
