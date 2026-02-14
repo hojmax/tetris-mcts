@@ -17,6 +17,7 @@ Treat this document as a living resource, not static documentation.
   `/Users/axelhojmark/Desktop/tetris-mcts`
 - Use a feature branch with `git worktree add -b <branch-name> /Users/axelhojmark/Desktop/tetris-mcts-worktrees/<worktree-name> <base-ref>`
 - Keep each feature isolated to its own worktree; merge to `main` only after validation.
+- After merging a feature branch into `main`, always clean up the feature worktree and branch immediately (for example: `git -C /Users/axelhojmark/Desktop/tetris-mcts worktree remove /Users/axelhojmark/Desktop/tetris-mcts-worktrees/<worktree-name>` and `git -C /Users/axelhojmark/Desktop/tetris-mcts branch -d <branch-name>`).
 
 ## Project Overview
 
