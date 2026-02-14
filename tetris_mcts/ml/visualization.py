@@ -26,6 +26,10 @@ def render_board(
     move_number: int = 0,
     attack: int = 0,
     info_text: Optional[str] = None,
+    can_hold: Optional[bool] = None,
+    combo: Optional[int] = None,
+    back_to_back: Optional[bool] = None,
+    is_terminal: bool = False,
     vpred: Optional[float] = None,
     value_pred: Optional[float] = None,
     # Extended info (shown on second line)
@@ -162,7 +166,16 @@ def render_board(
             fill=(200, 200, 200),
             font=font,
         )
-        second_line = info_text or ""
+        has_standard_status = (
+            can_hold is not None and combo is not None and back_to_back is not None
+        )
+        if has_standard_status:
+            second_line = (
+                f"{'Terminal  ' if is_terminal else ''}Can hold: {'y' if can_hold else 'n'}\n"
+                f"Combo: {combo}  B2B: {'y' if back_to_back else 'n'}"
+            )
+        else:
+            second_line = info_text or ""
         if resolved_value_pred is not None:
             if second_line:
                 second_line += f"  Vpred: {resolved_value_pred:.2f}"
