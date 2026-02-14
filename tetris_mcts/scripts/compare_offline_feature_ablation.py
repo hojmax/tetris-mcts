@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
+import plotly.graph_objects as go
 import structlog
 import torch
 import torch.nn as nn
@@ -913,8 +914,7 @@ def log_overlay_chart(
     if not results:
         return
     steps = [int(row["step"]) for row in results[0]["history"]]
-    ys: list[list[float]] = []
-    keys: list[str] = []
+    figure = go.Figure()
     for result in results:
         variant_steps = [int(row["step"]) for row in result["history"]]
         if variant_steps != steps:
@@ -922,20 +922,29 @@ def log_overlay_chart(
                 "Variant eval step schedules differ; expected identical schedules for "
                 "overlay charts"
             )
-        ys.append([float(row[history_key]) for row in result["history"]])
-        keys.append(str(result["variant_name"]))
-
-    wandb.log(
-        {
-            chart_key: wandb.plot.line_series(
-                xs=steps,
-                ys=ys,
-                keys=keys,
-                title=chart_title,
-                xname="offline_step",
+        line_values = [float(row[history_key]) for row in result["history"]]
+        figure.add_trace(
+            go.Scatter(
+                x=steps,
+                y=line_values,
+                mode="lines",
+                name=str(result["variant_name"]),
+                hovertemplate=(
+                    "variant=%{fullData.name}<br>"
+                    "offline_step=%{x}<br>"
+                    f"{history_key}=%{{y:.6f}}<extra></extra>"
+                ),
             )
-        }
+        )
+
+    figure.update_layout(
+        title=chart_title,
+        xaxis_title="offline_step",
+        yaxis_title=history_key,
+        legend_title_text="feature_variant",
+        template="plotly_white",
     )
+    wandb.log({chart_key: wandb.Plotly(figure)})
 
 
 def rank_val_total_loss(result: dict) -> float:
