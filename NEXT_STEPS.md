@@ -1,8 +1,13 @@
 # Next Steps
 
+- [ ] Run with updated feature set, integrate all the new features. (try offline with and without and see loss curves)
 - [ ] Deeper search depth potentially.
 - [ ] What AWS instance would be well suited for this workload?
-- [ ] Try running it on AWS instance and see generation speed compared to Mac.
+- [ ] Benchmark conv net depth impact on speed, since caching so high. 96% caching.
+- [ ] What is the right value head weighting for a good network?
+- [ ] Another round of benchmarking and optimizing?
+- [ ] Adding in alpha downweighting of value loss?
+
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler
   - Model size
@@ -12,11 +17,6 @@
   - Optimizer
   - Architecture choices
   - Huber loss vs. MSE loss
-
-- [ ] Run with updated feature set, integrate all the new features.
-- [ ] Another round of benchmarking and optimizing?
-- [ ] Benchmark conv net depth impact on speed, since caching so high. 96% caching.
-- [ ] Adding in alpha downweighting of value loss?
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
 
 # Deep Review
