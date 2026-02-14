@@ -120,7 +120,7 @@ class TrainingConfig:
         1
     )
     mirror_replay_on_accelerator: bool = (  # If True, mirror full replay buffer on CUDA/MPS and train from device-local samples
-        False
+        True
     )
     replay_mirror_refresh_seconds: float = (  # Seconds between full replay mirror refreshes while training from device-local replay
         10.0
@@ -129,7 +129,7 @@ class TrainingConfig:
         65_536
     )
     pin_memory_batches: bool = (  # If True, pin host tensors before CUDA transfer
-        False
+        True
     )
 
     # Intervals (seconds)
