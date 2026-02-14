@@ -1,3 +1,4 @@
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +12,126 @@ from tetris_mcts.config import (
     NUM_PIECE_TYPES,
     QUEUE_SIZE,
 )
-from tetris_mcts.ml.network import AUX_FEATURES, ConvBackbone, HeadsModel, TetrisNet
+from tetris_mcts.ml.network import (
+    AUX_FEATURES,
+    ConvBackbone,
+    HeadsModel,
+    TetrisNet,
+    build_aux_features,
+    normalize_combo_for_feature,
+)
 from tetris_mcts.ml.weights import export_onnx, export_split_models
+
+
+OVERHANG_NORMALIZATION_DENOMINATOR = float(BOARD_WIDTH * (BOARD_HEIGHT - 1))
+
+
+def _binary_board(env: tetris_core.TetrisEnv) -> np.ndarray:
+    board = np.asarray(env.get_board(), dtype=np.float32)
+    return np.where(board != 0.0, 1.0, 0.0).astype(np.float32)
+
+
+def _hidden_piece_distribution(env: tetris_core.TetrisEnv) -> np.ndarray:
+    visible_state = env.clone_state()
+    visible_state.truncate_queue(QUEUE_SIZE)
+    hidden_candidates = visible_state.get_possible_next_pieces()
+    if len(hidden_candidates) == 0:
+        raise ValueError("Hidden-piece candidate set must not be empty")
+
+    hidden_distribution = np.zeros(NUM_PIECE_TYPES, dtype=np.float32)
+    probability = 1.0 / float(len(hidden_candidates))
+    for piece_type in hidden_candidates:
+        hidden_distribution[int(piece_type)] = probability
+    return hidden_distribution
+
+
+def _compute_diagnostics(
+    board: np.ndarray,
+) -> tuple[np.ndarray, float, float, np.ndarray, float, float, float, float]:
+    height, width = board.shape
+    filled = board != 0.0
+
+    raw_column_heights = np.zeros(width, dtype=np.int32)
+    for x in range(width):
+        filled_rows = np.flatnonzero(filled[:, x])
+        if filled_rows.size > 0:
+            raw_column_heights[x] = height - int(filled_rows[0])
+
+    raw_row_fill_counts = filled.sum(axis=1, dtype=np.int32)
+    raw_total_blocks = int(raw_row_fill_counts.sum())
+
+    raw_bumpiness = 0
+    if width >= 2:
+        deltas = np.diff(raw_column_heights)
+        raw_bumpiness = int(np.sum(deltas * deltas))
+
+    empty = ~filled
+    reachable = np.zeros((height, width), dtype=bool)
+    frontier: deque[tuple[int, int]] = deque()
+    for x in range(width):
+        if not empty[0, x]:
+            continue
+        reachable[0, x] = True
+        frontier.append((0, x))
+
+    while frontier:
+        y, x = frontier.popleft()
+        if y > 0 and empty[y - 1, x] and not reachable[y - 1, x]:
+            reachable[y - 1, x] = True
+            frontier.append((y - 1, x))
+        if y + 1 < height and empty[y + 1, x] and not reachable[y + 1, x]:
+            reachable[y + 1, x] = True
+            frontier.append((y + 1, x))
+        if x > 0 and empty[y, x - 1] and not reachable[y, x - 1]:
+            reachable[y, x - 1] = True
+            frontier.append((y, x - 1))
+        if x + 1 < width and empty[y, x + 1] and not reachable[y, x + 1]:
+            reachable[y, x + 1] = True
+            frontier.append((y, x + 1))
+
+    raw_overhang_fields = 0
+    raw_holes = 0
+    for x in range(width):
+        seen_filled = False
+        for y in range(height):
+            if filled[y, x]:
+                seen_filled = True
+                continue
+            if not seen_filled:
+                continue
+            raw_overhang_fields += 1
+            if not reachable[y, x]:
+                raw_holes += 1
+
+    normalized_column_heights = raw_column_heights.astype(np.float32) / float(height)
+    max_column_height = float(np.max(normalized_column_heights))
+    min_column_height = float(np.min(normalized_column_heights))
+    normalized_row_fill_counts = raw_row_fill_counts.astype(np.float32) / float(width)
+    normalized_total_blocks = float(raw_total_blocks) / float(width * height)
+
+    normalized_bumpiness = 0.0
+    if width >= 2:
+        max_bumpiness = float((width - 1) * height * height)
+        normalized_bumpiness = float(raw_bumpiness) / max_bumpiness
+
+    normalized_holes = 0.0
+    if width > 0 and height >= 2:
+        max_holes = float(width * (height - 1))
+        normalized_holes = float(raw_holes) / max_holes
+
+    normalized_overhang_fields = (
+        float(raw_overhang_fields) / OVERHANG_NORMALIZATION_DENOMINATOR
+    )
+    return (
+        normalized_column_heights,
+        max_column_height,
+        min_column_height,
+        normalized_row_fill_counts,
+        normalized_total_blocks,
+        normalized_bumpiness,
+        normalized_holes,
+        normalized_overhang_fields,
+    )
 
 
 def _encode_state_python(
@@ -20,49 +139,60 @@ def _encode_state_python(
     move_number: int,
     max_placements: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    board = np.array(
-        [1.0 if cell != 0 else 0.0 for row in env.get_board() for cell in row],
-        dtype=np.float32,
-    )
+    board_matrix = _binary_board(env)
+    board = board_matrix.reshape(-1)
 
     current = env.get_current_piece()
     hold = env.get_hold_piece()
     queue = env.get_queue(QUEUE_SIZE)
 
-    aux: list[float] = []
+    current_piece = np.zeros(NUM_PIECE_TYPES, dtype=np.float32)
+    current_piece_idx = 0 if current is None else current.piece_type
+    current_piece[current_piece_idx] = 1.0
 
-    current_piece = 0 if current is None else current.piece_type
-    for piece_type in range(NUM_PIECE_TYPES):
-        aux.append(1.0 if piece_type == current_piece else 0.0)
+    hold_piece = np.zeros(NUM_PIECE_TYPES + 1, dtype=np.float32)
+    if hold is None:
+        hold_piece[NUM_PIECE_TYPES] = 1.0
+    else:
+        hold_piece[hold.piece_type] = 1.0
 
-    hold_piece = None if hold is None else hold.piece_type
-    for piece_type in range(NUM_PIECE_TYPES):
-        aux.append(1.0 if hold_piece == piece_type else 0.0)
-    aux.append(1.0 if hold_piece is None else 0.0)
+    queue_features = np.zeros((QUEUE_SIZE, NUM_PIECE_TYPES), dtype=np.float32)
+    for slot, piece_type in enumerate(queue):
+        queue_features[slot, piece_type] = 1.0
 
-    aux.append(1.0 if not env.is_hold_used() else 0.0)
+    (
+        column_heights,
+        max_column_height,
+        min_column_height,
+        row_fill_counts,
+        total_blocks,
+        bumpiness,
+        holes,
+        overhang_fields,
+    ) = _compute_diagnostics(board_matrix)
 
-    for slot in range(QUEUE_SIZE):
-        queue_piece = queue[slot] if slot < len(queue) else None
-        for piece_type in range(NUM_PIECE_TYPES):
-            aux.append(1.0 if queue_piece == piece_type else 0.0)
+    aux = build_aux_features(
+        current_piece=current_piece,
+        hold_piece=hold_piece,
+        hold_available=1.0 if not env.is_hold_used() else 0.0,
+        next_queue=queue_features,
+        placement_count=float(move_number) / float(max_placements),
+        combo_feature=normalize_combo_for_feature(float(env.combo)),
+        back_to_back=1.0 if env.back_to_back else 0.0,
+        next_hidden_piece_probs=_hidden_piece_distribution(env),
+        column_heights=column_heights,
+        max_column_height=max_column_height,
+        min_column_height=min_column_height,
+        row_fill_counts=row_fill_counts,
+        total_blocks=total_blocks,
+        bumpiness=bumpiness,
+        holes=holes,
+        overhang_fields=overhang_fields,
+    )
 
-    aux.append(float(move_number) / float(max_placements))
-    aux.append(min(float(env.combo), 12.0) / 12.0)
-    aux.append(1.0 if env.back_to_back else 0.0)
-
-    hidden_candidates = env.get_possible_next_pieces()
-    if len(hidden_candidates) == 0:
-        raise ValueError("Hidden-piece candidate set must not be empty")
-    hidden_distribution = [0.0] * NUM_PIECE_TYPES
-    probability = 1.0 / float(len(hidden_candidates))
-    for piece in hidden_candidates:
-        hidden_distribution[int(piece)] = probability
-    aux.extend(hidden_distribution)
-
-    if len(aux) != AUX_FEATURES:
-        raise ValueError(f"Expected {AUX_FEATURES} aux features, got {len(aux)}")
-    return board, np.asarray(aux, dtype=np.float32)
+    if aux.size != AUX_FEATURES:
+        raise ValueError(f"Expected {AUX_FEATURES} aux features, got {aux.size}")
+    return board.astype(np.float32), aux.astype(np.float32)
 
 
 def _python_masked_softmax(logits: np.ndarray, mask: np.ndarray) -> np.ndarray:
