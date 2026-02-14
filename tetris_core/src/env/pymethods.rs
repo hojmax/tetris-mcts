@@ -283,6 +283,11 @@ impl TetrisEnv {
             let current_type = current.piece_type;
             let current_bag_pos = self.current_piece_bag_position;
 
+            // No-op if swapping would produce the same piece
+            if self.hold_piece == Some(current_type) {
+                return false;
+            }
+
             if let Some(held_type) = self.hold_piece {
                 let held_bag_pos = self
                     .hold_piece_bag_position
@@ -552,7 +557,9 @@ impl TetrisEnv {
             return;
         };
         let piece = piece.clone();
-        let hold_is_available = !self.game_over && !self.is_hold_used();
+        let hold_is_available = !self.game_over
+            && !self.is_hold_used()
+            && self.hold_piece != Some(piece.piece_type);
         let global_cache_key = build_placement_lookup_key(self, &piece, hold_is_available);
 
         if let Some(cache_key) = global_cache_key {

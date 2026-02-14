@@ -914,12 +914,12 @@ class Trainer:
     def _create_wandb_gif_video(
         self,
         frames: list,
+        attack: int,
     ) -> tuple[Optional[object], Optional[Path]]:
         if not frames:
             return None, None
 
-        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as f:
-            gif_path = Path(f.name)
+        gif_path = Path(tempfile.gettempdir()) / f"eval_step{self.step}_attack{attack}.gif"
 
         try:
             create_trajectory_gif(
@@ -1539,8 +1539,9 @@ class Trainer:
                         }
                         # Log trajectory as animated GIF
                         if trajectory_frames:
+                            trajectory_attack = eval_result.game_results[0][0]
                             eval_video, _ = self._create_wandb_gif_video(
-                                trajectory_frames
+                                trajectory_frames, attack=trajectory_attack
                             )
                             if eval_video is not None:
                                 log_data["eval/trajectory"] = eval_video
