@@ -245,7 +245,7 @@ tetris_mcts/                 # Python package
 All valid (x, y, rotation) placements are enumerated. The `ActionSpace` struct maps between action indices and placements.
 
 Placement metadata includes `last_move_was_rotation` and `last_kick_index` for T-spin scoring when executing action indices directly. If multiple shortest input paths reach the same placement, move generation prefers paths whose last move is **not** a rotation to avoid accidental T-spin attribution from arbitrary path tie breaks.
-Per-state placement caching now also stores a precomputed sorted list of placement action indices, so valid-action lookup no longer rescans all 735 slots on cache hits; hold availability is still added dynamically per state.
+Per-state placement caching now also stores a precomputed sorted list of placement action indices, so valid-action lookup no longer rescans all 735 slots on cache hits. Global placement-cache keys include hold availability to avoid stale hold action masks across otherwise identical board/current-piece states.
 
 ### MCTS with Chance Nodes
 
@@ -298,6 +298,7 @@ From `config.py` TrainingConfig defaults:
 - **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=8` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=16` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
+- **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default.
 - **Q Squash Scale**: `q_scale=8.0` by default; PUCT uses `tanh(Q / q_scale)` for the Q term.

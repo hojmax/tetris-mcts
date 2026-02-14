@@ -24,6 +24,7 @@
   - Architecture choices
   - Huber loss vs. MSE loss
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
+- [ ] Batched leaf inference.
 
 # Confusions
 
