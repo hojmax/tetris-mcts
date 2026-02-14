@@ -73,6 +73,15 @@ class TrainingConfig:
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
         2000
     )
+    train_step_metrics_interval: int = (  # Collect full train-step scalar metrics every N updates (1 = every step)
+        16
+    )
+    compute_extra_train_metrics_on_log: bool = (  # If True, run an extra forward pass at log ticks for diagnostics (policy entropy, accuracy)
+        False
+    )
+    log_individual_games_to_wandb: bool = (  # If True, log one WandB row per completed game instead of aggregated replay summaries
+        False
+    )
     use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
         True
     )
@@ -234,6 +243,8 @@ class TrainingConfig:
             raise ValueError("lr_step_divisor must be > 0")
         if self.value_loss_weight_window <= 0:
             raise ValueError("value_loss_weight_window must be > 0")
+        if self.train_step_metrics_interval <= 0:
+            raise ValueError("train_step_metrics_interval must be > 0")
         if self.lr_schedule == "step":
             step_size = self.lr_decay_steps // self.lr_step_divisor
             if step_size <= 0:

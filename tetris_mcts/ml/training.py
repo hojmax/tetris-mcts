@@ -206,6 +206,53 @@ def compute_batch_feature_metrics(
     }
 
 
+def summarize_completed_games(
+    completed_games: list[tuple[int, dict[str, float | int]]],
+) -> dict[str, float]:
+    if not completed_games:
+        return {}
+
+    attack_sum = 0.0
+    line_sum = 0.0
+    episode_length_sum = 0.0
+    holds_sum = 0.0
+    max_attack = float("-inf")
+    max_lines = float("-inf")
+
+    for _, game_stats in completed_games:
+        total_attack = float(game_stats["total_attack"])
+        total_lines = float(game_stats["total_lines"])
+        episode_length = float(game_stats["episode_length"])
+        holds = float(game_stats["holds"])
+        if episode_length <= 0.0:
+            raise ValueError(
+                "Invalid episode_length while aggregating completed games: "
+                f"{episode_length}"
+            )
+        attack_sum += total_attack
+        line_sum += total_lines
+        episode_length_sum += episode_length
+        holds_sum += holds
+        max_attack = max(max_attack, total_attack)
+        max_lines = max(max_lines, total_lines)
+
+    completed_count = float(len(completed_games))
+    first_game_number = float(completed_games[0][0])
+    last_game_number = float(completed_games[-1][0])
+    return {
+        "replay/completed_games_logged": completed_count,
+        "replay/completed_games_first_number": first_game_number,
+        "replay/completed_games_last_number": last_game_number,
+        "replay/completed_games_avg_attack": attack_sum / completed_count,
+        "replay/completed_games_avg_lines": line_sum / completed_count,
+        "replay/completed_games_avg_moves": episode_length_sum / completed_count,
+        "replay/completed_games_max_attack": max_attack,
+        "replay/completed_games_max_lines": max_lines,
+        "replay/completed_games_avg_attack_per_move": attack_sum / episode_length_sum,
+        "replay/completed_games_avg_hold_rate": holds_sum / episode_length_sum,
+    }
+
+
 def assert_rust_inference_artifacts(onnx_path: Path) -> None:
     conv_path, heads_path, fc_path = split_model_paths(onnx_path)
     required_paths = [onnx_path, conv_path, heads_path, fc_path]
@@ -656,7 +703,7 @@ class Trainer:
             masks=mirror.batch.masks.index_select(0, sample_indices),
         )
 
-    def train_step(self, batch: TrainingBatch) -> dict:
+    def train_step(self, batch: TrainingBatch, collect_metrics: bool) -> dict[str, float]:
         """Execute one training step."""
         self.model.train()
 
@@ -689,7 +736,6 @@ class Trainer:
         policy_loss_scalar = policy_loss.item()
         value_loss_scalar = value_loss.item()
         self.loss_balancer.append(policy_loss_scalar, value_loss_scalar)
-        policy_loss_avg, value_loss_avg = self.loss_balancer.averages()
 
         # Gradient clipping
         grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -700,6 +746,10 @@ class Trainer:
         if self.scheduler:
             self.scheduler.step()
 
+        if not collect_metrics:
+            return {}
+
+        policy_loss_avg, value_loss_avg = self.loss_balancer.averages()
         metrics = {
             "train/loss": total_loss.item(),
             "train/policy_loss": policy_loss_scalar,
@@ -976,6 +1026,7 @@ class Trainer:
         replay_sync_count = 0
         train_step_time_s = 0.0
         train_step_count = 0
+        latest_train_metrics: dict[str, float] | None = None
         pending_batches: deque[TrainingBatch] = deque()
         replay_mirror: ReplayMirror | None = None
         interval_anchor_s = time.perf_counter()
@@ -1047,10 +1098,22 @@ class Trainer:
                 session_step = self.step - start_step
 
                 # Train step
+                now_s = time.perf_counter()
+                is_log_step = now_s >= next_log_time_s
+                collect_train_metrics = (
+                    is_log_step
+                    or latest_train_metrics is None
+                    or session_step % self.config.train_step_metrics_interval == 0
+                )
                 train_step_start = time.perf_counter()
-                metrics = self.train_step(batch)
+                step_metrics = self.train_step(
+                    batch,
+                    collect_metrics=collect_train_metrics,
+                )
                 train_step_time_s += time.perf_counter() - train_step_start
                 train_step_count += 1
+                if step_metrics:
+                    latest_train_metrics = step_metrics
 
                 for event in generator.drain_model_eval_events():
                     promoted = bool(event["promoted"])
@@ -1092,7 +1155,13 @@ class Trainer:
                 # Log metrics
                 now_s = time.perf_counter()
                 if now_s >= next_log_time_s:
-                    metrics.update(self._compute_extra_train_metrics(batch))
+                    if latest_train_metrics is None:
+                        raise RuntimeError(
+                            "No collected train metrics are available for logging"
+                        )
+                    metrics = dict(latest_train_metrics)
+                    if self.config.compute_extra_train_metrics_on_log:
+                        metrics.update(self._compute_extra_train_metrics(batch))
                     games = generator.games_generated()
                     window_elapsed_s = now_s - throughput_window_start_s
                     games_delta = games - throughput_window_start_games
@@ -1147,37 +1216,45 @@ class Trainer:
                     if log_to_wandb:
                         metrics["trainer_step"] = self.step
                         wandb.log(metrics)
-                        # Log all completed games since the last logging tick.
-                        for (
-                            game_number,
-                            game_stats,
-                        ) in generator.drain_completed_game_stats():
-                            game_metrics = {
-                                "game_number": game_number,
-                                "game/number": game_number,
-                                "trainer_step": self.step,
-                            }
-                            for key, value in game_stats.items():
-                                game_metrics[f"game/{key}"] = value
-                            episode_length = game_stats["episode_length"]
-                            if episode_length <= 0:
-                                raise ValueError(
-                                    f"Invalid episode_length for game {game_number}: "
-                                    f"{episode_length}"
+                        completed_games = generator.drain_completed_game_stats()
+                        if self.config.log_individual_games_to_wandb:
+                            for (
+                                game_number,
+                                game_stats,
+                            ) in completed_games:
+                                game_metrics = {
+                                    "game_number": game_number,
+                                    "game/number": game_number,
+                                    "trainer_step": self.step,
+                                }
+                                for key, value in game_stats.items():
+                                    game_metrics[f"game/{key}"] = value
+                                episode_length = game_stats["episode_length"]
+                                if episode_length <= 0:
+                                    raise ValueError(
+                                        "Invalid episode_length for game "
+                                        f"{game_number}: {episode_length}"
+                                    )
+                                game_metrics["game/attack_per_move"] = (
+                                    game_stats["total_attack"] / episode_length
                                 )
-                            game_metrics["game/attack_per_move"] = (
-                                game_stats["total_attack"] / episode_length
+                                game_metrics["game/lines_per_move"] = (
+                                    game_stats["total_lines"] / episode_length
+                                )
+                                game_metrics["game/hold_rate"] = (
+                                    game_stats["holds"] / episode_length
+                                )
+                                # Don't pin per-game logs to the training step: multiple
+                                # games can complete between train ticks, and reusing the
+                                # same step causes only a subset to appear in history.
+                                wandb.log(game_metrics)
+                        else:
+                            game_summary_metrics = summarize_completed_games(
+                                completed_games
                             )
-                            game_metrics["game/lines_per_move"] = (
-                                game_stats["total_lines"] / episode_length
-                            )
-                            game_metrics["game/hold_rate"] = (
-                                game_stats["holds"] / episode_length
-                            )
-                            # Don't pin per-game logs to the training step: multiple
-                            # games can complete between train ticks, and reusing the
-                            # same step causes only a subset to appear in history.
-                            wandb.log(game_metrics)
+                            if game_summary_metrics:
+                                game_summary_metrics["trainer_step"] = self.step
+                                wandb.log(game_summary_metrics)
                     sample_batch_time_s = 0.0
                     sample_batch_count = 0
                     replay_sync_time_s = 0.0
