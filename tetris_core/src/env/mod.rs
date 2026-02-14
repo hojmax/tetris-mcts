@@ -5,6 +5,7 @@
 
 mod board;
 mod clearing;
+pub(crate) mod global_cache;
 mod lock_delay;
 mod movement;
 mod piece_management;

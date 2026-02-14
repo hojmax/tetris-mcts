@@ -15,7 +15,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::constants::{AUX_FEATURES, NUM_PIECE_TYPES, QUEUE_SIZE};
+use crate::constants::{AUX_FEATURES, NUM_PIECE_TYPES};
 use crate::mcts::GameStats;
 use crate::mcts::{GameResult, GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
@@ -804,7 +804,7 @@ impl GameGenerator {
         let mut values = vec![0.0f32; actual_batch];
         let mut overhangs = vec![0.0f32; actual_batch];
         let mut masks = vec![0.0f32; actual_batch * num_actions];
-        let move_norm_denominator = max_placements as f32;
+        let max_placements_usize = max_placements as usize;
 
         for (i, ex) in sampled_examples.iter().enumerate() {
             // Copy board (already flat u8, convert to f32)
@@ -812,51 +812,32 @@ impl GameGenerator {
                 boards[i * board_height * board_width + j] = val as f32;
             }
 
-            // Build aux features (same encoding as Python)
+            // Build auxiliary features through the shared encoder used by Rust inference.
             let aux_offset = i * aux_features_size;
-            let mut aux_idx = aux_offset;
-            // Current piece one-hot (7)
-            aux[aux_idx + ex.current_piece] = 1.0;
-            aux_idx += NUM_PIECE_TYPES;
-
-            // Hold piece one-hot (8) - 7 means empty
-            if ex.hold_piece < NUM_PIECE_TYPES {
-                aux[aux_idx + ex.hold_piece] = 1.0;
+            let aux_slice = &mut aux[aux_offset..aux_offset + aux_features_size];
+            let hold_piece = if ex.hold_piece < NUM_PIECE_TYPES {
+                Some(ex.hold_piece)
             } else {
-                aux[aux_idx + NUM_PIECE_TYPES] = 1.0; // Empty slot
-            }
-            aux_idx += NUM_PIECE_TYPES + 1;
-
-            // Hold available (1)
-            aux[aux_idx] = if ex.hold_available { 1.0 } else { 0.0 };
-            aux_idx += 1;
-
-            // Next queue one-hot (5 * 7 = 35)
-            for (j, &piece) in ex.next_queue.iter().take(QUEUE_SIZE).enumerate() {
-                aux[aux_idx + j * NUM_PIECE_TYPES + piece] = 1.0;
-            }
-            aux_idx += QUEUE_SIZE * NUM_PIECE_TYPES;
-
-            // Placement count normalized (1)
-            aux[aux_idx] = ex.placement_count as f32 / move_norm_denominator;
-            aux_idx += 1;
-
-            // Combo normalized (1)
-            aux[aux_idx] = crate::nn::normalize_combo_for_feature(ex.combo);
-            aux_idx += 1;
-
-            // Back-to-back flag (1)
-            aux[aux_idx] = if ex.back_to_back { 1.0 } else { 0.0 };
-            aux_idx += 1;
-
-            // Next hidden piece distribution (7)
-            debug_assert_eq!(ex.next_hidden_piece_probs.len(), NUM_PIECE_TYPES);
-            for (piece, &probability) in ex.next_hidden_piece_probs.iter().enumerate() {
-                aux[aux_idx + piece] = probability;
-            }
-            aux_idx += NUM_PIECE_TYPES;
-
-            debug_assert_eq!(aux_idx - aux_offset, aux_features_size);
+                None
+            };
+            crate::nn::encode_aux_features(
+                aux_slice,
+                ex.current_piece,
+                hold_piece,
+                ex.hold_available,
+                &ex.next_queue,
+                ex.placement_count as usize,
+                max_placements_usize,
+                ex.combo,
+                ex.back_to_back,
+                &ex.next_hidden_piece_probs,
+            )
+            .map_err(|error| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Failed to encode aux features for sampled example {}: {}",
+                    i, error
+                ))
+            })?;
 
             // Copy policy
             for (j, &val) in ex.policy.iter().enumerate() {

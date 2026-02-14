@@ -3,13 +3,17 @@
 //! All #[pymethods] consolidated in one file due to PyO3 limitation.
 
 use pyo3::prelude::*;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
+use std::sync::Arc;
 
 use crate::mcts::HOLD_ACTION_INDEX;
 use crate::moves::{find_all_placements, Board, Placement};
 use crate::piece::{spawn_x, spawn_y, Piece};
 use crate::scoring::AttackResult;
 
+use super::global_cache::{
+    build_placement_lookup_key, get_cached_placements, insert_cached_placements,
+};
 use super::state::PlacementCache;
 use super::TetrisEnv;
 
@@ -226,12 +230,12 @@ impl TetrisEnv {
 
         let bag_start = bag_number * 7;
         let bag_end = bag_start + 7;
-        let mut used_in_bag: HashSet<usize> = HashSet::with_capacity(7);
+        let mut used_in_bag = [false; 7];
 
         let current_bag_pos = self.current_piece_bag_position as usize;
         if current_bag_pos >= bag_start && current_bag_pos < bag_end {
             if let Some(ref piece) = self.current_piece {
-                used_in_bag.insert(piece.piece_type);
+                used_in_bag[piece.piece_type] = true;
             }
         }
 
@@ -240,18 +244,20 @@ impl TetrisEnv {
         {
             let hold_pos = hold_bag_pos as usize;
             if hold_pos >= bag_start && hold_pos < bag_end {
-                used_in_bag.insert(hold_type);
+                used_in_bag[hold_type] = true;
             }
         }
 
         for (i, &piece_type) in self.piece_queue.iter().enumerate() {
             let piece_pos = self.pieces_spawned as usize + i;
             if piece_pos >= bag_start && piece_pos < bag_end {
-                used_in_bag.insert(piece_type);
+                used_in_bag[piece_type] = true;
             }
         }
 
-        (0..7).filter(|p| !used_in_bag.contains(p)).collect()
+        (0..7)
+            .filter(|piece_type| !used_in_bag[*piece_type])
+            .collect()
     }
 
     pub fn push_queue_piece(&mut self, piece_type: usize) {
@@ -482,31 +488,14 @@ impl TetrisEnv {
     }
 
     pub fn get_possible_placements(&self) -> Vec<Placement> {
-        // Check cache first
-        if let Some(ref cached) = *self.placements_cache.borrow() {
-            return cached.placements.clone();
-        }
-
-        // Cache miss - compute placements
-        let placements = if let Some(ref piece) = self.current_piece {
-            let board = Board::new(self.width, self.height, self.board_cells());
-            find_all_placements(&board, piece.piece_type, piece.x, piece.y)
-        } else {
-            Vec::new()
-        };
-
-        let mut action_to_placement_idx = vec![None; crate::mcts::NUM_ACTIONS];
-        for (placement_idx, placement) in placements.iter().enumerate() {
-            debug_assert!(placement.action_index < action_to_placement_idx.len());
-            action_to_placement_idx[placement.action_index] = Some(placement_idx);
-        }
-
-        // Store in cache and return
-        *self.placements_cache.borrow_mut() = Some(PlacementCache {
-            placements: placements.clone(),
-            action_to_placement_idx,
-        });
-        placements
+        self.ensure_placements_cache();
+        let cache_ref = self.placements_cache.borrow();
+        cache_ref
+            .as_ref()
+            .expect("placements cache should exist after ensure_placements_cache")
+            .placements
+            .as_ref()
+            .clone()
     }
 
     pub fn get_placements_for_piece(&self, piece_type: usize) -> Vec<Placement> {
@@ -533,23 +522,111 @@ impl TetrisEnv {
             return if self.hold() { Some(0) } else { None };
         }
 
-        if self.placements_cache.borrow().is_none() {
-            self.get_possible_placements();
+        let (x, y, rotation, last_move_was_rotation, last_kick_index) =
+            self.cached_placement_params_for_action(action_idx)?;
+
+        Some(self.place_piece_internal_with_kick(
+            x,
+            y,
+            rotation,
+            last_move_was_rotation,
+            last_kick_index,
+        ))
+    }
+}
+
+impl TetrisEnv {
+    fn ensure_placements_cache(&self) {
+        if self.placements_cache.borrow().is_some() {
+            return;
         }
 
-        let placement = {
-            let cache_ref = self.placements_cache.borrow();
-            let cache = cache_ref
-                .as_ref()
-                .expect("placements cache should exist after get_possible_placements");
-            let placement_idx = cache
-                .action_to_placement_idx
-                .get(action_idx)
-                .copied()
-                .flatten()?;
-            cache.placements[placement_idx].clone()
+        let Some(piece) = self.current_piece.as_ref() else {
+            *self.placements_cache.borrow_mut() = Some(PlacementCache {
+                placements: Arc::new(Vec::new()),
+                action_to_placement_idx: Arc::new(vec![None; crate::mcts::NUM_ACTIONS]),
+            });
+            return;
+        };
+        let piece = piece.clone();
+        let global_cache_key = build_placement_lookup_key(self, &piece);
+
+        if let Some(cache_key) = global_cache_key {
+            if let Some(global_cached) = get_cached_placements(cache_key) {
+                *self.placements_cache.borrow_mut() = Some(global_cached);
+                return;
+            }
+        }
+
+        let board = Board::new(self.width, self.height, self.board_cells());
+        let placements = find_all_placements(&board, piece.piece_type, piece.x, piece.y);
+
+        let mut action_to_placement_idx = vec![None; crate::mcts::NUM_ACTIONS];
+        for (placement_idx, placement) in placements.iter().enumerate() {
+            debug_assert!(placement.action_index < action_to_placement_idx.len());
+            action_to_placement_idx[placement.action_index] = Some(placement_idx);
+        }
+
+        let cache_entry = PlacementCache {
+            placements: Arc::new(placements),
+            action_to_placement_idx: Arc::new(action_to_placement_idx),
         };
 
-        Some(self.execute_placement(&placement))
+        if let Some(cache_key) = global_cache_key {
+            insert_cached_placements(cache_key, cache_entry.clone());
+        }
+        *self.placements_cache.borrow_mut() = Some(cache_entry);
+    }
+
+    fn cached_placement_params_for_action(
+        &self,
+        action_idx: usize,
+    ) -> Option<(i32, i32, usize, bool, usize)> {
+        self.ensure_placements_cache();
+
+        let cache_ref = self.placements_cache.borrow();
+        let cache = cache_ref
+            .as_ref()
+            .expect("placements cache should exist after ensure_placements_cache");
+        let placement_idx = cache
+            .action_to_placement_idx
+            .get(action_idx)
+            .copied()
+            .flatten()?;
+        let placement = &cache.placements[placement_idx];
+        Some((
+            placement.piece.x,
+            placement.piece.y,
+            placement.piece.rotation,
+            placement.last_move_was_rotation,
+            placement.last_kick_index,
+        ))
+    }
+
+    pub(crate) fn fill_cached_action_mask(&self, mask: &mut [bool]) {
+        debug_assert_eq!(mask.len(), crate::mcts::NUM_ACTIONS);
+        mask.fill(false);
+
+        if self.game_over {
+            return;
+        }
+
+        self.ensure_placements_cache();
+
+        let cache_ref = self.placements_cache.borrow();
+        let cache = cache_ref
+            .as_ref()
+            .expect("placements cache should exist after ensure_placements_cache");
+        for (action_idx, placement_idx) in cache.action_to_placement_idx.iter().enumerate() {
+            if placement_idx.is_some() {
+                mask[action_idx] = true;
+            }
+        }
+
+        let hold_is_available =
+            !self.game_over && !self.is_hold_used() && self.current_piece.is_some();
+        if hold_is_available {
+            mask[HOLD_ACTION_INDEX] = true;
+        }
     }
 }

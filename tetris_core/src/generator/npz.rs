@@ -13,6 +13,7 @@ use zip::CompressionMethod;
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::mcts::{TrainingExample, NUM_ACTIONS};
+use crate::nn::{denormalize_combo_feature, normalize_combo_for_feature};
 
 /// Write training examples to NPZ format (compatible with Python numpy).
 ///
@@ -24,7 +25,7 @@ use crate::mcts::{TrainingExample, NUM_ACTIONS};
 /// - next_queue: (N, 5, 7) float32 one-hot
 /// - move_numbers: (N,) float32 normalized frame indices (includes holds)
 /// - placement_counts: (N,) float32 normalized placement counts (excludes holds)
-/// - combos: (N,) uint32
+/// - combos: (N,) float32 normalized combo feature (clamped to 0.0..1.0)
 /// - back_to_back: (N,) bool
 /// - next_hidden_piece_probs: (N, 7) float32
 /// - column_heights: (N, 10) float32 normalized by board height
@@ -58,7 +59,7 @@ pub fn write_examples_to_npz(
     let mut next_queue: Vec<f32> = vec![0.0; n * QUEUE_SIZE * NUM_PIECE_TYPES];
     let mut move_numbers: Vec<f32> = Vec::with_capacity(n);
     let mut placement_counts: Vec<f32> = Vec::with_capacity(n);
-    let mut combos: Vec<u32> = Vec::with_capacity(n);
+    let mut combos: Vec<f32> = Vec::with_capacity(n);
     let mut back_to_back: Vec<u8> = Vec::with_capacity(n);
     let mut next_hidden_piece_probs: Vec<f32> = Vec::with_capacity(n * NUM_PIECE_TYPES);
     let mut column_heights: Vec<f32> = Vec::with_capacity(n * BOARD_WIDTH);
@@ -102,7 +103,7 @@ pub fn write_examples_to_npz(
         // Move number (normalized)
         move_numbers.push(ex.move_number as f32 / move_norm_denominator);
         placement_counts.push(ex.placement_count as f32 / move_norm_denominator);
-        combos.push(ex.combo);
+        combos.push(normalize_combo_for_feature(ex.combo));
         back_to_back.push(ex.back_to_back as u8);
         if ex.next_hidden_piece_probs.len() != NUM_PIECE_TYPES {
             return Err(format!(
@@ -322,7 +323,7 @@ pub fn read_examples_from_npz(
         read_npy_array::<f32>(&mut archive, "move_numbers.npy")?;
     let (placement_counts, placement_counts_shape) =
         read_npy_array::<f32>(&mut archive, "placement_counts.npy")?;
-    let (combos, combos_shape) = read_npy_array::<u32>(&mut archive, "combos.npy")?;
+    let (combos, combos_shape) = read_npy_array::<f32>(&mut archive, "combos.npy")?;
     let (back_to_back, back_to_back_shape) =
         read_npy_array_bool_like(&mut archive, "back_to_back.npy")?;
     let (next_hidden_piece_probs, next_hidden_piece_probs_shape) =
@@ -419,6 +420,14 @@ pub fn read_examples_from_npz(
     let row_fill_counts_size = BOARD_HEIGHT;
 
     for i in 0..n {
+        let combo_feature = combos[i];
+        if !combo_feature.is_finite() || !(0.0..=1.0).contains(&combo_feature) {
+            return Err(format!(
+                "combos[{}] must be finite and in [0, 1], got {}",
+                i, combo_feature
+            ));
+        }
+
         let board_start = i * board_size;
         let board_end = board_start + board_size;
 
@@ -462,7 +471,7 @@ pub fn read_examples_from_npz(
             next_queue: next_queue_pieces,
             move_number: denormalize_move_number(move_numbers[i], move_norm_denominator),
             placement_count: denormalize_move_number(placement_counts[i], move_norm_denominator),
-            combo: combos[i],
+            combo: denormalize_combo_feature(combo_feature),
             back_to_back: back_to_back[i] != 0,
             next_hidden_piece_probs: next_hidden_piece_probs[hidden_probs_start..hidden_probs_end]
                 .to_vec(),
@@ -601,6 +610,7 @@ fn write_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize + Copy>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::COMBO_NORMALIZATION_MAX;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -618,7 +628,7 @@ mod tests {
         ))
     }
 
-    fn make_example(move_number: u32, hold_piece: usize) -> TrainingExample {
+    fn make_example(move_number: u32, hold_piece: usize, combo: u32) -> TrainingExample {
         let mut board = vec![0u8; BOARD_HEIGHT * BOARD_WIDTH];
         board[0] = 1;
         board[42] = 1;
@@ -639,7 +649,7 @@ mod tests {
             next_queue: vec![0, 1, 2, 3, 4],
             move_number,
             placement_count: move_number,
-            combo: 3,
+            combo,
             back_to_back: true,
             next_hidden_piece_probs: vec![0.25, 0.25, 0.0, 0.0, 0.25, 0.25, 0.0],
             column_heights: vec![0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45],
@@ -661,7 +671,7 @@ mod tests {
     #[test]
     fn test_npz_round_trip_preserves_examples() {
         let path = unique_temp_path("roundtrip");
-        let examples = vec![make_example(0, 7), make_example(88, 5)];
+        let examples = vec![make_example(0, 7, 3), make_example(88, 5, 3)];
 
         write_examples_to_npz(&path, &examples, 100).expect("write should succeed");
         let loaded = read_examples_from_npz(&path, 100).expect("read should succeed");
@@ -705,6 +715,19 @@ mod tests {
         let err = validate_shape_with_dynamic_batch("boards", &[2, 19, 10], &[0, 20, 10])
             .expect_err("shape mismatch should error");
         assert!(err.contains("expected [N, 20, 10]"));
+    }
+
+    #[test]
+    fn test_npz_combo_round_trip_saturates_to_feature_cap() {
+        let path = unique_temp_path("combo_saturation");
+        let examples = vec![make_example(0, 7, 99)];
+
+        write_examples_to_npz(&path, &examples, 100).expect("write should succeed");
+        let loaded = read_examples_from_npz(&path, 100).expect("read should succeed");
+        fs::remove_file(&path).expect("temp file cleanup should succeed");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].combo, COMBO_NORMALIZATION_MAX);
     }
 
     #[test]

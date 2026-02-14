@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::constants::NUM_PIECE_TYPES;
 use crate::env::TetrisEnv;
 
-use super::action_space::{HOLD_ACTION_INDEX, NUM_ACTIONS};
+use super::action_space::NUM_ACTIONS;
 use super::utils::sample_dirichlet;
 
 const Q_NORMALIZATION_EPSILON: f32 = 1e-6;
@@ -247,19 +247,8 @@ impl ChanceNode {
 
 /// Get valid action indices for a state
 pub fn get_valid_action_indices(env: &TetrisEnv) -> Vec<usize> {
-    let current_placements = env.get_possible_placements();
-
     let mut valid = vec![false; NUM_ACTIONS];
-    for p in current_placements {
-        debug_assert!(p.action_index < NUM_ACTIONS);
-        valid[p.action_index] = true;
-    }
-
-    let hold_is_available =
-        !env.game_over && !env.is_hold_used() && env.get_current_piece().is_some();
-    if hold_is_available {
-        valid[HOLD_ACTION_INDEX] = true;
-    }
+    env.fill_cached_action_mask(&mut valid);
 
     valid
         .iter()

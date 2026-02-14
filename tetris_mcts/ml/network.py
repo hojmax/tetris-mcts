@@ -19,6 +19,7 @@ Output:
 - Value head: 1 output (scalar target)
 """
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -53,6 +54,47 @@ AUX_FEATURES = (
     + BACK_TO_BACK_FEATURES
     + HIDDEN_PIECE_DISTRIBUTION_FEATURES
 )  # 61
+
+COMBO_NORMALIZATION_MAX = 12.0
+
+
+def normalize_combo_for_feature(combo: float) -> float:
+    return min(max(combo, 0.0), COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
+
+
+def denormalize_combo_feature(combo_feature: float) -> int:
+    return int(round(min(max(combo_feature, 0.0), 1.0) * COMBO_NORMALIZATION_MAX))
+
+
+def build_aux_features(
+    current_piece: np.ndarray,
+    hold_piece: np.ndarray,
+    hold_available: float,
+    next_queue: np.ndarray,
+    placement_count: float,
+    combo_feature: float,
+    back_to_back: float,
+    next_hidden_piece_probs: np.ndarray,
+) -> np.ndarray:
+    hold_available_feature = np.array([hold_available], dtype=np.float32)
+    placement_count_feature = np.array([placement_count], dtype=np.float32)
+    combo_feature_array = np.array(
+        [min(max(combo_feature, 0.0), 1.0)],
+        dtype=np.float32,
+    )
+    back_to_back_feature = np.array([back_to_back], dtype=np.float32)
+    return np.concatenate(
+        [
+            current_piece.astype(np.float32),
+            hold_piece.astype(np.float32),
+            hold_available_feature,
+            next_queue.astype(np.float32).reshape(-1),
+            placement_count_feature,
+            combo_feature_array,
+            back_to_back_feature,
+            next_hidden_piece_probs.astype(np.float32).reshape(-1),
+        ]
+    )
 
 
 class TetrisNet(nn.Module):

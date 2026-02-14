@@ -7,6 +7,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use crate::constants::{DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES};
 use crate::moves::Placement;
@@ -14,8 +15,8 @@ use crate::scoring::AttackResult;
 
 #[derive(Clone)]
 pub(crate) struct PlacementCache {
-    pub placements: Vec<Placement>,
-    pub action_to_placement_idx: Vec<Option<usize>>,
+    pub placements: Arc<Vec<Placement>>,
+    pub action_to_placement_idx: Arc<Vec<Option<usize>>>,
 }
 
 #[pyclass]
@@ -63,6 +64,8 @@ pub struct TetrisEnv {
     /// Cached placements for current piece (invalidated when piece or board changes)
     /// Using RefCell for interior mutability to cache with &self
     pub(crate) placements_cache: RefCell<Option<PlacementCache>>,
+    /// Cached board diagnostics (overhang_fields, holes), invalidated only when board changes.
+    pub(crate) board_analysis_cache: RefCell<Option<(u32, u32)>>,
 }
 
 impl TetrisEnv {
@@ -97,6 +100,7 @@ impl TetrisEnv {
             row_fill_counts: vec![0; height],
             column_heights: vec![0; width],
             placements_cache: RefCell::new(None),
+            board_analysis_cache: RefCell::new(None),
         };
         env.spawn_piece_internal();
         env
@@ -129,6 +133,7 @@ impl TetrisEnv {
         self.row_fill_counts = vec![0; self.height];
         self.column_heights = vec![0; self.width];
         *self.placements_cache.borrow_mut() = None;
+        *self.board_analysis_cache.borrow_mut() = None;
         self.spawn_piece_internal();
     }
 
@@ -136,5 +141,21 @@ impl TetrisEnv {
     #[inline]
     pub(crate) fn invalidate_placement_cache(&self) {
         *self.placements_cache.borrow_mut() = None;
+    }
+
+    /// Invalidate cached board analysis metrics (overhang fields and holes).
+    #[inline]
+    pub(crate) fn invalidate_board_analysis_cache(&self) {
+        *self.board_analysis_cache.borrow_mut() = None;
+    }
+
+    #[inline]
+    pub(crate) fn get_cached_overhang_fields_and_holes(&self) -> Option<(u32, u32)> {
+        *self.board_analysis_cache.borrow()
+    }
+
+    #[inline]
+    pub(crate) fn set_cached_overhang_fields_and_holes(&self, value: (u32, u32)) {
+        *self.board_analysis_cache.borrow_mut() = Some(value);
     }
 }

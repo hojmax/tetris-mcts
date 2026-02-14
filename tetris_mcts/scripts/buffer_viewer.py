@@ -93,7 +93,7 @@ class BufferViewer:
         hold_available_raw = float(self.data["hold_available"][i])
         next_queue_raw = self.data["next_queue"][i]
         placement_count_raw = float(self.data["placement_counts"][i])
-        combo_raw = float(self.data["combos"][i])
+        combo_feature = float(self.data["combos"][i])
         back_to_back_raw = float(self.data["back_to_back"][i])
         next_hidden_piece_probs_raw = self.data["next_hidden_piece_probs"][i]
         current_piece = get_piece_type(self.data["current_pieces"][i])
@@ -114,7 +114,7 @@ class BufferViewer:
                 hold_available=hold_available_raw,
                 next_queue=next_queue_raw,
                 placement_count=placement_count_raw,
-                combo=combo_raw,
+                combo_feature=combo_feature,
                 back_to_back=back_to_back_raw,
                 next_hidden_piece_probs=next_hidden_piece_probs_raw,
             )

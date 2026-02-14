@@ -10,7 +10,7 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, ArrayView1};
 use tract_onnx::prelude::*;
 
 use crate::constants::{
@@ -88,19 +88,13 @@ impl TetrisNN {
         })
     }
 
-    fn compute_board_embedding(&self, board_f32: &[f32]) -> TractResult<Array1<f32>> {
-        let board_tensor = tract_ndarray::Array4::from_shape_vec(
-            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
-            board_f32.to_vec(),
-        )?
-        .into_tensor();
+    fn compute_board_embedding_owned(&self, board_f32: Vec<f32>) -> TractResult<Array1<f32>> {
+        let board_tensor =
+            tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_f32)?
+                .into_tensor();
 
         let conv_output = self.conv_model.run(tvec!(board_tensor.into()))?;
-        let conv_out: Vec<f32> = conv_output[0]
-            .to_array_view::<f32>()?
-            .iter()
-            .copied()
-            .collect();
+        let conv_out = conv_output[0].to_array_view::<f32>()?;
         if conv_out.len() != self.conv_out_size {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -112,9 +106,21 @@ impl TetrisNN {
             )
             .into());
         }
+        let conv_slice = conv_out.as_slice_memory_order().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Conv output tensor is not contiguous",
+            )
+        })?;
 
-        let conv_arr = Array1::from_vec(conv_out);
-        Ok(self.board_proj_weight.dot(&conv_arr) + self.board_proj_bias.as_ref())
+        let conv_arr = ArrayView1::from(conv_slice);
+        let mut board_embed = self.board_proj_weight.dot(&conv_arr);
+        board_embed += self.board_proj_bias.as_ref();
+        Ok(board_embed)
+    }
+
+    fn compute_board_embedding_from_slice(&self, board_f32: &[f32]) -> TractResult<Array1<f32>> {
+        self.compute_board_embedding_owned(board_f32.to_vec())
     }
 
     fn insert_board_embedding_cache(&self, board_key: [u64; 4], embed: Array1<f32>) {
@@ -162,18 +168,20 @@ impl TetrisNN {
                 }
                 None => {
                     self.cache_misses.set(self.cache_misses.get() + 1);
-                    let embed = self.compute_board_embedding(&board_f32)?;
+                    let embed = self.compute_board_embedding_owned(board_f32)?;
                     self.insert_board_embedding_cache(board_key, embed.clone());
                     embed
                 }
             }
         } else {
-            self.compute_board_embedding(&board_f32)?
+            self.compute_board_embedding_owned(board_f32)?
         };
 
-        let board_h_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, self.board_hidden), board_embed.to_vec())?
-                .into_tensor();
+        let board_h_tensor = tract_ndarray::Array2::from_shape_vec(
+            (1, self.board_hidden),
+            board_embed.into_raw_vec(),
+        )?
+        .into_tensor();
         let aux_tensor =
             tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_vec)?.into_tensor();
         let heads_output = self
@@ -217,10 +225,12 @@ impl TetrisNN {
         action_mask: &[bool],
     ) -> TractResult<(Vec<f32>, f32)> {
         // No caching for raw tensor inputs (used only by debug functions)
-        let board_embed = self.compute_board_embedding(board_tensor)?;
-        let board_h_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, self.board_hidden), board_embed.to_vec())?
-                .into_tensor();
+        let board_embed = self.compute_board_embedding_from_slice(board_tensor)?;
+        let board_h_tensor = tract_ndarray::Array2::from_shape_vec(
+            (1, self.board_hidden),
+            board_embed.into_raw_vec(),
+        )?
+        .into_tensor();
         let aux_tensor =
             tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor.to_vec())?
                 .into_tensor();
@@ -390,47 +400,23 @@ pub fn encode_state_features(
         .map(|&cell| if cell != 0 { 1.0 } else { 0.0 })
         .collect();
 
-    // Auxiliary features
-    let mut aux = Vec::with_capacity(AUX_FEATURES);
-
-    // Current piece: one-hot (7)
     let current_piece = env.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
-    for i in 0..NUM_PIECE_TYPES {
-        aux.push(if i == current_piece { 1.0 } else { 0.0 });
-    }
-
-    // Hold piece: one-hot (8) - 7 pieces + empty
     let hold_piece = env.get_hold_piece().map(|p| p.piece_type);
-    for i in 0..NUM_PIECE_TYPES {
-        aux.push(if hold_piece == Some(i) { 1.0 } else { 0.0 });
-    }
-    aux.push(if hold_piece.is_none() { 1.0 } else { 0.0 }); // Empty slot
-
-    // Hold available: binary (1)
-    aux.push(if !env.is_hold_used() { 1.0 } else { 0.0 });
-
-    // Next queue: one-hot per slot (5 x 7 = 35)
     let queue = env.get_queue(QUEUE_SIZE);
-    for slot in 0..QUEUE_SIZE {
-        let piece_type = queue.get(slot).copied();
-        for i in 0..NUM_PIECE_TYPES {
-            aux.push(if piece_type == Some(i) { 1.0 } else { 0.0 });
-        }
-    }
-
-    // Placement count: normalized (1)
-    let normalized_denominator = max_placements as f32;
-    aux.push(placement_count as f32 / normalized_denominator);
-
-    // Combo: normalized (1)
-    aux.push(normalize_combo_for_feature(env.combo));
-
-    // Back-to-back flag: binary (1)
-    aux.push(if env.back_to_back { 1.0 } else { 0.0 });
-
-    // Next hidden piece distribution from 7-bag (7)
     let hidden_piece_distribution = next_hidden_piece_distribution(env);
-    aux.extend(hidden_piece_distribution);
+    let mut aux = vec![0.0; AUX_FEATURES];
+    encode_aux_features(
+        &mut aux,
+        current_piece,
+        hold_piece,
+        !env.is_hold_used(),
+        &queue,
+        placement_count,
+        max_placements,
+        env.combo,
+        env.back_to_back,
+        &hidden_piece_distribution,
+    )?;
 
     Ok((board_tensor, aux))
 }
@@ -438,6 +424,134 @@ pub fn encode_state_features(
 pub fn normalize_combo_for_feature(combo: u32) -> f32 {
     let capped = combo.min(COMBO_NORMALIZATION_MAX) as f32;
     capped / COMBO_NORMALIZATION_MAX as f32
+}
+
+pub fn denormalize_combo_feature(combo_feature: f32) -> u32 {
+    let clamped = combo_feature.clamp(0.0, 1.0);
+    (clamped * COMBO_NORMALIZATION_MAX as f32).round() as u32
+}
+
+pub fn encode_aux_features(
+    aux_out: &mut [f32],
+    current_piece: usize,
+    hold_piece: Option<usize>,
+    hold_available: bool,
+    next_queue: &[usize],
+    placement_count: usize,
+    max_placements: usize,
+    combo: u32,
+    back_to_back: bool,
+    next_hidden_piece_probs: &[f32],
+) -> TractResult<()> {
+    if max_placements == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "max_placements must be > 0",
+        )
+        .into());
+    }
+    if aux_out.len() != AUX_FEATURES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "aux_out length must be {} (got {})",
+                AUX_FEATURES,
+                aux_out.len()
+            ),
+        )
+        .into());
+    }
+    if current_piece >= NUM_PIECE_TYPES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "current_piece must be in 0..{} (got {})",
+                NUM_PIECE_TYPES, current_piece
+            ),
+        )
+        .into());
+    }
+    if let Some(piece_type) = hold_piece {
+        if piece_type >= NUM_PIECE_TYPES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "hold_piece must be in 0..{} when present (got {})",
+                    NUM_PIECE_TYPES, piece_type
+                ),
+            )
+            .into());
+        }
+    }
+    if next_hidden_piece_probs.len() != NUM_PIECE_TYPES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "next_hidden_piece_probs length must be {} (got {})",
+                NUM_PIECE_TYPES,
+                next_hidden_piece_probs.len()
+            ),
+        )
+        .into());
+    }
+    if let Some(&invalid_piece) = next_queue
+        .iter()
+        .take(QUEUE_SIZE)
+        .find(|&&piece_type| piece_type >= NUM_PIECE_TYPES)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "next_queue contains invalid piece type {} (expected < {})",
+                invalid_piece, NUM_PIECE_TYPES
+            ),
+        )
+        .into());
+    }
+
+    aux_out.fill(0.0);
+    let mut aux_idx = 0;
+
+    // Current piece: one-hot (7)
+    aux_out[aux_idx + current_piece] = 1.0;
+    aux_idx += NUM_PIECE_TYPES;
+
+    // Hold piece: one-hot (8) - 7 pieces + empty
+    if let Some(piece_type) = hold_piece {
+        aux_out[aux_idx + piece_type] = 1.0;
+    } else {
+        aux_out[aux_idx + NUM_PIECE_TYPES] = 1.0;
+    }
+    aux_idx += NUM_PIECE_TYPES + 1;
+
+    // Hold available: binary (1)
+    aux_out[aux_idx] = if hold_available { 1.0 } else { 0.0 };
+    aux_idx += 1;
+
+    // Next queue: one-hot per slot (5 x 7 = 35)
+    for (slot, &piece_type) in next_queue.iter().take(QUEUE_SIZE).enumerate() {
+        aux_out[aux_idx + slot * NUM_PIECE_TYPES + piece_type] = 1.0;
+    }
+    aux_idx += QUEUE_SIZE * NUM_PIECE_TYPES;
+
+    // Placement count: normalized (1)
+    aux_out[aux_idx] = placement_count as f32 / max_placements as f32;
+    aux_idx += 1;
+
+    // Combo: normalized (1)
+    aux_out[aux_idx] = normalize_combo_for_feature(combo);
+    aux_idx += 1;
+
+    // Back-to-back flag: binary (1)
+    aux_out[aux_idx] = if back_to_back { 1.0 } else { 0.0 };
+    aux_idx += 1;
+
+    // Next hidden piece distribution from 7-bag (7)
+    aux_out[aux_idx..aux_idx + NUM_PIECE_TYPES].copy_from_slice(next_hidden_piece_probs);
+    aux_idx += NUM_PIECE_TYPES;
+
+    debug_assert_eq!(aux_idx, AUX_FEATURES);
+    Ok(())
 }
 
 /// Probability distribution over the next hidden queue piece implied by the 7-bag state.
@@ -489,23 +603,9 @@ pub fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
 
 /// Get action mask from environment
 pub fn get_action_mask(env: &TetrisEnv) -> Vec<bool> {
-    use crate::mcts::{HOLD_ACTION_INDEX, NUM_ACTIONS};
-
-    let current_placements = env.get_possible_placements();
-
+    use crate::mcts::NUM_ACTIONS;
     let mut mask = vec![false; NUM_ACTIONS];
-
-    for p in current_placements {
-        debug_assert!(p.action_index < NUM_ACTIONS);
-        mask[p.action_index] = true;
-    }
-
-    let hold_is_available =
-        !env.game_over && !env.is_hold_used() && env.get_current_piece().is_some();
-    if hold_is_available {
-        mask[HOLD_ACTION_INDEX] = true;
-    }
-
+    env.fill_cached_action_mask(&mut mask);
     mask
 }
 
@@ -811,6 +911,15 @@ mod tests {
         assert!((probs[0] + probs[2] - 1.0).abs() < 1e-5);
         assert_eq!(probs[1], 0.0);
         assert_eq!(probs[3], 0.0);
+    }
+
+    #[test]
+    fn test_combo_feature_round_trip() {
+        assert_eq!(denormalize_combo_feature(normalize_combo_for_feature(7)), 7);
+        assert_eq!(
+            denormalize_combo_feature(normalize_combo_for_feature(99)),
+            COMBO_NORMALIZATION_MAX
+        );
     }
 
     #[test]

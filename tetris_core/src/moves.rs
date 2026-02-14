@@ -306,68 +306,68 @@ pub fn find_all_placements(
     // Deduplicate by actual cells occupied (not just x, y, rotation).
     // This handles cases like O piece where different rotations look identical.
     // Use a full coordinate key (including negative values) to avoid collisions.
-    let mut seen_cells: HashSet<[(i32, i32); 4]> = HashSet::new();
+    let mut seen_cells: HashSet<u64> = HashSet::new();
     let mut placements: Vec<Placement> = Vec::new();
     let action_space = get_action_space();
 
-    let mut final_entries: Vec<(PieceState, usize)> = final_best_source
-        .into_iter()
-        .enumerate()
-        .filter_map(|(final_idx, source_idx)| {
-            source_idx.map(|source| (index_to_state(final_idx), source))
-        })
-        .collect();
-    final_entries.sort_unstable_by(|a, b| {
-        let a_state = a.0;
-        let b_state = b.0;
-        let (ax, ay, arot) = (a_state.x, a_state.y, a_state.rotation);
-        let (bx, by, brot) = (b_state.x, b_state.y, b_state.rotation);
-        arot.cmp(&brot)
-            .then_with(|| ax.cmp(&bx))
-            .then_with(|| ay.cmp(&by))
-    });
+    for (final_idx, source_idx) in final_best_source.iter().enumerate() {
+        let Some(source_idx) = source_idx else {
+            continue;
+        };
 
-    for (final_state, source_idx) in final_entries {
+        let final_state = index_to_state(final_idx);
         let x = final_state.x;
         let y = final_state.y;
         let rotation = final_state.rotation;
 
-        let mut cells = get_cells(piece_type, rotation, x, y);
+        let cells = get_cells(piece_type, rotation, x, y);
         debug_assert_eq!(cells.len(), 4, "Tetromino should have exactly 4 cells");
-        cells.sort_unstable();
-        let cell_key = [cells[0], cells[1], cells[2], cells[3]];
-
-        if seen_cells.insert(cell_key) {
-            // Reconstruct shortest path from BFS parent pointers.
-            let mut moves = Vec::with_capacity(depth[source_idx] as usize + 1);
-            let mut cursor = source_idx;
-            while cursor != start_idx {
-                moves.push(action_from_parent[cursor]);
-                cursor = parents[cursor];
-            }
-            moves.reverse();
-            moves.push(Action::HardDrop.to_u8());
-
-            // Pre-compute action index
-            let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
-                debug_assert!(
-                    false,
-                    "BUG: valid placement ({}, {}, {}) missing from action space",
-                    x, y, rotation
-                );
-                continue;
-            };
-
-            placements.push(Placement {
-                piece: Piece::with_position(piece_type, x, y, rotation),
-                moves,
-                column: x,
-                rotation,
-                last_kick_index: last_kick_index[source_idx] as usize,
-                last_move_was_rotation: last_move_was_rotation[source_idx],
-                action_index,
-            });
+        let mut packed_cells = [0u16; 4];
+        for (cell_idx, (cx, cy)) in cells.into_iter().enumerate() {
+            let packed = cy as usize * board.width + cx as usize;
+            debug_assert!(packed <= u16::MAX as usize);
+            packed_cells[cell_idx] = packed as u16;
         }
+        packed_cells.sort_unstable();
+        let cell_key = ((packed_cells[0] as u64) << 48)
+            | ((packed_cells[1] as u64) << 32)
+            | ((packed_cells[2] as u64) << 16)
+            | packed_cells[3] as u64;
+
+        if !seen_cells.insert(cell_key) {
+            continue;
+        }
+
+        // Reconstruct shortest path from BFS parent pointers without reverse pass.
+        let path_len = depth[*source_idx] as usize;
+        let mut moves = vec![0u8; path_len + 1];
+        moves[path_len] = Action::HardDrop.to_u8();
+        let mut cursor = *source_idx;
+        let mut write_idx = path_len;
+        while cursor != start_idx {
+            write_idx -= 1;
+            moves[write_idx] = action_from_parent[cursor];
+            cursor = parents[cursor];
+        }
+
+        let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
+            debug_assert!(
+                false,
+                "BUG: valid placement ({}, {}, {}) missing from action space",
+                x, y, rotation
+            );
+            continue;
+        };
+
+        placements.push(Placement {
+            piece: Piece::with_position(piece_type, x, y, rotation),
+            moves,
+            column: x,
+            rotation,
+            last_kick_index: last_kick_index[*source_idx] as usize,
+            last_move_was_rotation: last_move_was_rotation[*source_idx],
+            action_index,
+        });
     }
 
     // Sort by rotation, column, then y for fully deterministic ordering

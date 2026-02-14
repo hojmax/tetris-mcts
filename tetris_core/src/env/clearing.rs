@@ -83,6 +83,7 @@ impl TetrisEnv {
 
             // Invalidate placements cache since board changed
             self.invalidate_placement_cache();
+            self.invalidate_board_analysis_cache();
 
             self.clear_lines_internal(is_tspin, is_mini);
             self.hold_used = false;
@@ -103,6 +104,8 @@ impl TetrisEnv {
             self.last_attack_result = None;
             return;
         }
+
+        self.invalidate_board_analysis_cache();
 
         // Compact non-cleared rows downward using in-place copy_within (zero allocations)
         let w = self.width;

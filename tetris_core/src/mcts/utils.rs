@@ -3,6 +3,9 @@
 use rand_distr::{Distribution, Gamma};
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
+use crate::env::global_cache::{
+    build_board_key, get_cached_board_analysis, insert_cached_board_analysis,
+};
 use crate::env::TetrisEnv;
 
 /// Normalization denominator for overhang fields.
@@ -59,6 +62,18 @@ pub fn compute_death_penalty(move_number: u32, max_placements: u32, death_penalt
 /// Overhang fields are empty cells with at least one filled cell above in the same column.
 /// Holes are overhang fields not reachable from top-row air via 4-neighbor flood-fill.
 pub fn count_overhang_fields_and_holes(env: &TetrisEnv) -> (u32, u32) {
+    if let Some(cached) = env.get_cached_overhang_fields_and_holes() {
+        return cached;
+    }
+
+    let board_key = build_board_key(env);
+    if let Some(key) = board_key {
+        if let Some(cached) = get_cached_board_analysis(key) {
+            env.set_cached_overhang_fields_and_holes(cached);
+            return cached;
+        }
+    }
+
     let board = env.board_cells();
     let width = env.width;
     let height = env.height;
@@ -140,7 +155,12 @@ pub fn count_overhang_fields_and_holes(env: &TetrisEnv) -> (u32, u32) {
         }
     }
 
-    (overhang_fields, holes)
+    let result = (overhang_fields, holes);
+    env.set_cached_overhang_fields_and_holes(result);
+    if let Some(key) = board_key {
+        insert_cached_board_analysis(key, result);
+    }
+    result
 }
 
 /// Count overhang fields (empty cells with at least one filled cell above in the same column).

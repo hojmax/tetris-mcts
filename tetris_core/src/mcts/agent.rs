@@ -139,10 +139,10 @@ impl MCTSAgent {
                     Ok(result) => result,
                     Err(e) => {
                         eprintln!(
-                            "[MCTSAgent] NN prediction failed at placement {}: {}. Ending game early.",
+                            "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
                             placement_count, e
                         );
-                        break;
+                        return None;
                     }
                 };
                 self.search(&env, policy, nn_value, add_noise, placement_count)

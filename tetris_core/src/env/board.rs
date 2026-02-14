@@ -98,5 +98,6 @@ impl TetrisEnv {
     pub(crate) fn sync_board_stats(&mut self) {
         self.recompute_total_blocks_and_row_fill_counts();
         self.recompute_column_heights();
+        self.invalidate_board_analysis_cache();
     }
 }

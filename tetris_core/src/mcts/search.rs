@@ -365,23 +365,18 @@ fn backup_with_value(
 
         // Update child stats (the ChanceNode we traversed through)
         if let Some(child) = node.children.get_mut(&action_idx) {
-            match child {
-                MCTSNode::Decision(d) => {
-                    d.value_sum += total_value;
-                    if track_value_history {
-                        d.value_history
-                            .get_or_insert_with(Vec::new)
-                            .push(total_value);
-                    }
+            let chance_child = match child {
+                MCTSNode::Chance(chance_child) => chance_child,
+                MCTSNode::Decision(_) => {
+                    unreachable!("DecisionNode child must be a ChanceNode")
                 }
-                MCTSNode::Chance(c) => {
-                    c.value_sum += total_value;
-                    if track_value_history {
-                        c.value_history
-                            .get_or_insert_with(Vec::new)
-                            .push(total_value);
-                    }
-                }
+            };
+            chance_child.value_sum += total_value;
+            if track_value_history {
+                chance_child
+                    .value_history
+                    .get_or_insert_with(Vec::new)
+                    .push(total_value);
             }
         }
 

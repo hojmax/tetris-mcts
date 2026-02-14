@@ -2,7 +2,6 @@
 //!
 //! Maps (x, y, rotation) placements to action indices and defines an explicit hold action.
 
-use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
@@ -17,31 +16,34 @@ pub const HOLD_ACTION_INDEX: usize = NUM_PLACEMENT_ACTIONS;
 /// Total number of actions in the action space.
 pub const NUM_ACTIONS: usize = NUM_PLACEMENT_ACTIONS + 1;
 
+const X_MIN: i32 = -3;
+const X_MAX_EXCLUSIVE: i32 = 10;
+const Y_MIN: i32 = -3;
+const Y_MAX_EXCLUSIVE: i32 = 20;
+const X_RANGE: usize = (X_MAX_EXCLUSIVE - X_MIN) as usize;
+const Y_RANGE: usize = (Y_MAX_EXCLUSIVE - Y_MIN) as usize;
+const LOOKUP_SIZE: usize = X_RANGE * Y_RANGE * 4;
+
 /// Placement action index mapping
 /// Maps (x, y, rotation) to placement action indices 0..NUM_PLACEMENT_ACTIONS-1
 /// Built at module load time to match Python's action_space.py
 #[derive(Clone)]
 pub struct ActionSpace {
     pub action_to_placement: Vec<(i32, i32, usize)>, // (x, y, rotation)
-    pub placement_to_action: HashMap<(i32, i32, usize), usize>,
+    placement_to_action: Vec<Option<usize>>,
 }
 
 impl ActionSpace {
     pub fn new() -> Self {
         let mut action_to_placement = Vec::new();
-        let mut placement_to_action = HashMap::new();
+        let mut placement_to_action = vec![None; LOOKUP_SIZE];
 
         // Same logic as Python's action_space.py
-        let x_min = -3i32;
-        let x_max = 10i32;
-        let y_min = -3i32;
-        let y_max = 20i32;
-
         // Check which positions are valid for at least one piece
         let mut valid_positions: Vec<(i32, i32, usize)> = Vec::new();
 
-        for y in y_min..y_max {
-            for x in x_min..x_max {
+        for y in Y_MIN..Y_MAX_EXCLUSIVE {
+            for x in X_MIN..X_MAX_EXCLUSIVE {
                 for rot in 0..4 {
                     // Check if any piece fits at this position on an empty board
                     for piece_type in 0..NUM_PIECE_TYPES {
@@ -59,7 +61,9 @@ impl ActionSpace {
 
         for (idx, pos) in valid_positions.iter().enumerate() {
             action_to_placement.push(*pos);
-            placement_to_action.insert(*pos, idx);
+            let lookup_idx = Self::lookup_index(pos.0, pos.1, pos.2)
+                .expect("BUG: action-space valid position is outside lookup bounds");
+            placement_to_action[lookup_idx] = Some(idx);
         }
 
         ActionSpace {
@@ -88,8 +92,26 @@ impl ActionSpace {
         self.action_to_placement.len()
     }
 
+    #[inline]
+    fn lookup_index(x: i32, y: i32, rotation: usize) -> Option<usize> {
+        if !(X_MIN..X_MAX_EXCLUSIVE).contains(&x) {
+            return None;
+        }
+        if !(Y_MIN..Y_MAX_EXCLUSIVE).contains(&y) {
+            return None;
+        }
+        if rotation >= 4 {
+            return None;
+        }
+
+        let x_offset = (x - X_MIN) as usize;
+        let y_offset = (y - Y_MIN) as usize;
+        Some((rotation * Y_RANGE + y_offset) * X_RANGE + x_offset)
+    }
+
     pub fn placement_to_index(&self, x: i32, y: i32, rotation: usize) -> Option<usize> {
-        self.placement_to_action.get(&(x, y, rotation)).copied()
+        let lookup_idx = Self::lookup_index(x, y, rotation)?;
+        self.placement_to_action[lookup_idx]
     }
 
     pub fn index_to_placement(&self, idx: usize) -> Option<(i32, i32, usize)> {

@@ -5,10 +5,8 @@ import numpy as np
 import torch
 
 from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, TrainingConfig
-from tetris_mcts.ml.network import TetrisNet
+from tetris_mcts.ml.network import TetrisNet, build_aux_features
 from tetris_mcts.ml.weights import load_checkpoint
-
-COMBO_NORMALIZATION_MAX = 12.0
 
 
 def load_training_config(config_path: Path) -> TrainingConfig:
@@ -42,7 +40,7 @@ class ValuePredictor:
         hold_available: float,
         next_queue: np.ndarray,
         placement_count: float,
-        combo: float,
+        combo_feature: float,
         back_to_back: float,
         next_hidden_piece_probs: np.ndarray,
     ) -> float:
@@ -52,24 +50,15 @@ class ValuePredictor:
         board_tensor = torch.from_numpy(board.astype(np.float32)).reshape(
             1, 1, BOARD_HEIGHT, BOARD_WIDTH
         )
-        hold_available_feature = np.array([hold_available], dtype=np.float32)
-        placement_count_feature = np.array([placement_count], dtype=np.float32)
-        combo_feature = np.array(
-            [min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX],
-            dtype=np.float32,
-        )
-        back_to_back_feature = np.array([back_to_back], dtype=np.float32)
-        aux = np.concatenate(
-            [
-                current_piece.astype(np.float32),
-                hold_piece.astype(np.float32),
-                hold_available_feature,
-                next_queue.astype(np.float32).reshape(-1),
-                placement_count_feature,
-                combo_feature,
-                back_to_back_feature,
-                next_hidden_piece_probs.astype(np.float32).reshape(-1),
-            ]
+        aux = build_aux_features(
+            current_piece=current_piece,
+            hold_piece=hold_piece,
+            hold_available=hold_available,
+            next_queue=next_queue,
+            placement_count=placement_count,
+            combo_feature=combo_feature,
+            back_to_back=back_to_back,
+            next_hidden_piece_probs=next_hidden_piece_probs,
         )
         aux_tensor = torch.from_numpy(aux).reshape(1, -1)
 

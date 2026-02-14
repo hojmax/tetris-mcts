@@ -17,6 +17,7 @@ from tetris_mcts.config import (
     PIECE_NAMES,
     QUEUE_SIZE,
 )
+from tetris_mcts.ml.network import denormalize_combo_feature
 from tetris_mcts.ml.value_predictor import ValuePredictor
 from tetris_mcts.ml.visualization import render_board
 
@@ -361,7 +362,8 @@ def main(args: ScriptArgs) -> None:
                 get_piece_type(data["next_queue"][i][j]) for j in range(QUEUE_SIZE)
             ]
             can_hold = bool(data["hold_available"][i])
-            combo = int(data["combos"][i])
+            combo_feature = float(data["combos"][i])
+            combo = denormalize_combo_feature(combo_feature)
             back_to_back = bool(data["back_to_back"][i])
             move_number = frame_idx  # Use frame index as move number
             value_target = float(data["value_targets"][i])
@@ -375,7 +377,7 @@ def main(args: ScriptArgs) -> None:
                     hold_available=float(data["hold_available"][i]),
                     next_queue=data["next_queue"][i],
                     placement_count=float(data["placement_counts"][i]),
-                    combo=float(data["combos"][i]),
+                    combo_feature=combo_feature,
                     back_to_back=float(data["back_to_back"][i]),
                     next_hidden_piece_probs=data["next_hidden_piece_probs"][i],
                 )

@@ -19,6 +19,10 @@
   - Huber loss vs. MSE loss
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
 
+# Confusions
+
+- [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
+
 # Deep Review
 
 Done: ✅
