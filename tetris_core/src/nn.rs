@@ -148,12 +148,12 @@ impl TetrisNN {
         self.cache_order.borrow_mut().clear();
     }
 
-    fn predict_logits_and_value(
+    fn predict_policy_logits_tensor_and_value(
         &self,
         env: &TetrisEnv,
         placement_count: usize,
         max_placements: usize,
-    ) -> TractResult<(Vec<f32>, f32)> {
+    ) -> TractResult<(Tensor, f32)> {
         let aux_vec = encode_aux_state_features(env, placement_count, max_placements)?;
 
         let board_embed = if self.cache_enabled.get() {
@@ -192,11 +192,7 @@ impl TetrisNN {
             .heads_model
             .run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
 
-        let policy_logits: Vec<f32> = heads_output[0]
-            .to_array_view::<f32>()?
-            .iter()
-            .copied()
-            .collect();
+        let policy_logits = heads_output[0].clone().into_tensor();
 
         let value = heads_output[1]
             .to_array_view::<f32>()?
@@ -205,6 +201,22 @@ impl TetrisNN {
             .copied()
             .expect("NN value output tensor is empty - model is malformed");
 
+        Ok((policy_logits, value))
+    }
+
+    fn predict_logits_and_value(
+        &self,
+        env: &TetrisEnv,
+        placement_count: usize,
+        max_placements: usize,
+    ) -> TractResult<(Vec<f32>, f32)> {
+        let (policy_logits_tensor, value) =
+            self.predict_policy_logits_tensor_and_value(env, placement_count, max_placements)?;
+        let policy_logits: Vec<f32> = policy_logits_tensor
+            .to_array_view::<f32>()?
+            .iter()
+            .copied()
+            .collect();
         Ok((policy_logits, value))
     }
 
@@ -244,8 +256,15 @@ impl TetrisNN {
         valid_actions: &[usize],
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits, value) =
-            self.predict_logits_and_value(env, placement_count, max_placements)?;
+        let (policy_logits_tensor, value) =
+            self.predict_policy_logits_tensor_and_value(env, placement_count, max_placements)?;
+        let policy_logits_view = policy_logits_tensor.to_array_view::<f32>()?;
+        let policy_logits = policy_logits_view.as_slice_memory_order().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "NN policy output tensor is not contiguous",
+            )
+        })?;
 
         if let Some(&invalid_action) = valid_actions
             .iter()
@@ -262,7 +281,7 @@ impl TetrisNN {
             .into());
         }
 
-        let action_priors = softmax_over_valid_actions(&policy_logits, valid_actions);
+        let action_priors = softmax_over_valid_actions(policy_logits, valid_actions);
         Ok((action_priors, value))
     }
 
