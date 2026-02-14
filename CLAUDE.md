@@ -342,7 +342,6 @@ From `config.py` TrainingConfig defaults:
 - **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default.
-- **Q Squash Scale**: `q_scale=8.0` by default; PUCT uses `tanh(Q / q_scale)` for the Q term.
 - **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=10800` (`0` disables periodic snapshot saves).
 - **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model

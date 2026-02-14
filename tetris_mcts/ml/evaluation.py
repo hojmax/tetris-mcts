@@ -57,7 +57,6 @@ class Evaluator:
         eval_seeds: list[int],
         eval_mcts_seed: int,
         nn_value_weight: float,
-        q_scale: float,
     ):
         self.model = model
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -67,7 +66,6 @@ class Evaluator:
         self.eval_seeds = [int(s) for s in eval_seeds]
         self.eval_mcts_seed = eval_mcts_seed
         self.nn_value_weight = nn_value_weight
-        self.q_scale = q_scale
 
     def evaluate(
         self, render_trajectory: bool = False
@@ -101,7 +99,6 @@ class Evaluator:
         mcts_config.visit_sampling_epsilon = 0.0
         mcts_config.seed = self.eval_mcts_seed
         mcts_config.nn_value_weight = self.nn_value_weight
-        mcts_config.q_scale = self.q_scale
 
         replay_path = self.checkpoint_dir / EVAL_REPLAYS_FILENAME
 
