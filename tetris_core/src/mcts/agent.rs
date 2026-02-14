@@ -247,7 +247,6 @@ impl MCTSAgent {
         );
 
         let values = compute_value_targets(&attacks);
-        let raw_values = values.clone();
 
         // Build training examples (use all moves)
         let mut examples = Vec::with_capacity(num_states);
@@ -310,7 +309,6 @@ impl MCTSAgent {
                 holes,
                 policy: policy.clone(),
                 value: values[i],
-                raw_value: raw_values[i],
                 action_mask: mask.clone(),
                 overhang_fields: overhang_fields[i],
                 game_number: 0,

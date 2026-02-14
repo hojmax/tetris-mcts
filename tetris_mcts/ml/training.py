@@ -202,7 +202,6 @@ class Trainer:
             aux,
             policy_targets,
             value_targets,
-            raw_value_targets,
             overhang_fields,
             masks,
         ) = batch
@@ -210,7 +209,6 @@ class Trainer:
         aux = aux.to(self.device)
         policy_targets = policy_targets.to(self.device)
         value_targets = value_targets.to(self.device)
-        raw_value_targets = raw_value_targets.to(self.device)
         overhang_fields = overhang_fields.to(self.device)
         masks = masks.to(self.device)
 
@@ -255,14 +253,13 @@ class Trainer:
             "train/grad_norm": grad_norm.item(),
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
             "batch/value_target_mean": value_targets.mean().item(),
-            "batch/raw_value_target_mean": raw_value_targets.mean().item(),
             "batch/overhang_fields_mean": overhang_fields.mean().item(),
             "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         }
         return metrics
 
     def _compute_extra_train_metrics(self, batch: tuple) -> dict:
-        boards, aux, policy_targets, value_targets, _, _, masks = batch
+        boards, aux, policy_targets, value_targets, _, masks = batch
         return compute_metrics(
             self.model,
             boards.to(self.device),
@@ -509,7 +506,6 @@ class Trainer:
                     aux,
                     policy_targets,
                     value_targets,
-                    raw_value_targets,
                     overhang_fields,
                     masks,
                 ) = result
@@ -520,7 +516,6 @@ class Trainer:
                     torch.from_numpy(aux),
                     torch.from_numpy(policy_targets),
                     torch.from_numpy(value_targets),
-                    torch.from_numpy(raw_value_targets),
                     torch.from_numpy(overhang_fields),
                     torch.from_numpy(masks),
                 )

@@ -227,7 +227,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 - `Piece` - Tetromino (piece_type, x, y, rotation)
 - `MCTSAgent` - MCTS search coordinator
 - `MCTSConfig` - Search hyperparameters (num_simulations, c_puct, temperature, etc.)
-- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + raw cumulative-attack mirror (`raw_value`) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`)
+- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`)
 - `GameGenerator` - Background self-play worker
 
 ### Python
@@ -286,7 +286,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
 6. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
 7. Before first promotion (default), workers run no-network MCTS (uniform policy prior + zero value) with separate simulation count
 8. Training examples from accepted games are stored in a shared in-memory ring buffer
-9. Python samples directly via `generator.sample_batch(batch_size, max_placements)` returning `(boards, aux, policy_targets, value_targets, raw_value_targets, overhang_fields, action_masks)` with periodic NPZ saves for resume only
+9. Python samples directly via `generator.sample_batch(batch_size, max_placements)` returning `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` with periodic NPZ saves for resume only
 10. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing

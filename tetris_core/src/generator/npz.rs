@@ -475,7 +475,6 @@ pub fn read_examples_from_npz(
             holes: holes[i],
             policy: policy_targets[policy_start..policy_end].to_vec(),
             value: value_targets[i],
-            raw_value: value_targets[i],
             action_mask: action_masks[mask_start..mask_end]
                 .iter()
                 .map(|value| *value != 0)
@@ -652,7 +651,6 @@ mod tests {
             holes: 0.05,
             policy,
             value: 3.5,
-            raw_value: 3.5,
             action_mask,
             overhang_fields: 17,
             game_number: 123,
@@ -692,7 +690,6 @@ mod tests {
             assert_eq!(actual.bumpiness, expected.bumpiness);
             assert_eq!(actual.holes, expected.holes);
             assert_eq!(actual.value, expected.value);
-            assert_eq!(actual.raw_value, expected.raw_value);
             assert_eq!(actual.policy.len(), expected.policy.len());
             assert_eq!(actual.action_mask, expected.action_mask);
             assert_eq!(actual.overhang_fields, expected.overhang_fields);
