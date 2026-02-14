@@ -1,7 +1,6 @@
 # Next Steps
 
 - [ ] Run with updated feature set, integrate all the new features. (try offline with and without and see loss curves)
-- [ ] Another round of benchmarking and optimizing?
 - [ ] Deeper search depth potentially.
 - [ ] Make sure all the features are scaled correctly.
 - [ ] What AWS instance would be well suited for this workload?
@@ -72,6 +71,7 @@ In progress: 🟨
 - [ ] Adding hand crafted heuristics to offload work off the neural network
   - can t-spin filter?
 - [ ] Try to handcraft great Tetris bot.
+- [ ] Another round of benchmarking and optimizing?
 
 ## Test Environment State
 
