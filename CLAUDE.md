@@ -198,6 +198,8 @@ tetris_mcts/                 # Python package
 
 All valid (x, y, rotation) placements are enumerated. The `ActionSpace` struct maps between action indices and placements.
 
+Placement metadata includes `last_move_was_rotation` and `last_kick_index` for T-spin scoring when executing action indices directly. If multiple shortest input paths reach the same placement, move generation prefers paths whose last move is **not** a rotation to avoid accidental T-spin attribution from arbitrary path tie breaks.
+
 ### MCTS with Chance Nodes
 
 Unlike standard AlphaZero, Tetris has stochastic piece spawning:

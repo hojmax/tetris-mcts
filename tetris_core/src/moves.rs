@@ -185,6 +185,19 @@ fn index_to_state(idx: usize) -> PieceState {
     }
 }
 
+#[inline]
+fn prefer_tspin_safe_path(
+    candidate_last_move_was_rotation: bool,
+    existing_last_move_was_rotation: bool,
+) -> bool {
+    if candidate_last_move_was_rotation != existing_last_move_was_rotation {
+        // Prefer equivalent paths that don't end on rotation to avoid
+        // accidental T-spin classification when both paths are equally short.
+        return !candidate_last_move_was_rotation;
+    }
+    false
+}
+
 /// Find all possible placements for a piece on the given board
 ///
 /// Uses BFS to explore all reachable states from the spawn position,
@@ -252,6 +265,15 @@ pub fn find_all_placements(
         if depth[state_idx] < final_best_depth[final_idx] {
             final_best_depth[final_idx] = depth[state_idx];
             final_best_source[final_idx] = Some(state_idx);
+        } else if depth[state_idx] == final_best_depth[final_idx] {
+            if let Some(existing_source_idx) = final_best_source[final_idx] {
+                if prefer_tspin_safe_path(
+                    last_move_was_rotation[state_idx],
+                    last_move_was_rotation[existing_source_idx],
+                ) {
+                    final_best_source[final_idx] = Some(state_idx);
+                }
+            }
         }
 
         // Try all possible moves
@@ -285,20 +307,29 @@ pub fn find_all_placements(
             let word = idx / 64;
             let bit = idx % 64;
             let is_visited = (visited[word] & (1u64 << bit)) != 0;
+            let candidate_depth = depth[state_idx] + 1;
+            let candidate_last_kick_index = if is_rotation {
+                kick_index
+            } else {
+                last_kick_index[state_idx]
+            };
 
             if !is_visited {
                 // Mark as visited and record BFS metadata
                 visited[word] |= 1u64 << bit;
                 parents[idx] = state_idx;
                 action_from_parent[idx] = action.to_u8();
-                depth[idx] = depth[state_idx] + 1;
-                last_kick_index[idx] = if is_rotation {
-                    kick_index
-                } else {
-                    last_kick_index[state_idx]
-                };
+                depth[idx] = candidate_depth;
+                last_kick_index[idx] = candidate_last_kick_index;
                 last_move_was_rotation[idx] = is_rotation;
                 queue.push_back(new_state);
+            } else if depth[idx] == candidate_depth
+                && prefer_tspin_safe_path(is_rotation, last_move_was_rotation[idx])
+            {
+                parents[idx] = state_idx;
+                action_from_parent[idx] = action.to_u8();
+                last_kick_index[idx] = candidate_last_kick_index;
+                last_move_was_rotation[idx] = is_rotation;
             }
         }
     }
@@ -593,5 +624,39 @@ mod tests {
         // T piece should have placements in all 4 rotations
         let rotations: HashSet<usize> = placements.iter().map(|p| p.rotation).collect();
         assert_eq!(rotations.len(), 4, "T piece should have all 4 rotations");
+    }
+
+    #[test]
+    fn test_translated_rotated_placement_prefers_non_rotation_last_move() {
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
+        let placements = find_all_placements(&board, 2, 3, 0); // T piece
+
+        let translated_rotated = placements
+            .iter()
+            .find(|p| p.rotation == 1 && p.column != 3)
+            .expect("Expected a rotated placement that also translates");
+
+        assert!(
+            !translated_rotated.last_move_was_rotation,
+            "Translated rotated placement should prefer non-rotation final move"
+        );
+    }
+
+    #[test]
+    fn test_pure_rotation_placement_keeps_rotation_last_move() {
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
+        let placements = find_all_placements(&board, 2, 3, 0); // T piece
+
+        let pure_rotation = placements
+            .iter()
+            .find(|p| p.rotation == 1 && p.column == 3)
+            .expect("Expected a pure-rotation placement at spawn column");
+
+        assert!(
+            pure_rotation.last_move_was_rotation,
+            "Pure rotation placement should keep rotation as last move"
+        );
     }
 }
