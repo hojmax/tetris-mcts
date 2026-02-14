@@ -90,7 +90,9 @@ python tetris_mcts/scripts/compare_offline_architectures.py \
 ```bash
 # Compare gated-fusion variants with extra board-state diagnostics:
 # no-extra, all-extra, and all-minus-one ablations.
-# Logs per-step metrics for each variant plus overlay charts to WandB.
+# Logs per-step metrics for each variant, per-step comparison curves under
+# `comparison/curves/*`, a main line-series chart under
+# `comparison/charts/eval_val_total_loss_main`, plus Plotly overlay charts.
 # Requires NPZ snapshots that include:
 # column_heights, max_column_heights, min_column_heights,
 # row_fill_counts, total_blocks, bumpiness (and optionally move_numbers).
@@ -134,10 +136,6 @@ make profile MODEL_PROFILE=<path-to-existing-onnx>  # Override model path explic
 
 If the default `MODEL_PROFILE` path does not exist in your local checkout, pass an explicit
 existing ONNX path (for example `training_runs/v32/checkpoints/latest.onnx`).
-
-If profiling fails with `NN prediction failed: Clashing resolution ...` (for example `97 != 61`),
-the ONNX model aux-input width does not match `AUX_FEATURES` for this checkout. Re-export ONNX
-artifacts from the current branch before benchmarking.
 
 For optimization validation on a busy desktop machine, run baseline and candidate back-to-back
 with identical flags and a fixed `--mcts_seed` (for example `123`) to reduce run-to-run variance.
@@ -258,7 +256,7 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 
 ### Neural Network (TetrisNet)
 
-- **Input**: 261 features (200 board cells + 61 auxiliary: current piece, hold, queue, move number, combo, back-to-back, hidden-piece distribution for the piece after the visible 5-queue horizon)
+- **Input**: 297 features (200 board cells + 97 auxiliary: current piece, hold, queue, placement count, combo, back-to-back, hidden-piece distribution for the piece after the visible 5-queue horizon, plus board diagnostics: column heights, max/min column height, row fill counts, total blocks, bumpiness, holes, overhang fields)
 - **Architecture**: Conv2d(1→4→8) + board projection + aux-conditioned gated fusion + optional fusion residual blocks + policy/value heads
 - **Output**: Policy probabilities over 735 actions (734 placements + hold), value (trained on raw cumulative-attack `value_targets`)
 
@@ -297,10 +295,12 @@ From `config.py` TrainingConfig defaults:
 
 - **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
+- **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=8` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=16` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.025` by default.
+- **Q Squash Scale**: `q_scale=8.0` by default; PUCT uses `tanh(Q / q_scale)` for the Q term.
 - **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=10800` (`0` disables periodic snapshot saves).
 - **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
@@ -317,7 +317,8 @@ Temperature behavior:
 
 ```python
 policy_loss = -sum(target_policy * log(masked_policy))  # Cross-entropy
-value_loss = MSE(predicted_value, target_value)
+value_loss = Huber(predicted_value, target_value)  # default
+# or MSE when use_huber_value_loss = false
 total_loss = policy_loss + value_loss
 ```
 
