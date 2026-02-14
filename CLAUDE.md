@@ -393,6 +393,8 @@ Training uses parallel Rust game generation via `GameGenerator`:
 ```bash
 make test  # Run Rust tests + Python tests (recommended)
 cd tetris_core && PYO3_PYTHON=../.venv/bin/python cargo test  # Rust-only equivalent
+# In feature worktrees, use the primary checkout virtualenv instead (example):
+# cd tetris_core && PYO3_PYTHON=/Users/axelhojmark/Desktop/tetris-mcts/.venv/bin/python cargo test
 ```
 
 Tests are in:
