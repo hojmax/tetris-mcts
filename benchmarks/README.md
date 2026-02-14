@@ -72,7 +72,7 @@ Use Instruments for Apple-optimized profiling:
 
 ```bash
 # Record profile
-instruments -t "Time Profiler" python tetris_mcts/scripts/profile_games.py --num_games 3
+instruments -t "Time Profiler" python tetris_mcts/scripts/inspection/profile_games.py --num_games 3
 
 # View in Instruments.app
 open profile.trace

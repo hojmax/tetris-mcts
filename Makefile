@@ -1,4 +1,4 @@
-.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight
+.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -36,7 +36,7 @@ play: $(RELEASE_MARKER)
 RUN_DIR ?= training_runs/v15
 DUMMY_NETWORK ?= 0
 viz: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,)
+	$(PYTHON) tetris_mcts/scripts/inspection/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,)
 
 # Force rebuild (clean first to avoid caching issues)
 rebuild:
@@ -73,18 +73,23 @@ train: $(RELEASE_MARKER)
 # Run W&B sweep over learning rate and model size (builds first if needed)
 # Usage: make sweep-lr-model ARGS="--count 20"
 sweep-lr-model: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/wandb_sweep_lr_model_size.py $(ARGS)
+	$(PYTHON) tetris_mcts/scripts/abalations/wandb_sweep_lr_model_size.py $(ARGS)
 
 # Evaluate one model across nn_value_weight values (no training)
 # Usage: make eval-nn-value-weight ARGS="--run_dir training_runs/v17 --num_games 50"
 eval-nn-value-weight: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/evaluate_nn_value_weight_sweep.py $(ARGS)
+	$(PYTHON) tetris_mcts/scripts/abalations/evaluate_nn_value_weight_sweep.py $(ARGS)
+
+# Compare offline network scaling variants (default, 2x board trunk, 2x post-fusion)
+# Usage: make compare-offline-network-scaling ARGS="--data_path training_runs/v32/training_data.npz"
+compare-offline-network-scaling: $(RELEASE_MARKER)
+	$(PYTHON) tetris_mcts/scripts/abalations/compare_offline_network_scaling.py $(ARGS)
 
 # View replay file
 # Usage: make replay FILE=replays.jsonl
 FILE ?= replays.jsonl
 replay: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/replay_viewer.py $(FILE)
+	$(PYTHON) tetris_mcts/scripts/inspection/replay_viewer.py $(FILE)
 
 # Profile game generation performance (builds first if needed)
 # Usage: make profile MODEL=benchmarks/models/parallel.onnx SIMS=100 OUTPUT=benchmarks/profile.jsonl
@@ -94,10 +99,10 @@ SIMS ?= 1000
 OUTPUT_PROFILE ?= benchmarks/profile_results.jsonl
 PROFILE_ARGS ?=
 profile: $(RELEASE_MARKER)
-	$(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE) $(PROFILE_ARGS)
+	$(PYTHON) tetris_mcts/scripts/inspection/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE) $(PROFILE_ARGS)
 
 # Profile with samply (interactive flamegraph viewer)
 # Usage: make profile-samply SIMS=50
 # Requires: cargo install samply
 profile-samply: $(RELEASE_MARKER)
-	samply record $(PYTHON) tetris_mcts/scripts/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --num_games 3
+	samply record $(PYTHON) tetris_mcts/scripts/inspection/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --num_games 3
