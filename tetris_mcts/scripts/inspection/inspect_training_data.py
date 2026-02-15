@@ -14,7 +14,6 @@ from tetris_mcts.config import (
     CONFIG_FILENAME,
     DEFAULT_GIF_FRAME_DURATION_MS,
     LATEST_CHECKPOINT_FILENAME,
-    PIECE_NAMES,
     PROJECT_ROOT,
     QUEUE_SIZE,
 )
@@ -412,12 +411,6 @@ def main(args: ScriptArgs) -> None:
                     overhang_fields=float(data["overhang_fields"][i]),
                 )
 
-            current_name = (
-                PIECE_NAMES[current_piece] if current_piece is not None else "?"
-            )
-            hold_name = PIECE_NAMES[hold_piece] if hold_piece is not None else "-"
-            queue_names = [PIECE_NAMES[p] if p is not None else "?" for p in next_queue]
-
             frame = render_board(
                 board=board,
                 move_number=move_number,
@@ -427,9 +420,8 @@ def main(args: ScriptArgs) -> None:
                 combo=combo,
                 back_to_back=back_to_back,
                 show_piece_info=True,
-                current_piece_name=current_name,
-                hold_piece_name=hold_name,
-                queue_pieces=queue_names,
+                hold_piece_type=hold_piece,
+                queue_piece_types=[p for p in next_queue if p is not None],
             )
             frames.append(frame)
 

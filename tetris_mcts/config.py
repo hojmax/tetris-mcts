@@ -49,6 +49,17 @@ PIECE_COLORS = [
     (227, 127, 59),  # L - Orange
 ]
 
+# Spawn-rotation (state 0) cell offsets — mirrors Rust TETROMINO_CELLS[][0]
+PIECE_SPAWN_CELLS: list[list[tuple[int, int]]] = [
+    [(0, 1), (1, 1), (2, 1), (3, 1)],  # I
+    [(1, 1), (2, 1), (1, 2), (2, 2)],  # O
+    [(1, 0), (0, 1), (1, 1), (2, 1)],  # T
+    [(1, 0), (2, 0), (0, 1), (1, 1)],  # S
+    [(0, 0), (1, 0), (1, 1), (2, 1)],  # Z
+    [(0, 0), (0, 1), (1, 1), (2, 1)],  # J
+    [(2, 0), (0, 1), (1, 1), (2, 1)],  # L
+]
+
 
 @dataclass
 class TrainingConfig:

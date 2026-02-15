@@ -18,7 +18,6 @@ from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     DEFAULT_GIF_FRAME_DURATION_MS,
-    PIECE_NAMES,
     QUEUE_SIZE,
 )
 from tetris_mcts.ml.visualization import render_board
@@ -88,12 +87,6 @@ def _render_frame(env: TetrisEnv, move_num: int, attack: int, info_text: str):
     ghost = env.get_ghost_piece()
     hold_piece = env.get_hold_piece()
 
-    current_piece_name = PIECE_NAMES[piece.piece_type] if piece is not None else "?"
-    hold_piece_name = (
-        PIECE_NAMES[hold_piece.piece_type] if hold_piece is not None else "-"
-    )
-    queue_pieces = [PIECE_NAMES[piece] for piece in env.get_queue(QUEUE_SIZE)]
-
     return render_board(
         board=board,
         board_piece_types=board_piece_types,
@@ -104,9 +97,8 @@ def _render_frame(env: TetrisEnv, move_num: int, attack: int, info_text: str):
         attack=attack,
         info_text=info_text,
         show_piece_info=True,
-        current_piece_name=current_piece_name,
-        hold_piece_name=hold_piece_name,
-        queue_pieces=queue_pieces,
+        hold_piece_type=hold_piece.piece_type if hold_piece else None,
+        queue_piece_types=list(env.get_queue(QUEUE_SIZE)),
     )
 
 

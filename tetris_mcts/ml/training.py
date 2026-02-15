@@ -29,6 +29,7 @@ from tetris_mcts.config import (
     INCUMBENT_ONNX_FILENAME,
     LATEST_ONNX_FILENAME,
     MODEL_CANDIDATES_DIRNAME,
+    NUM_ACTIONS,
     PARALLEL_ONNX_FILENAME,
     TRAINING_DATA_FILENAME,
     TrainingConfig,
@@ -106,18 +107,29 @@ class TrainingBatch:
         return batches
 
 
-@dataclass
-class ReplayMirror:
-    start_index: int
-    batch: TrainingBatch
+class CircularReplayMirror:
+    """Pre-allocated circular buffer for device-resident replay mirror.
+
+    All tensors are allocated once at full capacity. Incremental updates
+    use in-place copy_() to avoid any new GPU allocations.
+    """
+
+    def __init__(self, capacity: int, device: torch.device) -> None:
+        self.boards = torch.zeros(capacity, 1, BOARD_HEIGHT, BOARD_WIDTH, device=device)
+        self.aux = torch.zeros(capacity, AUX_FEATURES, device=device)
+        self.policy_targets = torch.zeros(capacity, NUM_ACTIONS, device=device)
+        self.value_targets = torch.zeros(capacity, device=device)
+        self.overhang_fields = torch.zeros(capacity, device=device)
+        self.masks = torch.zeros(capacity, NUM_ACTIONS, device=device)
+
+        self.capacity = capacity
+        self.count = 0
+        self.write_pos = 0
+        self.logical_end = 0
 
     @property
     def size(self) -> int:
-        return self.batch.size
-
-    @property
-    def device(self) -> torch.device:
-        return self.batch.device
+        return self.count
 
 
 @dataclass(frozen=True)
@@ -572,46 +584,54 @@ class Trainer:
         )
         return sum(t.numel() * t.element_size() for t in tensors)
 
-    def _slice_training_batch(
+    def _write_to_mirror(
         self,
+        mirror: CircularReplayMirror,
         batch: TrainingBatch,
-        start: int,
-        end: int,
-    ) -> TrainingBatch:
-        if start < 0 or end < start or end > batch.size:
-            raise ValueError(
-                f"Invalid training batch slice bounds: start={start}, end={end}, size={batch.size}"
+    ) -> None:
+        n = batch.size
+        if n == 0:
+            return
+        if n > mirror.capacity:
+            # Delta larger than buffer — only keep the tail
+            offset = n - mirror.capacity
+            batch = TrainingBatch(
+                boards=batch.boards[offset:],
+                aux=batch.aux[offset:],
+                policy_targets=batch.policy_targets[offset:],
+                value_targets=batch.value_targets[offset:],
+                overhang_fields=batch.overhang_fields[offset:],
+                masks=batch.masks[offset:],
             )
-        return TrainingBatch(
-            boards=batch.boards[start:end],
-            aux=batch.aux[start:end],
-            policy_targets=batch.policy_targets[start:end],
-            value_targets=batch.value_targets[start:end],
-            overhang_fields=batch.overhang_fields[start:end],
-            masks=batch.masks[start:end],
-        )
+            n = mirror.capacity
 
-    def _concat_training_batches(
-        self,
-        first: TrainingBatch,
-        second: TrainingBatch,
-    ) -> TrainingBatch:
-        if first.size == 0:
-            return second
-        if second.size == 0:
-            return first
-        return TrainingBatch(
-            boards=torch.cat((first.boards, second.boards), dim=0),
-            aux=torch.cat((first.aux, second.aux), dim=0),
-            policy_targets=torch.cat(
-                (first.policy_targets, second.policy_targets), dim=0
-            ),
-            value_targets=torch.cat((first.value_targets, second.value_targets), dim=0),
-            overhang_fields=torch.cat(
-                (first.overhang_fields, second.overhang_fields), dim=0
-            ),
-            masks=torch.cat((first.masks, second.masks), dim=0),
-        )
+        end_pos = mirror.write_pos + n
+        if end_pos <= mirror.capacity:
+            s = slice(mirror.write_pos, end_pos)
+            mirror.boards[s].copy_(batch.boards)
+            mirror.aux[s].copy_(batch.aux)
+            mirror.policy_targets[s].copy_(batch.policy_targets)
+            mirror.value_targets[s].copy_(batch.value_targets)
+            mirror.overhang_fields[s].copy_(batch.overhang_fields)
+            mirror.masks[s].copy_(batch.masks)
+        else:
+            tail = mirror.capacity - mirror.write_pos
+            mirror.boards[mirror.write_pos :].copy_(batch.boards[:tail])
+            mirror.aux[mirror.write_pos :].copy_(batch.aux[:tail])
+            mirror.policy_targets[mirror.write_pos :].copy_(batch.policy_targets[:tail])
+            mirror.value_targets[mirror.write_pos :].copy_(batch.value_targets[:tail])
+            mirror.overhang_fields[mirror.write_pos :].copy_(batch.overhang_fields[:tail])
+            mirror.masks[mirror.write_pos :].copy_(batch.masks[:tail])
+            head = n - tail
+            mirror.boards[:head].copy_(batch.boards[tail:])
+            mirror.aux[:head].copy_(batch.aux[tail:])
+            mirror.policy_targets[:head].copy_(batch.policy_targets[tail:])
+            mirror.value_targets[:head].copy_(batch.value_targets[tail:])
+            mirror.overhang_fields[:head].copy_(batch.overhang_fields[tail:])
+            mirror.masks[:head].copy_(batch.masks[tail:])
+
+        mirror.write_pos = (mirror.write_pos + n) % mirror.capacity
+        mirror.count = min(mirror.count + n, mirror.capacity)
 
     def _sample_prefetched_batches(
         self,
@@ -627,7 +647,11 @@ class Trainer:
     def _use_device_replay_mirror(self) -> bool:
         return self.config.mirror_replay_on_accelerator and self.device.type != "cpu"
 
-    def _load_replay_mirror(self, generator: GameGenerator) -> ReplayMirror | None:
+    def _load_replay_mirror(
+        self,
+        generator: GameGenerator,
+        mirror: CircularReplayMirror | None = None,
+    ) -> CircularReplayMirror | None:
         result = generator.replay_buffer_snapshot(self.config.max_placements)
         if result is None:
             return None
@@ -640,42 +664,38 @@ class Trainer:
             overhang_fields,
             masks,
         ) = result
-        mirrored_batch = self._to_training_device(
+        device_batch = self._to_training_device(
             self._build_training_batch(
-                (
-                    boards,
-                    aux,
-                    policy_targets,
-                    value_targets,
-                    overhang_fields,
-                    masks,
-                )
+                (boards, aux, policy_targets, value_targets, overhang_fields, masks)
             )
         )
-        mirror_bytes = self._training_batch_bytes(mirrored_batch)
+        if mirror is None:
+            mirror = CircularReplayMirror(self.config.buffer_size, self.device)
+        mirror.count = 0
+        mirror.write_pos = 0
+        self._write_to_mirror(mirror, device_batch)
+        mirror.logical_end = int(start_index) + device_batch.size
         logger.info(
             "Loaded replay mirror snapshot",
             start_index=int(start_index),
-            examples=mirrored_batch.size,
-            mirror_gb=(mirror_bytes / (1024.0 * 1024.0 * 1024.0)),
+            examples=mirror.count,
             device=str(self.device),
         )
-        return ReplayMirror(start_index=int(start_index), batch=mirrored_batch)
+        return mirror
 
     def _refresh_replay_mirror(
         self,
         generator: GameGenerator,
-        mirror: ReplayMirror | None,
-    ) -> ReplayMirror | None:
+        mirror: CircularReplayMirror | None,
+    ) -> CircularReplayMirror | None:
         if mirror is None:
             return self._load_replay_mirror(generator)
 
-        mirror_end = mirror.start_index + mirror.size
         delta_examples_total = 0
         delta_bytes_total = 0
         while True:
             result = generator.replay_buffer_delta(
-                mirror_end,
+                mirror.logical_end,
                 self.config.replay_mirror_delta_chunk_examples,
                 self.config.max_placements,
             )
@@ -695,101 +715,68 @@ class Trainer:
             window_start = int(window_start)
             window_end = int(window_end)
             slice_start = int(slice_start)
-            if slice_start < mirror_end:
+            if slice_start < mirror.logical_end:
                 logger.info(
                     "Replay mirror stale; loading full snapshot",
-                    mirror_start_index=mirror.start_index,
-                    mirror_end_index=mirror_end,
+                    mirror_logical_end=mirror.logical_end,
                     window_start_index=window_start,
                     window_end_index=window_end,
                     slice_start_index=slice_start,
                 )
-                return self._load_replay_mirror(generator)
-            if window_start > mirror_end:
+                return self._load_replay_mirror(generator, mirror)
+            if window_start > mirror.logical_end:
                 logger.info(
-                    "Replay mirror fully evicted; rebasing incrementally",
-                    mirror_start_index=mirror.start_index,
-                    mirror_end_index=mirror_end,
+                    "Replay mirror fully evicted; rebasing",
+                    mirror_logical_end=mirror.logical_end,
                     window_start_index=window_start,
                     window_end_index=window_end,
                 )
-                mirror = ReplayMirror(
-                    start_index=window_start,
-                    batch=self._slice_training_batch(
-                        mirror.batch, mirror.size, mirror.size
-                    ),
-                )
-                mirror_end = mirror.start_index
+                mirror.count = 0
+                mirror.write_pos = 0
+                mirror.logical_end = window_start
 
             delta_batch = self._to_training_device(
                 self._build_training_batch(
-                    (
-                        boards,
-                        aux,
-                        policy_targets,
-                        value_targets,
-                        overhang_fields,
-                        masks,
-                    )
+                    (boards, aux, policy_targets, value_targets, overhang_fields, masks)
                 )
             )
             if delta_batch.size > 0:
                 delta_examples_total += delta_batch.size
                 delta_bytes_total += self._training_batch_bytes(delta_batch)
-                mirror = ReplayMirror(
-                    start_index=mirror.start_index,
-                    batch=self._concat_training_batches(mirror.batch, delta_batch),
-                )
-                mirror_end += delta_batch.size
+                self._write_to_mirror(mirror, delta_batch)
+                mirror.logical_end += delta_batch.size
 
-            expected_size = window_end - window_start
-            if mirror.start_index < window_start:
-                drop = window_start - mirror.start_index
-                start = min(drop, mirror.size)
-                mirror = ReplayMirror(
-                    start_index=window_start,
-                    batch=self._slice_training_batch(mirror.batch, start, mirror.size),
-                )
-
-            if mirror.size > expected_size:
-                drop = mirror.size - expected_size
-                mirror = ReplayMirror(
-                    start_index=mirror.start_index + drop,
-                    batch=self._slice_training_batch(mirror.batch, drop, mirror.size),
-                )
-            mirror_end = mirror.start_index + mirror.size
-            if mirror_end >= window_end:
+            if mirror.logical_end >= window_end:
                 if delta_examples_total > 0:
                     logger.info(
                         "Updated replay mirror incrementally",
                         added_examples=delta_examples_total,
                         delta_gb=(delta_bytes_total / (1024.0 * 1024.0 * 1024.0)),
-                        mirror_start_index=mirror.start_index,
-                        mirror_end_index=mirror_end,
-                        mirror_examples=mirror.size,
+                        mirror_logical_end=mirror.logical_end,
+                        mirror_examples=mirror.count,
                         window_start_index=window_start,
                         window_end_index=window_end,
                     )
                 return mirror
 
-    def _sample_from_replay_mirror(self, mirror: ReplayMirror) -> TrainingBatch:
-        if mirror.size <= 0:
+    def _sample_from_replay_mirror(
+        self, mirror: CircularReplayMirror
+    ) -> TrainingBatch:
+        if mirror.count <= 0:
             raise ValueError("Replay mirror is empty")
         sample_indices = torch.randint(
             low=0,
-            high=mirror.size,
+            high=mirror.count,
             size=(self.config.batch_size,),
-            device=mirror.device,
+            device=mirror.boards.device,
         )
         return TrainingBatch(
-            boards=mirror.batch.boards.index_select(0, sample_indices),
-            aux=mirror.batch.aux.index_select(0, sample_indices),
-            policy_targets=mirror.batch.policy_targets.index_select(0, sample_indices),
-            value_targets=mirror.batch.value_targets.index_select(0, sample_indices),
-            overhang_fields=mirror.batch.overhang_fields.index_select(
-                0, sample_indices
-            ),
-            masks=mirror.batch.masks.index_select(0, sample_indices),
+            boards=mirror.boards.index_select(0, sample_indices),
+            aux=mirror.aux.index_select(0, sample_indices),
+            policy_targets=mirror.policy_targets.index_select(0, sample_indices),
+            value_targets=mirror.value_targets.index_select(0, sample_indices),
+            overhang_fields=mirror.overhang_fields.index_select(0, sample_indices),
+            masks=mirror.masks.index_select(0, sample_indices),
         )
 
     def train_step(
@@ -1181,7 +1168,7 @@ class Trainer:
         train_step_count = 0
         latest_train_metrics: dict[str, float] | None = None
         pending_batches: deque[TrainingBatch] = deque()
-        replay_mirror: ReplayMirror | None = None
+        replay_mirror: CircularReplayMirror | None = None
         interval_anchor_s = time.perf_counter()
         throughput_window_start_s = interval_anchor_s
         throughput_window_start_games = generator.games_generated()
@@ -1352,7 +1339,7 @@ class Trainer:
                                 "Replay mirror mode active but replay_mirror is missing"
                             )
                         metrics["replay/mirror_size"] = replay_mirror.size
-                        metrics["replay/mirror_start_index"] = replay_mirror.start_index
+                        metrics["replay/mirror_logical_end"] = replay_mirror.logical_end
                     metrics["incumbent/model_step"] = generator.incumbent_model_step()
                     metrics["incumbent/uses_network"] = (
                         generator.incumbent_uses_network()

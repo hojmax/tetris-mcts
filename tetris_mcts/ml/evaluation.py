@@ -17,7 +17,6 @@ from tetris_mcts.config import (
     BOARD_WIDTH,
     EVAL_ONNX_FILENAME,
     EVAL_REPLAYS_FILENAME,
-    PIECE_NAMES,
     QUEUE_SIZE,
 )
 from tetris_mcts.ml.network import TetrisNet
@@ -182,10 +181,6 @@ class Evaluator:
             ghost = env.get_ghost_piece()
             ghost_cells = ghost.get_cells() if ghost else None
 
-            current_name = PIECE_NAMES[piece.piece_type] if piece else "?"
-            hold_name = PIECE_NAMES[hold_piece.piece_type] if hold_piece else "-"
-            queue_names = [PIECE_NAMES[piece_type] for piece_type in queue_piece_types]
-
             frame = render_board(
                 board=board,
                 board_piece_types=board_piece_types,
@@ -198,9 +193,8 @@ class Evaluator:
                 combo=env.combo,
                 back_to_back=env.back_to_back,
                 show_piece_info=True,
-                current_piece_name=current_name,
-                hold_piece_name=hold_name,
-                queue_pieces=queue_names,
+                hold_piece_type=hold_piece.piece_type if hold_piece else None,
+                queue_piece_types=list(queue_piece_types),
             )
             frames.append(frame)
 
@@ -220,9 +214,6 @@ class Evaluator:
         piece_type = piece.piece_type if piece else None
         ghost = env.get_ghost_piece()
         ghost_cells = ghost.get_cells() if ghost else None
-        current_name = PIECE_NAMES[piece.piece_type] if piece else "?"
-        hold_name = PIECE_NAMES[hold_piece.piece_type] if hold_piece else "-"
-        queue_names = [PIECE_NAMES[piece_type] for piece_type in queue_piece_types]
         frame = render_board(
             board=board,
             board_piece_types=board_piece_types,
@@ -236,9 +227,8 @@ class Evaluator:
             back_to_back=env.back_to_back,
             is_terminal=env.game_over,
             show_piece_info=True,
-            current_piece_name=current_name,
-            hold_piece_name=hold_name,
-            queue_pieces=queue_names,
+            hold_piece_type=hold_piece.piece_type if hold_piece else None,
+            queue_piece_types=list(queue_piece_types),
         )
         frames.append(frame)
 

@@ -117,6 +117,8 @@ def export_onnx(
     """
     # ONNX export must happen on CPU
     original_device = next(model.parameters()).device
+    if original_device.type == "cuda":
+        torch.cuda.empty_cache()
     onnx_logger = logging.getLogger("torch.onnx")
     old_level = onnx_logger.level
     try:
@@ -176,6 +178,8 @@ def export_split_models(
     """Export split models (conv.onnx, heads.onnx, fc.bin) for cached Rust inference."""
     conv_path, heads_path, fc_path = _split_paths(onnx_path)
     original_device = next(model.parameters()).device
+    if original_device.type == "cuda":
+        torch.cuda.empty_cache()
     onnx_logger = logging.getLogger("torch.onnx")
     old_level = onnx_logger.level
     try:

@@ -10,13 +10,17 @@ from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, PIECE_COLORS
 
 # Constants
 CELL_SIZE = 30
-LEFT_SIDEBAR_WIDTH = 120
-RIGHT_SIDEBAR_WIDTH = 120
+LEFT_SIDEBAR_WIDTH = 150
+RIGHT_SIDEBAR_WIDTH = 150
 TOP_PADDING = 40
 BOTTOM_PADDING = 20
 
 WINDOW_WIDTH = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE + RIGHT_SIDEBAR_WIDTH
 WINDOW_HEIGHT = TOP_PADDING + BOARD_HEIGHT * CELL_SIZE + BOTTOM_PADDING
+
+# Piece slot spacing (hold / queue)
+SLOT_HEIGHT = 50
+SLOT_GAP = 16
 
 # Colors
 BLACK = (0, 0, 0)
@@ -24,6 +28,7 @@ WHITE = (255, 255, 255)
 GRAY = (80, 80, 80)
 GRID_COLOR = (40, 40, 40)
 BORDER_COLOR = (80, 80, 80)
+LABEL_COLOR = (140, 140, 140)
 
 
 class TetrisGame:
@@ -33,6 +38,8 @@ class TetrisGame:
         pygame.display.set_caption("Tetris")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 28)
+        self.label_font = pygame.font.Font(None, 22)
+        self.stats_font = pygame.font.Font(None, 22)
 
         self.env = TetrisEnv(BOARD_WIDTH, BOARD_HEIGHT)
         self.fall_time = 0
@@ -332,95 +339,83 @@ class TetrisGame:
         rect = pygame.Rect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2)
         pygame.draw.rect(self.screen, color, rect)
 
-    def draw_mini_piece(self, piece, center_x, center_y):
+    def draw_mini_piece(
+        self,
+        piece,
+        center_x: int,
+        center_y: int,
+        color_override: tuple[int, int, int] | None = None,
+    ):
         """Draw a mini piece centered at the given position."""
-        shape = piece.get_shape()
-        color = self._piece_color(piece.piece_type)
+        cells = piece.get_cells()
+        color = color_override or self._piece_color(piece.piece_type)
 
-        # Find bounding box of the piece
-        min_x, max_x = 4, -1
-        min_y, max_y = 4, -1
-        for dy, row in enumerate(shape):
-            for dx, cell in enumerate(row):
-                if cell == 1:
-                    min_x = min(min_x, dx)
-                    max_x = max(max_x, dx)
-                    min_y = min(min_y, dy)
-                    max_y = max(max_y, dy)
+        xs = [c[0] for c in cells]
+        ys = [c[1] for c in cells]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
 
         piece_width = (max_x - min_x + 1) * self.mini_cell_size
         piece_height = (max_y - min_y + 1) * self.mini_cell_size
 
-        # Calculate offset to center the piece
         start_x = center_x - piece_width // 2
         start_y = center_y - piece_height // 2
 
-        for dy, row in enumerate(shape):
-            for dx, cell in enumerate(row):
-                if cell == 1:
-                    rect = pygame.Rect(
-                        start_x + (dx - min_x) * self.mini_cell_size,
-                        start_y + (dy - min_y) * self.mini_cell_size,
-                        self.mini_cell_size - 1,
-                        self.mini_cell_size - 1,
-                    )
-                    pygame.draw.rect(self.screen, color, rect)
+        for cx, cy in cells:
+            rect = pygame.Rect(
+                start_x + (cx - min_x) * self.mini_cell_size,
+                start_y + (cy - min_y) * self.mini_cell_size,
+                self.mini_cell_size - 1,
+                self.mini_cell_size - 1,
+            )
+            pygame.draw.rect(self.screen, color, rect)
 
     def draw_sidebar(self):
-        # Left sidebar - HOLD piece
+        left_cx = LEFT_SIDEBAR_WIDTH // 2
+
+        # --- Left sidebar: HOLD label + piece ---
+        hold_label = self.label_font.render("HOLD", True, LABEL_COLOR)
+        hold_label_rect = hold_label.get_rect(center=(left_cx, TOP_PADDING + 12))
+        self.screen.blit(hold_label, hold_label_rect)
+
         hold_piece = self.env.get_hold_piece()
         if hold_piece:
-            hold_used = self.env.is_hold_used()
-            # Draw hold piece centered in left sidebar
-            center_x = LEFT_SIDEBAR_WIDTH // 2
-            center_y = TOP_PADDING + 50
-            if hold_used:
-                # Dim the color if hold was used this turn
-                original_color = self._piece_color(hold_piece.piece_type)
-                dimmed = tuple(c // 2 for c in original_color)
-                # Temporarily modify for drawing
-                shape = hold_piece.get_shape()
-                min_x, max_x = 4, -1
-                min_y, max_y = 4, -1
-                for dy, row in enumerate(shape):
-                    for dx, cell in enumerate(row):
-                        if cell == 1:
-                            min_x = min(min_x, dx)
-                            max_x = max(max_x, dx)
-                            min_y = min(min_y, dy)
-                            max_y = max(max_y, dy)
-                piece_width = (max_x - min_x + 1) * self.mini_cell_size
-                piece_height = (max_y - min_y + 1) * self.mini_cell_size
-                start_x = center_x - piece_width // 2
-                start_y = center_y - piece_height // 2
-                for dy, row in enumerate(shape):
-                    for dx, cell in enumerate(row):
-                        if cell == 1:
-                            rect = pygame.Rect(
-                                start_x + (dx - min_x) * self.mini_cell_size,
-                                start_y + (dy - min_y) * self.mini_cell_size,
-                                self.mini_cell_size - 1,
-                                self.mini_cell_size - 1,
-                            )
-                            pygame.draw.rect(self.screen, dimmed, rect)
-            else:
-                self.draw_mini_piece(hold_piece, center_x, center_y)
+            color = None
+            if self.env.is_hold_used():
+                base = self._piece_color(hold_piece.piece_type)
+                color = (base[0] // 3, base[1] // 3, base[2] // 3)
+            self.draw_mini_piece(
+                hold_piece, left_cx, TOP_PADDING + 28 + SLOT_HEIGHT // 2, color_override=color
+            )
 
-        # Attack display in bottom right corner
+        # --- Stats under hold piece ---
+        stats_y = TOP_PADDING + 28 + SLOT_HEIGHT + 16
+        stats_x = left_cx - 40
+        b2b = "Yes" if self.env.back_to_back else "No"
+        stats = [
+            ("ATK", str(self.env.attack)),
+            ("Lines", str(self.env.lines_cleared)),
+            ("Combo", str(self.env.combo)),
+            ("B2B", b2b),
+        ]
+        for label, value in stats:
+            text = self.stats_font.render(f"{label}: {value}", True, LABEL_COLOR)
+            self.screen.blit(text, (stats_x, stats_y))
+            stats_y += 20
+
+        # --- Right sidebar: NEXT label + panels ---
         right_x = LEFT_SIDEBAR_WIDTH + BOARD_WIDTH * CELL_SIZE
-        attack_text = f"Attack: {self.env.attack}"
-        attack_surface = self.font.render(attack_text, True, WHITE)
-        self.screen.blit(
-            attack_surface, (right_x + 15, WINDOW_HEIGHT - BOTTOM_PADDING - 15)
-        )
+        right_cx = right_x + RIGHT_SIDEBAR_WIDTH // 2
 
-        # Right sidebar - NEXT pieces
+        next_label = self.label_font.render("NEXT", True, LABEL_COLOR)
+        next_label_rect = next_label.get_rect(center=(right_cx, TOP_PADDING + 12))
+        self.screen.blit(next_label, next_label_rect)
+
         next_pieces = self.env.get_next_pieces(5)
-
+        slot_start_y = TOP_PADDING + 28
         for i, piece in enumerate(next_pieces):
-            center_x = right_x + RIGHT_SIDEBAR_WIDTH // 2
-            center_y = TOP_PADDING + 30 + i * 55
-            self.draw_mini_piece(piece, center_x, center_y)
+            slot_cy = slot_start_y + i * (SLOT_HEIGHT + SLOT_GAP) + SLOT_HEIGHT // 2
+            self.draw_mini_piece(piece, right_cx, slot_cy)
 
     def draw_overlay(self):
         if self.inspect_mode:
