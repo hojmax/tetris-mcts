@@ -323,8 +323,8 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 
 ### Neural Network (TetrisNet)
 
-- **Input**: 297 features (200 board cells + 97 auxiliary: current piece, hold, queue, placement count, combo, back-to-back, hidden-piece distribution for the piece after the visible 5-queue horizon, plus board diagnostics: column heights, max/min column height, row fill counts, total blocks, bumpiness, holes, overhang fields)
-- **Architecture**: Conv2d(1→4→8) + board projection + aux-conditioned gated fusion + optional fusion residual blocks + policy/value heads
+- **Input**: 297 features (200 board cells + 97 auxiliary). Aux is split into 61 piece/game features (current piece, hold, queue, placement count, combo, back-to-back, hidden-piece distribution) sent to the uncached heads model, and 36 board-derived stats (column heights, max/min column height, row fill counts, total blocks, bumpiness, holes, overhang fields) folded into the cached board embedding. Training data packs all 97 features together; the model splits internally.
+- **Architecture**: Conv2d(1→4→8) + board projection (conv features + board stats → cached embedding) + aux-conditioned gated fusion (61-dim piece/game features) + optional fusion residual blocks + policy/value heads
 - **Output**: Policy probabilities over 735 actions (734 placements + hold), value (trained on raw cumulative-attack `value_targets`)
 
 ### 7-Bag Randomizer
@@ -443,7 +443,7 @@ Tests are in:
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
 
-Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board))`. `fc.bin` stores `board_proj` weights/bias only, and Rust validates that `conv.onnx` output width matches `fc.bin` columns, so changing `conv_filters[-1]` still does not require a Rust constant edit. MCTS leaf expansion now keeps NN priors sparse (aligned to valid actions) instead of materializing dense 735-action vectors for chance-node caching. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
+Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board) ++ board_stats)` where `board_stats` is the 36-dim board-derived statistics (column heights, bumpiness, holes, etc.). On cache hits, both conv and board_stats computation are skipped; only the 61-dim piece/game features are encoded for the heads model. `fc.bin` stores `board_proj` weights/bias (now shape `(hidden, conv_out + 36)`), and Rust validates that `fc.bin` columns equal conv output width + `BOARD_STATS_FEATURES`. MCTS leaf expansion keeps NN priors sparse (aligned to valid actions) instead of materializing dense 735-action vectors for chance-node caching. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
 
 ### Training a model
 
