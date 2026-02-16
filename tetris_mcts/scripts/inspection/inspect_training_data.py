@@ -406,6 +406,7 @@ def main(args: ScriptArgs) -> None:
 
             frame = render_board(
                 board=board,
+                current_piece_type=current_piece,
                 move_number=move_number,
                 attack=cumulative_attack,
                 value_pred=value_pred,
