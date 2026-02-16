@@ -236,28 +236,12 @@ def render_board(
         info_x = LEFT_SIDEBAR + (board_w_px - info_tw) // 2
         draw.text((info_x, 6), info_str, fill=TEXT_COLOR, font=font)
 
-        # --- Left sidebar: CURRENT + HOLD ---
+        # --- Left sidebar: HOLD ---
         left_cx = LEFT_SIDEBAR // 2
-
-        bbox = label_font.getbbox("CUR")
-        tw = bbox[2] - bbox[0]
-        draw.text(
-            (left_cx - tw // 2, board_y + SIDEBAR_LABEL_Y),
-            "CUR",
-            fill=LABEL_COLOR,
-            font=label_font,
-        )
-
-        if current_piece_type is not None:
-            _draw_mini_piece(
-                draw, current_piece_type, left_cx, board_y + SIDEBAR_PIECE_Y
-            )
-
-        hold_label_y = board_y + SIDEBAR_LABEL_Y + QUEUE_SLOT_SPACING
         bbox = label_font.getbbox("HOLD")
         tw = bbox[2] - bbox[0]
         draw.text(
-            (left_cx - tw // 2, hold_label_y),
+            (left_cx - tw // 2, board_y + SIDEBAR_LABEL_Y),
             "HOLD",
             fill=LABEL_COLOR,
             font=label_font,
@@ -265,11 +249,11 @@ def render_board(
 
         if hold_piece_type is not None:
             _draw_mini_piece(
-                draw, hold_piece_type, left_cx, hold_label_y + 30
+                draw, hold_piece_type, left_cx, board_y + SIDEBAR_PIECE_Y
             )
 
         # Stats below hold piece
-        sy = board_y + STATS_Y + QUEUE_SLOT_SPACING
+        sy = board_y + STATS_Y
         sx = left_cx - 28
         stat_lines = []
         if combo is not None:
