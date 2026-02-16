@@ -40,6 +40,7 @@ make check      # Run ruff + pyright linting
 make sweep-lr-model  # Run W&B sweep for learning rate + model size
 make eval-nn-value-weight  # Evaluate fixed network at multiple nn_value_weight values
 make compare-offline-network-scaling  # Compare default vs scaled network variants offline
+make sweep-mcts-config  # Sweep an MCTS config param (q_scale, c_puct, etc.)
 make rebuild    # Force clean rebuild (slow, only when needed)
 ```
 
@@ -132,6 +133,32 @@ python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
 python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
     --data_path training_runs/v32/training_data.npz \
     --include_move_number_feature true
+```
+
+### MCTS Config Sweep
+
+```bash
+# Sweep q_scale (tanh divisor) over multiple values using a trained model.
+# Runs MCTS evaluation games in Rust for each value and outputs JSON + PNG plot.
+python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
+    --run_dir training_runs/v32 \
+    --sweep_param q_scale \
+    --sweep_values '[2, 4, 8, 16, 32]'
+
+# Sweep any other float MCTSConfig param (e.g. c_puct, nn_value_weight)
+python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
+    --run_dir training_runs/v32 \
+    --sweep_param c_puct \
+    --sweep_values '[0.5, 1.0, 1.5, 2.0, 3.0]' \
+    --num_games 100
+
+# Override base MCTS config values that aren't being swept
+python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
+    --run_dir training_runs/v32 \
+    --sweep_param q_scale \
+    --sweep_values '[4, 8, 16]' \
+    --nn_value_weight 0.05 \
+    --num_simulations 500
 ```
 
 ### Replay Buffer Combo Patch
@@ -343,7 +370,7 @@ From `config.py` TrainingConfig defaults:
 - **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.01` by default. Promotion ramp is event-driven on accepted candidates with multiplicative targets and additive updates: `delta = min(current * (nn_value_weight_promotion_multiplier - 1.0), nn_value_weight_promotion_max_delta)` then `next = min(nn_value_weight_cap, current + delta)`. Defaults: multiplier `1.4` (adds 40%), max delta `0.10`, cap `1.0`.
-- **Q Squash Scale**: `q_scale=8.0` by default; NN-guided MCTS uses `tanh(Q / q_scale)` for the Q term. Bootstrap (no-NN) mode uses sibling min-max Q normalization instead.
+- **Q Normalization**: `use_tanh_q_normalization=true` by default; when true, NN-guided MCTS uses `tanh(Q / q_scale)` (default `q_scale=8.0`) for the Q term. When false, uses sibling min-max Q normalization even in NN mode. Bootstrap (no-NN) mode always uses min-max regardless of this setting.
 - **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1800` (`0` disables periodic snapshot saves).
 - **Training-loop logging defaults**: full scalar train-step metrics are collected every `train_step_metrics_interval=16` steps, extra diagnostics (`compute_metrics` forward pass for policy entropy/accuracy) are enabled by default with `compute_extra_train_metrics_on_log=true` (overhead tracked as `timing/extra_metrics_ms`), and individual per-game rows are logged by default (`log_individual_games_to_wandb=true`). Aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step` are always logged.
 - **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default; candidate evaluation carries an explicit `candidate_nn_value_weight`, and promotion atomically updates `(incumbent model, incumbent nn_value_weight)` together

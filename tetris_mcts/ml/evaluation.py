@@ -56,7 +56,7 @@ class Evaluator:
         eval_seeds: list[int],
         eval_mcts_seed: int,
         nn_value_weight: float,
-        q_scale: float,
+        q_scale: float | None,
     ):
         self.model = model
         self.checkpoint_dir = Path(checkpoint_dir)
