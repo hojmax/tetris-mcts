@@ -121,7 +121,9 @@ class TrainingConfig:
     nn_value_weight_cap: float = (  # Maximum allowed nn_value_weight during promotion ramp
         1.0
     )
-    q_scale: float = 8.0  # Scale for tanh Q squashing in PUCT (NN mode only; bootstrap uses min-max)
+    q_scale: float = (  # Scale for tanh Q squashing in PUCT (NN mode only; bootstrap uses min-max)
+        8.0
+    )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
     )
@@ -169,7 +171,7 @@ class TrainingConfig:
     eval_interval_seconds: float = 1800  # Seconds between evaluations
     log_interval_seconds: float = 10  # Seconds between logging
     save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
-        1800
+        3600
     )
 
     # Evaluation
