@@ -17,6 +17,9 @@ pub const NUM_PIECE_TYPES: usize = 7;
 /// Number of occupied cells in any tetromino
 pub const MAX_PIECE_CELLS: usize = 4;
 
+/// Maximum board cells (width * height) for fixed-size board storage
+pub const MAX_BOARD_CELLS: usize = BOARD_WIDTH * BOARD_HEIGHT;
+
 /// Combo normalization divisor (combo >= this value maps to 1.0).
 /// Old: 12 (combo-attack table saturation). New: 4 (p99=2, max=8; combos >4 very rare).
 pub const COMBO_NORMALIZATION_MAX: u32 = 4;

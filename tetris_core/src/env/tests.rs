@@ -2,7 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::constants::{I_PIECE, L_PIECE, O_PIECE, S_PIECE, T_PIECE, Z_PIECE};
+    use crate::constants::{
+        BOARD_HEIGHT, BOARD_WIDTH, I_PIECE, L_PIECE, MAX_BOARD_CELLS, O_PIECE, S_PIECE, T_PIECE,
+        Z_PIECE,
+    };
     use crate::env::TetrisEnv;
     use crate::mcts::HOLD_ACTION_INDEX;
     use crate::piece::Piece;
@@ -1595,9 +1598,13 @@ mod tests {
     // (total_blocks, row_fill_counts) match ground truth.
 
     /// Helper to compute expected tracked board stats from board state.
-    fn compute_expected_stats(board: &[u8], width: usize, height: usize) -> (u32, Vec<u8>) {
+    fn compute_expected_stats(
+        board: &[u8],
+        width: usize,
+        height: usize,
+    ) -> (u32, [u8; BOARD_HEIGHT]) {
         let mut total_blocks = 0u32;
-        let mut row_fill_counts = vec![0u8; height];
+        let mut row_fill_counts = [0u8; BOARD_HEIGHT];
 
         for y in 0..height {
             for x in 0..width {
@@ -1610,8 +1617,12 @@ mod tests {
         (total_blocks, row_fill_counts)
     }
 
-    fn compute_expected_column_heights(board: &[u8], width: usize, height: usize) -> Vec<u8> {
-        let mut column_heights = vec![0u8; width];
+    fn compute_expected_column_heights(
+        board: &[u8],
+        width: usize,
+        height: usize,
+    ) -> [u8; BOARD_WIDTH] {
+        let mut column_heights = [0u8; BOARD_WIDTH];
         for x in 0..width {
             for y in 0..height {
                 if board[y * width + x] != 0 {
@@ -1905,7 +1916,7 @@ mod tests {
         // 3. Board dimensions must be consistent
         assert_eq!(
             env.board.len(),
-            env.width * env.height,
+            MAX_BOARD_CELLS,
             "{}: board size mismatch",
             context
         );

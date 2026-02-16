@@ -9,7 +9,7 @@ use super::TetrisEnv;
 impl TetrisEnv {
     #[inline]
     pub(crate) fn board_cells(&self) -> &[u8] {
-        &self.board
+        &self.board[..self.width * self.height]
     }
 
     /// Compute how far a piece can drop using exact collision checks.
@@ -81,7 +81,7 @@ impl TetrisEnv {
 
     pub(crate) fn recompute_total_blocks_and_row_fill_counts(&mut self) {
         self.total_blocks = 0;
-        self.row_fill_counts = vec![0; self.height];
+        self.row_fill_counts.fill(0);
         for y in 0..self.height {
             for x in 0..self.width {
                 if self.board[y * self.width + x] == 0 {

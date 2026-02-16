@@ -413,18 +413,18 @@ impl MCTSAgent {
             let hold_available = !state.is_hold_used();
             let next_queue = state.get_queue(5);
             let next_hidden_piece_probs = crate::nn::next_hidden_piece_distribution(state);
-            let raw_bumpiness = super::utils::compute_bumpiness(&state.column_heights);
+            let raw_bumpiness = super::utils::compute_bumpiness(&state.column_heights[..state.width]);
             let column_heights =
-                super::utils::normalize_column_heights(&state.column_heights);
+                super::utils::normalize_column_heights(&state.column_heights[..state.width]);
             let row_fill_counts =
-                super::utils::normalize_row_fill_counts(&state.row_fill_counts, state.width);
+                super::utils::normalize_row_fill_counts(&state.row_fill_counts[..state.height], state.width);
             let total_blocks = super::utils::normalize_total_blocks(state.total_blocks);
             let bumpiness = super::utils::normalize_bumpiness(raw_bumpiness);
             let holes = super::utils::normalize_holes(snapshot.hole_count);
             let overhang_fields =
                 super::utils::normalize_overhang_fields(snapshot.overhang_fields);
-            let raw_max = state.column_heights.iter().copied().max().unwrap_or(0);
-            let raw_min = state.column_heights.iter().copied().min().unwrap_or(0);
+            let raw_max = state.column_heights[..state.width].iter().copied().max().unwrap_or(0);
+            let raw_min = state.column_heights[..state.width].iter().copied().min().unwrap_or(0);
             let max_column_height = super::utils::normalize_max_column_height(raw_max);
             let min_column_height = super::utils::normalize_min_column_height(raw_min);
 
@@ -619,7 +619,8 @@ mod tests {
 
         for example in result.examples.iter() {
             let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
-            env.board = example.board.clone();
+            env.board.fill(0);
+            env.board[..example.board.len()].copy_from_slice(&example.board);
             env.invalidate_board_analysis_cache();
 
             let (expected_overhang, expected_holes_raw) =

@@ -68,10 +68,13 @@ impl TetrisEnv {
         if let Some(piece) = self.current_piece.take() {
             let (is_tspin, is_mini) = self.check_tspin(&piece);
 
+            let has_piece_types = !self.board_piece_types.is_empty();
             for (x, y) in get_cells(piece.piece_type, piece.rotation, piece.x, piece.y) {
                 self.board[y as usize * self.width + x as usize] = 1;
-                self.board_piece_types[y as usize * self.width + x as usize] =
-                    Some(piece.piece_type);
+                if has_piece_types {
+                    self.board_piece_types[y as usize * self.width + x as usize] =
+                        Some(piece.piece_type);
+                }
                 // Update row fill count
                 self.row_fill_counts[y as usize] += 1;
                 let column_height = (self.height - y as usize) as u8;
@@ -117,7 +120,9 @@ impl TetrisEnv {
                     let src = read_row * w;
                     let dst = write_row * w;
                     self.board.copy_within(src..src + w, dst);
-                    self.board_piece_types.copy_within(src..src + w, dst);
+                    if !self.board_piece_types.is_empty() {
+                        self.board_piece_types.copy_within(src..src + w, dst);
+                    }
                     self.row_fill_counts[write_row] = self.row_fill_counts[read_row];
                 }
             }
@@ -125,7 +130,9 @@ impl TetrisEnv {
         // Zero out top rows
         let n = num_lines as usize;
         self.board[..n * w].fill(0);
-        self.board_piece_types[..n * w].fill(None);
+        if !self.board_piece_types.is_empty() {
+            self.board_piece_types[..n * w].fill(None);
+        }
         self.row_fill_counts[..n].fill(0);
 
         // Each cleared line removes width blocks

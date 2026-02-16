@@ -278,7 +278,7 @@ fn expand_action<E: LeafEvaluator>(
     move_number: u32,
     max_placements: u32,
 ) -> Option<MCTSNode> {
-    let mut new_state = parent.state.clone();
+    let mut new_state = parent.state.mcts_clone();
     let attack = match new_state.execute_action_index(action_idx) {
         Some(attack) => attack,
         None => {
@@ -316,7 +316,7 @@ fn expand_action<E: LeafEvaluator>(
 /// Uses cached policy/value from parent ChanceNode since the NN only sees the visible
 /// queue (5 pieces) - the hidden 6th piece doesn't affect the NN output.
 fn expand_chance(parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNode {
-    let mut new_state = parent.state.clone();
+    let mut new_state = parent.state.mcts_clone();
 
     // Add the selected piece to the end of the queue
     // This represents the "chance" outcome - which piece appears next in the queue

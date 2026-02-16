@@ -75,8 +75,11 @@ impl TetrisEnv {
             }
         }
 
-        // Flatten nested Vec into flat Vec
-        self.board = board.into_iter().flatten().collect();
+        // Copy nested Vec into fixed-size board array
+        self.board.fill(0);
+        for (i, val) in board.into_iter().flatten().enumerate() {
+            self.board[i] = val;
+        }
         self.board_piece_types = vec![None; self.width * self.height];
         self.sync_board_stats();
         self.invalidate_placement_cache();
@@ -166,7 +169,7 @@ impl TetrisEnv {
     // === Board (board.rs) ===
 
     pub fn get_board(&self) -> Vec<Vec<u8>> {
-        self.board
+        self.board[..self.width * self.height]
             .chunks(self.width)
             .map(|row| row.to_vec())
             .collect()
