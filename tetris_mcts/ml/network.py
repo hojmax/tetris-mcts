@@ -79,7 +79,7 @@ AUX_FEATURES = (
     + OVERHANG_FIELDS_FEATURES
 )  # 97
 
-COMBO_NORMALIZATION_MAX = 12.0
+COMBO_NORMALIZATION_MAX = 4.0
 
 
 def normalize_combo_for_feature(combo: float) -> float:

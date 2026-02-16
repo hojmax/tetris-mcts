@@ -415,27 +415,18 @@ impl MCTSAgent {
             let next_hidden_piece_probs = crate::nn::next_hidden_piece_distribution(state);
             let raw_bumpiness = super::utils::compute_bumpiness(&state.column_heights);
             let column_heights =
-                super::utils::normalize_column_heights(&state.column_heights, state.height);
+                super::utils::normalize_column_heights(&state.column_heights);
             let row_fill_counts =
                 super::utils::normalize_row_fill_counts(&state.row_fill_counts, state.width);
-            let total_blocks =
-                super::utils::normalize_total_blocks(state.total_blocks, state.width, state.height);
-            let bumpiness =
-                super::utils::normalize_bumpiness(raw_bumpiness, state.width, state.height);
-            let holes =
-                super::utils::normalize_holes(snapshot.hole_count, state.width, state.height);
+            let total_blocks = super::utils::normalize_total_blocks(state.total_blocks);
+            let bumpiness = super::utils::normalize_bumpiness(raw_bumpiness);
+            let holes = super::utils::normalize_holes(snapshot.hole_count);
             let overhang_fields =
                 super::utils::normalize_overhang_fields(snapshot.overhang_fields);
-            let max_column_height = column_heights
-                .iter()
-                .copied()
-                .reduce(f32::max)
-                .unwrap_or(0.0);
-            let min_column_height = column_heights
-                .iter()
-                .copied()
-                .reduce(f32::min)
-                .unwrap_or(0.0);
+            let raw_max = state.column_heights.iter().copied().max().unwrap_or(0);
+            let raw_min = state.column_heights.iter().copied().min().unwrap_or(0);
+            let max_column_height = super::utils::normalize_max_column_height(raw_max);
+            let min_column_height = super::utils::normalize_min_column_height(raw_min);
 
             examples.push(TrainingExample {
                 board,
@@ -636,7 +627,7 @@ mod tests {
             let expected_normalized_overhang =
                 super::super::utils::normalize_overhang_fields(expected_overhang);
             let expected_holes =
-                super::super::utils::normalize_holes(expected_holes_raw, env.width, env.height);
+                super::super::utils::normalize_holes(expected_holes_raw);
 
             assert!(
                 (example.overhang_fields - expected_normalized_overhang).abs() < 1e-6,

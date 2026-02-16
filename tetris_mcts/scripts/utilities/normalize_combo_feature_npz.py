@@ -96,7 +96,7 @@ def should_normalize(stats: ComboStats) -> bool:
 
 
 def normalize_combos(combos: np.ndarray) -> np.ndarray:
-    return (combos / 12.0).astype(np.float32, copy=False)
+    return (combos / 4.0).astype(np.float32, copy=False)
 
 
 def rewrite_npz_with_combos(

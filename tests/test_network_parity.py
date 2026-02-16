@@ -23,7 +23,13 @@ from tetris_mcts.ml.network import (
 from tetris_mcts.ml.weights import export_onnx, export_split_models
 
 
-OVERHANG_NORMALIZATION_DENOMINATOR = float(BOARD_WIDTH * (BOARD_HEIGHT - 1))
+OVERHANG_NORMALIZATION_DIVISOR = 25.0
+BUMPINESS_NORMALIZATION_DIVISOR = 200.0
+HOLES_NORMALIZATION_DIVISOR = 20.0
+TOTAL_BLOCKS_NORMALIZATION_DIVISOR = 60.0
+COLUMN_HEIGHT_NORMALIZATION_DIVISOR = 8.0
+MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR = 20.0
+MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR = 6.0
 
 
 def _binary_board(env: tetris_core.TetrisEnv) -> np.ndarray:
@@ -103,25 +109,16 @@ def _compute_diagnostics(
             if not reachable[y, x]:
                 raw_holes += 1
 
-    normalized_column_heights = raw_column_heights.astype(np.float32) / float(height)
-    max_column_height = float(np.max(normalized_column_heights))
-    min_column_height = float(np.min(normalized_column_heights))
+    normalized_column_heights = raw_column_heights.astype(np.float32) / COLUMN_HEIGHT_NORMALIZATION_DIVISOR
+    raw_max = int(np.max(raw_column_heights))
+    raw_min = int(np.min(raw_column_heights))
+    max_column_height = float(raw_max) / MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
+    min_column_height = float(raw_min) / MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
     normalized_row_fill_counts = raw_row_fill_counts.astype(np.float32) / float(width)
-    normalized_total_blocks = float(raw_total_blocks) / float(width * height)
-
-    normalized_bumpiness = 0.0
-    if width >= 2:
-        max_bumpiness = float((width - 1) * height * height)
-        normalized_bumpiness = float(raw_bumpiness) / max_bumpiness
-
-    normalized_holes = 0.0
-    if width > 0 and height >= 2:
-        max_holes = float(width * (height - 1))
-        normalized_holes = float(raw_holes) / max_holes
-
-    normalized_overhang_fields = (
-        float(raw_overhang_fields) / OVERHANG_NORMALIZATION_DENOMINATOR
-    )
+    normalized_total_blocks = float(raw_total_blocks) / TOTAL_BLOCKS_NORMALIZATION_DIVISOR
+    normalized_bumpiness = float(raw_bumpiness) / BUMPINESS_NORMALIZATION_DIVISOR
+    normalized_holes = float(raw_holes) / HOLES_NORMALIZATION_DIVISOR
+    normalized_overhang_fields = float(raw_overhang_fields) / OVERHANG_NORMALIZATION_DIVISOR
     return (
         normalized_column_heights,
         max_column_height,
