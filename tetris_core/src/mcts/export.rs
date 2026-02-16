@@ -13,19 +13,13 @@ pub(super) fn export_decision_node(
     nodes: &mut Vec<TreeNodeExport>,
 ) -> usize {
     let id = nodes.len();
-    let mean_value = if node.visit_count > 0 {
-        node.value_sum / node.visit_count as f32
-    } else {
-        0.0
-    };
-
     // Create the node (children will be filled in later)
     let export = TreeNodeExport {
         id,
         node_type: "decision".to_string(),
         visit_count: node.visit_count,
         value_sum: node.value_sum,
-        mean_value,
+        mean_value: node.mean_value(),
         value_history: node.value_history.clone().unwrap_or_default(),
         nn_value: node.nn_value,
         is_terminal: node.is_terminal,
@@ -67,18 +61,13 @@ pub(super) fn export_chance_node(
     nodes: &mut Vec<TreeNodeExport>,
 ) -> usize {
     let id = nodes.len();
-    let mean_value = if node.visit_count > 0 {
-        node.value_sum / node.visit_count as f32
-    } else {
-        0.0
-    };
 
     let export = TreeNodeExport {
         id,
         node_type: "chance".to_string(),
         visit_count: node.visit_count,
         value_sum: node.value_sum,
-        mean_value,
+        mean_value: node.mean_value(),
         value_history: node.value_history.clone().unwrap_or_default(),
         nn_value: node.nn_value,
         is_terminal: false,

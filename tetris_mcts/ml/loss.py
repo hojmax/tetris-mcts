@@ -161,7 +161,7 @@ def compute_metrics(
         value_error = torch.abs(value_residual).mean()
         value_bias = value_residual.mean()
         value_target_var = torch.var(value_targets, unbiased=False)
-        value_residual_var = torch.var(value_targets - value_pred_flat, unbiased=False)
+        value_residual_var = torch.var(value_residual, unbiased=False)
         if value_target_var.item() > 0:
             value_explained_variance = 1.0 - (value_residual_var / value_target_var)
         else:

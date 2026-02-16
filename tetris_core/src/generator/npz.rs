@@ -3,7 +3,7 @@
 //! Read and write training examples in NPZ format (compatible with Python numpy).
 
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::Path;
 
 use npyz::{NpyFile, WriterBuilder};
 use zip::read::ZipArchive;
@@ -18,7 +18,7 @@ use crate::nn::{denormalize_combo_feature, normalize_combo_for_feature};
 ///
 /// Convenience wrapper over [`write_examples_slices_to_npz`] for a single contiguous slice.
 pub fn write_examples_to_npz(
-    filepath: &PathBuf,
+    filepath: &Path,
     examples: &[TrainingExample],
     max_placements: u32,
 ) -> Result<(), String> {
@@ -56,7 +56,7 @@ pub fn write_examples_to_npz(
 /// - game_numbers: (N,) uint64 (1-indexed game IDs aligned with WandB game_number)
 /// - game_total_attacks: (N,) uint32 (raw total attack for each example's source game)
 pub(crate) fn write_examples_slices_to_npz(
-    filepath: &PathBuf,
+    filepath: &Path,
     examples_a: &[TrainingExample],
     examples_b: &[TrainingExample],
     max_placements: u32,
@@ -282,7 +282,7 @@ pub(crate) fn write_examples_slices_to_npz(
 
 /// Read training examples from NPZ format.
 pub fn read_examples_from_npz(
-    filepath: &PathBuf,
+    filepath: &Path,
     max_placements: u32,
 ) -> Result<Vec<TrainingExample>, String> {
     let file = File::open(filepath).map_err(|e| e.to_string())?;
@@ -591,6 +591,7 @@ mod tests {
     use crate::constants::COMBO_NORMALIZATION_MAX;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_temp_path(name: &str) -> PathBuf {

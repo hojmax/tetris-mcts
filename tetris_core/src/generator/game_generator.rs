@@ -249,7 +249,7 @@ impl SharedBuffer {
     /// Holds the read lock for the duration of the write so that the snapshot is
     /// consistent. Workers calling `add_examples` will block until the save completes
     /// (typically 10-30 seconds), which is acceptable for a save every 30 minutes.
-    fn persist_to_npz(&self, filepath: &PathBuf, max_placements: u32) -> Result<(), String> {
+    fn persist_to_npz(&self, filepath: &Path, max_placements: u32) -> Result<(), String> {
         let state = self.state.read().unwrap();
         let (slice_a, slice_b) = state.examples.as_slices();
         write_examples_slices_to_npz(filepath, slice_a, slice_b, max_placements)
@@ -754,7 +754,7 @@ impl GameGenerator {
                     &old_request.model_path,
                     &self.bootstrap_model_path,
                     &incumbent_path,
-                    evaluating_path.as_ref(),
+                    evaluating_path.as_deref(),
                 );
             }
         }
@@ -1082,8 +1082,8 @@ impl GameGenerator {
         &'py PyArray2<f32>,
     )> {
         let batch_size = examples.len();
-        let board_height = 20usize;
-        let board_width = 10usize;
+        let board_height = BOARD_HEIGHT;
+        let board_width = BOARD_WIDTH;
         let num_actions = NUM_ACTIONS;
         let aux_features_size = AUX_FEATURES;
         let max_placements_usize = max_placements as usize;
@@ -1170,7 +1170,7 @@ impl GameGenerator {
     }
 
     fn persist_snapshot_if_due(
-        training_data_path: &PathBuf,
+        training_data_path: &Path,
         buffer: &Arc<SharedBuffer>,
         max_placements: u32,
         save_interval_seconds: f64,
@@ -1436,7 +1436,7 @@ impl GameGenerator {
             target_nn_value_weight,
             target_death_penalty,
             target_overhang_penalty_weight,
-            model_path.as_ref(),
+            model_path.as_deref(),
             worker_id,
             "incumbent",
         ) else {
@@ -1479,7 +1479,7 @@ impl GameGenerator {
         game_stats: &Arc<SharedStats>,
         completed_games: &Arc<RwLock<VecDeque<LastGameInfo>>>,
         model_eval_events: &Arc<RwLock<VecDeque<ModelEvalEvent>>>,
-        bootstrap_model_path: &PathBuf,
+        bootstrap_model_path: &Path,
         incumbent_model_path: &Arc<RwLock<PathBuf>>,
         incumbent_uses_network: &Arc<AtomicBool>,
         incumbent_model_step: &Arc<AtomicU64>,
@@ -1783,7 +1783,7 @@ impl GameGenerator {
         nn_value_weight: f32,
         death_penalty: f32,
         overhang_penalty_weight: f32,
-        model_path: Option<&PathBuf>,
+        model_path: Option<&Path>,
         worker_id: usize,
         role: &str,
     ) -> Option<MCTSAgent> {
@@ -1875,7 +1875,7 @@ impl GameGenerator {
     }
 
     fn persist_buffer_snapshot(
-        training_data_path: &PathBuf,
+        training_data_path: &Path,
         buffer: &Arc<SharedBuffer>,
         max_placements: u32,
     ) {
@@ -1897,7 +1897,7 @@ impl GameGenerator {
         ]
     }
 
-    fn remove_model_artifacts(model_path: &PathBuf) {
+    fn remove_model_artifacts(model_path: &Path) {
         for artifact_path in Self::model_artifact_paths(model_path) {
             if let Err(error) = fs::remove_file(&artifact_path) {
                 if error.kind() != std::io::ErrorKind::NotFound {
@@ -1912,10 +1912,10 @@ impl GameGenerator {
     }
 
     fn remove_model_artifacts_if_safe(
-        model_path: &PathBuf,
-        bootstrap_model_path: &PathBuf,
-        incumbent_model_path: &PathBuf,
-        evaluating_model_path: Option<&PathBuf>,
+        model_path: &Path,
+        bootstrap_model_path: &Path,
+        incumbent_model_path: &Path,
+        evaluating_model_path: Option<&Path>,
     ) {
         if model_path == bootstrap_model_path {
             return;

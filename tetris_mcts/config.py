@@ -1,10 +1,11 @@
 """Training configuration for Tetris AlphaZero."""
 
+from __future__ import annotations
+
 import json
 import math
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional
 
 # Project root (tetris-mcts/)
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -174,13 +175,13 @@ class TrainingConfig:
     )
 
     # Paths (set automatically by setup_run_directory)
-    run_dir: Optional[Path] = None  # e.g., training_runs/v0
-    checkpoint_dir: Optional[Path] = None  # e.g., training_runs/v0/checkpoints
-    data_dir: Optional[Path] = None  # e.g., training_runs/v0 (for training_data.npz)
+    run_dir: Path | None = None  # e.g., training_runs/v0
+    checkpoint_dir: Path | None = None  # e.g., training_runs/v0/checkpoints
+    data_dir: Path | None = None  # e.g., training_runs/v0 (for training_data.npz)
 
     # WandB
     project_name: str = "tetris-alphazero"
-    run_name: Optional[str] = None
+    run_name: str | None = None
 
     def __post_init__(self) -> None:
         if self.total_steps <= 0:
@@ -329,7 +330,7 @@ def get_next_version(base_dir: Path) -> int:
 def setup_run_directory(
     config: TrainingConfig,
     base_dir: Path = TRAINING_RUNS_DIR,
-    run_dir: Optional[Path] = None,
+    run_dir: Path | None = None,
 ) -> TrainingConfig:
     """
     Set up run directory and update config paths.

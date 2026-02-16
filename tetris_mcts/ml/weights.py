@@ -155,8 +155,7 @@ def export_onnx(
         model.to(original_device)
 
 
-def _split_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
-    """Derive split model paths from the base ONNX path."""
+def split_model_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
     base = Path(onnx_path).with_suffix("")
     return (
         base.with_suffix(".conv.onnx"),
@@ -165,18 +164,13 @@ def _split_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
     )
 
 
-def split_model_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
-    """Return paths for the split-model artifacts associated with an ONNX file."""
-    return _split_paths(onnx_path)
-
-
 def export_split_models(
     model: TetrisNet,
     onnx_path: str | Path,
     opset_version: int = 18,
 ) -> bool:
     """Export split models (conv.onnx, heads.onnx, fc.bin) for cached Rust inference."""
-    conv_path, heads_path, fc_path = _split_paths(onnx_path)
+    conv_path, heads_path, fc_path = split_model_paths(onnx_path)
     original_device = next(model.parameters()).device
     if original_device.type == "cuda":
         torch.cuda.empty_cache()
