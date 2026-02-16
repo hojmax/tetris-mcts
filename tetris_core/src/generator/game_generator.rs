@@ -19,7 +19,7 @@ use crate::constants::{AUX_FEATURES, NUM_PIECE_TYPES};
 use crate::mcts::GameStats;
 use crate::mcts::{GameResult, GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
-use super::npz::{read_examples_from_npz, write_examples_to_npz};
+use super::npz::{read_examples_from_npz, write_examples_slices_to_npz};
 
 /// Aggregate game statistics (thread-safe counters).
 #[derive(Default)]
@@ -233,15 +233,15 @@ impl SharedBuffer {
         self.state.read().unwrap().examples.len()
     }
 
-    /// Get a copy of all examples (for disk saves).
-    fn get_all(&self) -> Vec<TrainingExample> {
-        self.state
-            .read()
-            .unwrap()
-            .examples
-            .iter()
-            .cloned()
-            .collect()
+    /// Stream buffer contents directly to an NPZ file under read lock.
+    ///
+    /// Holds the read lock for the duration of the write so that the snapshot is
+    /// consistent. Workers calling `add_examples` will block until the save completes
+    /// (typically 10-30 seconds), which is acceptable for a save every 30 minutes.
+    fn persist_to_npz(&self, filepath: &PathBuf, max_placements: u32) -> Result<(), String> {
+        let state = self.state.read().unwrap();
+        let (slice_a, slice_b) = state.examples.as_slices();
+        write_examples_slices_to_npz(filepath, slice_a, slice_b, max_placements)
     }
 
     /// Return the logical one-past-end index in replay index space.
@@ -1357,15 +1357,10 @@ impl GameGenerator {
         }
 
         // Final save on shutdown (only worker 0)
-        if is_save_worker {
-            let all_examples = buffer.get_all();
-            if !all_examples.is_empty() {
-                let _ = write_examples_to_npz(&training_data_path, &all_examples, max_placements);
-                eprintln!(
-                    "[GameGenerator] Saved {} examples to disk",
-                    all_examples.len()
-                );
-            }
+        if is_save_worker && buffer.len() > 0 {
+            let n = buffer.len();
+            let _ = buffer.persist_to_npz(&training_data_path, max_placements);
+            eprintln!("[GameGenerator] Saved {} examples to disk", n);
         }
 
         eprintln!("[GameGenerator] Worker {} exiting", worker_id);
@@ -1746,9 +1741,7 @@ impl GameGenerator {
         buffer: &Arc<SharedBuffer>,
         max_placements: u32,
     ) {
-        let all_examples = buffer.get_all();
-        if let Err(error) = write_examples_to_npz(training_data_path, &all_examples, max_placements)
-        {
+        if let Err(error) = buffer.persist_to_npz(training_data_path, max_placements) {
             eprintln!("[GameGenerator] Failed to write NPZ: {}", error);
         }
     }
@@ -1896,7 +1889,7 @@ mod tests {
         buffer.add_examples(vec![make_example(1), make_example(2)]);
         buffer.add_examples(vec![make_example(3), make_example(4)]);
 
-        let kept = buffer.get_all();
+        let (_, _, kept) = buffer.logical_window_snapshot().unwrap();
         assert_eq!(kept.len(), 3);
         let move_numbers: Vec<u32> = kept.iter().map(|e| e.move_number).collect();
         assert_eq!(move_numbers, vec![2, 3, 4]);
