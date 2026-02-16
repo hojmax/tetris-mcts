@@ -96,7 +96,7 @@ class TrainingConfig:
         True
     )
     use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
-        False
+        True
     )
 
     # MCTS / Self-play
