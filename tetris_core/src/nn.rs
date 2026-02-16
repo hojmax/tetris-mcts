@@ -20,8 +20,9 @@ use crate::constants::{
 use crate::env::TetrisEnv;
 use crate::mcts::{
     compute_bumpiness, count_overhang_fields_and_holes, normalize_bumpiness,
-    normalize_column_heights, normalize_holes, normalize_overhang_fields,
-    normalize_row_fill_counts, normalize_total_blocks,
+    normalize_column_heights, normalize_holes, normalize_max_column_height,
+    normalize_min_column_height, normalize_overhang_fields, normalize_row_fill_counts,
+    normalize_total_blocks,
 };
 
 /// Neural network model wrapper with board embedding cache
@@ -482,23 +483,17 @@ pub fn encode_aux_state_features(
     let hold_piece = env.get_hold_piece().map(|p| p.piece_type);
     let queue = env.get_queue(QUEUE_SIZE);
     let hidden_piece_distribution = next_hidden_piece_distribution(env);
-    let normalized_column_heights = normalize_column_heights(&env.column_heights, env.height);
-    let max_column_height = normalized_column_heights
-        .iter()
-        .copied()
-        .reduce(f32::max)
-        .unwrap_or(0.0);
-    let min_column_height = normalized_column_heights
-        .iter()
-        .copied()
-        .reduce(f32::min)
-        .unwrap_or(0.0);
+    let normalized_column_heights = normalize_column_heights(&env.column_heights);
+    let raw_max = env.column_heights.iter().copied().max().unwrap_or(0);
+    let raw_min = env.column_heights.iter().copied().min().unwrap_or(0);
+    let max_column_height = normalize_max_column_height(raw_max);
+    let min_column_height = normalize_min_column_height(raw_min);
     let normalized_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts, env.width);
-    let normalized_total_blocks = normalize_total_blocks(env.total_blocks, env.width, env.height);
+    let normalized_total_blocks = normalize_total_blocks(env.total_blocks);
     let raw_bumpiness = compute_bumpiness(&env.column_heights);
-    let normalized_bumpiness = normalize_bumpiness(raw_bumpiness, env.width, env.height);
+    let normalized_bumpiness = normalize_bumpiness(raw_bumpiness);
     let (raw_overhang_fields, raw_holes) = count_overhang_fields_and_holes(env);
-    let normalized_holes = normalize_holes(raw_holes, env.width, env.height);
+    let normalized_holes = normalize_holes(raw_holes);
     let normalized_overhang_fields = normalize_overhang_fields(raw_overhang_fields);
     let mut aux = vec![0.0; AUX_FEATURES];
     encode_aux_features(
@@ -981,7 +976,7 @@ mod tests {
         }
         idx += NUM_PIECE_TYPES;
 
-        let expected_column_heights = normalize_column_heights(&env.column_heights, env.height);
+        let expected_column_heights = normalize_column_heights(&env.column_heights);
         let encoded_column_heights = &aux[idx..idx + BOARD_WIDTH];
         for col in 0..BOARD_WIDTH {
             assert!(
@@ -994,11 +989,8 @@ mod tests {
         }
         idx += BOARD_WIDTH;
 
-        let expected_max_column_height = expected_column_heights
-            .iter()
-            .copied()
-            .reduce(f32::max)
-            .unwrap_or(0.0);
+        let raw_max = env.column_heights.iter().copied().max().unwrap_or(0);
+        let expected_max_column_height = normalize_max_column_height(raw_max);
         assert!(
             (aux[idx] - expected_max_column_height).abs() < 1e-6,
             "Max column height should be {}, got {}",
@@ -1007,11 +999,8 @@ mod tests {
         );
         idx += 1;
 
-        let expected_min_column_height = expected_column_heights
-            .iter()
-            .copied()
-            .reduce(f32::min)
-            .unwrap_or(0.0);
+        let raw_min = env.column_heights.iter().copied().min().unwrap_or(0);
+        let expected_min_column_height = normalize_min_column_height(raw_min);
         assert!(
             (aux[idx] - expected_min_column_height).abs() < 1e-6,
             "Min column height should be {}, got {}",
@@ -1033,7 +1022,7 @@ mod tests {
         }
         idx += BOARD_HEIGHT;
 
-        let expected_total_blocks = normalize_total_blocks(env.total_blocks, env.width, env.height);
+        let expected_total_blocks = normalize_total_blocks(env.total_blocks);
         assert!(
             (aux[idx] - expected_total_blocks).abs() < 1e-6,
             "Total blocks should be {}, got {}",
@@ -1042,11 +1031,7 @@ mod tests {
         );
         idx += 1;
 
-        let expected_bumpiness = normalize_bumpiness(
-            compute_bumpiness(&env.column_heights),
-            env.width,
-            env.height,
-        );
+        let expected_bumpiness = normalize_bumpiness(compute_bumpiness(&env.column_heights));
         assert!(
             (aux[idx] - expected_bumpiness).abs() < 1e-6,
             "Bumpiness should be {}, got {}",
@@ -1056,7 +1041,7 @@ mod tests {
         idx += 1;
 
         let (expected_overhang_raw, expected_holes_raw) = count_overhang_fields_and_holes(&env);
-        let expected_holes = normalize_holes(expected_holes_raw, env.width, env.height);
+        let expected_holes = normalize_holes(expected_holes_raw);
         assert!(
             (aux[idx] - expected_holes).abs() < 1e-6,
             "Holes should be {}, got {}",
@@ -1300,26 +1285,19 @@ mod tests {
                 let mut idx = diagnostics_start;
 
                 let expected_column_heights =
-                    normalize_column_heights(&env.column_heights, env.height);
+                    normalize_column_heights(&env.column_heights);
                 for expected in expected_column_heights.iter().take(BOARD_WIDTH) {
                     prop_assert!((aux[idx] - *expected).abs() < 1e-6);
-                    prop_assert!((0.0..=1.0).contains(&aux[idx]));
                     idx += 1;
                 }
 
-                let expected_max_column_height = expected_column_heights
-                    .iter()
-                    .copied()
-                    .reduce(f32::max)
-                    .unwrap_or(0.0);
+                let raw_max = env.column_heights.iter().copied().max().unwrap_or(0);
+                let expected_max_column_height = normalize_max_column_height(raw_max);
                 prop_assert!((aux[idx] - expected_max_column_height).abs() < 1e-6);
                 idx += 1;
 
-                let expected_min_column_height = expected_column_heights
-                    .iter()
-                    .copied()
-                    .reduce(f32::min)
-                    .unwrap_or(0.0);
+                let raw_min = env.column_heights.iter().copied().min().unwrap_or(0);
+                let expected_min_column_height = normalize_min_column_height(raw_min);
                 prop_assert!((aux[idx] - expected_min_column_height).abs() < 1e-6);
                 idx += 1;
 
@@ -1331,29 +1309,23 @@ mod tests {
                     idx += 1;
                 }
 
-                let expected_total_blocks =
-                    normalize_total_blocks(env.total_blocks, env.width, env.height);
+                let expected_total_blocks = normalize_total_blocks(env.total_blocks);
                 prop_assert!((aux[idx] - expected_total_blocks).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
                 idx += 1;
 
                 let expected_raw_bumpiness = compute_bumpiness(&env.column_heights);
-                let expected_bumpiness =
-                    normalize_bumpiness(expected_raw_bumpiness, env.width, env.height);
+                let expected_bumpiness = normalize_bumpiness(expected_raw_bumpiness);
                 prop_assert!((aux[idx] - expected_bumpiness).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
                 idx += 1;
 
                 let (expected_raw_overhang, expected_raw_holes) =
                     count_overhang_fields_and_holes(&env);
-                let expected_holes = normalize_holes(expected_raw_holes, env.width, env.height);
+                let expected_holes = normalize_holes(expected_raw_holes);
                 prop_assert!((aux[idx] - expected_holes).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
                 idx += 1;
 
                 let expected_overhang = normalize_overhang_fields(expected_raw_overhang);
                 prop_assert!((aux[idx] - expected_overhang).abs() < 1e-6);
-                prop_assert!((0.0..=1.0).contains(&aux[idx]));
                 idx += 1;
 
                 prop_assert_eq!(idx, AUX_FEATURES);
@@ -1379,7 +1351,7 @@ mod tests {
 
     #[test]
     fn test_combo_feature_round_trip() {
-        assert_eq!(denormalize_combo_feature(normalize_combo_for_feature(7)), 7);
+        assert_eq!(denormalize_combo_feature(normalize_combo_for_feature(3)), 3);
         assert_eq!(
             denormalize_combo_feature(normalize_combo_for_feature(99)),
             COMBO_NORMALIZATION_MAX

@@ -18,8 +18,33 @@ pub const NUM_PIECE_TYPES: usize = 7;
 pub const MAX_PIECE_CELLS: usize = 4;
 
 /// Combo normalization divisor (combo >= this value maps to 1.0).
-/// Chosen to match the combo-attack table saturation point.
-pub const COMBO_NORMALIZATION_MAX: u32 = 12;
+/// Old: 12 (combo-attack table saturation). New: 4 (p99=2, max=8; combos >4 very rare).
+pub const COMBO_NORMALIZATION_MAX: u32 = 4;
+
+// ── Empirical normalization divisors ──
+// Derived from v37 training data percentiles. Replace theoretical board-maximum
+// divisors with tighter empirical ones to improve gradient signal and float precision.
+
+/// Old: (W-1)*H² = 3600. New: 200 (p99=161, p100=906; covers normal play).
+pub const BUMPINESS_NORMALIZATION_DIVISOR: f32 = 200.0;
+
+/// Old: W*(H-1) = 190. New: 20 (p99=13, p100=55; good spread for 0-13).
+pub const HOLES_NORMALIZATION_DIVISOR: f32 = 20.0;
+
+/// Old: W*(H-1) = 190. New: 25 (p99=19, p100=55).
+pub const OVERHANG_NORMALIZATION_DIVISOR: f32 = 25.0;
+
+/// Old: W*H = 200. New: 60 (p90=40, p99=110; most play is 10-50).
+pub const TOTAL_BLOCKS_NORMALIZATION_DIVISOR: f32 = 60.0;
+
+/// Old: H = 20. New: 8 (p90=5, p99=15; most columns 0-6).
+pub const COLUMN_HEIGHT_NORMALIZATION_DIVISOR: f32 = 8.0;
+
+/// Old: H = 20 (same as column_heights). New: 6 (p99=6; usually 0-2).
+pub const MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR: f32 = 6.0;
+
+/// Unchanged: H = 20 (already good range for max column height).
+pub const MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR: f32 = 20.0;
 
 /// Auxiliary feature vector size for NN input:
 /// current piece (7) + hold piece (8) + hold available (1) + queue (35) + placement count (1)

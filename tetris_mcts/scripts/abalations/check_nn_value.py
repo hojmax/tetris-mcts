@@ -12,7 +12,7 @@ NUM_PIECE_TYPES = 7
 BOARD_HEIGHT = 20
 BOARD_WIDTH = 10
 MAX_PLACEMENTS = 100
-COMBO_NORMALIZATION_MAX = 12.0
+COMBO_NORMALIZATION_MAX = 4.0
 
 # ── State from MCTS visualizer (node 3, chance node) ──
 CURRENT_PIECE = "J"
@@ -34,19 +34,19 @@ BOARD[18, 0] = 1.0  # row 18, col 0
 BOARD[18, 1] = 1.0  # row 18, col 1
 BOARD[19, 0] = 1.0  # row 19, col 0
 COLUMN_HEIGHTS = np.array(
-    [0.15, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [3.0 / 8.0, 2.0 / 8.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     dtype=np.float32,
 )
-MAX_COLUMN_HEIGHT = 0.15
-MIN_COLUMN_HEIGHT = 0.0
+MAX_COLUMN_HEIGHT = 3.0 / 20.0
+MIN_COLUMN_HEIGHT = 0.0 / 6.0
 ROW_FILL_COUNTS = np.array(
     [0.0] * 17 + [0.1, 0.2, 0.1],
     dtype=np.float32,
 )
-TOTAL_BLOCKS = 0.02
-BUMPINESS = 5.0 / 3600.0
+TOTAL_BLOCKS = 4.0 / 60.0
+BUMPINESS = 5.0 / 200.0
 HOLES = 0.0
-OVERHANG_FIELDS = 1.0 / 190.0
+OVERHANG_FIELDS = 1.0 / 25.0
 
 EXPECTED_VALUE = 0.567
 MODEL_PATH = PROJECT_ROOT / "training_runs" / "v6" / "checkpoints" / "parallel.onnx"

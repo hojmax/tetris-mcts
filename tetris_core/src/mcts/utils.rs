@@ -2,16 +2,16 @@
 
 use rand_distr::{Distribution, Gamma};
 
-use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
+use crate::constants::{
+    BUMPINESS_NORMALIZATION_DIVISOR, COLUMN_HEIGHT_NORMALIZATION_DIVISOR,
+    HOLES_NORMALIZATION_DIVISOR, MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR,
+    MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR, OVERHANG_NORMALIZATION_DIVISOR,
+    TOTAL_BLOCKS_NORMALIZATION_DIVISOR,
+};
 use crate::env::global_cache::{
     build_board_key, get_cached_board_analysis, insert_cached_board_analysis,
 };
 use crate::env::TetrisEnv;
-
-/// Normalization denominator for overhang fields.
-/// For each column, max overhang is `height - 1` (top filled, rest empty).
-/// On a 10x20 board: 10 * 19 = 190.
-pub const OVERHANG_NORMALIZATION_DENOMINATOR: f32 = (BOARD_WIDTH * (BOARD_HEIGHT - 1)) as f32;
 
 /// Sample from Dirichlet distribution.
 ///
@@ -172,7 +172,7 @@ pub fn count_overhang_fields(env: &TetrisEnv) -> u32 {
 }
 
 pub fn normalize_overhang_fields(overhang_fields: u32) -> f32 {
-    overhang_fields as f32 / OVERHANG_NORMALIZATION_DENOMINATOR
+    overhang_fields as f32 / OVERHANG_NORMALIZATION_DIVISOR
 }
 
 /// Compute normalized overhang penalty magnitude from raw overhang count.
@@ -198,12 +198,19 @@ pub fn compute_bumpiness(column_heights: &[u8]) -> u32 {
     bumpiness
 }
 
-pub fn normalize_column_heights(column_heights: &[u8], board_height: usize) -> Vec<f32> {
-    let denominator = board_height as f32;
+pub fn normalize_column_heights(column_heights: &[u8]) -> Vec<f32> {
     column_heights
         .iter()
-        .map(|&height| height as f32 / denominator)
+        .map(|&height| height as f32 / COLUMN_HEIGHT_NORMALIZATION_DIVISOR)
         .collect()
+}
+
+pub fn normalize_max_column_height(raw: u8) -> f32 {
+    raw as f32 / MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
+}
+
+pub fn normalize_min_column_height(raw: u8) -> f32 {
+    raw as f32 / MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
 }
 
 pub fn normalize_row_fill_counts(row_fill_counts: &[u8], board_width: usize) -> Vec<f32> {
@@ -214,25 +221,16 @@ pub fn normalize_row_fill_counts(row_fill_counts: &[u8], board_width: usize) -> 
         .collect()
 }
 
-pub fn normalize_total_blocks(total_blocks: u32, board_width: usize, board_height: usize) -> f32 {
-    let denominator = (board_width * board_height) as f32;
-    total_blocks as f32 / denominator
+pub fn normalize_total_blocks(total_blocks: u32) -> f32 {
+    total_blocks as f32 / TOTAL_BLOCKS_NORMALIZATION_DIVISOR
 }
 
-pub fn normalize_bumpiness(raw_bumpiness: u32, board_width: usize, board_height: usize) -> f32 {
-    if board_width < 2 {
-        return 0.0;
-    }
-    let max_bumpiness = ((board_width - 1) * board_height * board_height) as f32;
-    raw_bumpiness as f32 / max_bumpiness
+pub fn normalize_bumpiness(raw_bumpiness: u32) -> f32 {
+    raw_bumpiness as f32 / BUMPINESS_NORMALIZATION_DIVISOR
 }
 
-pub fn normalize_holes(holes: u32, board_width: usize, board_height: usize) -> f32 {
-    if board_height < 2 || board_width == 0 {
-        return 0.0;
-    }
-    let max_holes = (board_width * (board_height - 1)) as f32;
-    holes as f32 / max_holes
+pub fn normalize_holes(holes: u32) -> f32 {
+    holes as f32 / HOLES_NORMALIZATION_DIVISOR
 }
 
 #[cfg(test)]
@@ -296,9 +294,9 @@ mod tests {
 
     #[test]
     fn test_compute_overhang_penalty_uses_fixed_normalization() {
-        let penalty = compute_overhang_penalty(95, 2.0);
-        // 95 / 190 = 0.5
-        assert!((penalty - 1.0).abs() < 1e-6);
+        let penalty = compute_overhang_penalty(25, 2.0);
+        // 25 / 25.0 = 1.0, * 2.0 = 2.0
+        assert!((penalty - 2.0).abs() < 1e-6);
     }
 
     #[test]
@@ -315,15 +313,29 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_total_blocks_on_standard_board() {
-        let normalized = normalize_total_blocks(50, 10, 20);
-        assert!((normalized - 0.25).abs() < 1e-6);
+    fn test_normalize_total_blocks_uses_empirical_divisor() {
+        // divisor = 60.0
+        let normalized = normalize_total_blocks(30);
+        assert!((normalized - 0.5).abs() < 1e-6);
     }
 
     #[test]
-    fn test_normalize_column_heights_divides_by_board_height() {
-        let normalized = normalize_column_heights(&[0, 10, 20], 20);
+    fn test_normalize_column_heights_uses_empirical_divisor() {
+        // divisor = 8.0
+        let normalized = normalize_column_heights(&[0, 4, 8]);
         assert_eq!(normalized, vec![0.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn test_normalize_max_column_height() {
+        // divisor = 20.0
+        assert!((normalize_max_column_height(10) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_normalize_min_column_height() {
+        // divisor = 6.0
+        assert!((normalize_min_column_height(3) - 0.5).abs() < 1e-6);
     }
 
     #[test]
@@ -333,16 +345,16 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_bumpiness_uses_board_maximum() {
-        let normalized = normalize_bumpiness(1800, 10, 20);
-        // Max is (10 - 1) * 20^2 = 3600
+    fn test_normalize_bumpiness_uses_empirical_divisor() {
+        // divisor = 200.0
+        let normalized = normalize_bumpiness(100);
         assert!((normalized - 0.5).abs() < 1e-6);
     }
 
     #[test]
-    fn test_normalize_holes_on_standard_board() {
-        let normalized = normalize_holes(95, 10, 20);
-        // Max is 10 * (20 - 1) = 190
+    fn test_normalize_holes_uses_empirical_divisor() {
+        // divisor = 20.0
+        let normalized = normalize_holes(10);
         assert!((normalized - 0.5).abs() < 1e-6);
     }
 }
