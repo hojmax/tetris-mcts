@@ -14,7 +14,7 @@ from simple_parsing import parse
 
 from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, PROJECT_ROOT
 from tetris_mcts.ml.loss import compute_loss
-from tetris_mcts.ml.network import AUX_FEATURES
+from tetris_mcts.ml.network import AUX_FEATURES, BOARD_STATS_FEATURES, PIECE_AUX_FEATURES
 
 logger = structlog.get_logger()
 
@@ -230,8 +230,8 @@ class GatedFusionTetrisNet(nn.Module):
         )
         self.bn2 = nn.BatchNorm2d(conv1)
 
-        self.board_proj = nn.Linear(conv_flat_size, fusion_hidden)
-        self.aux_fc = nn.Linear(AUX_FEATURES, aux_hidden)
+        self.board_proj = nn.Linear(conv_flat_size + BOARD_STATS_FEATURES, fusion_hidden)
+        self.aux_fc = nn.Linear(PIECE_AUX_FEATURES, aux_hidden)
         self.aux_ln = nn.LayerNorm(aux_hidden)
         self.gate_fc = nn.Linear(aux_hidden, fusion_hidden)
         self.aux_proj = nn.Linear(aux_hidden, fusion_hidden)
@@ -247,12 +247,14 @@ class GatedFusionTetrisNet(nn.Module):
         board: torch.Tensor,
         aux_features: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        piece_aux = aux_features[:, :PIECE_AUX_FEATURES]
+        board_stats = aux_features[:, PIECE_AUX_FEATURES:]
         x = F.relu(self.bn1(self.conv1(board)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = x.view(x.size(0), -1)
 
-        board_h = self.board_proj(x)
-        aux_h = F.relu(self.aux_ln(self.aux_fc(aux_features)))
+        board_h = self.board_proj(torch.cat([x, board_stats], dim=1))
+        aux_h = F.relu(self.aux_ln(self.aux_fc(piece_aux)))
         gate = torch.sigmoid(self.gate_fc(aux_h))
 
         fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
@@ -345,11 +347,11 @@ def gated_flop_breakdown(
     miss_only += h2 * w2 * conv1 * (2 * conv0 * k * k + 1)
     miss_only += 2 * h2 * w2 * conv1
     miss_only += h1 * w1 * conv0 + h2 * w2 * conv1
-    # Cached board path includes board projection.
-    miss_only += fusion_hidden * (2 * conv_flat + 1)
+    # Cached board path includes board projection (conv_flat + board_stats).
+    miss_only += fusion_hidden * (2 * (conv_flat + BOARD_STATS_FEATURES) + 1)
 
     hit_path = 0
-    hit_path += aux_hidden * (2 * AUX_FEATURES + 1)
+    hit_path += aux_hidden * (2 * PIECE_AUX_FEATURES + 1)
     hit_path += 5 * aux_hidden
     hit_path += aux_hidden
     hit_path += fusion_hidden * (2 * aux_hidden + 1)
@@ -398,8 +400,8 @@ def gated_parameter_count(
     params += conv1 * conv0 * k * k + conv1
     params += 2 * conv1
 
-    params += conv_flat * fusion_hidden + fusion_hidden
-    params += AUX_FEATURES * aux_hidden + aux_hidden
+    params += (conv_flat + BOARD_STATS_FEATURES) * fusion_hidden + fusion_hidden
+    params += PIECE_AUX_FEATURES * aux_hidden + aux_hidden
     params += 2 * aux_hidden
     params += aux_hidden * fusion_hidden + fusion_hidden
     params += aux_hidden * fusion_hidden + fusion_hidden

@@ -14,8 +14,8 @@ use ndarray::{Array1, Array2, ArrayView1};
 use tract_onnx::prelude::*;
 
 use crate::constants::{
-    AUX_FEATURES, BOARD_CACHE_MAX_ENTRIES, BOARD_HEIGHT, BOARD_WIDTH, COMBO_NORMALIZATION_MAX,
-    NUM_PIECE_TYPES, QUEUE_SIZE,
+    AUX_FEATURES, BOARD_CACHE_MAX_ENTRIES, BOARD_HEIGHT, BOARD_STATS_FEATURES, BOARD_WIDTH,
+    COMBO_NORMALIZATION_MAX, NUM_PIECE_TYPES, PIECE_AUX_FEATURES, QUEUE_SIZE,
 };
 use crate::env::TetrisEnv;
 use crate::mcts::{
@@ -29,10 +29,10 @@ use crate::mcts::{
 pub struct TetrisNN {
     conv_model: Arc<TypedRunnableModel<TypedModel>>,
     heads_model: Arc<TypedRunnableModel<TypedModel>>,
-    board_proj_weight: Arc<Array2<f32>>, // (board_hidden, conv_out_size)
+    board_proj_weight: Arc<Array2<f32>>, // (board_hidden, conv_out_size + BOARD_STATS_FEATURES)
     board_proj_bias: Arc<Array1<f32>>,   // (board_hidden,)
     board_hidden: usize,
-    conv_out_size: usize,
+    conv_out_size: usize, // conv model output dim (e.g. 1600)
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
     cache_order: RefCell<VecDeque<[u64; 4]>>,
     cache_capacity: usize,
@@ -65,17 +65,18 @@ impl TetrisNN {
 
         let (board_proj_weight, board_proj_bias) = load_fc_binary(&fc_path)?;
         let board_hidden = board_proj_weight.nrows();
-        let conv_out_size = board_proj_weight.ncols();
-        if conv_out_size == 0 {
+        let board_proj_cols = board_proj_weight.ncols();
+        if board_proj_cols <= BOARD_STATS_FEATURES {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "Board projection width {} is invalid; expected > 0",
-                    conv_out_size
+                    "Board projection width {} must be > BOARD_STATS_FEATURES ({})",
+                    board_proj_cols, BOARD_STATS_FEATURES
                 ),
             )
             .into());
         }
+        let conv_out_size = board_proj_cols - BOARD_STATS_FEATURES;
 
         Ok(TetrisNN {
             conv_model: Arc::new(conv_model),
@@ -93,7 +94,11 @@ impl TetrisNN {
         })
     }
 
-    fn compute_board_embedding_owned(&self, board_f32: Vec<f32>) -> TractResult<Array1<f32>> {
+    fn compute_board_embedding_owned(
+        &self,
+        board_f32: Vec<f32>,
+        board_stats: &[f32],
+    ) -> TractResult<Array1<f32>> {
         let board_tensor =
             tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_f32)?
                 .into_tensor();
@@ -104,7 +109,7 @@ impl TetrisNN {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "Conv output size mismatch: conv.onnx={} fc.bin={} (re-export split models together)",
+                    "Conv output size mismatch: conv.onnx={} fc.bin expects conv_out={} (re-export split models together)",
                     conv_out.len(),
                     self.conv_out_size
                 ),
@@ -118,10 +123,23 @@ impl TetrisNN {
             )
         })?;
 
-        let conv_arr = ArrayView1::from(conv_slice);
-        let mut board_embed = self.board_proj_weight.dot(&conv_arr);
+        // Concatenate conv output (e.g. 1600) + board_stats (36) → board_proj input
+        let mut combined = Vec::with_capacity(self.conv_out_size + BOARD_STATS_FEATURES);
+        combined.extend_from_slice(conv_slice);
+        combined.extend_from_slice(board_stats);
+
+        let combined_arr = ArrayView1::from(&combined);
+        let mut board_embed = self.board_proj_weight.dot(&combined_arr);
         board_embed += self.board_proj_bias.as_ref();
         Ok(board_embed)
+    }
+
+    fn compute_board_embedding_from_slice(
+        &self,
+        board_f32: &[f32],
+        board_stats: &[f32],
+    ) -> TractResult<Array1<f32>> {
+        self.compute_board_embedding_owned(board_f32.to_vec(), board_stats)
     }
 
     fn insert_board_embedding_cache(&self, board_key: [u64; 4], embed: Array1<f32>) {
@@ -151,8 +169,6 @@ impl TetrisNN {
         placement_count: usize,
         max_placements: usize,
     ) -> TractResult<(Tensor, f32)> {
-        let aux_vec = encode_aux_state_features(env, placement_count, max_placements)?;
-
         let board_embed = if self.cache_enabled.get() {
             let board_key = pack_board(env);
             let board_embed = {
@@ -168,15 +184,20 @@ impl TetrisNN {
                 None => {
                     self.cache_misses.set(self.cache_misses.get() + 1);
                     let board_f32 = encode_board_features(env);
-                    let embed = self.compute_board_embedding_owned(board_f32)?;
+                    let board_stats = encode_board_stats(env);
+                    let embed = self.compute_board_embedding_owned(board_f32, &board_stats)?;
                     self.insert_board_embedding_cache(board_key, embed.clone());
                     embed
                 }
             }
         } else {
             let board_f32 = encode_board_features(env);
-            self.compute_board_embedding_owned(board_f32)?
+            let board_stats = encode_board_stats(env);
+            self.compute_board_embedding_owned(board_f32, &board_stats)?
         };
+
+        // Encode only piece/game aux features (61-dim) for the heads model
+        let piece_aux_vec = encode_piece_aux_features(env, placement_count, max_placements)?;
 
         let board_h_tensor = tract_ndarray::Array2::from_shape_vec(
             (1, self.board_hidden),
@@ -184,7 +205,8 @@ impl TetrisNN {
         )?
         .into_tensor();
         let aux_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_vec)?.into_tensor();
+            tract_ndarray::Array2::from_shape_vec((1, PIECE_AUX_FEATURES), piece_aux_vec)?
+                .into_tensor();
         let heads_output = self
             .heads_model
             .run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
@@ -288,15 +310,18 @@ impl TetrisNN {
         aux_tensor: &[f32],
         action_mask: &[bool],
     ) -> TractResult<(Vec<f32>, f32)> {
-        // No caching for raw tensor inputs (used only by debug functions)
-        let board_embed = self.compute_board_embedding_owned(board_tensor.to_vec())?;
+        // No caching for raw tensor inputs (used only by debug functions).
+        // aux_tensor is the full 97-dim vector; split into piece_aux (61) + board_stats (36).
+        let piece_aux = &aux_tensor[..PIECE_AUX_FEATURES];
+        let board_stats = &aux_tensor[PIECE_AUX_FEATURES..];
+        let board_embed = self.compute_board_embedding_from_slice(board_tensor, board_stats)?;
         let board_h_tensor = tract_ndarray::Array2::from_shape_vec(
             (1, self.board_hidden),
             board_embed.into_raw_vec(),
         )?
         .into_tensor();
         let aux_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, AUX_FEATURES), aux_tensor.to_vec())?
+            tract_ndarray::Array2::from_shape_vec((1, PIECE_AUX_FEATURES), piece_aux.to_vec())?
                 .into_tensor();
         let heads_output = self
             .heads_model
@@ -460,6 +485,104 @@ fn encode_board_features(env: &TetrisEnv) -> Vec<f32> {
         .iter()
         .map(|&cell| if cell != 0 { 1.0 } else { 0.0 })
         .collect()
+}
+
+/// Encode the 36 board-derived statistics for the cached board embedding path.
+fn encode_board_stats(env: &TetrisEnv) -> Vec<f32> {
+    let normalized_column_heights = normalize_column_heights(&env.column_heights);
+    let max_column_height = normalized_column_heights
+        .iter()
+        .copied()
+        .reduce(f32::max)
+        .unwrap_or(0.0);
+    let min_column_height = normalized_column_heights
+        .iter()
+        .copied()
+        .reduce(f32::min)
+        .unwrap_or(0.0);
+    let normalized_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts, env.width);
+    let normalized_total_blocks = normalize_total_blocks(env.total_blocks);
+    let raw_bumpiness = compute_bumpiness(&env.column_heights);
+    let normalized_bumpiness = normalize_bumpiness(raw_bumpiness);
+    let (raw_overhang_fields, raw_holes) = count_overhang_fields_and_holes(env);
+    let normalized_holes = normalize_holes(raw_holes);
+    let normalized_overhang_fields = normalize_overhang_fields(raw_overhang_fields);
+
+    let mut stats = Vec::with_capacity(BOARD_STATS_FEATURES);
+    stats.extend_from_slice(&normalized_column_heights);
+    stats.push(max_column_height);
+    stats.push(min_column_height);
+    stats.extend_from_slice(&normalized_row_fill_counts);
+    stats.push(normalized_total_blocks);
+    stats.push(normalized_bumpiness);
+    stats.push(normalized_holes);
+    stats.push(normalized_overhang_fields);
+    debug_assert_eq!(stats.len(), BOARD_STATS_FEATURES);
+    stats
+}
+
+/// Encode only the 61 piece/game auxiliary features for the uncached heads model.
+fn encode_piece_aux_features(
+    env: &TetrisEnv,
+    placement_count: usize,
+    max_placements: usize,
+) -> TractResult<Vec<f32>> {
+    if max_placements == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "max_placements must be > 0",
+        )
+        .into());
+    }
+
+    let current_piece = env.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
+    let hold_piece = env.get_hold_piece().map(|p| p.piece_type);
+    let queue = env.get_queue(QUEUE_SIZE);
+    let hidden_piece_distribution = next_hidden_piece_distribution(env);
+
+    let mut aux = vec![0.0; PIECE_AUX_FEATURES];
+    let mut aux_idx = 0;
+
+    // Current piece: one-hot (7)
+    aux[aux_idx + current_piece] = 1.0;
+    aux_idx += NUM_PIECE_TYPES;
+
+    // Hold piece: one-hot (8) - 7 pieces + empty
+    if let Some(piece_type) = hold_piece {
+        aux[aux_idx + piece_type] = 1.0;
+    } else {
+        aux[aux_idx + NUM_PIECE_TYPES] = 1.0;
+    }
+    aux_idx += NUM_PIECE_TYPES + 1;
+
+    // Hold available: binary (1)
+    aux[aux_idx] = if !env.is_hold_used() { 1.0 } else { 0.0 };
+    aux_idx += 1;
+
+    // Next queue: one-hot per slot (5 x 7 = 35)
+    for (slot, &piece_type) in queue.iter().take(QUEUE_SIZE).enumerate() {
+        aux[aux_idx + slot * NUM_PIECE_TYPES + piece_type] = 1.0;
+    }
+    aux_idx += QUEUE_SIZE * NUM_PIECE_TYPES;
+
+    // Placement count: normalized (1)
+    aux[aux_idx] = placement_count as f32 / max_placements as f32;
+    aux_idx += 1;
+
+    // Combo: normalized (1)
+    aux[aux_idx] = normalize_combo_for_feature(env.combo);
+    aux_idx += 1;
+
+    // Back-to-back flag: binary (1)
+    aux[aux_idx] = if env.back_to_back { 1.0 } else { 0.0 };
+    aux_idx += 1;
+
+    // Next hidden piece distribution from 7-bag (7)
+    aux[aux_idx..aux_idx + NUM_PIECE_TYPES].copy_from_slice(&hidden_piece_distribution);
+    aux_idx += NUM_PIECE_TYPES;
+
+    debug_assert_eq!(aux_idx, PIECE_AUX_FEATURES);
+    Ok(aux)
 }
 
 pub fn encode_aux_state_features(

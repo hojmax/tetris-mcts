@@ -3,6 +3,8 @@ Neural network architecture for Tetris AlphaZero.
 
 Input representation:
 - Board state: 20 x 10 binary (1 = filled, 0 = empty)
+
+Piece/game auxiliary features (61, uncached heads path):
 - Current piece: 7 (one-hot)
 - Hold piece: 8 (one-hot, 7 pieces + empty)
 - Hold available: 1 (binary)
@@ -11,6 +13,8 @@ Input representation:
 - Combo: 1 (normalized, capped)
 - Back-to-back: 1 (binary)
 - Next hidden piece distribution: 7 (7-bag probabilities)
+
+Board stats features (36, folded into cached board embedding):
 - Column heights: 10 (normalized)
 - Max column height: 1 (normalized)
 - Min column height: 1 (normalized)
@@ -21,6 +25,8 @@ Input representation:
 - Overhang fields: 1 (normalized)
 
 Total input: 200 board + 97 aux = 297 features.
+Training data packs all 97 aux features together; the model splits internally.
+Rust inference encodes board stats separately for the cached board embedding path.
 
 Output:
 - Policy head: 735 outputs (734 placements + hold)
@@ -60,7 +66,7 @@ BUMPINESS_FEATURES = 1
 HOLES_FEATURES = 1
 OVERHANG_FIELDS_FEATURES = 1
 
-AUX_FEATURES = (
+PIECE_AUX_FEATURES = (
     CURRENT_PIECE_FEATURES
     + HOLD_PIECE_FEATURES
     + HOLD_AVAILABLE_FEATURES
@@ -69,7 +75,10 @@ AUX_FEATURES = (
     + COMBO_FEATURES
     + BACK_TO_BACK_FEATURES
     + HIDDEN_PIECE_DISTRIBUTION_FEATURES
-    + COLUMN_HEIGHT_FEATURES
+)  # 61
+
+BOARD_STATS_FEATURES = (
+    COLUMN_HEIGHT_FEATURES
     + MAX_COLUMN_HEIGHT_FEATURES
     + MIN_COLUMN_HEIGHT_FEATURES
     + ROW_FILL_COUNT_FEATURES
@@ -77,7 +86,9 @@ AUX_FEATURES = (
     + BUMPINESS_FEATURES
     + HOLES_FEATURES
     + OVERHANG_FIELDS_FEATURES
-)  # 97
+)  # 36
+
+AUX_FEATURES = PIECE_AUX_FEATURES + BOARD_STATS_FEATURES  # 97
 
 COMBO_NORMALIZATION_MAX = 4.0
 
@@ -180,11 +191,11 @@ class TetrisNet(nn.Module):
         conv_flat_size = BOARD_HEIGHT * BOARD_WIDTH * conv1
         fusion_hidden = fc_hidden
 
-        # Board-only projection cached by Rust inference.
-        self.board_proj = nn.Linear(conv_flat_size, fusion_hidden)
+        # Board projection: conv features + board stats, cached by Rust inference.
+        self.board_proj = nn.Linear(conv_flat_size + BOARD_STATS_FEATURES, fusion_hidden)
 
-        # Aux-conditioned modulation.
-        self.aux_fc = nn.Linear(AUX_FEATURES, aux_hidden)
+        # Aux-conditioned modulation (piece/game features only).
+        self.aux_fc = nn.Linear(PIECE_AUX_FEATURES, aux_hidden)
         self.aux_ln = nn.LayerNorm(aux_hidden)
         self.gate_fc = nn.Linear(aux_hidden, fusion_hidden)
         self.aux_proj = nn.Linear(aux_hidden, fusion_hidden)
@@ -199,9 +210,9 @@ class TetrisNet(nn.Module):
         self.value_head = nn.Linear(fusion_hidden, 1)
 
     def forward_from_board_embedding(
-        self, board_h: torch.Tensor, aux_features: torch.Tensor
+        self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        aux_h = F.relu(self.aux_ln(self.aux_fc(aux_features)))
+        aux_h = F.relu(self.aux_ln(self.aux_fc(piece_aux)))
         gate = torch.sigmoid(self.gate_fc(aux_h))
 
         fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
@@ -223,17 +234,19 @@ class TetrisNet(nn.Module):
 
         Args:
             board: Shape (batch, 1, 20, 10) - binary board state
-            aux_features: Shape (batch, 97) - auxiliary features
+            aux_features: Shape (batch, 97) - auxiliary features (61 piece/game + 36 board stats)
 
         Returns:
             policy_logits: Shape (batch, 735) - raw logits (caller should apply
                 action mask before softmax to mask invalid actions)
             value: Shape (batch, 1) - predicted scalar value target
         """
+        piece_aux = aux_features[:, :PIECE_AUX_FEATURES]
+        board_stats = aux_features[:, PIECE_AUX_FEATURES:]
         x = F.relu(self.bn1(self.conv1(board)))
         x = F.relu(self.bn2(self.conv2(x)))
-        board_h = self.board_proj(x.view(x.size(0), -1))
-        return self.forward_from_board_embedding(board_h, aux_features)
+        board_h = self.board_proj(torch.cat([x.view(x.size(0), -1), board_stats], dim=1))
+        return self.forward_from_board_embedding(board_h, piece_aux)
 
 
 class ResidualFusionBlock(nn.Module):
@@ -285,9 +298,9 @@ class HeadsModel(nn.Module):
         self.value_head = parent.value_head
 
     def forward(
-        self, board_h: torch.Tensor, aux_features: torch.Tensor
+        self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        aux_h = F.relu(self.aux_ln(self.aux_fc(aux_features)))
+        aux_h = F.relu(self.aux_ln(self.aux_fc(piece_aux)))
         gate = torch.sigmoid(self.gate_fc(aux_h))
         fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
         fused = F.relu(self.fusion_ln(fused))
