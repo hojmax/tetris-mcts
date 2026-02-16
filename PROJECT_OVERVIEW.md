@@ -17,18 +17,26 @@ We adapt [AlphaZero](alphazero.pdf) (Silver et al., 2017) for single-player stoc
 
 ### Input Representation
 
-| Component      | Shape      | Encoding                        |
-| -------------- | ---------- | ------------------------------- |
-| Board state    | 20 x 10    | Binary (1 = filled, 0 = empty)  |
-| Current piece  | 7          | One-hot encoded                 |
-| Hold piece     | 8          | One-hot (7 pieces + empty)      |
-| Hold available | 1          | Binary (can use hold this turn) |
-| Next queue     | 5 x 7 = 35 | One-hot encoded per slot        |
-| Move number    | 1          | Normalized: move_idx / 100      |
-
-**Total input**: 200 + 7 + 8 + 1 + 35 + 1 = **252 features**
-
-Move number lets the value head learn that later positions have less remaining future attack (due to 100-move episode cap).
+| Component         | Shape      | Encoding                                  |
+| ----------------- | ---------- | ----------------------------------------- |
+| Board state       | 20 × 10    | Binary (1 = filled, 0 = empty)            |
+| Current piece     | 7          | One-hot encoded                           |
+| Hold piece        | 8          | One-hot (7 pieces + empty)                |
+| Hold available    | 1          | Binary (can use hold this turn)           |
+| Next queue        | 5 × 7 = 35 | One-hot encoded per slot                  |
+| Placement count   | 1          | Normalized: count / max_placements        |
+| Combo             | 1          | Normalized: clamp(0, 12) / 12             |
+| Back-to-back      | 1          | Binary (1 = active)                       |
+| Hidden piece dist | 7          | Probability distribution from 7-bag state |
+| Column heights    | 10         | Normalized: height / 20 per column        |
+| Max column height | 1          | Normalized: max height / 20               |
+| Min column height | 1          | Normalized: min height / 20               |
+| Row fill counts   | 20         | Normalized: fill / 10 per row             |
+| Total blocks      | 1          | Normalized: count / 200                   |
+| Bumpiness         | 1          | Normalized: Σ(Δh²) / 3600                 |
+| Holes             | 1          | Normalized: sealed cavities / 190         |
+| Overhang fields   | 1          | Normalized: empty-below-filled / 190      |
+| **Total**         | **297**    | **(200 board + 97 auxiliary)**            |
 
 ### Network Structure
 
@@ -43,7 +51,7 @@ Input Board (20x10x1)
     │        ▼
     │    Flatten → 20*10*8 = 1,600
     │
-Auxiliary Input (52 features: current + hold + hold_avail + next_queue + move_num)
+Auxiliary Input (97 features)
     │
     └──► Concat with flattened board features
               │
@@ -587,7 +595,7 @@ def export_onnx(model: TetrisNet, path: Path) -> None:
     """Export PyTorch model to ONNX for Rust inference."""
     model.eval()
     dummy_board = torch.zeros(1, 1, 20, 10)
-    dummy_aux = torch.zeros(1, 52)  # 7 + 8 + 1 + 35 + 1 = 52
+    dummy_aux = torch.zeros(1, 97)  # 97 auxiliary features
 
     torch.onnx.export(
         model,

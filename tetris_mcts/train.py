@@ -213,7 +213,6 @@ def main(args: ScriptArgs) -> None:
                     f"(got {restored_nn_value_weight})"
                 )
             config.nn_value_weight = restored_nn_value_weight
-            trainer.evaluator.nn_value_weight = restored_nn_value_weight
             logger.info(
                 "Restored incumbent nn_value_weight from checkpoint",
                 checkpoint=str(resume_checkpoint),

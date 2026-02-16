@@ -5,8 +5,6 @@
 - [ ] The tetris tspin stuff is still weird.
   - Investigate with make viz
 - [ ] Check out new gif rendering
-- [ ] Min / Max Normalization vs. tanh
-- [ ] Should we divide by the mean value in the tanh normalization?
 - [ ] Batch chance nodes
 - [ ] Too low learning rate?
 - [ ] Slow batches still?
@@ -18,7 +16,11 @@
 - [ ] Replay buffer should grow gradually
 - [ ] Batch the chance nodes?
 - [ ] Think about how much of the aux computation can be cached
-- [ ] Compare larger trunk effect on computation speed.
+- [ ] Compare larger trunk effect on computation speed. Like we have a lot of caching,
+- [ ] Double the board trunk since it is cached.
+- [ ] Speed of game generation based on model sizes.
+- [x] Min / Max Normalization vs. tanh
+- [x] Should we divide by the mean value in the tanh normalization?
 - [x] Run min max vs. tanh normalization constants.
 - [x] Right optimizer?
 - [x] Bigger replay buffer

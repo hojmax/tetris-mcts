@@ -387,7 +387,7 @@ def create_plot(
             draw.line([(x - 5, y_high), (x + 5, y_high)], fill=color, width=2)
 
         r = 5
-        fill_color = (218, 64, 82) if row["sweep_value"] is None else (218, 64, 82)
+        fill_color = (180, 180, 180) if row["sweep_value"] is None else (218, 64, 82)
         draw.ellipse(
             [(x - r, y - r), (x + r, y + r)], fill=fill_color, outline="black"
         )
