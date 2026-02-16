@@ -3,11 +3,14 @@ import json
 from pathlib import Path
 
 import numpy as np
+import structlog
 import torch
 
 from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, TrainingConfig
 from tetris_mcts.ml.network import TetrisNet, build_aux_features
 from tetris_mcts.ml.weights import load_checkpoint
+
+logger = structlog.get_logger()
 
 
 def load_training_config(config_path: Path) -> TrainingConfig:
@@ -15,6 +18,23 @@ def load_training_config(config_path: Path) -> TrainingConfig:
     known_fields = {f.name for f in dataclasses.fields(TrainingConfig)}
     config_data = {k: v for k, v in config_data.items() if k in known_fields}
     return TrainingConfig(**config_data)
+
+
+def try_load_value_predictor(
+    checkpoint_path: Path, config_path: Path
+) -> "ValuePredictor | None":
+    if not checkpoint_path.exists() or not config_path.exists():
+        logger.warning(
+            "Model predictions disabled: checkpoint/config not found",
+            checkpoint_path=str(checkpoint_path),
+            config_path=str(config_path),
+        )
+        return None
+    try:
+        return ValuePredictor(checkpoint_path, config_path)
+    except RuntimeError as e:
+        logger.warning("Model predictions disabled: incompatible checkpoint", error=str(e))
+        return None
 
 
 class ValuePredictor:

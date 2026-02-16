@@ -18,7 +18,7 @@ from tetris_mcts.config import (
     QUEUE_SIZE,
 )
 from tetris_mcts.ml.network import denormalize_combo_feature
-from tetris_mcts.ml.value_predictor import ValuePredictor
+from tetris_mcts.ml.value_predictor import try_load_value_predictor
 from tetris_mcts.ml.visualization import render_board
 
 SCRIPT_DIR = Path(__file__).parent
@@ -260,17 +260,10 @@ def main(args: ScriptArgs) -> None:
         )
         return
 
-    value_predictor: ValuePredictor | None = None
-    if checkpoint_path.exists() and config_path.exists():
-        value_predictor = ValuePredictor(checkpoint_path, config_path)
+    value_predictor = try_load_value_predictor(checkpoint_path, config_path)
+    if value_predictor is not None:
         logger.info(
             "Loaded model predictions",
-            checkpoint_path=str(checkpoint_path),
-            config_path=str(config_path),
-        )
-    else:
-        logger.warning(
-            "Model predictions disabled: checkpoint/config not found",
             checkpoint_path=str(checkpoint_path),
             config_path=str(config_path),
         )
