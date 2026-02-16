@@ -207,10 +207,10 @@ def compute_metrics(
         p3 = top3[:, 2]
 
     return {
-        "policy_entropy": entropy.item(),
-        "value_error": value_error.item(),
-        "top1_accuracy": top1_acc.item(),
-        "top3_accuracy": top3_acc.item(),
+        "train/policy_entropy": entropy.item(),
+        "train/value_error": value_error.item(),
+        "train/top1_accuracy": top1_acc.item(),
+        "train/top3_accuracy": top3_acc.item(),
         "train/value_explained_variance": value_explained_variance.item(),
         "train/value_bias": value_bias.item(),
         "train/policy_kl_to_target": policy_kl_to_target.item(),

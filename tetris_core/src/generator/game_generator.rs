@@ -183,6 +183,7 @@ struct ModelEvalEvent {
     candidate_step: u64,
     candidate_games: u64,
     candidate_avg_attack: f32,
+    candidate_attack_variance: f32,
     candidate_nn_value_weight: f32,
     promoted_nn_value_weight: f32,
     promoted_death_penalty: f32,
@@ -875,6 +876,10 @@ impl GameGenerator {
             d.insert(
                 "candidate_avg_attack".to_string(),
                 event.candidate_avg_attack as f64,
+            );
+            d.insert(
+                "candidate_attack_variance".to_string(),
+                event.candidate_attack_variance as f64,
             );
             d.insert(
                 "candidate_nn_value_weight".to_string(),
@@ -1579,6 +1584,14 @@ impl GameGenerator {
             .map(|result| result.total_attack as u64)
             .sum();
         let candidate_avg_attack = candidate_total_attack as f32 / candidate_games as f32;
+        let candidate_attack_variance = candidate_results
+            .iter()
+            .map(|r| {
+                let diff = r.total_attack as f32 - candidate_avg_attack;
+                diff * diff
+            })
+            .sum::<f32>()
+            / candidate_games as f32;
 
         let incumbent_games = incumbent_lifetime_games.load(Ordering::SeqCst);
         let incumbent_total_attack = incumbent_lifetime_attack.load(Ordering::SeqCst);
@@ -1691,6 +1704,7 @@ impl GameGenerator {
                 candidate_step: candidate.model_step,
                 candidate_games,
                 candidate_avg_attack,
+                candidate_attack_variance,
                 candidate_nn_value_weight: candidate.nn_value_weight,
                 promoted_nn_value_weight,
                 promoted_death_penalty,

@@ -308,10 +308,6 @@ def main(args: ScriptArgs) -> None:
         wandb.define_metric("throughput/*", step_metric="trainer_step")
         wandb.define_metric("incumbent/*", step_metric="trainer_step")
         wandb.define_metric("model_gate/*", step_metric="trainer_step")
-        wandb.define_metric("policy_entropy", step_metric="trainer_step")
-        wandb.define_metric("value_error", step_metric="trainer_step")
-        wandb.define_metric("top1_accuracy", step_metric="trainer_step")
-        wandb.define_metric("top3_accuracy", step_metric="trainer_step")
         # Use game_number as x-axis for per-game metrics
         wandb.define_metric("game_number")
         wandb.define_metric("game/*", step_metric="game_number")

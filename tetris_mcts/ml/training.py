@@ -383,7 +383,7 @@ class Trainer:
         self.model = model.to(self.device)
 
         # Create optimizer
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=config.learning_rate,
             weight_decay=config.weight_decay,
@@ -1273,6 +1273,7 @@ class Trainer:
                         candidate_step=int(event["candidate_step"]),
                         candidate_games=int(event["candidate_games"]),
                         candidate_avg_attack=event["candidate_avg_attack"],
+                        candidate_attack_variance=event["candidate_attack_variance"],
                         candidate_nn_value_weight=candidate_nn_value_weight,
                         incumbent_step=int(event["incumbent_step"]),
                         incumbent_uses_network=bool(event["incumbent_uses_network"]),
@@ -1294,6 +1295,9 @@ class Trainer:
                                 "model_gate/candidate_games": event["candidate_games"],
                                 "model_gate/candidate_avg_attack": event[
                                     "candidate_avg_attack"
+                                ],
+                                "model_gate/candidate_attack_variance": event[
+                                    "candidate_attack_variance"
                                 ],
                                 "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
                                 "model_gate/incumbent_step": event["incumbent_step"],

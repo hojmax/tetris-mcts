@@ -469,14 +469,14 @@ training_runs/
 Step-alignment rule for resumed runs:
 
 - Any metric namespace/key that should continue on checkpoint `step` must be explicitly mapped with `wandb.define_metric(..., step_metric="trainer_step")`. If a key is not mapped, WandB uses internal `_step`, which resets in new resumed runs.
-- Current trainer mappings include `train/*`, `batch/*`, `eval/*`, `timing/*`, `replay/*`, `throughput/*`, `incumbent/*`, `model_gate/*`, and scalar keys `policy_entropy`, `value_error`, `top1_accuracy`, `top3_accuracy`.
+- Current trainer mappings include `train/*`, `batch/*`, `eval/*`, `timing/*`, `replay/*`, `throughput/*`, `incumbent/*`, `model_gate/*`. All training-specific scalars (policy entropy, value error, accuracies) are namespaced under `train/` so the glob covers them.
 - Per-game metrics are mapped to `game_number` via `wandb.define_metric("game/*", step_metric="game_number")` and individual game rows are emitted by default (`log_individual_games_to_wandb=true`). Aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step` are always logged.
 
 ### Training Metrics
 
 - `loss`, `policy_loss`, `value_loss` - Loss components
 - `learning_rate` - Current LR (with scheduling)
-- `policy_entropy` - Policy distribution entropy
+- `train/policy_entropy` - Policy distribution entropy
 - `buffer_size` - Current examples in memory
 - `throughput/games_per_second` and `throughput/steps_per_second` are windowed rates computed from counter deltas divided by elapsed wall-clock seconds since the previous training log tick.
 - Candidate evaluator games are only added to `replay/games_generated` if the candidate is promoted. During rejection-heavy periods, evaluator work still consumes compute but does not increment this counter, which can make generation throughput look lower.
