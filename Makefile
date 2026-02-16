@@ -1,4 +1,4 @@
-.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling
+.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -79,6 +79,11 @@ sweep-lr-model: $(RELEASE_MARKER)
 # Usage: make eval-nn-value-weight ARGS="--run_dir training_runs/v17 --num_games 50"
 eval-nn-value-weight: $(RELEASE_MARKER)
 	$(PYTHON) tetris_mcts/scripts/abalations/evaluate_nn_value_weight_sweep.py $(ARGS)
+
+# Sweep an MCTS config parameter (e.g. q_scale, nn_value_weight, c_puct) over multiple values
+# Usage: make sweep-mcts-config ARGS="--run_dir training_runs/v32 --sweep_param q_scale --sweep_values '[2,4,8,16,32]'"
+sweep-mcts-config: $(RELEASE_MARKER)
+	$(PYTHON) tetris_mcts/scripts/abalations/sweep_mcts_config.py $(ARGS)
 
 # Compare offline network scaling variants (default, 2x board trunk, 2x post-fusion)
 # Usage: make compare-offline-network-scaling ARGS="--data_path training_runs/v32/training_data.npz"

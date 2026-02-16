@@ -118,7 +118,10 @@ class TrainingConfig:
     nn_value_weight_cap: float = (  # Maximum allowed nn_value_weight during promotion ramp
         1.0
     )
-    q_scale: float = (  # Scale for tanh Q squashing in PUCT (NN mode only; bootstrap uses min-max)
+    use_tanh_q_normalization: bool = (  # If True, use tanh(Q/q_scale) squashing; if False, use sibling min-max Q normalization
+        True
+    )
+    q_scale: float = (  # Scale for tanh Q squashing in PUCT (only used when use_tanh_q_normalization=True)
         8.0
     )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
@@ -224,7 +227,9 @@ class TrainingConfig:
             raise ValueError(
                 f"nn_value_weight must be >= 0 (got {self.nn_value_weight})"
             )
-        if not math.isfinite(self.q_scale) or self.q_scale <= 0.0:
+        if self.use_tanh_q_normalization and (
+            not math.isfinite(self.q_scale) or self.q_scale <= 0.0
+        ):
             raise ValueError(f"q_scale must be finite and > 0 (got {self.q_scale})")
         if (
             not math.isfinite(self.nn_value_weight_promotion_multiplier)
