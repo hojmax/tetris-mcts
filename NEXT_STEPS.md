@@ -5,15 +5,15 @@
 - [ ] The tetris tspin stuff is still weird.
   - Investigate with make viz
 - [ ] Batch chance nodes
-- [ ] Too low learning rate?
-- [ ] Slow batches still?
 - [ ] Faster training loop
 - [ ] Speed up data generation
 - [ ] Multi machine RL environment generation?
-- [ ] try with and without the penalties on offline seeds.
-- [ ] Try training model offline and see if we hit the same ceiling that the model had during training. I.e. is it fully fit, and we are simply shifting the distribution and that is why value loss increases, or is there something suboptimal in the training during game generation
 - [ ] Replay buffer should grow gradually
 - [ ] Think about how much of the aux computation can be cached
+- [x] Try training model offline and see if we hit the same ceiling that the model had during training. I.e. is it fully fit, and we are simply shifting the distribution and that is why value loss increases, or is there something suboptimal in the training during game generation
+- [x] try with and without the penalties on offline seeds.
+- [x] Slow batches still?
+- [x] Too low learning rate?
 - [x] Check out new gif rendering
 - [x] Compare larger trunk effect on computation speed. Like we have a lot of caching,
 - [x] Speed of game generation based on model sizes.
