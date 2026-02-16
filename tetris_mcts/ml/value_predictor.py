@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from tetris_mcts.ml.weights import load_checkpoint
 
 def load_training_config(config_path: Path) -> TrainingConfig:
     config_data = json.loads(config_path.read_text())
+    known_fields = {f.name for f in dataclasses.fields(TrainingConfig)}
+    config_data = {k: v for k, v in config_data.items() if k in known_fields}
     return TrainingConfig(**config_data)
 
 
