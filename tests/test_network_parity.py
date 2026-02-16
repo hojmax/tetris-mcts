@@ -14,6 +14,7 @@ from tetris_mcts.config import (
 )
 from tetris_mcts.ml.network import (
     AUX_FEATURES,
+    PIECE_AUX_FEATURES,
     ConvBackbone,
     HeadsModel,
     TetrisNet,
@@ -333,8 +334,10 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
 
                 # Split path
                 conv_out = conv_backbone(board)  # (1, 1600)
-                board_h = model.board_proj(conv_out)
-                split_logits, split_value = heads(board_h, aux)
+                board_stats = aux[:, PIECE_AUX_FEATURES:]  # (1, 36)
+                board_h = model.board_proj(torch.cat([conv_out, board_stats], dim=1))
+                piece_aux = aux[:, :PIECE_AUX_FEATURES]  # (1, 61)
+                split_logits, split_value = heads(board_h, piece_aux)
 
             np.testing.assert_allclose(
                 split_logits.numpy(),
