@@ -95,6 +95,9 @@ class TrainingConfig:
     use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
         True
     )
+    use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
+        False
+    )
 
     # MCTS / Self-play
     num_simulations: int = 1000  # MCTS simulations per move
