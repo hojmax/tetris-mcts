@@ -1,5 +1,33 @@
 # Next Steps
 
+- [ ] Why are the replays always worse than the average attack would suggest?
+- [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
+- [ ] The tetris tspin stuff is still weird.
+  - Investigate with make viz
+- [ ] Check out new gif rendering
+- [ ] Min / Max Normalization vs. tanh
+- [ ] Should we divide by the mean value in the tanh normalization?
+- [ ] Batch chance nodes
+- [ ] Too low learning rate?
+- [ ] Slow batches still?
+- [ ] Faster training loop
+- [ ] Speed up data generation
+- [ ] Multi machine RL environment generation?
+- [ ] try with and without the penalties on offline seeds.
+- [ ] Try training model offline and see if we hit the same ceiling that the model had during training. I.e. is it fully fit, and we are simply shifting the distribution and that is why value loss increases, or is there something suboptimal in the training during game generation
+- [ ] Replay buffer should grow gradually
+- [ ] Batch the chance nodes?
+- [ ] Think about how much of the aux computation can be cached
+- [ ] Compare larger trunk effect on computation speed.
+- [x] Run min max vs. tanh normalization constants.
+- [x] Right optimizer?
+- [x] Bigger replay buffer
+- [x] Divisor in tanh sweep
+- [x] Instead of seperate evaluation (complex) just use the candidate runs? They will be on fixed seeds anyways. So we can take one of those and save the gif for.
+- [x] Not all plots are x-axis synced like top1_accuracy
+- [x] Fixed candidate seeds, no need for 50 random
+- [x] Scale down death and pverhang penalty
+
 - [ ] What is so inherently noisy about the values? Why does it have such a high variance?
 - [ ] Bumpiness is not scaled correctly.
 - [ ] Turn off the nn value weight scheduele.
@@ -25,32 +53,6 @@
   - Huber loss vs. MSE loss
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
 - [ ] Batched leaf inference.
-
-- [ ] Why are the replays always worse than the average attack would suggest?
-- [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
-- [ ] The tetris tspin stuff is still weird.
-- [ ] Run min max vs. tanh normalization constants.
-- [ ] Check out new gif rendering
-- [ ] Min / Max Normalization vs. tanh
-- [ ] Should we divide by the mean value in the tanh normalization?
-- [ ] Batch chance nodes
-- [ ] Too low learning rate?
-- [ ] Slow batches still?
-- [ ] Faster training loop
-- [ ] Speed up data generation
-- [ ] Multi machine RL environment generation?
-- [ ] try with and without the penalties on offline seeds.
-- [ ] Try training model offline and see if we hit the same ceiling that the model had during training. I.e. is it fully fit, and we are simply shifting the distribution and that is why value loss increases, or is there something suboptimal in the training during game generation
-- [ ] Replay buffer should grow gradually
-- [ ] Batch the chance nodes?
-- [ ] Think about how much of the aux computation can be cached
-- [x] Right optimizer?
-- [x] Bigger replay buffer
-- [x] Divisor in tanh sweep
-- [x] Instead of seperate evaluation (complex) just use the candidate runs? They will be on fixed seeds anyways. So we can take one of those and save the gif for.
-- [x] Not all plots are x-axis synced like top1_accuracy
-- [x] Fixed candidate seeds, no need for 50 random
-- [x] Scale down death and pverhang penalty
 
 # Confusions
 

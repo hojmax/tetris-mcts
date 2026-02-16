@@ -987,6 +987,10 @@ class Trainer:
                 [incumbent_conv_path, incumbent_heads_path, incumbent_fc_path]
             )
 
+        training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME
+        if training_data_path.exists():
+            files_to_upload.append(training_data_path)
+
         for file_path in files_to_upload:
             if not file_path.exists():
                 raise FileNotFoundError(
