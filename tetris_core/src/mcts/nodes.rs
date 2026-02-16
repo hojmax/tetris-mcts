@@ -15,6 +15,14 @@ use super::utils::sample_dirichlet;
 
 const Q_NORMALIZATION_EPSILON: f32 = 1e-6;
 
+fn mean_value(visit_count: u32, value_sum: f32) -> f32 {
+    if visit_count > 0 {
+        value_sum / visit_count as f32
+    } else {
+        0.0
+    }
+}
+
 fn normalize_q_value(q: f32, q_min: f32, q_max: f32) -> f32 {
     let range = q_max - q_min;
     if range.abs() < Q_NORMALIZATION_EPSILON {
@@ -187,11 +195,7 @@ impl DecisionNode {
 
 impl DecisionNode {
     pub fn mean_value(&self) -> f32 {
-        if self.visit_count > 0 {
-            self.value_sum / self.visit_count as f32
-        } else {
-            0.0
-        }
+        mean_value(self.visit_count, self.value_sum)
     }
 }
 
@@ -261,11 +265,7 @@ impl ChanceNode {
 
 impl ChanceNode {
     pub fn mean_value(&self) -> f32 {
-        if self.visit_count > 0 {
-            self.value_sum / self.visit_count as f32
-        } else {
-            0.0
-        }
+        mean_value(self.visit_count, self.value_sum)
     }
 }
 

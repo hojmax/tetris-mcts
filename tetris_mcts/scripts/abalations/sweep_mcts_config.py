@@ -16,7 +16,6 @@ from tetris_mcts.config import (
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     LATEST_ONNX_FILENAME,
-    TRAINING_RUNS_DIR,
 )
 from tetris_mcts.ml.training import assert_rust_inference_artifacts
 
@@ -36,7 +35,7 @@ SWEEPABLE_FLOAT_PARAMS = {
 
 @dataclass
 class ScriptArgs:
-    run_dir: Path = TRAINING_RUNS_DIR / "v17"  # Training run to evaluate
+    run_dir: Path  # Training run to evaluate
     sweep_param: str = "q_scale"  # MCTSConfig field to sweep
     sweep_values: list[float] = field(
         default_factory=lambda: [2.0, 4.0, 8.0, 16.0, 32.0]

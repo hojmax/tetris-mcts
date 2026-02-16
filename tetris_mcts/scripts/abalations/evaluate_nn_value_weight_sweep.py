@@ -28,7 +28,6 @@ from tetris_mcts.config import (
     CONFIG_FILENAME,
     LATEST_ONNX_FILENAME,
     NUM_ACTIONS,
-    TRAINING_RUNS_DIR,
 )
 
 logger = structlog.get_logger()
@@ -39,7 +38,7 @@ WORKER_MAX_PLACEMENTS: int | None = None
 
 @dataclass
 class ScriptArgs:
-    run_dir: Path = TRAINING_RUNS_DIR / "v17"
+    run_dir: Path  # Training run directory
     nn_value_weights: list[float] = field(default_factory=lambda: [0.005, 0.025, 0.075])
     num_games: int = 50
     seed_start: int = 1

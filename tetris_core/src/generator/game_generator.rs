@@ -1971,9 +1971,9 @@ impl Drop for GameGenerator {
 mod tests {
     use super::*;
     use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
+    use crate::generator::test_utils;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_example(move_number: u32) -> TrainingExample {
         let mut policy = vec![0.0; NUM_ACTIONS];
@@ -2009,16 +2009,7 @@ mod tests {
     }
 
     fn unique_temp_path(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "tetris_generator_{}_{}_{}.npz",
-            name,
-            std::process::id(),
-            nanos
-        ))
+        test_utils::unique_temp_path("tetris_generator", name)
     }
 
     #[test]

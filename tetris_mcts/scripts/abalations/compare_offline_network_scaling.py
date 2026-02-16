@@ -14,7 +14,6 @@ from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     NUM_ACTIONS,
-    PROJECT_ROOT,
 )
 from tetris_mcts.ml.network import BOARD_STATS_FEATURES, PIECE_AUX_FEATURES, TetrisNet
 from compare_offline_architectures import (
@@ -37,9 +36,7 @@ logger = structlog.get_logger()
 
 @dataclass
 class ScriptArgs:
-    data_path: Path = (
-        PROJECT_ROOT / "training_runs" / "v17" / "training_data.npz"
-    )  # Path to offline replay buffer NPZ
+    data_path: Path  # Path to offline replay buffer NPZ
     device: str = "auto"  # auto/cpu/cuda/mps
     seed: int = 123
     max_examples: int = 0  # 0 = use all examples in NPZ

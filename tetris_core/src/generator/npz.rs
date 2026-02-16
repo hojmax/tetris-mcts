@@ -589,22 +589,13 @@ fn stream_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize>(
 mod tests {
     use super::*;
     use crate::constants::COMBO_NORMALIZATION_MAX;
+    use crate::generator::test_utils;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn unique_temp_path(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "tetris_core_{}_{}_{}.npz",
-            name,
-            std::process::id(),
-            nanos
-        ))
+        test_utils::unique_temp_path("tetris_core", name)
     }
 
     fn make_example(move_number: u32, hold_piece: usize, combo: u32) -> TrainingExample {

@@ -1,9 +1,12 @@
-"""Check NN value estimate by manually constructing a state and running ONNX inference."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
+from simple_parsing import parse
 
-from tetris_mcts.config import PROJECT_ROOT
 from tetris_mcts.ml.network import AUX_FEATURES
 
 # Piece name -> index mapping (matches constants.rs / config.py PIECE_NAMES)
@@ -49,7 +52,11 @@ HOLES = 0.0
 OVERHANG_FIELDS = 1.0 / 25.0
 
 EXPECTED_VALUE = 0.567
-MODEL_PATH = PROJECT_ROOT / "training_runs" / "v6" / "checkpoints" / "parallel.onnx"
+
+
+@dataclass
+class ScriptArgs:
+    model_path: Path  # Path to ONNX model
 
 
 def encode_board(board: np.ndarray) -> np.ndarray:
@@ -149,7 +156,7 @@ def encode_aux(
     return aux.reshape(1, AUX_FEATURES)
 
 
-def main() -> None:
+def main(args: ScriptArgs) -> None:
     board_tensor = encode_board(BOARD)
     aux_tensor = encode_aux(
         CURRENT_PIECE,
@@ -205,7 +212,7 @@ def main() -> None:
     print()
 
     # Load ONNX and run inference
-    session = ort.InferenceSession(str(MODEL_PATH))
+    session = ort.InferenceSession(str(args.model_path))
     input_names = [inp.name for inp in session.get_inputs()]
     print(f"ONNX input names: {input_names}")
 
@@ -229,4 +236,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(parse(ScriptArgs))
