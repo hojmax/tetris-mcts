@@ -16,7 +16,6 @@ from pathlib import Path
 import shutil
 import tempfile
 import time
-from typing import Optional
 
 import structlog
 import torch
@@ -359,7 +358,7 @@ class Trainer:
     def __init__(
         self,
         config: TrainingConfig,
-        model: Optional[TetrisNet] = None,
+        model: TetrisNet | None = None,
         device: str = "cpu",
     ):
         self.config = config
@@ -570,6 +569,20 @@ class Trainer:
         )
         return sum(t.numel() * t.element_size() for t in tensors)
 
+    @staticmethod
+    def _tensor_field_pairs(
+        mirror: CircularReplayMirror,
+        batch: TrainingBatch,
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        return [
+            (mirror.boards, batch.boards),
+            (mirror.aux, batch.aux),
+            (mirror.policy_targets, batch.policy_targets),
+            (mirror.value_targets, batch.value_targets),
+            (mirror.overhang_fields, batch.overhang_fields),
+            (mirror.masks, batch.masks),
+        ]
+
     def _write_to_mirror(
         self,
         mirror: CircularReplayMirror,
@@ -579,7 +592,6 @@ class Trainer:
         if n == 0:
             return
         if n > mirror.capacity:
-            # Delta larger than buffer — only keep the tail
             offset = n - mirror.capacity
             batch = TrainingBatch(
                 boards=batch.boards[offset:],
@@ -592,29 +604,17 @@ class Trainer:
             n = mirror.capacity
 
         end_pos = mirror.write_pos + n
+        pairs = self._tensor_field_pairs(mirror, batch)
         if end_pos <= mirror.capacity:
             s = slice(mirror.write_pos, end_pos)
-            mirror.boards[s].copy_(batch.boards)
-            mirror.aux[s].copy_(batch.aux)
-            mirror.policy_targets[s].copy_(batch.policy_targets)
-            mirror.value_targets[s].copy_(batch.value_targets)
-            mirror.overhang_fields[s].copy_(batch.overhang_fields)
-            mirror.masks[s].copy_(batch.masks)
+            for dst, src in pairs:
+                dst[s].copy_(src)
         else:
             tail = mirror.capacity - mirror.write_pos
-            mirror.boards[mirror.write_pos :].copy_(batch.boards[:tail])
-            mirror.aux[mirror.write_pos :].copy_(batch.aux[:tail])
-            mirror.policy_targets[mirror.write_pos :].copy_(batch.policy_targets[:tail])
-            mirror.value_targets[mirror.write_pos :].copy_(batch.value_targets[:tail])
-            mirror.overhang_fields[mirror.write_pos :].copy_(batch.overhang_fields[:tail])
-            mirror.masks[mirror.write_pos :].copy_(batch.masks[:tail])
             head = n - tail
-            mirror.boards[:head].copy_(batch.boards[tail:])
-            mirror.aux[:head].copy_(batch.aux[tail:])
-            mirror.policy_targets[:head].copy_(batch.policy_targets[tail:])
-            mirror.value_targets[:head].copy_(batch.value_targets[tail:])
-            mirror.overhang_fields[:head].copy_(batch.overhang_fields[tail:])
-            mirror.masks[:head].copy_(batch.masks[tail:])
+            for dst, src in pairs:
+                dst[mirror.write_pos :].copy_(src[:tail])
+                dst[:head].copy_(src[tail:])
 
         mirror.write_pos = (mirror.write_pos + n) % mirror.capacity
         mirror.count = min(mirror.count + n, mirror.capacity)
@@ -884,7 +884,7 @@ class Trainer:
         self,
         frames: list,
         attack: int,
-    ) -> tuple[Optional[object], Optional[Path]]:
+    ) -> tuple[object | None, Path | None]:
         if not frames:
             return None, None
 

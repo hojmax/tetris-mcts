@@ -123,10 +123,6 @@ impl TetrisNN {
         Ok(board_embed)
     }
 
-    fn compute_board_embedding_from_slice(&self, board_f32: &[f32]) -> TractResult<Array1<f32>> {
-        self.compute_board_embedding_owned(board_f32.to_vec())
-    }
-
     fn insert_board_embedding_cache(&self, board_key: [u64; 4], embed: Array1<f32>) {
         let mut cache = self.board_cache.borrow_mut();
         let mut cache_order = self.cache_order.borrow_mut();
@@ -292,7 +288,7 @@ impl TetrisNN {
         action_mask: &[bool],
     ) -> TractResult<(Vec<f32>, f32)> {
         // No caching for raw tensor inputs (used only by debug functions)
-        let board_embed = self.compute_board_embedding_from_slice(board_tensor)?;
+        let board_embed = self.compute_board_embedding_owned(board_tensor.to_vec())?;
         let board_h_tensor = tract_ndarray::Array2::from_shape_vec(
             (1, self.board_hidden),
             board_embed.into_raw_vec(),

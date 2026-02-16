@@ -35,7 +35,7 @@ make build      # Compile Rust with maturin (release mode, slow but optimized)
 make build-dev  # Fast debug build (~10x faster, for development only)
 make play       # Run interactive Tetris game
 make viz        # Run MCTS tree visualizer (Dash app at localhost:8050)
-make test       # Run Rust tests (cargo test)
+make test       # Run Rust tests + Python tests
 make check      # Run ruff + pyright linting
 make sweep-lr-model  # Run W&B sweep for learning rate + model size
 make eval-nn-value-weight  # Evaluate fixed network at multiple nn_value_weight values
@@ -255,6 +255,7 @@ tetris_core/src/             # Rust game engine
 │   ├── piece_management.rs  # Queue, hold, 7-bag spawning
 │   ├── clearing.rs          # Line clear mechanics
 │   ├── lock_delay.rs        # Lock delay timer
+│   ├── global_cache.rs      # Thread-local placement & board analysis caches
 │   └── pymethods.rs         # Python API exports
 ├── mcts/                    # Monte Carlo Tree Search
 │   ├── agent.rs             # MCTSAgent PyO3 interface
@@ -278,7 +279,8 @@ tetris_mcts/                 # Python package
 │   ├── training.py          # Trainer class, training loop
 │   ├── loss.py              # Loss functions and metrics
 │   ├── weights.py           # Checkpoint/ONNX export
-│   └── visualization.py     # Board rendering + replay visualization
+│   ├── visualization.py     # Board rendering + replay visualization
+│   └── value_predictor.py
 └── scripts/
     ├── tetris_game.py              # Interactive Pygame game
     ├── abalations/                 # Network ablation/architecture experiments
@@ -289,6 +291,7 @@ tetris_mcts/                 # Python package
     │   ├── compare_offline_feature_ablation.py
     │   ├── compare_offline_network_scaling.py
     │   ├── evaluate_nn_value_weight_sweep.py
+    │   ├── sweep_mcts_config.py
     │   └── wandb_sweep_lr_model_size.py
     ├── inspection/                 # Data/MCTS inspection and debugging tools
     │   ├── analyze_training_data.py
@@ -363,13 +366,13 @@ From `config.py` TrainingConfig defaults:
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
 - **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
 - **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
-- **Buffer**: 1M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=1` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=1` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
+- **Buffer**: 2M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=1` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=1` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
 - **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.01` by default. Promotion ramp is event-driven on accepted candidates with multiplicative targets and additive updates: `delta = min(current * (nn_value_weight_promotion_multiplier - 1.0), nn_value_weight_promotion_max_delta)` then `next = min(nn_value_weight_cap, current + delta)`. Defaults: multiplier `1.4` (adds 40%), max delta `0.10`, cap `1.0`.
 - **Q Normalization**: `use_tanh_q_normalization=true` by default; when true, NN-guided MCTS uses `tanh(Q / q_scale)` (default `q_scale=8.0`) for the Q term. When false, uses sibling min-max Q normalization even in NN mode. Bootstrap (no-NN) mode always uses min-max regardless of this setting.
-- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1800` (`0` disables periodic snapshot saves).
+- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=3600` (`0` disables periodic snapshot saves).
 - **Training-loop logging defaults**: full scalar train-step metrics are collected every `train_step_metrics_interval=16` steps, extra diagnostics (`compute_metrics` forward pass for policy entropy/accuracy) are enabled by default with `compute_extra_train_metrics_on_log=true` (overhead tracked as `timing/extra_metrics_ms`), and individual per-game rows are logged by default (`log_individual_games_to_wandb=true`). Aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step` are always logged.
 - **Model Promotion Gate**: candidate window=50 games on fixed seeds `0..N`, evaluator noise enabled by default; candidate evaluation carries an explicit `candidate_nn_value_weight`, and promotion atomically updates `(incumbent model, incumbent nn_value_weight)` together. Candidate eval events include per-game results and best/worst game replays for trajectory GIF rendering.
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model

@@ -1,10 +1,4 @@
-"""
-Weight Export/Import Pipeline for Tetris AlphaZero
-
-Supports:
-- PyTorch checkpoint save/load
-- ONNX export for Rust inference
-"""
+from __future__ import annotations
 
 import contextlib
 import io
@@ -13,7 +7,6 @@ import logging
 import struct
 import warnings
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
@@ -34,22 +27,12 @@ logger = structlog.get_logger()
 
 def save_checkpoint(
     model: TetrisNet,
-    optimizer: Optional[torch.optim.Optimizer],
-    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
+    optimizer: torch.optim.Optimizer | None,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     step: int,
     filepath: str | Path,
     **extra_state,
 ) -> None:
-    """
-    Save a training checkpoint.
-
-    Args:
-        model: The TetrisNet model
-        optimizer: Optimizer state (optional)
-        step: Training step number
-        filepath: Path to save to
-        **extra_state: Additional state to save
-    """
     state = {
         "model_state_dict": model.state_dict(),
         "step": step,
@@ -65,21 +48,10 @@ def save_checkpoint(
 
 def load_checkpoint(
     filepath: str | Path,
-    model: Optional[TetrisNet] = None,
-    optimizer: Optional[torch.optim.Optimizer] = None,
-    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
+    model: TetrisNet | None = None,
+    optimizer: torch.optim.Optimizer | None = None,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
 ) -> dict:
-    """
-    Load a training checkpoint.
-
-    Args:
-        filepath: Path to checkpoint file
-        model: Model to load weights into (optional)
-        optimizer: Optimizer to load state into (optional)
-
-    Returns:
-        Checkpoint state dict
-    """
     state = torch.load(filepath, map_location="cpu", weights_only=True)
 
     if model is not None:
@@ -99,23 +71,8 @@ def load_checkpoint(
     return state
 
 
-def export_onnx(
-    model: TetrisNet,
-    filepath: str | Path,
-    opset_version: int = 18,
-) -> bool:
-    """
-    Export model to ONNX format for Rust inference (tract-onnx).
-
-    Args:
-        model: The TetrisNet model
-        filepath: Output path (should end in .onnx)
-        opset_version: ONNX opset version (17 needed for LayerNorm)
-
-    Returns:
-        True if export succeeded, False if ONNX dependencies are missing
-    """
-    # ONNX export must happen on CPU
+@contextlib.contextmanager
+def _onnx_export_context(model: TetrisNet):
     original_device = next(model.parameters()).device
     if original_device.type == "cuda":
         torch.cuda.empty_cache()
@@ -124,35 +81,40 @@ def export_onnx(
     try:
         model.cpu()
         model.eval()
-
-        # Create dummy inputs (batch size 1, tract handles this)
-        dummy_board = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
-        dummy_aux = torch.zeros(1, AUX_FEATURES)
-
-        # Suppress ONNX export warnings
         onnx_logger.setLevel(logging.ERROR)
+        yield
+    finally:
+        onnx_logger.setLevel(old_level)
+        model.to(original_device)
 
-        # Export without dynamic_axes for tract compatibility
-        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
-            warnings.filterwarnings("ignore")
-            torch.onnx.export(
-                model,
-                (dummy_board, dummy_aux),
-                filepath,
-                export_params=True,
-                opset_version=opset_version,
-                do_constant_folding=True,
-                input_names=["board", "aux_features"],
-                output_names=["policy_logits", "value"],
-                verbose=False,
-            )
+
+def export_onnx(
+    model: TetrisNet,
+    filepath: str | Path,
+    opset_version: int = 18,
+) -> bool:
+    try:
+        with _onnx_export_context(model):
+            dummy_board = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
+            dummy_aux = torch.zeros(1, AUX_FEATURES)
+
+            with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+                warnings.filterwarnings("ignore")
+                torch.onnx.export(
+                    model,
+                    (dummy_board, dummy_aux),
+                    filepath,
+                    export_params=True,
+                    opset_version=opset_version,
+                    do_constant_folding=True,
+                    input_names=["board", "aux_features"],
+                    output_names=["policy_logits", "value"],
+                    verbose=False,
+                )
         return True
     except (ImportError, ModuleNotFoundError) as e:
         logger.warning("ONNX export skipped; missing dependencies", error=str(e))
         return False
-    finally:
-        onnx_logger.setLevel(old_level)
-        model.to(original_device)
 
 
 def split_model_paths(onnx_path: str | Path) -> tuple[Path, Path, Path]:
@@ -169,88 +131,67 @@ def export_split_models(
     onnx_path: str | Path,
     opset_version: int = 18,
 ) -> bool:
-    """Export split models (conv.onnx, heads.onnx, fc.bin) for cached Rust inference."""
     conv_path, heads_path, fc_path = split_model_paths(onnx_path)
-    original_device = next(model.parameters()).device
-    if original_device.type == "cuda":
-        torch.cuda.empty_cache()
-    onnx_logger = logging.getLogger("torch.onnx")
-    old_level = onnx_logger.level
     try:
-        model.cpu()
-        model.eval()
-        onnx_logger.setLevel(logging.ERROR)
+        with _onnx_export_context(model):
+            conv_backbone = ConvBackbone(model)
+            conv_backbone.eval()
+            dummy_board = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
+            with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+                warnings.filterwarnings("ignore")
+                torch.onnx.export(
+                    conv_backbone,
+                    (dummy_board,),
+                    str(conv_path),
+                    export_params=True,
+                    opset_version=opset_version,
+                    do_constant_folding=True,
+                    input_names=["board"],
+                    output_names=["conv_out"],
+                    verbose=False,
+                )
 
-        conv_backbone = ConvBackbone(model)
-        conv_backbone.eval()
-        dummy_board = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
-        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
-            warnings.filterwarnings("ignore")
-            torch.onnx.export(
-                conv_backbone,
-                (dummy_board,),
-                str(conv_path),
-                export_params=True,
-                opset_version=opset_version,
-                do_constant_folding=True,
-                input_names=["board"],
-                output_names=["conv_out"],
-                verbose=False,
-            )
+            heads_model = HeadsModel(model)
+            heads_model.eval()
+            board_hidden = model.board_proj.out_features
+            dummy_board_h = torch.zeros(1, board_hidden)
+            dummy_aux = torch.zeros(1, AUX_FEATURES)
+            with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+                warnings.filterwarnings("ignore")
+                torch.onnx.export(
+                    heads_model,
+                    (dummy_board_h, dummy_aux),
+                    str(heads_path),
+                    export_params=True,
+                    opset_version=opset_version,
+                    do_constant_folding=True,
+                    input_names=["board_h", "aux_features"],
+                    output_names=["policy_logits", "value"],
+                    verbose=False,
+                )
 
-        heads_model = HeadsModel(model)
-        heads_model.eval()
-        board_hidden = model.board_proj.out_features
-        dummy_board_h = torch.zeros(1, board_hidden)
-        dummy_aux = torch.zeros(1, AUX_FEATURES)
-        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
-            warnings.filterwarnings("ignore")
-            torch.onnx.export(
-                heads_model,
-                (dummy_board_h, dummy_aux),
-                str(heads_path),
-                export_params=True,
-                opset_version=opset_version,
-                do_constant_folding=True,
-                input_names=["board_h", "aux_features"],
-                output_names=["policy_logits", "value"],
-                verbose=False,
-            )
-
-        # Export board projection weight and bias as raw f32 binary
-        # Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
-        weight = model.board_proj.weight.detach().numpy()  # (hidden, conv_flat)
-        bias = model.board_proj.bias.detach().numpy()  # (hidden,)
-        rows, cols = weight.shape
-        with open(fc_path, "wb") as f:
-            f.write(struct.pack("<II", rows, cols))
-            f.write(weight.astype(np.float32).tobytes())
-            f.write(bias.astype(np.float32).tobytes())
+            # Export board projection weight and bias as raw f32 binary
+            # Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
+            weight = model.board_proj.weight.detach().numpy()
+            bias = model.board_proj.bias.detach().numpy()
+            rows, cols = weight.shape
+            with open(fc_path, "wb") as f:
+                f.write(struct.pack("<II", rows, cols))
+                f.write(weight.astype(np.float32).tobytes())
+                f.write(bias.astype(np.float32).tobytes())
 
         return True
     except (ImportError, ModuleNotFoundError) as e:
         logger.warning("Split model export skipped; missing dependencies", error=str(e))
         return False
-    finally:
-        onnx_logger.setLevel(old_level)
-        model.to(original_device)
 
 
 def export_metadata(
     filepath: str | Path,
     step: int,
-    eval_metrics: Optional[dict] = None,
-    config: Optional[dict] = None,
+    eval_metrics: dict | None = None,
+    config: dict | None = None,
 ) -> None:
-    """
-    Export metadata alongside weights for tracking.
-
-    Args:
-        filepath: Path to JSON file
-        step: Training step
-        eval_metrics: Optional evaluation metrics
-        config: Optional training config
-    """
     metadata = {
         "step": step,
         "eval_metrics": eval_metrics or {},
@@ -262,14 +203,6 @@ def export_metadata(
 
 
 class WeightManager:
-    """
-    Manages weight files for training/inference coordination.
-
-    Handles:
-    - Saving checkpoints at intervals
-    - Exporting weights for Rust self-play
-    - Loading latest weights
-    """
 
     def __init__(self, checkpoint_dir: str | Path):
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -278,18 +211,13 @@ class WeightManager:
     def save(
         self,
         model: TetrisNet,
-        optimizer: Optional[torch.optim.Optimizer],
-        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
+        optimizer: torch.optim.Optimizer | None,
+        scheduler: torch.optim.lr_scheduler.LRScheduler | None,
         step: int,
-        eval_metrics: Optional[dict] = None,
+        eval_metrics: dict | None = None,
         export_for_rust: bool = True,
         extra_checkpoint_state: dict[str, object] | None = None,
     ) -> dict[str, Path]:
-        """
-        Save checkpoint and optionally export for Rust.
-
-        Returns paths to saved files.
-        """
         paths = {}
 
         # Save PyTorch checkpoint
@@ -338,15 +266,9 @@ class WeightManager:
     def load_latest(
         self,
         model: TetrisNet,
-        optimizer: Optional[torch.optim.Optimizer] = None,
-        scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
-    ) -> Optional[int]:
-        """
-        Load the latest checkpoint.
-
-        Returns:
-            Training step of loaded checkpoint, or None if no checkpoint exists
-        """
+        optimizer: torch.optim.Optimizer | None = None,
+        scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+    ) -> int | None:
         latest_path = self.checkpoint_dir / LATEST_CHECKPOINT_FILENAME
         if not latest_path.exists():
             return None
@@ -355,7 +277,6 @@ class WeightManager:
         return state.get("step", 0)
 
     def get_checkpoints(self) -> list[Path]:
-        """Get list of all checkpoint files, sorted by step."""
         checkpoints = list(
             self.checkpoint_dir.glob(f"{CHECKPOINT_FILENAME_PREFIX}_*.pt")
         )

@@ -4,7 +4,6 @@
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
 - [ ] The tetris tspin stuff is still weird.
   - Investigate with make viz
-- [ ] Check out new gif rendering
 - [ ] Batch chance nodes
 - [ ] Too low learning rate?
 - [ ] Slow batches still?
@@ -14,11 +13,12 @@
 - [ ] try with and without the penalties on offline seeds.
 - [ ] Try training model offline and see if we hit the same ceiling that the model had during training. I.e. is it fully fit, and we are simply shifting the distribution and that is why value loss increases, or is there something suboptimal in the training during game generation
 - [ ] Replay buffer should grow gradually
-- [ ] Batch the chance nodes?
 - [ ] Think about how much of the aux computation can be cached
-- [ ] Compare larger trunk effect on computation speed. Like we have a lot of caching,
-- [ ] Double the board trunk since it is cached.
-- [ ] Speed of game generation based on model sizes.
+- [x] Check out new gif rendering
+- [x] Compare larger trunk effect on computation speed. Like we have a lot of caching,
+- [x] Speed of game generation based on model sizes.
+- [x] Double the board trunk since it is cached. (seems to be 2% slower for a 1% val loss improvement)
+- [x] Batch the chance nodes?
 - [x] Min / Max Normalization vs. tanh
 - [x] Should we divide by the mean value in the tanh normalization?
 - [x] Run min max vs. tanh normalization constants.
