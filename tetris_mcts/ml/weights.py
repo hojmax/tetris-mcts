@@ -27,7 +27,7 @@ from tetris_mcts.config import (
     LATEST_METADATA_FILENAME,
     LATEST_ONNX_FILENAME,
 )
-from tetris_mcts.ml.network import AUX_FEATURES, ConvBackbone, HeadsModel, TetrisNet
+from tetris_mcts.ml.network import AUX_FEATURES, PIECE_AUX_FEATURES, ConvBackbone, HeadsModel, TetrisNet
 
 logger = structlog.get_logger()
 
@@ -208,7 +208,7 @@ def export_split_models(
         heads_model.eval()
         board_hidden = model.board_proj.out_features
         dummy_board_h = torch.zeros(1, board_hidden)
-        dummy_aux = torch.zeros(1, AUX_FEATURES)
+        dummy_aux = torch.zeros(1, PIECE_AUX_FEATURES)
         with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
             warnings.filterwarnings("ignore")
             torch.onnx.export(
@@ -218,7 +218,7 @@ def export_split_models(
                 export_params=True,
                 opset_version=opset_version,
                 do_constant_folding=True,
-                input_names=["board_h", "aux_features"],
+                input_names=["board_h", "piece_aux"],
                 output_names=["policy_logits", "value"],
                 verbose=False,
             )

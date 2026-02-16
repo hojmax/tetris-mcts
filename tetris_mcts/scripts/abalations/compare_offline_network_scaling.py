@@ -16,7 +16,7 @@ from tetris_mcts.config import (
     NUM_ACTIONS,
     PROJECT_ROOT,
 )
-from tetris_mcts.ml.network import AUX_FEATURES, TetrisNet
+from tetris_mcts.ml.network import BOARD_STATS_FEATURES, PIECE_AUX_FEATURES, TetrisNet
 from compare_offline_architectures import (
     FlopBreakdown,
     OfflineDataSource,
@@ -195,10 +195,10 @@ def variant_flop_breakdown(
     miss_only += h2 * w2 * conv1 * (2 * conv0 * k * k + 1)
     miss_only += 2 * h2 * w2 * conv1
     miss_only += h1 * w1 * conv0 + h2 * w2 * conv1
-    miss_only += fusion_hidden * (2 * conv_flat + 1)
+    miss_only += fusion_hidden * (2 * (conv_flat + BOARD_STATS_FEATURES) + 1)
 
     hit_path = 0
-    hit_path += args.aux_hidden * (2 * AUX_FEATURES + 1)
+    hit_path += args.aux_hidden * (2 * PIECE_AUX_FEATURES + 1)
     hit_path += 5 * args.aux_hidden
     hit_path += args.aux_hidden
     hit_path += fusion_hidden * (2 * args.aux_hidden + 1)

@@ -21,28 +21,33 @@ pub const MAX_PIECE_CELLS: usize = 4;
 /// Chosen to match the combo-attack table saturation point.
 pub const COMBO_NORMALIZATION_MAX: u32 = 12;
 
-/// Auxiliary feature vector size for NN input:
+/// Piece/game auxiliary features sent to the uncached heads model:
 /// current piece (7) + hold piece (8) + hold available (1) + queue (35) + placement count (1)
-/// + combo (1) + back-to-back (1) + hidden-piece distribution (7)
-/// + column heights (10) + max column height (1) + min column height (1)
-/// + row fill counts (20) + total blocks (1) + bumpiness (1)
-/// + holes (1) + overhang fields (1).
-pub const AUX_FEATURES: usize = NUM_PIECE_TYPES
+/// + combo (1) + back-to-back (1) + hidden-piece distribution (7).
+pub const PIECE_AUX_FEATURES: usize = NUM_PIECE_TYPES
     + (NUM_PIECE_TYPES + 1)
     + 1
     + (QUEUE_SIZE * NUM_PIECE_TYPES)
     + 1
     + 1
     + 1
-    + NUM_PIECE_TYPES
-    + BOARD_WIDTH
+    + NUM_PIECE_TYPES; // 61
+
+/// Board-derived statistics folded into the cached board embedding:
+/// column heights (10) + max column height (1) + min column height (1)
+/// + row fill counts (20) + total blocks (1) + bumpiness (1)
+/// + holes (1) + overhang fields (1).
+pub const BOARD_STATS_FEATURES: usize = BOARD_WIDTH
     + 1
     + 1
     + BOARD_HEIGHT
     + 1
     + 1
     + 1
-    + 1;
+    + 1; // 36
+
+/// Full auxiliary feature vector size (training data packing).
+pub const AUX_FEATURES: usize = PIECE_AUX_FEATURES + BOARD_STATS_FEATURES; // 97
 
 /// Default lock delay in milliseconds
 pub const DEFAULT_LOCK_DELAY_MS: u32 = 500;
