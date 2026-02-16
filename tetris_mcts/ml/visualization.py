@@ -27,8 +27,8 @@ PADDING = 10
 MINI_CELL = 12
 LEFT_SIDEBAR = 76
 RIGHT_SIDEBAR = 76
-SIDEBAR_LABEL_Y = 12
-SIDEBAR_PIECE_Y = 38
+SIDEBAR_LABEL_Y = 2
+SIDEBAR_PIECE_Y = 32
 QUEUE_SLOT_SPACING = 44
 STATS_Y = 80
 STATS_LINE_H = 16
@@ -225,12 +225,16 @@ def render_board(
 
     if show_piece_info:
         # --- Top info bar ---
-        parts = [f"Move: {move_number}", f"ATK: {attack}"]
+        parts = [f"Move: {move_number}", f"Attack: {attack}"]
         if value_pred is not None:
             parts.append(f"Vpred: {value_pred:.2f}")
         if is_terminal:
             parts.append("TERMINAL")
-        draw.text((LEFT_SIDEBAR, 6), "  ".join(parts), fill=TEXT_COLOR, font=font)
+        info_str = "  ".join(parts)
+        bbox_info = font.getbbox(info_str)
+        info_tw = bbox_info[2] - bbox_info[0]
+        info_x = LEFT_SIDEBAR + (board_w_px - info_tw) // 2
+        draw.text((info_x, 6), info_str, fill=TEXT_COLOR, font=font)
 
         # --- Left sidebar: HOLD ---
         left_cx = LEFT_SIDEBAR // 2
@@ -251,7 +255,7 @@ def render_board(
         # Stats below hold piece
         sy = board_y + STATS_Y
         sx = left_cx - 28
-        stat_lines = [f"ATK: {attack}"]
+        stat_lines = []
         if combo is not None:
             stat_lines.append(f"Combo: {combo}")
         if back_to_back is not None:
