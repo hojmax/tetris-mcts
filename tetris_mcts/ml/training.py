@@ -1091,6 +1091,7 @@ class Trainer:
             non_network_num_simulations=self.config.bootstrap_num_simulations,
             initial_incumbent_lifetime_games=self.initial_incumbent_lifetime_games,
             initial_incumbent_lifetime_attack=self.initial_incumbent_lifetime_attack,
+            nn_value_weight_cap=self.config.nn_value_weight_cap,
         )
         generator.start()
         logger.info(
@@ -1262,6 +1263,10 @@ class Trainer:
                         event["incumbent_nn_value_weight"]
                     )
                     promoted_nn_value_weight = float(event["promoted_nn_value_weight"])
+                    promoted_death_penalty = float(event["promoted_death_penalty"])
+                    promoted_overhang_penalty_weight = float(
+                        event["promoted_overhang_penalty_weight"]
+                    )
                     logger.info(
                         "Model evaluation decision",
                         trainer_step=self.step,
@@ -1275,6 +1280,8 @@ class Trainer:
                         incumbent_avg_attack=event["incumbent_avg_attack"],
                         incumbent_nn_value_weight=incumbent_nn_value_weight,
                         promoted_nn_value_weight=promoted_nn_value_weight,
+                        promoted_death_penalty=promoted_death_penalty,
+                        promoted_overhang_penalty_weight=promoted_overhang_penalty_weight,
                         promoted=promoted,
                         auto_promoted=bool(event["auto_promoted"]),
                         evaluation_seconds=event["evaluation_seconds"],
@@ -1299,6 +1306,8 @@ class Trainer:
                                 ],
                                 "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
                                 "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
+                                "model_gate/promoted_death_penalty": promoted_death_penalty,
+                                "model_gate/promoted_overhang_penalty_weight": promoted_overhang_penalty_weight,
                                 "model_gate/promoted": event["promoted"],
                                 "model_gate/auto_promoted": event["auto_promoted"],
                                 "model_gate/evaluation_seconds": event[

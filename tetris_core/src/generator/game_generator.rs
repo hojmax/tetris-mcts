@@ -185,6 +185,8 @@ struct ModelEvalEvent {
     candidate_avg_attack: f32,
     candidate_nn_value_weight: f32,
     promoted_nn_value_weight: f32,
+    promoted_death_penalty: f32,
+    promoted_overhang_penalty_weight: f32,
     promoted: bool,
     auto_promoted: bool,
     evaluation_seconds: f32,
@@ -344,6 +346,12 @@ pub struct GameGenerator {
     incumbent_model_version: Arc<AtomicU64>,
     /// Current nn_value_weight used by incumbent NN-guided rollouts.
     incumbent_nn_value_weight: Arc<AtomicU32>,
+    /// Current death penalty for incumbent search (zeroed when nn_value_weight reaches cap).
+    incumbent_death_penalty: Arc<AtomicU32>,
+    /// Current overhang penalty weight for incumbent search (zeroed when nn_value_weight reaches cap).
+    incumbent_overhang_penalty_weight: Arc<AtomicU32>,
+    /// Cap at which nn_value_weight triggers penalty removal.
+    nn_value_weight_cap: f32,
     /// Lifetime game count for the currently deployed incumbent model.
     incumbent_lifetime_games: Arc<AtomicU64>,
     /// Lifetime total attack for the currently deployed incumbent model.
@@ -355,7 +363,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_lifetime_games=0, initial_incumbent_lifetime_attack=0))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_lifetime_games=0, initial_incumbent_lifetime_attack=0, nn_value_weight_cap=1.0))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -371,6 +379,7 @@ impl GameGenerator {
         non_network_num_simulations: u32,
         initial_incumbent_lifetime_games: u64,
         initial_incumbent_lifetime_attack: u64,
+        nn_value_weight_cap: f32,
     ) -> PyResult<Self> {
         if max_placements == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -411,6 +420,9 @@ impl GameGenerator {
             ));
         }
         let initial_nn_value_weight_bits = resolved_config.nn_value_weight.to_bits();
+        let initial_death_penalty_bits = resolved_config.death_penalty.to_bits();
+        let initial_overhang_penalty_weight_bits =
+            resolved_config.overhang_penalty_weight.to_bits();
         let bootstrap_model_path = PathBuf::from(model_path);
 
         Ok(GameGenerator {
@@ -437,6 +449,11 @@ impl GameGenerator {
             incumbent_model_step: Arc::new(AtomicU64::new(initial_model_step)),
             incumbent_model_version: Arc::new(AtomicU64::new(0)),
             incumbent_nn_value_weight: Arc::new(AtomicU32::new(initial_nn_value_weight_bits)),
+            incumbent_death_penalty: Arc::new(AtomicU32::new(initial_death_penalty_bits)),
+            incumbent_overhang_penalty_weight: Arc::new(AtomicU32::new(
+                initial_overhang_penalty_weight_bits,
+            )),
+            nn_value_weight_cap,
             incumbent_lifetime_games: Arc::new(AtomicU64::new(initial_incumbent_lifetime_games)),
             incumbent_lifetime_attack: Arc::new(AtomicU64::new(initial_incumbent_lifetime_attack)),
             thread_handles: Vec::new(),
@@ -541,6 +558,10 @@ impl GameGenerator {
             let incumbent_model_step = Arc::clone(&self.incumbent_model_step);
             let incumbent_model_version = Arc::clone(&self.incumbent_model_version);
             let incumbent_nn_value_weight = Arc::clone(&self.incumbent_nn_value_weight);
+            let incumbent_death_penalty = Arc::clone(&self.incumbent_death_penalty);
+            let incumbent_overhang_penalty_weight =
+                Arc::clone(&self.incumbent_overhang_penalty_weight);
+            let nn_value_weight_cap = self.nn_value_weight_cap;
             let incumbent_lifetime_games = Arc::clone(&self.incumbent_lifetime_games);
             let incumbent_lifetime_attack = Arc::clone(&self.incumbent_lifetime_attack);
 
@@ -571,6 +592,9 @@ impl GameGenerator {
                     incumbent_model_step,
                     incumbent_model_version,
                     incumbent_nn_value_weight,
+                    incumbent_death_penalty,
+                    incumbent_overhang_penalty_weight,
+                    nn_value_weight_cap,
                     incumbent_lifetime_games,
                     incumbent_lifetime_attack,
                 );
@@ -654,6 +678,14 @@ impl GameGenerator {
 
     pub fn incumbent_nn_value_weight(&self) -> f32 {
         Self::load_atomic_f32(&self.incumbent_nn_value_weight)
+    }
+
+    pub fn incumbent_death_penalty(&self) -> f32 {
+        Self::load_atomic_f32(&self.incumbent_death_penalty)
+    }
+
+    pub fn incumbent_overhang_penalty_weight(&self) -> f32 {
+        Self::load_atomic_f32(&self.incumbent_overhang_penalty_weight)
     }
 
     /// Queue a candidate model for evaluator-worker gating.
@@ -851,6 +883,14 @@ impl GameGenerator {
             d.insert(
                 "promoted_nn_value_weight".to_string(),
                 event.promoted_nn_value_weight as f64,
+            );
+            d.insert(
+                "promoted_death_penalty".to_string(),
+                event.promoted_death_penalty as f64,
+            );
+            d.insert(
+                "promoted_overhang_penalty_weight".to_string(),
+                event.promoted_overhang_penalty_weight as f64,
             );
             d.insert(
                 "promoted".to_string(),
@@ -1201,6 +1241,9 @@ impl GameGenerator {
         incumbent_model_step: Arc<AtomicU64>,
         incumbent_model_version: Arc<AtomicU64>,
         incumbent_nn_value_weight: Arc<AtomicU32>,
+        incumbent_death_penalty: Arc<AtomicU32>,
+        incumbent_overhang_penalty_weight: Arc<AtomicU32>,
+        nn_value_weight_cap: f32,
         incumbent_lifetime_games: Arc<AtomicU64>,
         incumbent_lifetime_attack: Arc<AtomicU64>,
     ) {
@@ -1219,6 +1262,8 @@ impl GameGenerator {
                 &incumbent_model_step,
                 &incumbent_model_version,
                 &incumbent_nn_value_weight,
+                &incumbent_death_penalty,
+                &incumbent_overhang_penalty_weight,
                 &mut loaded_model_version,
                 &mut loaded_model_step,
                 &mut loaded_with_network,
@@ -1248,6 +1293,8 @@ impl GameGenerator {
                 &incumbent_model_step,
                 &incumbent_model_version,
                 &incumbent_nn_value_weight,
+                &incumbent_death_penalty,
+                &incumbent_overhang_penalty_weight,
                 &mut loaded_model_version,
                 &mut loaded_model_step,
                 &mut loaded_with_network,
@@ -1302,6 +1349,9 @@ impl GameGenerator {
                         &incumbent_model_step,
                         &incumbent_model_version,
                         &incumbent_nn_value_weight,
+                        &incumbent_death_penalty,
+                        &incumbent_overhang_penalty_weight,
+                        nn_value_weight_cap,
                         &incumbent_lifetime_games,
                         &incumbent_lifetime_attack,
                     );
@@ -1375,6 +1425,8 @@ impl GameGenerator {
         incumbent_model_step: &Arc<AtomicU64>,
         incumbent_model_version: &Arc<AtomicU64>,
         incumbent_nn_value_weight: &Arc<AtomicU32>,
+        incumbent_death_penalty: &Arc<AtomicU32>,
+        incumbent_overhang_penalty_weight: &Arc<AtomicU32>,
         loaded_model_version: &mut u64,
         loaded_model_step: &mut u64,
         loaded_with_network: &mut bool,
@@ -1393,11 +1445,16 @@ impl GameGenerator {
             None
         };
         let target_nn_value_weight = Self::load_atomic_f32(incumbent_nn_value_weight);
+        let target_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
+        let target_overhang_penalty_weight =
+            Self::load_atomic_f32(incumbent_overhang_penalty_weight);
         let Some(new_agent) = Self::create_rollout_agent(
             config,
             target_uses_network,
             non_network_num_simulations,
             target_nn_value_weight,
+            target_death_penalty,
+            target_overhang_penalty_weight,
             model_path.as_ref(),
             worker_id,
             "incumbent",
@@ -1409,8 +1466,8 @@ impl GameGenerator {
         if worker_id == 0 {
             if target_uses_network {
                 eprintln!(
-                    "[GameGenerator] Loaded incumbent NN model step {} ({} workers, sims={}, nn_value_weight={:.6})",
-                    *loaded_model_step, num_workers, config.num_simulations, target_nn_value_weight
+                    "[GameGenerator] Loaded incumbent NN model step {} ({} workers, sims={}, nn_value_weight={:.6}, death_penalty={:.3}, overhang_penalty_weight={:.3})",
+                    *loaded_model_step, num_workers, config.num_simulations, target_nn_value_weight, target_death_penalty, target_overhang_penalty_weight
                 );
             } else {
                 eprintln!(
@@ -1447,14 +1504,23 @@ impl GameGenerator {
         incumbent_model_step: &Arc<AtomicU64>,
         incumbent_model_version: &Arc<AtomicU64>,
         incumbent_nn_value_weight: &Arc<AtomicU32>,
+        incumbent_death_penalty: &Arc<AtomicU32>,
+        incumbent_overhang_penalty_weight: &Arc<AtomicU32>,
+        nn_value_weight_cap: f32,
         incumbent_lifetime_games: &Arc<AtomicU64>,
         incumbent_lifetime_attack: &Arc<AtomicU64>,
     ) -> usize {
+        // Read current penalty values for candidate evaluation
+        let candidate_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
+        let candidate_overhang_penalty_weight =
+            Self::load_atomic_f32(incumbent_overhang_penalty_weight);
         let Some(candidate_agent) = Self::create_rollout_agent(
             config,
             true,
             non_network_num_simulations,
             candidate.nn_value_weight,
+            candidate_death_penalty,
+            candidate_overhang_penalty_weight,
             Some(&candidate.model_path),
             worker_id,
             "candidate",
@@ -1541,6 +1607,15 @@ impl GameGenerator {
             incumbent_uses_network.store(true, Ordering::SeqCst);
             incumbent_model_step.store(candidate.model_step, Ordering::SeqCst);
             Self::store_atomic_f32(incumbent_nn_value_weight, candidate.nn_value_weight);
+            // Zero out search penalties once nn_value_weight reaches the cap
+            if candidate.nn_value_weight >= nn_value_weight_cap {
+                Self::store_atomic_f32(incumbent_death_penalty, 0.0);
+                Self::store_atomic_f32(incumbent_overhang_penalty_weight, 0.0);
+                eprintln!(
+                    "[GameGenerator] nn_value_weight reached cap ({:.6}), disabling death_penalty and overhang_penalty_weight",
+                    nn_value_weight_cap
+                );
+            }
             incumbent_model_version.fetch_add(1, Ordering::SeqCst);
             incumbent_lifetime_games.store(0, Ordering::SeqCst);
             incumbent_lifetime_attack.store(0, Ordering::SeqCst);
@@ -1600,6 +1675,9 @@ impl GameGenerator {
         };
 
         let evaluation_seconds = eval_start.elapsed().as_secs_f32();
+        let promoted_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
+        let promoted_overhang_penalty_weight =
+            Self::load_atomic_f32(incumbent_overhang_penalty_weight);
 
         model_eval_events
             .write()
@@ -1615,6 +1693,8 @@ impl GameGenerator {
                 candidate_avg_attack,
                 candidate_nn_value_weight: candidate.nn_value_weight,
                 promoted_nn_value_weight,
+                promoted_death_penalty,
+                promoted_overhang_penalty_weight,
                 promoted,
                 auto_promoted,
                 evaluation_seconds,
@@ -1628,6 +1708,8 @@ impl GameGenerator {
         uses_network: bool,
         non_network_num_simulations: u32,
         nn_value_weight: f32,
+        death_penalty: f32,
+        overhang_penalty_weight: f32,
     ) -> MCTSConfig {
         let mut rollout_config = base_config.clone();
         rollout_config.num_simulations = if uses_network {
@@ -1636,6 +1718,8 @@ impl GameGenerator {
             non_network_num_simulations
         };
         rollout_config.nn_value_weight = nn_value_weight;
+        rollout_config.death_penalty = death_penalty;
+        rollout_config.overhang_penalty_weight = overhang_penalty_weight;
         if !uses_network {
             rollout_config.q_scale = None;
         }
@@ -1647,6 +1731,8 @@ impl GameGenerator {
         uses_network: bool,
         non_network_num_simulations: u32,
         nn_value_weight: f32,
+        death_penalty: f32,
+        overhang_penalty_weight: f32,
         model_path: Option<&PathBuf>,
         worker_id: usize,
         role: &str,
@@ -1658,6 +1744,8 @@ impl GameGenerator {
             uses_network,
             non_network_num_simulations,
             nn_value_weight,
+            death_penalty,
+            overhang_penalty_weight,
         );
         let mut agent = MCTSAgent::new(rollout_config);
         if uses_network {
@@ -1998,25 +2086,39 @@ mod tests {
         config.dirichlet_alpha = 0.02;
         config.dirichlet_epsilon = 0.3;
         config.nn_value_weight = 0.123;
+        config.death_penalty = 5.0;
+        config.overhang_penalty_weight = 3.0;
         config.q_scale = Some(7.5);
 
-        let network_config = GameGenerator::build_rollout_config(&config, true, 999, 0.123);
+        let network_config =
+            GameGenerator::build_rollout_config(&config, true, 999, 0.123, 5.0, 3.0);
         assert_eq!(network_config.num_simulations, 123);
         assert_eq!(network_config.visit_sampling_epsilon, 0.42);
         assert_eq!(network_config.temperature, 1.5);
         assert_eq!(network_config.dirichlet_alpha, 0.02);
         assert_eq!(network_config.dirichlet_epsilon, 0.3);
         assert_eq!(network_config.nn_value_weight, 0.123);
+        assert_eq!(network_config.death_penalty, 5.0);
+        assert_eq!(network_config.overhang_penalty_weight, 3.0);
         assert_eq!(network_config.q_scale, Some(7.5));
 
-        let bootstrap_config = GameGenerator::build_rollout_config(&config, false, 999, 0.456);
+        let bootstrap_config =
+            GameGenerator::build_rollout_config(&config, false, 999, 0.456, 5.0, 3.0);
         assert_eq!(bootstrap_config.num_simulations, 999);
         assert_eq!(bootstrap_config.visit_sampling_epsilon, 0.42);
         assert_eq!(bootstrap_config.temperature, 1.5);
         assert_eq!(bootstrap_config.dirichlet_alpha, 0.02);
         assert_eq!(bootstrap_config.dirichlet_epsilon, 0.3);
         assert_eq!(bootstrap_config.nn_value_weight, 0.456);
+        assert_eq!(bootstrap_config.death_penalty, 5.0);
+        assert_eq!(bootstrap_config.overhang_penalty_weight, 3.0);
         assert_eq!(bootstrap_config.q_scale, None);
+
+        // Verify penalties are overridden when passed as 0
+        let zeroed_config =
+            GameGenerator::build_rollout_config(&config, true, 999, 1.0, 0.0, 0.0);
+        assert_eq!(zeroed_config.death_penalty, 0.0);
+        assert_eq!(zeroed_config.overhang_penalty_weight, 0.0);
     }
 
     #[test]
@@ -2096,6 +2198,7 @@ mod tests {
             10,
             0,
             0,
+            1.0,
         )
         .expect("generator should construct");
 

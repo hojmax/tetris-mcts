@@ -53,6 +53,9 @@ pub fn sample_dirichlet<R: rand::Rng + ?Sized>(alpha: f32, n: usize, rng: &mut R
 /// Dying early (low move_number) incurs a larger penalty than dying late.
 /// Returns 0.0 if death_penalty is 0.0 or move_number >= max_placements.
 pub fn compute_death_penalty(move_number: u32, max_placements: u32, death_penalty: f32) -> f32 {
+    if death_penalty == 0.0 {
+        return 0.0;
+    }
     let remaining = (max_placements as f32 - move_number as f32) / max_placements as f32;
     death_penalty * remaining.max(0.0)
 }
@@ -174,6 +177,9 @@ pub fn normalize_overhang_fields(overhang_fields: u32) -> f32 {
 
 /// Compute normalized overhang penalty magnitude from raw overhang count.
 pub fn compute_overhang_penalty(overhang_fields: u32, overhang_penalty_weight: f32) -> f32 {
+    if overhang_penalty_weight == 0.0 {
+        return 0.0;
+    }
     normalize_overhang_fields(overhang_fields) * overhang_penalty_weight
 }
 
