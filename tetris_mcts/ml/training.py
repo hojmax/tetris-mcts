@@ -24,7 +24,6 @@ import wandb
 from tetris_mcts.config import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
-    DEFAULT_GIF_FPS,
     DEFAULT_GIF_FRAME_DURATION_MS,
     INCUMBENT_ONNX_FILENAME,
     LATEST_ONNX_FILENAME,
@@ -917,7 +916,6 @@ class Trainer:
 
             video = wandb.Video(
                 str(gif_path),
-                fps=DEFAULT_GIF_FPS,
                 format="gif",
             )
             self._pending_eval_gif_paths.append(gif_path)

@@ -26,6 +26,29 @@
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
 - [ ] Batched leaf inference.
 
+- [ ]  Tetris
+    - [ ]  Batch chance nodes
+    - [ ]  Too low learning rate?
+    - [ ]  Slow batches still?
+    - [ ]  Bigger replay buffer
+    - [ ]  Faster training loop
+    - [ ]  Speed up data generation
+    - [ ]  Divisor in tanh sweep
+    - [ ]  Multi machine RL environment generation?
+    - [ ]  Instead of seperate evaluation (complex) just use the candidate runs? They will be on fixed seeds anyways. So we can take one of those and save the gif for.
+    - [ ]  Not all plots are x-axis synced like top1_accuracy
+    - [ ]  Right optimizer?
+    - [ ]  try with and without the penalties on offline seeds.
+    - [ ]  Try training model offline and see if we hit the same ceiling that the model had during training. I.e. is it fully fit, and we are simply shifting the distribution and that is why value loss increases, or is there something suboptimal in the training during game generation
+    - [ ]  Replay buffer should grow gradually
+    - [ ]  Fixed candidate seeds, no need for 50 random
+    - [ ]  fix this warning
+        2026-02-16 10:29:19
+        wandb: WARNING `fps` argument does not affect the frame rate of the video when providing a file path or raw bytes.
+    - [ ]  Batch the chance nodes?
+    - [ ]  Think about how much of the aux computation can be cached
+    - [ ]  Scale down death and pverhang penalty
+
 # Confusions
 
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.

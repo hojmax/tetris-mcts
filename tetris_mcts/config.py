@@ -35,7 +35,6 @@ CHECKPOINT_FILENAME_PREFIX = "checkpoint"
 
 # Visualization / logging defaults
 DEFAULT_GIF_FRAME_DURATION_MS = 300
-DEFAULT_GIF_FPS = 3
 
 # Piece metadata
 PIECE_NAMES = ["I", "O", "T", "S", "Z", "J", "L"]
