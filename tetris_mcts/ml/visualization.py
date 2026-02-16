@@ -14,7 +14,10 @@ from tetris_mcts.config import (
     BOARD_WIDTH,
     PIECE_COLORS,
     PIECE_SPAWN_CELLS,
+    QUEUE_SIZE,
 )
+
+from tetris_core import TetrisEnv
 
 # Board cell size
 CELL_SIZE = 20
@@ -284,6 +287,83 @@ def render_board(
         draw.text((PADDING, 10), text, fill=TEXT_COLOR, font=font)
 
     return img
+
+
+def render_replay(replay: dict) -> list[Image.Image]:
+    seed = int(replay["seed"])
+    moves = replay["moves"]
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed)
+    frames: list[Image.Image] = []
+    total_attack = 0
+
+    for move_idx, move in enumerate(moves):
+        if env.game_over:
+            break
+
+        board = np.array(env.get_board())
+        board_piece_types = env.get_board_piece_types()
+        piece = env.get_current_piece()
+        hold_piece = env.get_hold_piece()
+        queue_piece_types = env.get_queue(QUEUE_SIZE)
+        can_hold = not env.is_hold_used()
+        piece_cells = piece.get_cells() if piece else None
+        piece_type = piece.piece_type if piece else None
+        ghost = env.get_ghost_piece()
+        ghost_cells = ghost.get_cells() if ghost else None
+
+        frame = render_board(
+            board=board,
+            board_piece_types=board_piece_types,
+            current_piece_cells=piece_cells,
+            current_piece_type=piece_type,
+            ghost_cells=ghost_cells,
+            move_number=move_idx,
+            attack=total_attack,
+            can_hold=can_hold,
+            combo=env.combo,
+            back_to_back=env.back_to_back,
+            show_piece_info=True,
+            hold_piece_type=hold_piece.piece_type if hold_piece else None,
+            queue_piece_types=list(queue_piece_types),
+        )
+        frames.append(frame)
+
+        action = int(move["action"])
+        attack = env.execute_action_index(action)
+        if attack is None:
+            raise ValueError(f"Invalid replay action index: {action}")
+        total_attack += int(move["attack"])
+
+    # Final frame (post-last-action)
+    board = np.array(env.get_board())
+    board_piece_types = env.get_board_piece_types()
+    piece = env.get_current_piece()
+    hold_piece = env.get_hold_piece()
+    queue_piece_types = env.get_queue(QUEUE_SIZE)
+    can_hold = not env.is_hold_used()
+    piece_cells = piece.get_cells() if piece else None
+    piece_type = piece.piece_type if piece else None
+    ghost = env.get_ghost_piece()
+    ghost_cells = ghost.get_cells() if ghost else None
+    frame = render_board(
+        board=board,
+        board_piece_types=board_piece_types,
+        current_piece_cells=piece_cells,
+        current_piece_type=piece_type,
+        ghost_cells=ghost_cells,
+        move_number=len(frames),
+        attack=total_attack,
+        can_hold=can_hold,
+        combo=env.combo,
+        back_to_back=env.back_to_back,
+        is_terminal=env.game_over,
+        show_piece_info=True,
+        hold_piece_type=hold_piece.piece_type if hold_piece else None,
+        queue_piece_types=list(queue_piece_types),
+    )
+    frames.append(frame)
+
+    return frames
 
 
 def create_trajectory_gif(

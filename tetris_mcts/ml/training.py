@@ -9,6 +9,7 @@ Implements:
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,8 +61,7 @@ from tetris_mcts.ml.weights import (
     split_model_paths,
 )
 from tetris_mcts.ml.loss import RunningLossBalancer, compute_loss, compute_metrics
-from tetris_mcts.ml.evaluation import Evaluator
-from tetris_mcts.ml.visualization import create_trajectory_gif
+from tetris_mcts.ml.visualization import create_trajectory_gif, render_replay
 
 from tetris_core import MCTSConfig, GameGenerator
 
@@ -394,19 +394,6 @@ class Trainer:
 
         # Create weight manager
         self.weight_manager = WeightManager(config.checkpoint_dir)
-
-        # Create evaluator
-        self.evaluator = Evaluator(
-            model=self.model,
-            checkpoint_dir=config.checkpoint_dir,
-            num_simulations=config.num_simulations,
-            max_placements=config.max_placements,
-            overhang_penalty_weight=config.overhang_penalty_weight,
-            eval_seeds=config.eval_seeds,
-            eval_mcts_seed=config.eval_mcts_seed,
-            nn_value_weight=config.nn_value_weight,
-            q_scale=config.q_scale,
-        )
 
         # Training state
         self.step = 0
@@ -859,10 +846,6 @@ class Trainer:
             batch.masks,
         )
 
-    def evaluate(self, render_trajectory: bool = False):
-        """Evaluate current model using MCTS on fixed seeds."""
-        return self.evaluator.evaluate(render_trajectory)
-
     def _persist_incumbent_model_artifacts(
         self, generator: GameGenerator
     ) -> tuple[Path | None, str]:
@@ -1086,7 +1069,7 @@ class Trainer:
             save_interval_seconds=self.config.save_interval_seconds,
             num_workers=self.config.num_workers,
             initial_model_step=self.step,
-            candidate_eval_games=self.config.model_promotion_eval_games,
+            candidate_eval_seeds=list(range(self.config.model_promotion_eval_games)),
             start_with_network=not self.config.bootstrap_without_network,
             non_network_num_simulations=self.config.bootstrap_num_simulations,
             initial_incumbent_lifetime_games=self.initial_incumbent_lifetime_games,
@@ -1101,7 +1084,7 @@ class Trainer:
             training_data_path=str(training_data_path),
             num_workers=self.config.num_workers,
             add_noise=self.config.add_noise,
-            candidate_eval_games=self.config.model_promotion_eval_games,
+            candidate_eval_seeds=self.config.model_promotion_eval_games,
             bootstrap_without_network=self.config.bootstrap_without_network,
             bootstrap_num_simulations=self.config.bootstrap_num_simulations,
             incumbent_nn_value_weight=self.config.nn_value_weight,
@@ -1177,7 +1160,6 @@ class Trainer:
         next_model_sync_time_s = (
             interval_anchor_s + self.config.model_sync_interval_seconds
         )
-        next_eval_time_s = interval_anchor_s + self.config.eval_interval_seconds
         next_checkpoint_time_s = (
             interval_anchor_s + self.config.checkpoint_interval_seconds
         )
@@ -1288,37 +1270,84 @@ class Trainer:
                         evaluation_seconds=event["evaluation_seconds"],
                     )
                     if log_to_wandb:
-                        wandb.log(
-                            {
-                                "trainer_step": self.step,
-                                "model_gate/candidate_step": event["candidate_step"],
-                                "model_gate/candidate_games": event["candidate_games"],
-                                "model_gate/candidate_avg_attack": event[
-                                    "candidate_avg_attack"
-                                ],
-                                "model_gate/candidate_attack_variance": event[
-                                    "candidate_attack_variance"
-                                ],
-                                "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
-                                "model_gate/incumbent_step": event["incumbent_step"],
-                                "model_gate/incumbent_uses_network": event[
-                                    "incumbent_uses_network"
-                                ],
-                                "model_gate/incumbent_games": event["incumbent_games"],
-                                "model_gate/incumbent_avg_attack": event[
-                                    "incumbent_avg_attack"
-                                ],
-                                "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
-                                "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
-                                "model_gate/promoted_death_penalty": promoted_death_penalty,
-                                "model_gate/promoted_overhang_penalty_weight": promoted_overhang_penalty_weight,
-                                "model_gate/promoted": event["promoted"],
-                                "model_gate/auto_promoted": event["auto_promoted"],
-                                "model_gate/evaluation_seconds": event[
-                                    "evaluation_seconds"
-                                ],
-                            }
-                        )
+                        wandb_data: dict[str, object] = {
+                            "trainer_step": self.step,
+                            "model_gate/candidate_step": event["candidate_step"],
+                            "model_gate/candidate_games": event["candidate_games"],
+                            "model_gate/candidate_avg_attack": event[
+                                "candidate_avg_attack"
+                            ],
+                            "model_gate/candidate_attack_variance": event[
+                                "candidate_attack_variance"
+                            ],
+                            "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
+                            "model_gate/incumbent_step": event["incumbent_step"],
+                            "model_gate/incumbent_uses_network": event[
+                                "incumbent_uses_network"
+                            ],
+                            "model_gate/incumbent_games": event["incumbent_games"],
+                            "model_gate/incumbent_avg_attack": event[
+                                "incumbent_avg_attack"
+                            ],
+                            "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
+                            "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
+                            "model_gate/promoted_death_penalty": promoted_death_penalty,
+                            "model_gate/promoted_overhang_penalty_weight": promoted_overhang_penalty_weight,
+                            "model_gate/promoted": event["promoted"],
+                            "model_gate/auto_promoted": event["auto_promoted"],
+                            "model_gate/evaluation_seconds": event[
+                                "evaluation_seconds"
+                            ],
+                        }
+
+                        # Compute eval/* metrics from per-game results
+                        per_game_results = event["per_game_results"]
+                        if per_game_results:
+                            num_games = len(per_game_results)
+                            total_attack = sum(r[1] for r in per_game_results)
+                            total_lines = sum(r[2] for r in per_game_results)
+                            total_moves = sum(r[3] for r in per_game_results)
+                            wandb_data["eval/num_games"] = num_games
+                            wandb_data["eval/avg_attack"] = total_attack / num_games
+                            wandb_data["eval/max_attack"] = max(
+                                r[1] for r in per_game_results
+                            )
+                            wandb_data["eval/avg_lines"] = total_lines / num_games
+                            wandb_data["eval/max_lines"] = max(
+                                r[2] for r in per_game_results
+                            )
+                            wandb_data["eval/avg_moves"] = total_moves / num_games
+                            wandb_data["eval/attack_per_piece"] = (
+                                total_attack / total_moves if total_moves > 0 else 0.0
+                            )
+                            wandb_data["eval/lines_per_piece"] = (
+                                total_lines / total_moves if total_moves > 0 else 0.0
+                            )
+                            wandb_data["eval/nn_value_weight"] = (
+                                promoted_nn_value_weight
+                            )
+
+                        # Render best/worst trajectory GIFs
+                        best_replay_json = event.get("best_game_replay_json")
+                        worst_replay_json = event.get("worst_game_replay_json")
+                        if best_replay_json is not None:
+                            replay = json.loads(best_replay_json)
+                            frames = render_replay(replay)
+                            video, _ = self._create_wandb_gif_video(
+                                frames, attack=replay["total_attack"]
+                            )
+                            if video is not None:
+                                wandb_data["eval/best_trajectory"] = video
+                        if worst_replay_json is not None:
+                            replay = json.loads(worst_replay_json)
+                            frames = render_replay(replay)
+                            video, _ = self._create_wandb_gif_video(
+                                frames, attack=replay["total_attack"]
+                            )
+                            if video is not None:
+                                wandb_data["eval/worst_trajectory"] = video
+
+                        wandb.log(wandb_data)
 
                 # Log metrics
                 now_s = time.perf_counter()
@@ -1506,47 +1535,6 @@ class Trainer:
                     next_model_sync_time_s = roll_interval_deadline(
                         next_model_sync_time_s,
                         self.config.model_sync_interval_seconds,
-                        time.perf_counter(),
-                    )
-
-                # Evaluate
-                now_s = time.perf_counter()
-                if now_s >= next_eval_time_s:
-                    self.evaluator.nn_value_weight = (
-                        generator.incumbent_nn_value_weight()
-                    )
-                    # Render trajectory every evaluation for visualization
-                    eval_start = time.perf_counter()
-                    eval_result, trajectory_frames = self.evaluate(
-                        render_trajectory=log_to_wandb
-                    )
-                    eval_ms = 1000.0 * (time.perf_counter() - eval_start)
-                    if log_to_wandb:
-                        log_data = {
-                            "eval/num_games": eval_result.num_games,
-                            "eval/avg_attack": eval_result.avg_attack,
-                            "eval/max_attack": eval_result.max_attack,
-                            "eval/avg_lines": eval_result.avg_lines,
-                            "eval/max_lines": eval_result.max_lines,
-                            "eval/avg_moves": eval_result.avg_moves,
-                            "eval/attack_per_piece": eval_result.attack_per_piece,
-                            "eval/lines_per_piece": eval_result.lines_per_piece,
-                            "eval/nn_value_weight": self.evaluator.nn_value_weight,
-                            "timing/eval_ms": eval_ms,
-                            "trainer_step": self.step,
-                        }
-                        # Log trajectory as animated GIF
-                        if trajectory_frames:
-                            trajectory_attack = eval_result.game_results[0][0]
-                            eval_video, _ = self._create_wandb_gif_video(
-                                trajectory_frames, attack=trajectory_attack
-                            )
-                            if eval_video is not None:
-                                log_data["eval/trajectory"] = eval_video
-                        wandb.log(log_data)
-                    next_eval_time_s = roll_interval_deadline(
-                        next_eval_time_s,
-                        self.config.eval_interval_seconds,
                         time.perf_counter(),
                     )
 

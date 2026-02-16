@@ -15,10 +15,12 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crate::constants::{AUX_FEATURES, NUM_PIECE_TYPES};
+use crate::constants::{AUX_FEATURES, BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
+use crate::env::TetrisEnv;
 use crate::mcts::GameStats;
 use crate::mcts::{GameResult, GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
+use super::evaluation::{GameReplay, ReplayMove};
 use super::npz::{read_examples_from_npz, write_examples_slices_to_npz};
 
 /// Aggregate game statistics (thread-safe counters).
@@ -191,6 +193,12 @@ struct ModelEvalEvent {
     promoted: bool,
     auto_promoted: bool,
     evaluation_seconds: f32,
+    /// Best (max attack) game replay as JSON, if available.
+    best_game_replay_json: Option<String>,
+    /// Worst (min attack) game replay as JSON, if available.
+    worst_game_replay_json: Option<String>,
+    /// Per-game results: (seed, attack, lines, moves)
+    per_game_results: Vec<(u64, u32, u32, u32)>,
 }
 
 /// Shared replay buffer for thread-safe access between generator and trainer.
@@ -315,8 +323,8 @@ pub struct GameGenerator {
     save_interval_seconds: f64,
     /// Number of worker threads
     num_workers: usize,
-    /// Number of games the evaluator worker plays per candidate model.
-    candidate_eval_games: usize,
+    /// Fixed seeds used by the evaluator worker for candidate games.
+    candidate_eval_seeds: Vec<u64>,
     /// Number of simulations per move before the first promoted NN model.
     non_network_num_simulations: u32,
     /// Shared replay buffer (accessed by both worker threads and Python)
@@ -364,7 +372,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_games=50, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_lifetime_games=0, initial_incumbent_lifetime_attack=0, nn_value_weight_cap=1.0))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_lifetime_games=0, initial_incumbent_lifetime_attack=0, nn_value_weight_cap=1.0))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -375,7 +383,7 @@ impl GameGenerator {
         save_interval_seconds: f64,
         num_workers: usize,
         initial_model_step: u64,
-        candidate_eval_games: usize,
+        candidate_eval_seeds: Option<Vec<u64>>,
         start_with_network: bool,
         non_network_num_simulations: u32,
         initial_incumbent_lifetime_games: u64,
@@ -402,9 +410,10 @@ impl GameGenerator {
                 "num_workers must be > 0",
             ));
         }
-        if candidate_eval_games == 0 {
+        let candidate_eval_seeds = candidate_eval_seeds.unwrap_or_else(|| (0..50).collect());
+        if candidate_eval_seeds.is_empty() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "candidate_eval_games must be > 0",
+                "candidate_eval_seeds must not be empty",
             ));
         }
         if non_network_num_simulations == 0 {
@@ -434,7 +443,7 @@ impl GameGenerator {
             add_noise,
             save_interval_seconds,
             num_workers,
-            candidate_eval_games,
+            candidate_eval_seeds,
             non_network_num_simulations,
             buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
@@ -541,7 +550,7 @@ impl GameGenerator {
             let max_placements = self.max_placements;
             let add_noise = self.add_noise;
             let save_interval_seconds = self.save_interval_seconds;
-            let candidate_eval_games = self.candidate_eval_games;
+            let candidate_eval_seeds = self.candidate_eval_seeds.clone();
             let non_network_num_simulations = self.non_network_num_simulations;
             let num_workers = self.num_workers;
             let is_evaluator_worker = worker_id == evaluator_worker_id;
@@ -577,7 +586,7 @@ impl GameGenerator {
                     max_placements,
                     add_noise,
                     save_interval_seconds,
-                    candidate_eval_games,
+                    candidate_eval_seeds,
                     non_network_num_simulations,
                     buffer,
                     running,
@@ -848,67 +857,34 @@ impl GameGenerator {
     }
 
     /// Drain evaluator decision events in generation order.
-    pub fn drain_model_eval_events(&self) -> Vec<HashMap<String, f64>> {
+    pub fn drain_model_eval_events(&self, py: Python<'_>) -> Vec<HashMap<String, PyObject>> {
         let mut queue = self.model_eval_events.write().unwrap();
         let mut drained = Vec::with_capacity(queue.len());
         while let Some(event) = queue.pop_front() {
-            let mut d = HashMap::new();
-            d.insert("incumbent_step".to_string(), event.incumbent_step as f64);
+            let mut d: HashMap<String, PyObject> = HashMap::new();
+            d.insert("incumbent_step".into(), (event.incumbent_step as f64).into_py(py));
             d.insert(
-                "incumbent_uses_network".to_string(),
-                if event.incumbent_uses_network {
-                    1.0
-                } else {
-                    0.0
-                },
+                "incumbent_uses_network".into(),
+                (if event.incumbent_uses_network { 1.0 } else { 0.0_f64 }).into_py(py),
             );
-            d.insert("incumbent_games".to_string(), event.incumbent_games as f64);
-            d.insert(
-                "incumbent_avg_attack".to_string(),
-                event.incumbent_avg_attack as f64,
-            );
-            d.insert(
-                "incumbent_nn_value_weight".to_string(),
-                event.incumbent_nn_value_weight as f64,
-            );
-            d.insert("candidate_step".to_string(), event.candidate_step as f64);
-            d.insert("candidate_games".to_string(), event.candidate_games as f64);
-            d.insert(
-                "candidate_avg_attack".to_string(),
-                event.candidate_avg_attack as f64,
-            );
-            d.insert(
-                "candidate_attack_variance".to_string(),
-                event.candidate_attack_variance as f64,
-            );
-            d.insert(
-                "candidate_nn_value_weight".to_string(),
-                event.candidate_nn_value_weight as f64,
-            );
-            d.insert(
-                "promoted_nn_value_weight".to_string(),
-                event.promoted_nn_value_weight as f64,
-            );
-            d.insert(
-                "promoted_death_penalty".to_string(),
-                event.promoted_death_penalty as f64,
-            );
-            d.insert(
-                "promoted_overhang_penalty_weight".to_string(),
-                event.promoted_overhang_penalty_weight as f64,
-            );
-            d.insert(
-                "promoted".to_string(),
-                if event.promoted { 1.0 } else { 0.0 },
-            );
-            d.insert(
-                "auto_promoted".to_string(),
-                if event.auto_promoted { 1.0 } else { 0.0 },
-            );
-            d.insert(
-                "evaluation_seconds".to_string(),
-                event.evaluation_seconds as f64,
-            );
+            d.insert("incumbent_games".into(), (event.incumbent_games as f64).into_py(py));
+            d.insert("incumbent_avg_attack".into(), (event.incumbent_avg_attack as f64).into_py(py));
+            d.insert("incumbent_nn_value_weight".into(), (event.incumbent_nn_value_weight as f64).into_py(py));
+            d.insert("candidate_step".into(), (event.candidate_step as f64).into_py(py));
+            d.insert("candidate_games".into(), (event.candidate_games as f64).into_py(py));
+            d.insert("candidate_avg_attack".into(), (event.candidate_avg_attack as f64).into_py(py));
+            d.insert("candidate_attack_variance".into(), (event.candidate_attack_variance as f64).into_py(py));
+            d.insert("candidate_nn_value_weight".into(), (event.candidate_nn_value_weight as f64).into_py(py));
+            d.insert("promoted_nn_value_weight".into(), (event.promoted_nn_value_weight as f64).into_py(py));
+            d.insert("promoted_death_penalty".into(), (event.promoted_death_penalty as f64).into_py(py));
+            d.insert("promoted_overhang_penalty_weight".into(), (event.promoted_overhang_penalty_weight as f64).into_py(py));
+            d.insert("promoted".into(), (if event.promoted { 1.0 } else { 0.0_f64 }).into_py(py));
+            d.insert("auto_promoted".into(), (if event.auto_promoted { 1.0 } else { 0.0_f64 }).into_py(py));
+            d.insert("evaluation_seconds".into(), (event.evaluation_seconds as f64).into_py(py));
+            // New fields for fixed-seed eval
+            d.insert("best_game_replay_json".into(), event.best_game_replay_json.into_py(py));
+            d.insert("worst_game_replay_json".into(), event.worst_game_replay_json.into_py(py));
+            d.insert("per_game_results".into(), event.per_game_results.into_py(py));
             drained.push(d);
         }
         drained
@@ -1230,7 +1206,7 @@ impl GameGenerator {
         max_placements: u32,
         add_noise: bool,
         save_interval_seconds: f64,
-        candidate_eval_games: usize,
+        candidate_eval_seeds: Vec<u64>,
         non_network_num_simulations: u32,
         buffer: Arc<SharedBuffer>,
         running: Arc<AtomicBool>,
@@ -1339,7 +1315,7 @@ impl GameGenerator {
                         &config,
                         &running,
                         max_placements,
-                        candidate_eval_games,
+                        &candidate_eval_seeds,
                         add_noise,
                         non_network_num_simulations,
                         &buffer,
@@ -1494,7 +1470,7 @@ impl GameGenerator {
         config: &MCTSConfig,
         running: &Arc<AtomicBool>,
         max_placements: u32,
-        candidate_eval_games: usize,
+        candidate_eval_seeds: &[u64],
         add_noise: bool,
         non_network_num_simulations: u32,
         buffer: &Arc<SharedBuffer>,
@@ -1548,10 +1524,16 @@ impl GameGenerator {
 
         let eval_start = Instant::now();
 
-        // Each play_game call creates a fresh TetrisEnv::new(...) with a new RNG seed.
-        // Candidate gating therefore evaluates on randomized games, not a fixed seed list.
-        let mut candidate_results: Vec<GameResult> = Vec::with_capacity(candidate_eval_games);
-        for _ in 0..candidate_eval_games {
+        // Play candidate games on fixed seeds for consistent benchmarking.
+        struct CandidateGameResult {
+            seed: u64,
+            game_result: GameResult,
+            replay_moves: Vec<ReplayMove>,
+        }
+
+        let mut candidate_results: Vec<CandidateGameResult> =
+            Vec::with_capacity(candidate_eval_seeds.len());
+        for &seed in candidate_eval_seeds {
             if !running.load(Ordering::SeqCst) {
                 let incumbent_path = incumbent_model_path.read().unwrap().clone();
                 Self::remove_model_artifacts_if_safe(
@@ -1562,8 +1544,15 @@ impl GameGenerator {
                 );
                 return 0;
             }
-            if let Some(result) = candidate_agent.play_game(max_placements, add_noise) {
-                candidate_results.push(result);
+            let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
+            if let Some((result, replay)) =
+                candidate_agent.play_game_on_env(env, max_placements, add_noise)
+            {
+                candidate_results.push(CandidateGameResult {
+                    seed,
+                    game_result: result,
+                    replay_moves: replay,
+                });
             }
         }
 
@@ -1578,16 +1567,61 @@ impl GameGenerator {
             return 0;
         }
 
+        // Build per-game results and find best/worst for replay serialization
+        let per_game_results: Vec<(u64, u32, u32, u32)> = candidate_results
+            .iter()
+            .map(|r| {
+                (
+                    r.seed,
+                    r.game_result.total_attack,
+                    r.game_result.stats.total_lines,
+                    r.game_result.num_moves,
+                )
+            })
+            .collect();
+
+        let best_idx = candidate_results
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, r)| r.game_result.total_attack)
+            .map(|(i, _)| i);
+        let worst_idx = candidate_results
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, r)| r.game_result.total_attack)
+            .map(|(i, _)| i);
+
+        let serialize_replay = |idx: usize| -> Option<String> {
+            let r = &candidate_results[idx];
+            let replay = GameReplay {
+                seed: r.seed,
+                moves: r.replay_moves.clone(),
+                total_attack: r.game_result.total_attack,
+                num_moves: r.game_result.num_moves,
+            };
+            serde_json::to_string(&replay).ok()
+        };
+
+        let best_game_replay_json = best_idx.and_then(serialize_replay);
+        let worst_game_replay_json = worst_idx.and_then(|i| {
+            // Avoid duplicating if best and worst are the same game
+            if Some(i) == best_idx {
+                None
+            } else {
+                serialize_replay(i)
+            }
+        });
+
         let candidate_games = candidate_results.len() as u64;
         let candidate_total_attack: u64 = candidate_results
             .iter()
-            .map(|result| result.total_attack as u64)
+            .map(|r| r.game_result.total_attack as u64)
             .sum();
         let candidate_avg_attack = candidate_total_attack as f32 / candidate_games as f32;
         let candidate_attack_variance = candidate_results
             .iter()
             .map(|r| {
-                let diff = r.total_attack as f32 - candidate_avg_attack;
+                let diff = r.game_result.total_attack as f32 - candidate_avg_attack;
                 diff * diff
             })
             .sum::<f32>()
@@ -1620,7 +1654,6 @@ impl GameGenerator {
             incumbent_uses_network.store(true, Ordering::SeqCst);
             incumbent_model_step.store(candidate.model_step, Ordering::SeqCst);
             Self::store_atomic_f32(incumbent_nn_value_weight, candidate.nn_value_weight);
-            // Zero out search penalties once nn_value_weight reaches the cap
             if candidate.nn_value_weight >= nn_value_weight_cap {
                 Self::store_atomic_f32(incumbent_death_penalty, 0.0);
                 Self::store_atomic_f32(incumbent_overhang_penalty_weight, 0.0);
@@ -1634,9 +1667,9 @@ impl GameGenerator {
             incumbent_lifetime_attack.store(0, Ordering::SeqCst);
 
             let mut committed = 0usize;
-            for result in candidate_results {
+            for r in candidate_results {
                 Self::commit_game_result(
-                    result,
+                    r.game_result,
                     buffer,
                     games_generated,
                     examples_generated,
@@ -1712,6 +1745,9 @@ impl GameGenerator {
                 promoted,
                 auto_promoted,
                 evaluation_seconds,
+                best_game_replay_json,
+                worst_game_replay_json,
+                per_game_results,
             });
 
         committed_games
@@ -2207,7 +2243,7 @@ mod tests {
             1.0,
             1,
             0,
-            1,
+            Some(vec![0]),
             true,
             10,
             0,

@@ -25,8 +25,6 @@ MODEL_CANDIDATES_DIRNAME = "model_candidates"
 CONFIG_FILENAME = "config.json"
 PARALLEL_ONNX_FILENAME = "parallel.onnx"
 INCUMBENT_ONNX_FILENAME = "incumbent.onnx"
-EVAL_ONNX_FILENAME = "eval.onnx"
-EVAL_REPLAYS_FILENAME = "eval_replays.jsonl"
 TRAINING_DATA_FILENAME = "training_data.npz"
 LATEST_ONNX_FILENAME = "latest.onnx"
 LATEST_METADATA_FILENAME = "latest_metadata.json"
@@ -167,15 +165,10 @@ class TrainingConfig:
     # Intervals (seconds)
     model_sync_interval_seconds: float = 300  # Seconds between ONNX exports
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
-    eval_interval_seconds: float = 1800  # Seconds between evaluations
     log_interval_seconds: float = 10  # Seconds between logging
     save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
         3600
     )
-
-    # Evaluation
-    eval_seeds: list[int] = field(default_factory=lambda: list(range(1)))
-    eval_mcts_seed: int = 12345  # Fixed MCTS RNG seed for deterministic evaluation
 
     # Paths (set automatically by setup_run_directory)
     run_dir: Optional[Path] = None  # e.g., training_runs/v0
@@ -272,11 +265,6 @@ class TrainingConfig:
             or self.checkpoint_interval_seconds <= 0
         ):
             raise ValueError("checkpoint_interval_seconds must be finite and > 0")
-        if (
-            not math.isfinite(self.eval_interval_seconds)
-            or self.eval_interval_seconds <= 0
-        ):
-            raise ValueError("eval_interval_seconds must be finite and > 0")
         if (
             not math.isfinite(self.log_interval_seconds)
             or self.log_interval_seconds <= 0

@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
+use crate::generator::evaluation::ReplayMove;
 
 use super::config::MCTSConfig;
 use super::export::export_decision_node;
@@ -109,250 +110,9 @@ impl MCTSAgent {
     ///     GameResult with training examples
     #[pyo3(signature = (max_placements=100, add_noise=true))]
     pub fn play_game(&self, max_placements: u32, add_noise: bool) -> Option<GameResult> {
-        let mut env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
-        let mut states: Vec<StateSnapshot> = Vec::new();
-        let mut attacks: Vec<u32> = Vec::new();
-        let mut stats = GameStats::default();
-        let mut valid_moves_sum: u32 = 0;
-        let mut max_valid_moves: u32 = 0;
-        let mut tree_stats_acc = TreeStatsAccumulator::new();
-        let mut frame_index: u32 = 0;
-        let mut placement_count: u32 = 0;
-
-        while placement_count < max_placements {
-            if env.game_over {
-                break;
-            }
-
-            // Get action mask
-            let mask = crate::nn::get_action_mask(&env);
-            if !mask.iter().any(|&x| x) {
-                // This should only happen if game is over - if not, it's a bug
-                debug_assert!(
-                    env.game_over,
-                    "No valid actions but game not over - this is a bug"
-                );
-                break;
-            }
-            let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
-
-            // Run MCTS search (NN-guided when model is loaded, otherwise uniform+zero bootstrap mode)
-            let (result, move_tree_stats) = if let Some(nn) = self.nn.as_ref() {
-                let (policy, nn_value) = match nn.predict_masked(
-                    &env,
-                    placement_count as usize,
-                    &mask,
-                    max_placements as usize,
-                ) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        eprintln!(
-                            "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
-                            placement_count, e
-                        );
-                        return None;
-                    }
-                };
-                self.search(&env, policy, nn_value, add_noise, placement_count)
-            } else {
-                let (mcts_result, _root, tree_stats) =
-                    search_internal_without_nn(&self.config, &env, add_noise, placement_count);
-                (mcts_result, tree_stats)
-            };
-
-            valid_moves_sum += valid_moves;
-            max_valid_moves = max_valid_moves.max(valid_moves);
-            tree_stats_acc.add(move_tree_stats);
-            if result.action == HOLD_ACTION_INDEX {
-                stats.holds += 1;
-            }
-
-            // Store state only after search succeeds so state/reward arrays stay aligned.
-            // Capture board diagnostics from the same pre-action state as this training sample.
-            let (overhang_count, hole_count) = super::utils::count_overhang_fields_and_holes(&env);
-            states.push(StateSnapshot {
-                state: env.clone(),
-                frame_idx: frame_index,
-                placement_idx: placement_count,
-                policy: result.policy.clone(),
-                mask: mask.clone(),
-                overhang_fields: overhang_count,
-                hole_count,
-            });
-
-            // Execute the selected action
-            let attack = env
-                .execute_action_index(result.action)
-                .expect("MCTS selected action is not executable");
-            attacks.push(attack);
-            if result.action != HOLD_ACTION_INDEX {
-                placement_count += 1;
-            }
-            frame_index += 1;
-
-            // Collect stats from the attack result
-            if let Some(ref attack_result) = env.get_last_attack_result() {
-                let lines = attack_result.lines_cleared;
-                stats.total_lines += lines;
-
-                // Track combo
-                if attack_result.combo > stats.max_combo {
-                    stats.max_combo = attack_result.combo;
-                }
-
-                // Track back-to-backs
-                if attack_result.back_to_back_attack > 0 {
-                    stats.back_to_backs += 1;
-                }
-
-                // Track perfect clears
-                if attack_result.is_perfect_clear {
-                    stats.perfect_clears += 1;
-                }
-
-                // Categorize clear type
-                if attack_result.is_tspin {
-                    match lines {
-                        1 => {
-                            // Check if mini (mini has 0 base attack for single)
-                            if attack_result.base_attack == 0 {
-                                stats.tspin_minis += 1;
-                            } else {
-                                stats.tspin_singles += 1;
-                            }
-                        }
-                        2 => stats.tspin_doubles += 1,
-                        3 => stats.tspin_triples += 1,
-                        _ => {}
-                    }
-                } else {
-                    match lines {
-                        1 => stats.singles += 1,
-                        2 => stats.doubles += 1,
-                        3 => stats.triples += 1,
-                        4 => stats.tetrises += 1,
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        // Compute value targets (raw cumulative attack from each position).
-        let num_states = states.len();
-        debug_assert_eq!(
-            states.len(),
-            attacks.len(),
-            "States and attacks should have same length"
-        );
-
-        let values = compute_value_targets(&attacks);
-
-        // Build training examples (use all moves)
-        let mut examples = Vec::with_capacity(num_states);
-
-        for (snapshot, value) in states.iter().zip(values.iter().copied()) {
-            let state = &snapshot.state;
-
-            // Convert board to binary (1 = filled, 0 = empty)
-            let board: Vec<u8> = state
-                .board_cells()
-                .iter()
-                .map(|&cell| if cell != 0 { 1 } else { 0 })
-                .collect();
-
-            let current_piece = state.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
-
-            let hold_piece = state.get_hold_piece().map(|p| p.piece_type).unwrap_or(7); // 7 = empty
-
-            let hold_available = !state.is_hold_used();
-            let next_queue = state.get_queue(5);
-            let next_hidden_piece_probs = crate::nn::next_hidden_piece_distribution(state);
-            let raw_bumpiness = super::utils::compute_bumpiness(&state.column_heights);
-            let column_heights =
-                super::utils::normalize_column_heights(&state.column_heights, state.height);
-            let row_fill_counts =
-                super::utils::normalize_row_fill_counts(&state.row_fill_counts, state.width);
-            let total_blocks =
-                super::utils::normalize_total_blocks(state.total_blocks, state.width, state.height);
-            let bumpiness =
-                super::utils::normalize_bumpiness(raw_bumpiness, state.width, state.height);
-            let holes =
-                super::utils::normalize_holes(snapshot.hole_count, state.width, state.height);
-            let overhang_fields = super::utils::normalize_overhang_fields(snapshot.overhang_fields);
-            let max_column_height = column_heights
-                .iter()
-                .copied()
-                .reduce(f32::max)
-                .unwrap_or(0.0);
-            let min_column_height = column_heights
-                .iter()
-                .copied()
-                .reduce(f32::min)
-                .unwrap_or(0.0);
-
-            examples.push(TrainingExample {
-                board,
-                current_piece,
-                hold_piece,
-                hold_available,
-                next_queue,
-                move_number: snapshot.frame_idx,
-                placement_count: snapshot.placement_idx,
-                combo: state.combo,
-                back_to_back: state.back_to_back,
-                next_hidden_piece_probs,
-                column_heights,
-                max_column_height,
-                min_column_height,
-                row_fill_counts,
-                total_blocks,
-                bumpiness,
-                holes,
-                policy: snapshot.policy.clone(),
-                value,
-                action_mask: snapshot.mask.clone(),
-                overhang_fields,
-                game_number: 0,
-                game_total_attack: 0,
-            });
-        }
-
-        let total_attack: u32 = attacks.iter().sum();
-        let total_overhang_fields: u32 = states.iter().map(|s| s.overhang_fields).sum();
-        let num_frames = states.len() as u32;
-        let num_moves = placement_count;
-        let avg_valid_moves = if num_frames > 0 {
-            valid_moves_sum as f32 / num_frames as f32
-        } else {
-            0.0
-        };
-        let avg_overhang_fields = if num_frames > 0 {
-            total_overhang_fields as f32 / num_frames as f32
-        } else {
-            0.0
-        };
-
-        let tree_stats = tree_stats_acc.finalize();
-        let (cache_hits, cache_misses, cache_size) = if let Some(nn) = self.nn.as_ref() {
-            nn.get_and_reset_cache_stats()
-        } else {
-            (0, 0, 0)
-        };
-
-        Some(GameResult {
-            examples,
-            total_attack,
-            num_moves,
-            avg_valid_actions: avg_valid_moves,
-            max_valid_actions: max_valid_moves,
-            stats,
-            tree_stats,
-            total_overhang_fields,
-            avg_overhang_fields,
-            cache_hits,
-            cache_misses,
-            cache_size,
-        })
+        let env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
+        self.play_game_on_env(env, max_placements, add_noise)
+            .map(|(result, _replay)| result)
     }
 
     /// Generate multiple games of training data
@@ -497,6 +257,252 @@ impl MCTSAgent {
     /// Get a reference to the neural network (if loaded).
     pub fn get_nn(&self) -> Option<&crate::nn::TetrisNN> {
         self.nn.as_ref()
+    }
+
+    /// Play a full game on a pre-created environment, returning both the
+    /// GameResult (with training examples) and a Vec of ReplayMove for replay.
+    pub(crate) fn play_game_on_env(
+        &self,
+        mut env: TetrisEnv,
+        max_placements: u32,
+        add_noise: bool,
+    ) -> Option<(GameResult, Vec<ReplayMove>)> {
+        let mut states: Vec<StateSnapshot> = Vec::new();
+        let mut attacks: Vec<u32> = Vec::new();
+        let mut replay_moves: Vec<ReplayMove> = Vec::new();
+        let mut stats = GameStats::default();
+        let mut valid_moves_sum: u32 = 0;
+        let mut max_valid_moves: u32 = 0;
+        let mut tree_stats_acc = TreeStatsAccumulator::new();
+        let mut frame_index: u32 = 0;
+        let mut placement_count: u32 = 0;
+
+        while placement_count < max_placements {
+            if env.game_over {
+                break;
+            }
+
+            // Get action mask
+            let mask = crate::nn::get_action_mask(&env);
+            if !mask.iter().any(|&x| x) {
+                debug_assert!(
+                    env.game_over,
+                    "No valid actions but game not over - this is a bug"
+                );
+                break;
+            }
+            let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
+
+            // Run MCTS search
+            let (result, move_tree_stats) = if let Some(nn) = self.nn.as_ref() {
+                let (policy, nn_value) = match nn.predict_masked(
+                    &env,
+                    placement_count as usize,
+                    &mask,
+                    max_placements as usize,
+                ) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!(
+                            "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
+                            placement_count, e
+                        );
+                        return None;
+                    }
+                };
+                self.search(&env, policy, nn_value, add_noise, placement_count)
+            } else {
+                let (mcts_result, _root, tree_stats) =
+                    search_internal_without_nn(&self.config, &env, add_noise, placement_count);
+                (mcts_result, tree_stats)
+            };
+
+            valid_moves_sum += valid_moves;
+            max_valid_moves = max_valid_moves.max(valid_moves);
+            tree_stats_acc.add(move_tree_stats);
+            if result.action == HOLD_ACTION_INDEX {
+                stats.holds += 1;
+            }
+
+            let (overhang_count, hole_count) =
+                super::utils::count_overhang_fields_and_holes(&env);
+            states.push(StateSnapshot {
+                state: env.clone(),
+                frame_idx: frame_index,
+                placement_idx: placement_count,
+                policy: result.policy.clone(),
+                mask: mask.clone(),
+                overhang_fields: overhang_count,
+                hole_count,
+            });
+
+            // Execute the selected action
+            let attack = env
+                .execute_action_index(result.action)
+                .expect("MCTS selected action is not executable");
+            attacks.push(attack);
+            replay_moves.push(ReplayMove {
+                action: result.action,
+                attack,
+            });
+            if result.action != HOLD_ACTION_INDEX {
+                placement_count += 1;
+            }
+            frame_index += 1;
+
+            // Collect stats from the attack result
+            if let Some(ref attack_result) = env.get_last_attack_result() {
+                let lines = attack_result.lines_cleared;
+                stats.total_lines += lines;
+
+                if attack_result.combo > stats.max_combo {
+                    stats.max_combo = attack_result.combo;
+                }
+                if attack_result.back_to_back_attack > 0 {
+                    stats.back_to_backs += 1;
+                }
+                if attack_result.is_perfect_clear {
+                    stats.perfect_clears += 1;
+                }
+
+                if attack_result.is_tspin {
+                    match lines {
+                        1 => {
+                            if attack_result.base_attack == 0 {
+                                stats.tspin_minis += 1;
+                            } else {
+                                stats.tspin_singles += 1;
+                            }
+                        }
+                        2 => stats.tspin_doubles += 1,
+                        3 => stats.tspin_triples += 1,
+                        _ => {}
+                    }
+                } else {
+                    match lines {
+                        1 => stats.singles += 1,
+                        2 => stats.doubles += 1,
+                        3 => stats.triples += 1,
+                        4 => stats.tetrises += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let num_states = states.len();
+        debug_assert_eq!(
+            states.len(),
+            attacks.len(),
+            "States and attacks should have same length"
+        );
+
+        let values = compute_value_targets(&attacks);
+        let mut examples = Vec::with_capacity(num_states);
+
+        for (snapshot, value) in states.iter().zip(values.iter().copied()) {
+            let state = &snapshot.state;
+            let board: Vec<u8> = state
+                .board_cells()
+                .iter()
+                .map(|&cell| if cell != 0 { 1 } else { 0 })
+                .collect();
+
+            let current_piece = state.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
+            let hold_piece = state.get_hold_piece().map(|p| p.piece_type).unwrap_or(7);
+            let hold_available = !state.is_hold_used();
+            let next_queue = state.get_queue(5);
+            let next_hidden_piece_probs = crate::nn::next_hidden_piece_distribution(state);
+            let raw_bumpiness = super::utils::compute_bumpiness(&state.column_heights);
+            let column_heights =
+                super::utils::normalize_column_heights(&state.column_heights, state.height);
+            let row_fill_counts =
+                super::utils::normalize_row_fill_counts(&state.row_fill_counts, state.width);
+            let total_blocks =
+                super::utils::normalize_total_blocks(state.total_blocks, state.width, state.height);
+            let bumpiness =
+                super::utils::normalize_bumpiness(raw_bumpiness, state.width, state.height);
+            let holes =
+                super::utils::normalize_holes(snapshot.hole_count, state.width, state.height);
+            let overhang_fields =
+                super::utils::normalize_overhang_fields(snapshot.overhang_fields);
+            let max_column_height = column_heights
+                .iter()
+                .copied()
+                .reduce(f32::max)
+                .unwrap_or(0.0);
+            let min_column_height = column_heights
+                .iter()
+                .copied()
+                .reduce(f32::min)
+                .unwrap_or(0.0);
+
+            examples.push(TrainingExample {
+                board,
+                current_piece,
+                hold_piece,
+                hold_available,
+                next_queue,
+                move_number: snapshot.frame_idx,
+                placement_count: snapshot.placement_idx,
+                combo: state.combo,
+                back_to_back: state.back_to_back,
+                next_hidden_piece_probs,
+                column_heights,
+                max_column_height,
+                min_column_height,
+                row_fill_counts,
+                total_blocks,
+                bumpiness,
+                holes,
+                policy: snapshot.policy.clone(),
+                value,
+                action_mask: snapshot.mask.clone(),
+                overhang_fields,
+                game_number: 0,
+                game_total_attack: 0,
+            });
+        }
+
+        let total_attack: u32 = attacks.iter().sum();
+        let total_overhang_fields: u32 = states.iter().map(|s| s.overhang_fields).sum();
+        let num_frames = states.len() as u32;
+        let num_moves = placement_count;
+        let avg_valid_moves = if num_frames > 0 {
+            valid_moves_sum as f32 / num_frames as f32
+        } else {
+            0.0
+        };
+        let avg_overhang_fields = if num_frames > 0 {
+            total_overhang_fields as f32 / num_frames as f32
+        } else {
+            0.0
+        };
+
+        let tree_stats = tree_stats_acc.finalize();
+        let (cache_hits, cache_misses, cache_size) = if let Some(nn) = self.nn.as_ref() {
+            nn.get_and_reset_cache_stats()
+        } else {
+            (0, 0, 0)
+        };
+
+        Some((
+            GameResult {
+                examples,
+                total_attack,
+                num_moves,
+                avg_valid_actions: avg_valid_moves,
+                max_valid_actions: max_valid_moves,
+                stats,
+                tree_stats,
+                total_overhang_fields,
+                avg_overhang_fields,
+                cache_hits,
+                cache_misses,
+                cache_size,
+            },
+            replay_moves,
+        ))
     }
 
     /// Run MCTS search from a given state.

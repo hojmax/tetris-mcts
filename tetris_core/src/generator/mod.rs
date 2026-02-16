@@ -5,7 +5,7 @@
 //! - `evaluate_model`: Evaluate a model on fixed seeds for consistent benchmarking
 //! - `write_examples_to_npz` / `read_examples_from_npz`: NPZ replay I/O
 
-mod evaluation;
+pub(crate) mod evaluation;
 mod game_generator;
 pub mod npz;
 

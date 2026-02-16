@@ -250,9 +250,8 @@ tetris_mcts/                 # Python package
 │   ├── network.py           # TetrisNet (PyTorch CNN)
 │   ├── training.py          # Trainer class, training loop
 │   ├── loss.py              # Loss functions and metrics
-│   ├── evaluation.py        # Model evaluation on fixed seeds
 │   ├── weights.py           # Checkpoint/ONNX export
-│   └── visualization.py     # Board rendering for eval trajectories
+│   └── visualization.py     # Board rendering + replay visualization
 └── scripts/
     ├── tetris_game.py              # Interactive Pygame game
     ├── abalations/                 # Network ablation/architecture experiments
@@ -326,7 +325,6 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 - `TetrisNet` - PyTorch neural network
 - `Trainer` - Training loop manager
 - `WeightManager` - Checkpoint and ONNX export
-- `Evaluator` - Model evaluation on fixed seeds
 
 ## Code Patterns
 
@@ -344,9 +342,9 @@ From `config.py` TrainingConfig defaults:
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.01` by default. Promotion ramp is event-driven on accepted candidates with multiplicative targets and additive updates: `delta = min(current * (nn_value_weight_promotion_multiplier - 1.0), nn_value_weight_promotion_max_delta)` then `next = min(nn_value_weight_cap, current + delta)`. Defaults: multiplier `1.4` (adds 40%), max delta `0.10`, cap `1.0`.
 - **Q Squash Scale**: `q_scale=8.0` by default; NN-guided MCTS uses `tanh(Q / q_scale)` for the Q term. Bootstrap (no-NN) mode uses sibling min-max Q normalization instead.
-- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `eval_interval_seconds=1800`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1800` (`0` disables periodic snapshot saves).
+- **Wall-Clock Intervals**: training cadence is time-based (not step-based): `log_interval_seconds=10`, `model_sync_interval_seconds=300`, `checkpoint_interval_seconds=10800`; replay snapshots use `save_interval_seconds=1800` (`0` disables periodic snapshot saves).
 - **Training-loop logging defaults**: full scalar train-step metrics are collected every `train_step_metrics_interval=16` steps, extra diagnostics (`compute_metrics` forward pass for policy entropy/accuracy) are enabled by default with `compute_extra_train_metrics_on_log=true` (overhead tracked as `timing/extra_metrics_ms`), and individual per-game rows are logged by default (`log_individual_games_to_wandb=true`). Aggregated per-tick replay summaries under `replay/completed_games_*` on `trainer_step` are always logged.
-- **Model Promotion Gate**: candidate window=50 games, evaluator noise enabled by default; candidate evaluation carries an explicit `candidate_nn_value_weight`, and promotion atomically updates `(incumbent model, incumbent nn_value_weight)` together
+- **Model Promotion Gate**: candidate window=50 games on fixed seeds `0..N`, evaluator noise enabled by default; candidate evaluation carries an explicit `candidate_nn_value_weight`, and promotion atomically updates `(incumbent model, incumbent nn_value_weight)` together. Candidate eval events include per-game results and best/worst game replays for trajectory GIF rendering.
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
 Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
@@ -354,8 +352,7 @@ Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.000
 Temperature behavior:
 
 - `temperature` shapes the MCTS visit-count policy target used for training.
-- In training self-play, action execution samples from the visit policy with probability `visit_sampling_epsilon` and otherwise uses argmax.
-- In evaluation, action execution is deterministic argmax.
+- In self-play (including candidate evaluation), action execution samples from the visit policy with probability `visit_sampling_epsilon` and otherwise uses argmax.
 
 ### Loss Function
 
@@ -376,8 +373,8 @@ Dirichlet root noise is mixed over `DecisionNode.action_priors` (valid actions o
 Training uses parallel Rust game generation via `GameGenerator`:
 
 1. Multiple worker threads (default: 7) run MCTS games in parallel
-2. One dedicated evaluator worker tests queued candidate ONNX models over a fixed game window (default 50 games)
-3. Candidate evaluation games use fresh random environment seeds (not a fixed seed list)
+2. One dedicated evaluator worker tests queued candidate ONNX models over a fixed game window (default 50 games on seeds `0..N`)
+3. Candidate evaluation games use fixed seeds (default `0..model_promotion_eval_games`) for consistent benchmarking; each eval also records per-game results and best/worst game replays
 4. Candidates are compared against incumbent lifetime average attack; if better, evaluator commits candidate games then promotes the model globally
 5. Promotion is atomic for `(model, nn_value_weight)`: evaluator runs candidate games with the queued candidate weight, and if promoted, workers switch to that exact weight with the model
 6. If candidate is worse, evaluator discards candidate games and keeps incumbent
@@ -491,14 +488,17 @@ Step-alignment rule for resumed runs:
 - `game/max_combo` - Longest combo achieved
 - `game/back_to_back` - Back-to-back count
 
-### Evaluation Metrics (fixed seeds, up to `max_placements`)
+### Evaluation Metrics (from candidate evaluations on fixed seeds)
 
-- `eval/avg_attack` - Average attack over eval games
-- `eval/max_attack` - Best single game
-- `eval/attack_per_piece` - Efficiency metric
-- Breakdown by clear types and T-spins
-- `eval/avg_moves` reflects played placements (hold actions excluded) up to `max_placements` (default 50)
-- `eval/trajectory` GIF renders the full first replay episode (all recorded actions plus a final post-action board frame), so length is no longer capped by a visualization frame limit
+Eval metrics are derived from candidate model evaluations (not a separate evaluation pass). Each candidate eval plays `model_promotion_eval_games` games on fixed seeds `0..N` and reports per-game results.
+
+- `eval/num_games`, `eval/avg_attack`, `eval/max_attack` - Attack statistics
+- `eval/avg_lines`, `eval/max_lines` - Line clear statistics
+- `eval/avg_moves` - Average placements per game
+- `eval/attack_per_piece`, `eval/lines_per_piece` - Efficiency metrics
+- `eval/nn_value_weight` - NN value weight used for the evaluation
+- `eval/best_trajectory` GIF renders the highest-attack candidate game replay
+- `eval/worst_trajectory` GIF renders the lowest-attack candidate game replay
 
 ### WandB Artifacts
 
