@@ -4,24 +4,15 @@
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
 - [ ] The tetris tspin stuff is still weird.
   - Investigate with make viz
-- [ ] Batch chance nodes
-- [ ] Faster training loop
 - [ ] Speed up data generation
 - [ ] Multi machine RL environment generation?
 - [ ] Replay buffer should grow gradually
 
 - [ ] What is so inherently noisy about the values? Why does it have such a high variance?
-- [ ] Bumpiness is not scaled correctly.
-- [ ] Turn off the nn value weight scheduele.
 - [ ] Deeper search depth potentially.
-- [ ] Make sure all the features are scaled correctly.
 - [ ] What AWS instance would be well suited for this workload?
-- [ ] Benchmark conv net depth impact on speed, since caching so high. 96% caching.
 - [ ] Adding in alpha downweighting of value loss?
-- [ ] What the hell do we do about the extreme about of noise in the value head? Also the policy is waay too myopic right now.
-  - Maybe the training loop could in the background run tests on what value head weight to use, and so it could slowly rise over time as the network gets more calibrated?
-  - Train with Huber loss
-  - Train with "n-step bootstrapped return"
+- [ ] Is huber loss even better than MSE loss?
 
 - Make nn_value_weight adaptive, not fixed: ramp it up only when value quality is decent (you already log train/value_explained_variance)
 - [ ] Do offline learning experiments. Things to validate:
