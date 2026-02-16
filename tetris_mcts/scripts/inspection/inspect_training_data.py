@@ -19,7 +19,7 @@ from tetris_mcts.config import (
 )
 from tetris_mcts.ml.network import denormalize_combo_feature
 from tetris_mcts.ml.value_predictor import try_load_value_predictor
-from tetris_mcts.ml.visualization import render_board
+from tetris_mcts.ml.visualization import compute_spawn_and_ghost, render_board
 
 SCRIPT_DIR = Path(__file__).parent
 OUTPUTS_DIR = SCRIPT_DIR / "outputs"
@@ -404,9 +404,18 @@ def main(args: ScriptArgs) -> None:
                     overhang_fields=float(data["overhang_fields"][i]),
                 )
 
+            piece_cells = None
+            ghost_cells = None
+            if current_piece is not None:
+                piece_cells, ghost_cells = compute_spawn_and_ghost(
+                    current_piece, board
+                )
+
             frame = render_board(
                 board=board,
+                current_piece_cells=piece_cells,
                 current_piece_type=current_piece,
+                ghost_cells=ghost_cells,
                 move_number=move_number,
                 attack=cumulative_attack,
                 value_pred=value_pred,

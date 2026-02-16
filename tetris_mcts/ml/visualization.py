@@ -68,6 +68,28 @@ def _get_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return font
 
 
+_SPAWN_X = (BOARD_WIDTH - 4) // 2
+
+
+def compute_spawn_and_ghost(
+    piece_type: int, board: np.ndarray
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    spawn_y = -1 if piece_type in (0, 1) else 0  # I/O spawn one row higher
+    spawn_cells = [
+        (cx + _SPAWN_X, cy + spawn_y) for cx, cy in PIECE_SPAWN_CELLS[piece_type]
+    ]
+
+    # Drop until collision
+    dy = 0
+    while True:
+        dy += 1
+        for x, y in spawn_cells:
+            ny = y + dy
+            if ny >= BOARD_HEIGHT or (ny >= 0 and board[ny][x] != 0):
+                ghost_cells = [(x, y + dy - 1) for x, y in spawn_cells]
+                return spawn_cells, ghost_cells
+
+
 def _draw_mini_piece(
     draw: ImageDraw.ImageDraw,
     piece_type: int,

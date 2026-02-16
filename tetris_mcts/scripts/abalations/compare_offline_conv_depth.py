@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, PROJECT_ROOT
 from tetris_mcts.ml.network import BOARD_STATS_FEATURES, PIECE_AUX_FEATURES
 from tetris_mcts.scripts.abalations.compare_offline_architectures import (
     GatedFusionTetrisNet,
@@ -33,14 +33,16 @@ logger = structlog.get_logger()
 
 @dataclass
 class ScriptArgs:
-    data_path: Path  # Path to offline replay buffer NPZ
+    data_path: Path = (
+        PROJECT_ROOT / "training_runs/v37/training_data.npz"
+    )  # Path to offline replay buffer NPZ
     device: str = "auto"  # auto/cpu/cuda/mps
     seed: int = 123
     max_examples: int = 0  # 0 = use all examples in NPZ
     train_fraction: float = 0.9
     steps: int = 20000
     batch_size: int = 1024
-    eval_interval: int = 100
+    eval_interval: int = 10000
     eval_examples: int = 32_768  # Max examples to use per train/val eval pass
     eval_batch_size: int = 2048
     log_train_metrics_every: int = 1  # Batch metric logging cadence
