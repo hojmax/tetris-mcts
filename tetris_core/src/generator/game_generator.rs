@@ -251,10 +251,10 @@ impl SharedBuffer {
     /// Holds the read lock for the duration of the write so that the snapshot is
     /// consistent. Workers calling `add_examples` will block until the save completes
     /// (typically 10-30 seconds), which is acceptable for a save every 30 minutes.
-    fn persist_to_npz(&self, filepath: &Path, max_placements: u32) -> Result<(), String> {
+    fn persist_to_npz(&self, filepath: &Path) -> Result<(), String> {
         let state = self.state.read().unwrap();
         let (slice_a, slice_b) = state.examples.as_slices();
-        write_examples_slices_to_npz(filepath, slice_a, slice_b, max_placements)
+        write_examples_slices_to_npz(filepath, slice_a, slice_b)
     }
 
     /// Return the logical one-past-end index in replay index space.
@@ -496,7 +496,7 @@ impl GameGenerator {
         // Load existing replay buffer snapshot if present.
         if self.training_data_path.exists() {
             let loaded_examples =
-                read_examples_from_npz(&self.training_data_path, self.max_placements).map_err(
+                read_examples_from_npz(&self.training_data_path).map_err(
                     |e| {
                         PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                             "Failed to load replay data from {}: {}",
@@ -1165,7 +1165,6 @@ impl GameGenerator {
     fn persist_snapshot_if_due(
         training_data_path: &Path,
         buffer: &Arc<SharedBuffer>,
-        max_placements: u32,
         save_interval_seconds: f64,
         next_snapshot_deadline: &mut Option<Instant>,
     ) {
@@ -1179,7 +1178,7 @@ impl GameGenerator {
             return;
         }
 
-        Self::persist_buffer_snapshot(training_data_path, buffer, max_placements);
+        Self::persist_buffer_snapshot(training_data_path, buffer);
 
         let mut next_deadline = deadline + interval;
         while next_deadline <= now {
@@ -1339,7 +1338,6 @@ impl GameGenerator {
                         Self::persist_snapshot_if_due(
                             &training_data_path,
                             &buffer,
-                            max_placements,
                             save_interval_seconds,
                             &mut next_snapshot_deadline,
                         );
@@ -1365,7 +1363,6 @@ impl GameGenerator {
                     Self::persist_snapshot_if_due(
                         &training_data_path,
                         &buffer,
-                        max_placements,
                         save_interval_seconds,
                         &mut next_snapshot_deadline,
                     );
@@ -1376,7 +1373,7 @@ impl GameGenerator {
         // Final save on shutdown (only worker 0)
         if is_save_worker && buffer.len() > 0 {
             let n = buffer.len();
-            let _ = buffer.persist_to_npz(&training_data_path, max_placements);
+            let _ = buffer.persist_to_npz(&training_data_path);
             eprintln!("[GameGenerator] Saved {} examples to disk", n);
         }
 
@@ -1849,9 +1846,8 @@ impl GameGenerator {
     fn persist_buffer_snapshot(
         training_data_path: &Path,
         buffer: &Arc<SharedBuffer>,
-        max_placements: u32,
     ) {
-        if let Err(error) = buffer.persist_to_npz(training_data_path, max_placements) {
+        if let Err(error) = buffer.persist_to_npz(training_data_path) {
             eprintln!("[GameGenerator] Failed to write NPZ: {}", error);
         }
     }

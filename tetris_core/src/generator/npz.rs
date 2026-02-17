@@ -20,9 +20,8 @@ use crate::nn::{denormalize_combo_feature, normalize_combo_for_feature};
 pub fn write_examples_to_npz(
     filepath: &Path,
     examples: &[TrainingExample],
-    max_placements: u32,
 ) -> Result<(), String> {
-    write_examples_slices_to_npz(filepath, examples, &[], max_placements)
+    write_examples_slices_to_npz(filepath, examples, &[])
 }
 
 /// Streaming NPZ writer that accepts two contiguous slices (to support VecDeque::as_slices()).
@@ -37,8 +36,8 @@ pub fn write_examples_to_npz(
 /// - hold_pieces: (N, 8) float32 one-hot
 /// - hold_available: (N,) bool
 /// - next_queue: (N, 5, 7) float32 one-hot
-/// - move_numbers: (N,) float32 normalized frame indices (includes holds)
-/// - placement_counts: (N,) float32 normalized placement counts (excludes holds)
+/// - move_numbers: (N,) uint32 raw frame indices (includes holds)
+/// - placement_counts: (N,) uint32 raw placement counts (excludes holds)
 /// - combos: (N,) float32 normalized combo feature (clamped to 0.0..1.0)
 /// - back_to_back: (N,) bool
 /// - next_hidden_piece_probs: (N, 7) float32
@@ -59,7 +58,6 @@ pub(crate) fn write_examples_slices_to_npz(
     filepath: &Path,
     examples_a: &[TrainingExample],
     examples_b: &[TrainingExample],
-    max_placements: u32,
 ) -> Result<(), String> {
     let n = examples_a.len() + examples_b.len();
     if n == 0 {
@@ -68,7 +66,6 @@ pub(crate) fn write_examples_slices_to_npz(
 
     let examples = || examples_a.iter().chain(examples_b.iter());
     let n64 = n as u64;
-    let move_norm_denominator = max_placements as f32;
 
     let file = File::create(filepath).map_err(|e| e.to_string())?;
     let mut zip = ZipWriter::new(file);
@@ -137,7 +134,7 @@ pub(crate) fn write_examples_slices_to_npz(
         options,
         "move_numbers.npy",
         &[n64],
-        examples().map(|ex| ex.move_number as f32 / move_norm_denominator),
+        examples().map(|ex| ex.move_number),
     )?;
 
     stream_npy_to_zip(
@@ -145,7 +142,7 @@ pub(crate) fn write_examples_slices_to_npz(
         options,
         "placement_counts.npy",
         &[n64],
-        examples().map(|ex| ex.placement_count as f32 / move_norm_denominator),
+        examples().map(|ex| ex.placement_count),
     )?;
 
     stream_npy_to_zip(
@@ -283,7 +280,6 @@ pub(crate) fn write_examples_slices_to_npz(
 /// Read training examples from NPZ format.
 pub fn read_examples_from_npz(
     filepath: &Path,
-    max_placements: u32,
 ) -> Result<Vec<TrainingExample>, String> {
     let file = File::open(filepath).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
@@ -296,9 +292,9 @@ pub fn read_examples_from_npz(
         read_npy_array_bool_like(&mut archive, "hold_available.npy")?;
     let (next_queue, next_queue_shape) = read_npy_array::<f32>(&mut archive, "next_queue.npy")?;
     let (move_numbers, move_numbers_shape) =
-        read_npy_array::<f32>(&mut archive, "move_numbers.npy")?;
+        read_npy_array::<u32>(&mut archive, "move_numbers.npy")?;
     let (placement_counts, placement_counts_shape) =
-        read_npy_array::<f32>(&mut archive, "placement_counts.npy")?;
+        read_npy_array::<u32>(&mut archive, "placement_counts.npy")?;
     let (combos, combos_shape) = read_npy_array::<f32>(&mut archive, "combos.npy")?;
     let (back_to_back, back_to_back_shape) =
         read_npy_array_bool_like(&mut archive, "back_to_back.npy")?;
@@ -387,7 +383,6 @@ pub fn read_examples_from_npz(
     validate_shape("game_total_attacks", &game_total_attacks_shape, &[n as u64])?;
 
     let mut examples = Vec::with_capacity(n);
-    let move_norm_denominator = max_placements as f32;
     let board_size = BOARD_HEIGHT * BOARD_WIDTH;
     let hold_size = NUM_PIECE_TYPES + 1;
     let next_queue_size = QUEUE_SIZE * NUM_PIECE_TYPES;
@@ -452,8 +447,8 @@ pub fn read_examples_from_npz(
             hold_piece,
             hold_available: hold_available[i] != 0,
             next_queue: next_queue_pieces,
-            move_number: denormalize_move_number(move_numbers[i], move_norm_denominator),
-            placement_count: denormalize_move_number(placement_counts[i], move_norm_denominator),
+            move_number: move_numbers[i],
+            placement_count: placement_counts[i],
             combo: denormalize_combo_feature(combo_feature),
             back_to_back: back_to_back[i] != 0,
             next_hidden_piece_probs: next_hidden_piece_probs[hidden_probs_start..hidden_probs_end]
@@ -478,15 +473,6 @@ pub fn read_examples_from_npz(
     }
 
     Ok(examples)
-}
-
-fn denormalize_move_number(normalized_move_number: f32, move_norm_denominator: f32) -> u32 {
-    let scaled = (normalized_move_number * move_norm_denominator).round();
-    if scaled < 0.0 {
-        0
-    } else {
-        scaled as u32
-    }
 }
 
 fn argmax_index(values: &[f32]) -> usize {
@@ -643,8 +629,8 @@ mod tests {
         let path = unique_temp_path("roundtrip");
         let examples = vec![make_example(0, 7, 3), make_example(88, 5, 3)];
 
-        write_examples_to_npz(&path, &examples, 100).expect("write should succeed");
-        let loaded = read_examples_from_npz(&path, 100).expect("read should succeed");
+        write_examples_to_npz(&path, &examples).expect("write should succeed");
+        let loaded = read_examples_from_npz(&path).expect("read should succeed");
         fs::remove_file(&path).expect("temp file cleanup should succeed");
 
         assert_eq!(loaded.len(), examples.len());
@@ -692,18 +678,12 @@ mod tests {
         let path = unique_temp_path("combo_saturation");
         let examples = vec![make_example(0, 7, 99)];
 
-        write_examples_to_npz(&path, &examples, 100).expect("write should succeed");
-        let loaded = read_examples_from_npz(&path, 100).expect("read should succeed");
+        write_examples_to_npz(&path, &examples).expect("write should succeed");
+        let loaded = read_examples_from_npz(&path).expect("read should succeed");
         fs::remove_file(&path).expect("temp file cleanup should succeed");
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].combo, COMBO_NORMALIZATION_MAX);
-    }
-
-    #[test]
-    fn test_denormalize_move_number_clamps_negative() {
-        let move_num = denormalize_move_number(-0.25, 100.0);
-        assert_eq!(move_num, 0);
     }
 
     #[test]
@@ -712,9 +692,9 @@ mod tests {
         let examples_a = vec![make_example(0, 7, 3)];
         let examples_b = vec![make_example(88, 5, 3)];
 
-        write_examples_slices_to_npz(&path, &examples_a, &examples_b, 100)
+        write_examples_slices_to_npz(&path, &examples_a, &examples_b)
             .expect("write should succeed");
-        let loaded = read_examples_from_npz(&path, 100).expect("read should succeed");
+        let loaded = read_examples_from_npz(&path).expect("read should succeed");
         fs::remove_file(&path).expect("temp file cleanup should succeed");
 
         assert_eq!(loaded.len(), 2);

@@ -16,6 +16,7 @@ from tetris_mcts.config import (
     LATEST_CHECKPOINT_FILENAME,
     PROJECT_ROOT,
     QUEUE_SIZE,
+    TrainingConfig,
 )
 from tetris_mcts.ml.network import denormalize_combo_feature
 from tetris_mcts.ml.value_predictor import try_load_value_predictor
@@ -46,9 +47,7 @@ def get_piece_type(one_hot: np.ndarray) -> int | None:
 
 
 def find_game_boundaries(move_numbers: np.ndarray) -> list[tuple[int, int]]:
-    """Find start/end indices for each game (where move_number resets to 0)."""
-    # Game starts where move_number equals 0 (or very close to 0)
-    game_starts = np.where(move_numbers < 0.001)[0]
+    game_starts = np.where(move_numbers == 0)[0]
 
     games = []
     for i, start in enumerate(game_starts):
@@ -390,7 +389,7 @@ def main(args: ScriptArgs) -> None:
                     hold_piece=data["hold_pieces"][i],
                     hold_available=float(data["hold_available"][i]),
                     next_queue=data["next_queue"][i],
-                    placement_count=float(data["placement_counts"][i]),
+                    placement_count=float(data["placement_counts"][i]) / TrainingConfig.max_placements,
                     combo_feature=combo_feature,
                     back_to_back=float(data["back_to_back"][i]),
                     next_hidden_piece_probs=data["next_hidden_piece_probs"][i],

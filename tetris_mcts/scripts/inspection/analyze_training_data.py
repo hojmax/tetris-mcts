@@ -190,8 +190,8 @@ def main(args: ScriptArgs) -> None:
         )
 
         print_section("Scalar Features")
-        print_distribution("Move Number (normalized)", move_numbers, bins=12)
-        print_distribution("Placement Count (normalized)", placement_counts, bins=12)
+        print_distribution("Move Number (raw)", move_numbers, bins=12)
+        print_distribution("Placement Count (raw)", placement_counts, bins=12)
         print_distribution("Combo Feature (normalized)", combos, bins=12)
         print_distribution("Back-to-Back Flag", back_to_back.astype(np.float32), bins=2)
         print_distribution("Value Targets", value_targets, bins=15)
@@ -214,8 +214,6 @@ def main(args: ScriptArgs) -> None:
         )
 
         print_section("Normalized Range Checks")
-        print_normalized_range_check("move_numbers", move_numbers)
-        print_normalized_range_check("placement_counts", placement_counts)
         print_normalized_range_check("combos", combos)
         print_normalized_range_check("next_hidden_piece_probs", next_hidden_piece_probs)
         print_normalized_range_check("column_heights", column_heights)
