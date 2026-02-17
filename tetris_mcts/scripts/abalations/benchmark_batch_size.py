@@ -89,7 +89,12 @@ def benchmark_batch_size(
         raise
 
     model = TetrisNet(
-        conv_filters=[4, 8], fc_hidden=128, conv_kernel_size=3, conv_padding=1
+        trunk_channels=16,
+        num_conv_residual_blocks=1,
+        reduction_channels=32,
+        fc_hidden=128,
+        conv_kernel_size=3,
+        conv_padding=1,
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-4)
     model.train()

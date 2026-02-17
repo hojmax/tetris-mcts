@@ -327,7 +327,7 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 ### Neural Network (TetrisNet)
 
 - **Input**: 297 features (200 board cells + 97 auxiliary). Aux is split into 61 piece/game features (current piece, hold, queue, placement count, combo, back-to-back, hidden-piece distribution) sent to the uncached heads model, and 36 board-derived stats (column heights, max/min column height, row fill counts, total blocks, bumpiness, holes, overhang fields) folded into the cached board embedding. Training data packs all 97 features together; the model splits internally.
-- **Architecture**: Conv2d(1→4→8) + board projection (conv features + board stats → cached embedding) + aux-conditioned gated fusion (61-dim piece/game features) + optional fusion residual blocks + policy/value heads
+- **Architecture**: Conv2d(1→16) + ResBlock(16) + stride-2 Conv(16→32) + board projection (conv features + board stats → cached embedding) + aux-conditioned gated fusion (61-dim piece/game features) + optional fusion residual blocks + policy/value heads
 - **Output**: Policy probabilities over 735 actions (734 placements + hold), value (trained on raw cumulative-attack `value_targets`)
 
 ### 7-Bag Randomizer
@@ -365,7 +365,7 @@ From `config.py` TrainingConfig defaults:
 - **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
 - **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
 - **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
-- **Architecture**: Conv(1→4→8), gated-fusion hidden size 128, 735 policy outputs, 1 value output
+- **Architecture**: Conv(1→16) + 1 ResBlock(16) + stride-2 Conv(16→32), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 2M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=1` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=1` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
 - **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.

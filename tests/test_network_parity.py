@@ -255,7 +255,9 @@ def test_masked_softmax_matches_between_rust_and_python() -> None:
 def test_pytorch_and_rust_tract_inference_match_on_same_onnx(tmp_path: Path) -> None:
     torch.manual_seed(7)
     model = TetrisNet(
-        conv_filters=[4, 8],
+        trunk_channels=16,
+        num_conv_residual_blocks=1,
+        reduction_channels=32,
         fc_hidden=128,
         conv_kernel_size=3,
         conv_padding=1,
@@ -305,7 +307,9 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
     for seed in range(10):
         torch.manual_seed(seed)
         model = TetrisNet(
-            conv_filters=[4, 8],
+            trunk_channels=16,
+            num_conv_residual_blocks=1,
+            reduction_channels=32,
             fc_hidden=128,
             conv_kernel_size=3,
             conv_padding=1,
@@ -359,7 +363,9 @@ def test_split_onnx_rust_matches_end_to_end_pytorch(tmp_path: Path) -> None:
     """Verify Rust split ONNX inference matches PyTorch end-to-end on real game states."""
     torch.manual_seed(99)
     model = TetrisNet(
-        conv_filters=[4, 8],
+        trunk_channels=16,
+        num_conv_residual_blocks=1,
+        reduction_channels=32,
         fc_hidden=128,
         conv_kernel_size=3,
         conv_padding=1,
@@ -492,7 +498,9 @@ def _assert_tree_exports_equal(
 def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
     torch.manual_seed(2026)
     model = TetrisNet(
-        conv_filters=[4, 8],
+        trunk_channels=16,
+        num_conv_residual_blocks=1,
+        reduction_channels=32,
         fc_hidden=128,
         conv_kernel_size=3,
         conv_padding=1,

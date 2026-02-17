@@ -375,7 +375,9 @@ class Trainer:
         # Create model
         if model is None:
             model = TetrisNet(
-                conv_filters=config.conv_filters,
+                trunk_channels=config.trunk_channels,
+                num_conv_residual_blocks=config.num_conv_residual_blocks,
+                reduction_channels=config.reduction_channels,
                 fc_hidden=config.fc_hidden,
                 conv_kernel_size=config.conv_kernel_size,
                 conv_padding=config.conv_padding,

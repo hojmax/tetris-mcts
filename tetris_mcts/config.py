@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 # Project root (tetris-mcts/)
@@ -64,7 +64,9 @@ class TrainingConfig:
     """Training hyperparameters - all configurable via CLI."""
 
     # Network architecture
-    conv_filters: list[int] = field(default_factory=lambda: [4, 8])
+    trunk_channels: int = 16
+    num_conv_residual_blocks: int = 1
+    reduction_channels: int = 32
     fc_hidden: int = 128
     conv_kernel_size: int = 3
     conv_padding: int = 1

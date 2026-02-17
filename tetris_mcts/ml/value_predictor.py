@@ -45,7 +45,9 @@ class ValuePredictor:
     def _load_model(self, checkpoint_path: Path, config_path: Path) -> TetrisNet:
         config = load_training_config(config_path)
         model = TetrisNet(
-            conv_filters=config.conv_filters,
+            trunk_channels=config.trunk_channels,
+            num_conv_residual_blocks=config.num_conv_residual_blocks,
+            reduction_channels=config.reduction_channels,
             fc_hidden=config.fc_hidden,
             conv_kernel_size=config.conv_kernel_size,
             conv_padding=config.conv_padding,
