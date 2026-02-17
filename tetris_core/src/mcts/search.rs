@@ -524,19 +524,17 @@ fn build_result_from_root(
     }
 }
 
-fn search_internal_with_evaluator<E: LeafEvaluator>(
+/// Core search loop: run simulations on a root and return results.
+///
+/// Works for both fresh roots and reused subtree roots. Takes ownership
+/// of the root and returns it alongside the result for tree reuse.
+pub(super) fn run_search<E: LeafEvaluator>(
     config: &MCTSConfig,
     evaluator: &E,
-    env: &TetrisEnv,
-    policy: Vec<f32>,
-    value: f32,
+    mut root: DecisionNode,
     add_noise: bool,
-    move_number: u32,
 ) -> (MCTSResult, DecisionNode, TreeStats) {
-    let mut root = DecisionNode::new(env.clone(), move_number);
-    root.set_nn_output(&policy, value);
-
-    let mut rng = create_search_rng(config, env, move_number);
+    let mut rng = create_search_rng(config, &root.state, root.move_number);
     if add_noise {
         root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
     }
@@ -550,7 +548,7 @@ fn search_internal_with_evaluator<E: LeafEvaluator>(
     (mcts_result, root, tree_stats)
 }
 
-/// Run MCTS search and return the result, root node, and tree statistics.
+/// Run MCTS search with NN guidance from a fresh root.
 pub(super) fn search_internal(
     config: &MCTSConfig,
     nn: &TetrisNN,
@@ -564,15 +562,9 @@ pub(super) fn search_internal(
         nn,
         nn_value_weight: config.nn_value_weight,
     };
-    search_internal_with_evaluator(
-        config,
-        &evaluator,
-        env,
-        policy,
-        scale_nn_value(nn_value, config.nn_value_weight),
-        add_noise,
-        move_number,
-    )
+    let mut root = DecisionNode::new(env.clone(), move_number);
+    root.set_nn_output(&policy, scale_nn_value(nn_value, config.nn_value_weight));
+    run_search(config, &evaluator, root, add_noise)
 }
 
 /// Run MCTS search without NN guidance (uniform priors and zero value).
@@ -583,37 +575,9 @@ pub(crate) fn search_internal_without_nn(
     move_number: u32,
 ) -> (MCTSResult, DecisionNode, TreeStats) {
     let root_policy = env.get_cached_uniform_policy().as_ref().clone();
-    let evaluator = BootstrapLeafEvaluator;
-    search_internal_with_evaluator(
-        config,
-        &evaluator,
-        env,
-        root_policy,
-        0.0,
-        add_noise,
-        move_number,
-    )
-}
-
-/// Continue MCTS search on a reused subtree root with additional simulations.
-pub(super) fn continue_search_internal<E: LeafEvaluator>(
-    config: &MCTSConfig,
-    evaluator: &E,
-    root: &mut DecisionNode,
-    add_noise: bool,
-) -> (MCTSResult, TreeStats) {
-    let mut rng = create_search_rng(config, &root.state, root.move_number);
-    if add_noise {
-        root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
-    }
-
-    for _ in 0..config.num_simulations {
-        simulate(config, evaluator, root, &mut rng);
-    }
-
-    let mcts_result = build_result_from_root(config, root, &mut rng);
-    let tree_stats = compute_tree_stats(root);
-    (mcts_result, tree_stats)
+    let mut root = DecisionNode::new(env.clone(), move_number);
+    root.set_nn_output(&root_policy, 0.0);
+    run_search(config, &BootstrapLeafEvaluator, root, add_noise)
 }
 
 /// Extract the subtree corresponding to a chosen action and actual piece spawn.
@@ -907,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn test_continue_search_adds_simulations_to_reused_tree() {
+    fn test_run_search_on_reused_tree_adds_simulations() {
         let env = TetrisEnv::new(10, 20);
         let mut config = MCTSConfig::default();
         config.num_simulations = 50;
@@ -926,9 +890,8 @@ mod tests {
         }
         let visits_after_first = root.visit_count;
 
-        // Continue search (simulates tree reuse)
-        let (result, _tree_stats) =
-            continue_search_internal(&config, &evaluator, &mut root, false);
+        // Continue search via run_search (simulates tree reuse)
+        let (result, root, _tree_stats) = run_search(&config, &evaluator, root, false);
 
         assert_eq!(
             root.visit_count,

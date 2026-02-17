@@ -16,11 +16,10 @@ use super::results::{
 };
 use super::nodes::DecisionNode;
 use super::search::{
-    continue_search_internal, extract_subtree, search_internal, search_internal_without_nn,
+    extract_subtree, run_search, search_internal, search_internal_without_nn,
 };
 use crate::constants::QUEUE_SIZE;
 use crate::mcts::action_space::HOLD_ACTION_INDEX;
-use crate::nn::TetrisNN;
 
 /// MCTS Agent for Tetris
 #[pyclass]
@@ -528,62 +527,41 @@ impl MCTSAgent {
         reused_root: Option<DecisionNode>,
     ) -> Option<(MCTSResult, Option<DecisionNode>, TreeStats)> {
         if let Some(nn) = self.nn.as_ref() {
-            // NN mode: try tree reuse, fall back to fresh search
-            if let Some(mut root) = reused_root {
-                let (result, tree_stats) = self.continue_search_nn(nn, &mut root, add_noise);
-                return Some((result, Some(root), tree_stats));
-            }
-            let (policy, nn_value) = match nn.predict_masked(
-                env,
-                placement_count as usize,
-                mask,
-                max_placements as usize,
-            ) {
-                Ok(result) => result,
-                Err(e) => {
-                    eprintln!(
-                        "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
-                        placement_count, e
-                    );
-                    return None;
-                }
+            let (result, root, tree_stats) = if let Some(root) = reused_root {
+                let evaluator = super::search::NeuralLeafEvaluator {
+                    nn,
+                    nn_value_weight: self.config.nn_value_weight,
+                };
+                run_search(&self.config, &evaluator, root, add_noise)
+            } else {
+                let (policy, nn_value) = match nn.predict_masked(
+                    env,
+                    placement_count as usize,
+                    mask,
+                    max_placements as usize,
+                ) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!(
+                            "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
+                            placement_count, e
+                        );
+                        return None;
+                    }
+                };
+                search_internal(
+                    &self.config, nn, env, policy, nn_value, add_noise, placement_count,
+                )
             };
-            let (mcts_result, root, tree_stats) = search_internal(
-                &self.config,
-                nn,
-                env,
-                policy,
-                nn_value,
-                add_noise,
-                placement_count,
-            );
-            Some((mcts_result, Some(root), tree_stats))
+            Some((result, Some(root), tree_stats))
         } else {
-            // Bootstrap mode: tree reuse still works with uniform priors
-            if let Some(mut root) = reused_root {
-                let evaluator = super::search::BootstrapLeafEvaluator;
-                let (result, tree_stats) =
-                    continue_search_internal(&self.config, &evaluator, &mut root, add_noise);
-                return Some((result, Some(root), tree_stats));
-            }
-            let (mcts_result, root, tree_stats) =
-                search_internal_without_nn(&self.config, env, add_noise, placement_count);
-            Some((mcts_result, Some(root), tree_stats))
+            let (result, root, tree_stats) = if let Some(root) = reused_root {
+                run_search(&self.config, &super::search::BootstrapLeafEvaluator, root, add_noise)
+            } else {
+                search_internal_without_nn(&self.config, env, add_noise, placement_count)
+            };
+            Some((result, Some(root), tree_stats))
         }
-    }
-
-    /// Continue MCTS search on a reused tree root using NN evaluation.
-    fn continue_search_nn(
-        &self,
-        nn: &TetrisNN,
-        root: &mut DecisionNode,
-        add_noise: bool,
-    ) -> (MCTSResult, TreeStats) {
-        let evaluator = super::search::NeuralLeafEvaluator {
-            nn,
-            nn_value_weight: self.config.nn_value_weight,
-        };
-        continue_search_internal(&self.config, &evaluator, root, add_noise)
     }
 
     /// Run MCTS search from a given state.
