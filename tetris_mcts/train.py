@@ -311,6 +311,7 @@ def main(args: ScriptArgs) -> None:
         wandb.define_metric("game_number")
         wandb.define_metric("game/*", step_metric="game_number")
 
+    torch.set_float32_matmul_precision("high")
     logger.info("Starting training with Rust game generation")
     trainer.train(log_to_wandb=log_to_wandb)
 
