@@ -1,5 +1,13 @@
 # Next Steps
 
+- [ ] Do we even need an additional node here?:
+
+  ```
+  1. MCTS builds a tree: DecisionNode → ChanceNode (action executed, queue
+    truncated to 5) → DecisionNode (hidden piece added)
+  ```
+
+- [ ] same scale through out mcts
 - [ ] Fix the t-spin logic
 - [ ] Why are the replays always worse than the average attack would suggest?
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
@@ -34,6 +42,7 @@
 # Confusions
 
 - [ ] How can there be game with 4 perfect clears but only 30 cleared lines? Should be atelast 40 right?
+- [ ] Also twice the number of simulations???
 - [ ] How come the model is not even better even when doing tree reuse
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
 
