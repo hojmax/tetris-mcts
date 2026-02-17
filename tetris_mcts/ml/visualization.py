@@ -16,7 +16,6 @@ from tetris_mcts.config import (
     PIECE_SPAWN_CELLS,
     QUEUE_SIZE,
 )
-
 from tetris_core import TetrisEnv
 
 # Board cell size
@@ -28,14 +27,14 @@ MINI_CELL = 12
 LEFT_SIDEBAR = 76
 RIGHT_SIDEBAR = 76
 SIDEBAR_LABEL_Y = 2
-SIDEBAR_PIECE_Y = 32
+SIDEBAR_PIECE_Y = 38
 QUEUE_SLOT_SPACING = 44
-STATS_Y = 80
+STATS_Y = 86
 STATS_LINE_H = 16
 
 # Info bar heights
 INFO_HEIGHT_SIMPLE = 36
-INFO_HEIGHT_SIDEBAR = 28
+INFO_HEIGHT_SIDEBAR = 34
 
 # Colors
 BG_COLOR = (20, 20, 20)
