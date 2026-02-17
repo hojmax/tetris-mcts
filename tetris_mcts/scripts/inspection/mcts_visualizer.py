@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import dash
-from dash import html, dcc, callback, Output, Input, State, clientside_callback
+from dash import html, dcc, callback, Output, Input, State, clientside_callback, dash_table
 import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
 from simple_parsing import parse
@@ -204,6 +204,12 @@ def build_decision_action_stats(
         u_value = c_puct * prior * sqrt_parent / (1 + visits)
         puct_total = transformed_q + u_value
 
+        parent_id = decision_node["id"]
+        if child is not None:
+            target_node_id = str(child["id"])
+        else:
+            target_node_id = f"v_{parent_id}_{action_idx}"
+
         action_stats.append(
             {
                 "action": action_idx,
@@ -214,10 +220,12 @@ def build_decision_action_stats(
                 "u": u_value,
                 "puct": puct_total,
                 "child": child,
+                "target_node_id": target_node_id,
             }
         )
 
     return action_stats
+
 
 
 def parse_piece_token(token: str) -> int:
@@ -717,7 +725,7 @@ def build_cytoscape_elements(
 
 
 # Create Dash app
-app = dash.Dash(__name__)
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.index_string = """
 <!DOCTYPE html>
 <html>
@@ -1039,6 +1047,16 @@ app.layout = html.Div(
                 # Right panel: Board + State info (top) and Node details (bottom)
                 html.Div(
                     [
+                        html.Button(
+                            "Back",
+                            id="nav-back-button",
+                            n_clicks=0,
+                            style={
+                                "marginBottom": "6px",
+                                "padding": "4px 12px",
+                                "cursor": "pointer",
+                            },
+                        ),
                         # Top row: Board image + State info side by side
                         html.Div(
                             [
@@ -1097,6 +1115,7 @@ app.layout = html.Div(
         dcc.Store(id="sims-done-store", data=0),
         # Store for current selection and navigation
         dcc.Store(id="selected-node-store", data=None),
+        dcc.Store(id="nav-history-store", data=[]),
         dcc.Store(id="siblings-store", data=[]),
         # Hidden div to capture keyboard events
         html.Div(id="keyboard-target", tabIndex="0", style={"outline": "none"}),
@@ -1519,201 +1538,86 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
         q_max = max(row["raw_q"] for row in action_stats) if action_stats else 0.0
         q_col = "Qtanh" if q_scale is not None else "Qnorm"
 
-        if node["action_priors"]:
+        if action_stats:
             details.append(html.Hr())
-            details.append(
-                html.H4(
-                    "Top 5 by Prior (with current PUCT score)",
-                    style={"marginBottom": "10px"},
-                )
-            )
-
-            top_prior_rows = sorted(
-                action_stats,
-                key=lambda row: (-row["prior"], row["action"]),
-            )
-            top_prior_rows = top_prior_rows[:5]
-
-            top_prior_header = html.Tr(
-                [
-                    html.Th("Action", style={"padding": "4px", "textAlign": "left"}),
-                    html.Th("P", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th(q_col, style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("Qraw", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("U", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th(f"{q_col}+U", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("N", style={"padding": "4px", "textAlign": "right"}),
-                ]
-            )
-            top_prior_table_rows = [top_prior_header]
-            for row in top_prior_rows:
-                top_prior_table_rows.append(
-                    html.Tr(
-                        [
-                            html.Td(
-                                f"a{row['action']}",
-                                style={"padding": "4px"},
-                            ),
-                            html.Td(
-                                f"{row['prior']:.4f}",
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                            html.Td(
-                                f"{row['q_transformed']:.4f}",
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                            html.Td(
-                                f"{row['raw_q']:.4f}",
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                            html.Td(
-                                f"{row['u']:.4f}",
-                                style={
-                                    "padding": "4px",
-                                    "textAlign": "right",
-                                    "color": "#0066cc",
-                                },
-                            ),
-                            html.Td(
-                                f"{row['puct']:.4f}",
-                                style={
-                                    "padding": "4px",
-                                    "textAlign": "right",
-                                    "fontWeight": "bold",
-                                },
-                            ),
-                            html.Td(
-                                str(row["visits"]),
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                        ]
-                    )
-                )
-
-            details.append(
-                html.Table(
-                    top_prior_table_rows,
-                    style={
-                        "width": "100%",
-                        "borderCollapse": "collapse",
-                        "fontSize": "12px",
-                    },
-                )
-            )
-
-        # Compute PUCT breakdown for each child action
-        if node["children"] and node["visit_count"] > 0:
-            details.append(html.Hr())
-            details.append(
-                html.H4(
-                    "Child Actions (PUCT Breakdown)", style={"marginBottom": "10px"}
-                )
-            )
             q_desc = (
-                f"PUCT = Q_tanh + U, where Q_tanh = tanh(Q/{q_scale:.1f}) and "
+                f"PUCT = Q_tanh + U, where Q_tanh = tanh(Q/{q_scale:.1f})"
                 if q_scale is not None
-                else "PUCT = Q_norm + U, where Q_norm is min-max normalized over all valid "
-                f"actions (q_min={q_min:.4f}, q_max={q_max:.4f}) and "
+                else f"PUCT = Q_norm + U, where Q_norm is min-max normalized "
+                f"(q_min={q_min:.4f}, q_max={q_max:.4f})"
             )
             details.append(
                 html.P(
-                    q_desc + "U = c_puct * P * sqrt(N_parent + 1) / (1 + N_child)",
+                    f"{q_desc}, U = c_puct * P * sqrt(N_parent + 1) / (1 + N_child)",
                     style={"fontSize": "11px", "color": "#666", "marginBottom": "10px"},
                 )
             )
 
-            child_info = [row for row in action_stats if row["child"] is not None]
+            table_data = []
+            nav_map = {}
+            for row in action_stats:
+                action_label = f"a{row['action']}"
+                nav_map[action_label] = row["target_node_id"]
+                entry: dict[str, str | int | float] = {
+                    "Action": action_label,
+                    "N": row["visits"],
+                    "P": round(row["prior"], 4),
+                    q_col: round(row["q_transformed"], 4),
+                    "Qraw": round(row["raw_q"], 4),
+                    "U": round(row["u"], 4),
+                    "PUCT": round(row["puct"], 4),
+                }
+                if row["child"] is not None:
+                    entry["Atk"] = row["child"]["attack"]
+                    entry["NNval"] = round(row["child"]["nn_value"], 4)
+                else:
+                    entry["Atk"] = ""
+                    entry["NNval"] = ""
+                table_data.append(entry)
 
-            # Sort by PUCT score descending
-            child_info.sort(key=lambda row: (-row["puct"], row["action"]))
-
-            # Display as a table
-            table_header = html.Tr(
-                [
-                    html.Th("Action", style={"padding": "4px", "textAlign": "left"}),
-                    html.Th("N", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("P", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("Qraw", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th(q_col, style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("U", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("PUCT", style={"padding": "4px", "textAlign": "right"}),
-                    html.Th("Atk", style={"padding": "4px", "textAlign": "right"}),
-                ]
-            )
-
-            table_rows = [table_header]
-            for i, info in enumerate(child_info[:15]):  # Show top 15
-                is_best = i == 0
-                row_style = {"backgroundColor": "#e6ffe6"} if is_best else {}
-                table_rows.append(
-                    html.Tr(
-                        [
-                            html.Td(
-                                f"a{info['action']}",
-                                style={
-                                    "padding": "4px",
-                                    "fontWeight": "bold" if is_best else "normal",
-                                },
-                            ),
-                            html.Td(
-                                str(info["visits"]),
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                            html.Td(
-                                f"{info['prior']:.3f}",
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                            html.Td(
-                                f"{info['raw_q']:.2f}",
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                            html.Td(
-                                f"{info['q_transformed']:.2f}",
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                            html.Td(
-                                f"{info['u']:.2f}",
-                                style={
-                                    "padding": "4px",
-                                    "textAlign": "right",
-                                    "color": "#0066cc",
-                                },
-                            ),
-                            html.Td(
-                                f"{info['puct']:.2f}",
-                                style={
-                                    "padding": "4px",
-                                    "textAlign": "right",
-                                    "fontWeight": "bold",
-                                },
-                            ),
-                            html.Td(
-                                str(info["child"]["attack"]),
-                                style={"padding": "4px", "textAlign": "right"},
-                            ),
-                        ],
-                        style=row_style,
-                    )
-                )
+            columns = [
+                {"name": "Action", "id": "Action", "type": "text"},
+                {"name": "N", "id": "N", "type": "numeric"},
+                {"name": "P", "id": "P", "type": "numeric"},
+                {"name": q_col, "id": q_col, "type": "numeric"},
+                {"name": "Qraw", "id": "Qraw", "type": "numeric"},
+                {"name": "U", "id": "U", "type": "numeric"},
+                {"name": "PUCT", "id": "PUCT", "type": "numeric"},
+                {"name": "Atk", "id": "Atk", "type": "numeric"},
+                {"name": "NNval", "id": "NNval", "type": "numeric"},
+            ]
 
             details.append(
-                html.Table(
-                    table_rows,
-                    style={
-                        "width": "100%",
-                        "borderCollapse": "collapse",
-                        "fontSize": "12px",
-                    },
-                )
+                dcc.Store(id="action-nav-map", data=nav_map),
             )
-
-            if len(child_info) > 15:
-                details.append(
-                    html.P(
-                        f"... and {len(child_info) - 15} more children",
-                        style={"fontSize": "11px", "color": "#666"},
-                    )
-                )
+            details.append(
+                dash_table.DataTable(
+                    id="action-stats-table",
+                    columns=columns,
+                    data=table_data,
+                    sort_action="native",
+                    sort_by=[{"column_id": "PUCT", "direction": "desc"}],
+                    style_table={"overflowX": "auto", "fontSize": "12px"},
+                    style_cell={
+                        "padding": "4px 8px",
+                        "textAlign": "right",
+                        "fontFamily": "monospace",
+                        "minWidth": "50px",
+                    },
+                    style_cell_conditional=[
+                        {"if": {"column_id": "Action"}, "textAlign": "left", "cursor": "pointer", "color": "#0066cc", "textDecoration": "underline"},
+                    ],
+                    style_header={
+                        "fontWeight": "bold",
+                        "cursor": "pointer",
+                    },
+                    style_data_conditional=[
+                        {"if": {"column_id": "U"}, "color": "#0066cc"},
+                        {"if": {"column_id": "PUCT"}, "fontWeight": "bold"},
+                    ],
+                    page_size=50,
+                ),
+            )
 
         elif node["action_priors"]:
             # No children yet, show top priors
@@ -1843,6 +1747,63 @@ clientside_callback(
     """,
     Output("keyboard-event", "data"),
     Input("keyboard-target", "n_clicks"),
+)
+
+# Pan the Cytoscape view to center on the selected node
+clientside_callback(
+    """
+    function(selectedNodeId) {
+        if (!selectedNodeId) return window.dash_clientside.no_update;
+        var cyEl = document.getElementById('cytoscape-tree');
+        if (!cyEl || !cyEl._cyreg || !cyEl._cyreg.cy) return window.dash_clientside.no_update;
+        var cy = cyEl._cyreg.cy;
+        var node = cy.getElementById(selectedNodeId);
+        if (node.length > 0) {
+            cy.animate({center: {eles: node}, duration: 200});
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("keyboard-target", "title"),  # dummy output (pan)
+    Input("selected-node-store", "data"),
+)
+
+# Manage navigation history: push previous node on forward nav, pop on back click
+clientside_callback(
+    """
+    function(selectedNodeId, backClicks, history) {
+        var ctx = window.dash_clientside.callback_context;
+        if (!ctx.triggered.length) return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        var trigger = ctx.triggered[0].prop_id;
+        history = history || [];
+
+        if (trigger === 'nav-back-button.n_clicks') {
+            if (history.length === 0) return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+            var prev = history[history.length - 1];
+            var newHistory = history.slice(0, -1);
+            // Set a flag so the next selected-node-store trigger knows it was a back nav
+            window._navBackInProgress = true;
+            return [prev, newHistory];
+        }
+
+        // Forward navigation — push previous node if not triggered by back
+        if (window._navBackInProgress) {
+            window._navBackInProgress = false;
+            return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        }
+        if (selectedNodeId && window._lastSelectedNode && window._lastSelectedNode !== selectedNodeId) {
+            history = history.concat([window._lastSelectedNode]);
+        }
+        window._lastSelectedNode = selectedNodeId;
+        return [window.dash_clientside.no_update, history];
+    }
+    """,
+    Output("selected-node-store", "data", allow_duplicate=True),
+    Output("nav-history-store", "data"),
+    Input("selected-node-store", "data"),
+    Input("nav-back-button", "n_clicks"),
+    State("nav-history-store", "data"),
+    prevent_initial_call=True,
 )
 
 
@@ -1999,6 +1960,27 @@ def update_highlight_stylesheet(selected_node_id, tap_node_data):
         )
 
     return styles
+
+
+@callback(
+    Output("selected-node-store", "data", allow_duplicate=True),
+    Input("action-stats-table", "active_cell"),
+    State("action-stats-table", "derived_virtual_data"),
+    State("action-nav-map", "data"),
+    prevent_initial_call=True,
+)
+def navigate_to_action_node(active_cell, virtual_data, nav_map):
+    """Navigate to a child node when an Action cell is clicked in the stats table."""
+    if not active_cell or not virtual_data or not nav_map:
+        return dash.no_update
+    if active_cell.get("column_id") != "Action":
+        return dash.no_update
+    row_idx = active_cell["row"]
+    action_label = virtual_data[row_idx]["Action"]
+    target = nav_map.get(action_label)
+    if target is None:
+        return dash.no_update
+    return target
 
 
 # Load dagre layout extension
