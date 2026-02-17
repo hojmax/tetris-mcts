@@ -403,8 +403,7 @@ class Trainer:
         self._cached_value_loss_weight: float = 1.0
         self._pending_eval_gif_paths: list[Path] = []
         self.initial_incumbent_model_path: Path | None = None
-        self.initial_incumbent_lifetime_games: int = 0
-        self.initial_incumbent_lifetime_attack: int = 0
+        self.initial_incumbent_eval_avg_attack: float = 0.0
 
         # Create directories
         config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1089,8 +1088,7 @@ class Trainer:
             candidate_eval_seeds=list(range(self.config.model_promotion_eval_games)),
             start_with_network=not self.config.bootstrap_without_network,
             non_network_num_simulations=self.config.bootstrap_num_simulations,
-            initial_incumbent_lifetime_games=self.initial_incumbent_lifetime_games,
-            initial_incumbent_lifetime_attack=self.initial_incumbent_lifetime_attack,
+            initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
             nn_value_weight_cap=self.config.nn_value_weight_cap,
         )
         generator.start()
@@ -1105,8 +1103,7 @@ class Trainer:
             bootstrap_without_network=self.config.bootstrap_without_network,
             bootstrap_num_simulations=self.config.bootstrap_num_simulations,
             incumbent_nn_value_weight=self.config.nn_value_weight,
-            initial_incumbent_lifetime_games=self.initial_incumbent_lifetime_games,
-            initial_incumbent_lifetime_attack=self.initial_incumbent_lifetime_attack,
+            initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
             nn_value_weight_promotion_multiplier=self.config.nn_value_weight_promotion_multiplier,
             nn_value_weight_promotion_max_delta=self.config.nn_value_weight_promotion_max_delta,
             nn_value_weight_cap=self.config.nn_value_weight_cap,
@@ -1287,7 +1284,6 @@ class Trainer:
                             incumbent_uses_network=bool(
                                 event["incumbent_uses_network"]
                             ),
-                            incumbent_games=int(event["incumbent_games"]),
                             incumbent_avg_attack=event["incumbent_avg_attack"],
                             incumbent_nn_value_weight=incumbent_nn_value_weight,
                             promoted_nn_value_weight=promoted_nn_value_weight,
@@ -1318,9 +1314,6 @@ class Trainer:
                                 ],
                                 "model_gate/incumbent_uses_network": event[
                                     "incumbent_uses_network"
-                                ],
-                                "model_gate/incumbent_games": event[
-                                    "incumbent_games"
                                 ],
                                 "model_gate/incumbent_avg_attack": event[
                                     "incumbent_avg_attack"
@@ -1447,11 +1440,8 @@ class Trainer:
                     metrics["incumbent/uses_network"] = (
                         generator.incumbent_uses_network()
                     )
-                    metrics["incumbent/lifetime_games"] = (
-                        generator.incumbent_lifetime_games()
-                    )
-                    metrics["incumbent/lifetime_avg_attack"] = (
-                        generator.incumbent_lifetime_avg_attack()
+                    metrics["incumbent/eval_avg_attack"] = (
+                        generator.incumbent_eval_avg_attack()
                     )
                     metrics["incumbent/nn_value_weight"] = (
                         generator.incumbent_nn_value_weight()
@@ -1631,8 +1621,7 @@ class Trainer:
                             "incumbent_uses_network": generator.incumbent_uses_network(),
                             "incumbent_model_step": generator.incumbent_model_step(),
                             "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
-                            "incumbent_lifetime_games": generator.incumbent_lifetime_games(),
-                            "incumbent_lifetime_attack": generator.incumbent_lifetime_attack(),
+                            "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
                             "incumbent_model_source_path": incumbent_model_source_path,
                             "incumbent_model_artifact": (
                                 incumbent_model_artifact.name
@@ -1681,8 +1670,7 @@ class Trainer:
                     "incumbent_uses_network": generator.incumbent_uses_network(),
                     "incumbent_model_step": generator.incumbent_model_step(),
                     "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
-                    "incumbent_lifetime_games": generator.incumbent_lifetime_games(),
-                    "incumbent_lifetime_attack": generator.incumbent_lifetime_attack(),
+                    "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
                     "incumbent_model_source_path": incumbent_model_source_path,
                     "incumbent_model_artifact": (
                         incumbent_model_artifact.name

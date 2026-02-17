@@ -218,44 +218,25 @@ def main(args: ScriptArgs) -> None:
                 checkpoint=str(resume_checkpoint),
                 nn_value_weight=restored_nn_value_weight,
             )
-        incumbent_lifetime_games = state.get("incumbent_lifetime_games")
-        if incumbent_lifetime_games is None:
-            restored_incumbent_lifetime_games = 0
+        incumbent_eval_avg_attack = state.get("incumbent_eval_avg_attack")
+        if incumbent_eval_avg_attack is None:
+            restored_incumbent_eval_avg_attack = 0.0
             logger.warning(
-                "Checkpoint missing incumbent_lifetime_games; using zero",
+                "Checkpoint missing incumbent_eval_avg_attack; using zero",
                 checkpoint=str(resume_checkpoint),
-                incumbent_lifetime_games=restored_incumbent_lifetime_games,
             )
         else:
-            restored_incumbent_lifetime_games = int(incumbent_lifetime_games)
-            if restored_incumbent_lifetime_games < 0:
+            restored_incumbent_eval_avg_attack = float(incumbent_eval_avg_attack)
+            if restored_incumbent_eval_avg_attack < 0.0:
                 raise ValueError(
-                    "Checkpoint incumbent_lifetime_games must be >= 0 "
-                    f"(got {restored_incumbent_lifetime_games})"
+                    "Checkpoint incumbent_eval_avg_attack must be >= 0 "
+                    f"(got {restored_incumbent_eval_avg_attack})"
                 )
-
-        incumbent_lifetime_attack = state.get("incumbent_lifetime_attack")
-        if incumbent_lifetime_attack is None:
-            restored_incumbent_lifetime_attack = 0
-            logger.warning(
-                "Checkpoint missing incumbent_lifetime_attack; using zero",
-                checkpoint=str(resume_checkpoint),
-                incumbent_lifetime_attack=restored_incumbent_lifetime_attack,
-            )
-        else:
-            restored_incumbent_lifetime_attack = int(incumbent_lifetime_attack)
-            if restored_incumbent_lifetime_attack < 0:
-                raise ValueError(
-                    "Checkpoint incumbent_lifetime_attack must be >= 0 "
-                    f"(got {restored_incumbent_lifetime_attack})"
-                )
-        trainer.initial_incumbent_lifetime_games = restored_incumbent_lifetime_games
-        trainer.initial_incumbent_lifetime_attack = restored_incumbent_lifetime_attack
+        trainer.initial_incumbent_eval_avg_attack = restored_incumbent_eval_avg_attack
         logger.info(
-            "Restored incumbent lifetime promotion baseline from checkpoint",
+            "Restored incumbent eval avg attack from checkpoint",
             checkpoint=str(resume_checkpoint),
-            incumbent_lifetime_games=restored_incumbent_lifetime_games,
-            incumbent_lifetime_attack=restored_incumbent_lifetime_attack,
+            incumbent_eval_avg_attack=restored_incumbent_eval_avg_attack,
         )
         if start_with_network and resume_incumbent_model_path is not None:
             trainer.initial_incumbent_model_path = resume_incumbent_model_path

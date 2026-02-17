@@ -179,7 +179,6 @@ struct CandidateModelRequest {
 struct ModelEvalEvent {
     incumbent_step: u64,
     incumbent_uses_network: bool,
-    incumbent_games: u64,
     incumbent_avg_attack: f32,
     incumbent_nn_value_weight: f32,
     candidate_step: u64,
@@ -361,10 +360,8 @@ pub struct GameGenerator {
     incumbent_overhang_penalty_weight: Arc<AtomicU32>,
     /// Cap at which nn_value_weight triggers penalty removal.
     nn_value_weight_cap: f32,
-    /// Lifetime game count for the currently deployed incumbent model.
-    incumbent_lifetime_games: Arc<AtomicU64>,
-    /// Lifetime total attack for the currently deployed incumbent model.
-    incumbent_lifetime_attack: Arc<AtomicU64>,
+    /// Average attack from the evaluation that promoted the current incumbent.
+    incumbent_eval_avg_attack: Arc<AtomicU32>,
     /// Thread handles (for joining on stop)
     thread_handles: Vec<JoinHandle<()>>,
 }
@@ -372,7 +369,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_lifetime_games=0, initial_incumbent_lifetime_attack=0, nn_value_weight_cap=1.0))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -386,8 +383,7 @@ impl GameGenerator {
         candidate_eval_seeds: Option<Vec<u64>>,
         start_with_network: bool,
         non_network_num_simulations: u32,
-        initial_incumbent_lifetime_games: u64,
-        initial_incumbent_lifetime_attack: u64,
+        initial_incumbent_eval_avg_attack: f32,
         nn_value_weight_cap: f32,
     ) -> PyResult<Self> {
         if max_placements == 0 {
@@ -464,8 +460,7 @@ impl GameGenerator {
                 initial_overhang_penalty_weight_bits,
             )),
             nn_value_weight_cap,
-            incumbent_lifetime_games: Arc::new(AtomicU64::new(initial_incumbent_lifetime_games)),
-            incumbent_lifetime_attack: Arc::new(AtomicU64::new(initial_incumbent_lifetime_attack)),
+            incumbent_eval_avg_attack: Arc::new(AtomicU32::new(initial_incumbent_eval_avg_attack.to_bits())),
             thread_handles: Vec::new(),
         })
     }
@@ -572,8 +567,7 @@ impl GameGenerator {
             let incumbent_overhang_penalty_weight =
                 Arc::clone(&self.incumbent_overhang_penalty_weight);
             let nn_value_weight_cap = self.nn_value_weight_cap;
-            let incumbent_lifetime_games = Arc::clone(&self.incumbent_lifetime_games);
-            let incumbent_lifetime_attack = Arc::clone(&self.incumbent_lifetime_attack);
+            let incumbent_eval_avg_attack = Arc::clone(&self.incumbent_eval_avg_attack);
 
             let handle = thread::spawn(move || {
                 Self::worker_loop(
@@ -605,8 +599,7 @@ impl GameGenerator {
                     incumbent_death_penalty,
                     incumbent_overhang_penalty_weight,
                     nn_value_weight_cap,
-                    incumbent_lifetime_games,
-                    incumbent_lifetime_attack,
+                    incumbent_eval_avg_attack,
                 );
             });
 
@@ -670,20 +663,8 @@ impl GameGenerator {
         self.incumbent_uses_network.load(Ordering::SeqCst)
     }
 
-    pub fn incumbent_lifetime_games(&self) -> u64 {
-        self.incumbent_lifetime_games.load(Ordering::SeqCst)
-    }
-
-    pub fn incumbent_lifetime_attack(&self) -> u64 {
-        self.incumbent_lifetime_attack.load(Ordering::SeqCst)
-    }
-
-    pub fn incumbent_lifetime_avg_attack(&self) -> f32 {
-        let games = self.incumbent_lifetime_games();
-        if games == 0 {
-            return 0.0;
-        }
-        self.incumbent_lifetime_attack.load(Ordering::SeqCst) as f32 / games as f32
+    pub fn incumbent_eval_avg_attack(&self) -> f32 {
+        Self::load_atomic_f32(&self.incumbent_eval_avg_attack)
     }
 
     pub fn incumbent_nn_value_weight(&self) -> f32 {
@@ -777,12 +758,8 @@ impl GameGenerator {
             self.incumbent_uses_network() as u64,
         );
         stats.insert(
-            "incumbent_lifetime_games".to_string(),
-            self.incumbent_lifetime_games.load(Ordering::SeqCst),
-        );
-        stats.insert(
-            "incumbent_lifetime_attack".to_string(),
-            self.incumbent_lifetime_attack.load(Ordering::SeqCst),
+            "incumbent_eval_avg_attack".to_string(),
+            Self::load_atomic_f32(&self.incumbent_eval_avg_attack).to_bits() as u64,
         );
         stats
     }
@@ -867,7 +844,6 @@ impl GameGenerator {
                 "incumbent_uses_network".into(),
                 (if event.incumbent_uses_network { 1.0 } else { 0.0_f64 }).into_py(py),
             );
-            d.insert("incumbent_games".into(), (event.incumbent_games as f64).into_py(py));
             d.insert("incumbent_avg_attack".into(), (event.incumbent_avg_attack as f64).into_py(py));
             d.insert("incumbent_nn_value_weight".into(), (event.incumbent_nn_value_weight as f64).into_py(py));
             d.insert("candidate_step".into(), (event.candidate_step as f64).into_py(py));
@@ -1225,8 +1201,7 @@ impl GameGenerator {
         incumbent_death_penalty: Arc<AtomicU32>,
         incumbent_overhang_penalty_weight: Arc<AtomicU32>,
         nn_value_weight_cap: f32,
-        incumbent_lifetime_games: Arc<AtomicU64>,
-        incumbent_lifetime_attack: Arc<AtomicU64>,
+        incumbent_eval_avg_attack: Arc<AtomicU32>,
     ) {
         let mut agent = MCTSAgent::new(config.clone());
         let mut loaded_model_version = u64::MAX;
@@ -1333,8 +1308,7 @@ impl GameGenerator {
                         &incumbent_death_penalty,
                         &incumbent_overhang_penalty_weight,
                         nn_value_weight_cap,
-                        &incumbent_lifetime_games,
-                        &incumbent_lifetime_attack,
+                        &incumbent_eval_avg_attack,
                     );
 
                     {
@@ -1359,8 +1333,6 @@ impl GameGenerator {
 
             // Play one game
             if let Some(result) = agent.play_game(max_placements, add_noise) {
-                let count_toward_incumbent =
-                    loaded_model_version == incumbent_model_version.load(Ordering::SeqCst);
                 Self::commit_game_result(
                     result,
                     &buffer,
@@ -1368,9 +1340,6 @@ impl GameGenerator {
                     &examples_generated,
                     &game_stats,
                     &completed_games,
-                    &incumbent_lifetime_games,
-                    &incumbent_lifetime_attack,
-                    count_toward_incumbent,
                 );
 
                 // Periodically save to disk for resume capability based on
@@ -1488,8 +1457,7 @@ impl GameGenerator {
         incumbent_death_penalty: &Arc<AtomicU32>,
         incumbent_overhang_penalty_weight: &Arc<AtomicU32>,
         nn_value_weight_cap: f32,
-        incumbent_lifetime_games: &Arc<AtomicU64>,
-        incumbent_lifetime_attack: &Arc<AtomicU64>,
+        incumbent_eval_avg_attack: &Arc<AtomicU32>,
     ) -> usize {
         // Read current penalty values for candidate evaluation
         let candidate_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
@@ -1627,17 +1595,11 @@ impl GameGenerator {
             .sum::<f32>()
             / candidate_games as f32;
 
-        let incumbent_games = incumbent_lifetime_games.load(Ordering::SeqCst);
-        let incumbent_total_attack = incumbent_lifetime_attack.load(Ordering::SeqCst);
-        let incumbent_avg_attack = if incumbent_games > 0 {
-            incumbent_total_attack as f32 / incumbent_games as f32
-        } else {
-            0.0
-        };
+        let incumbent_avg_attack = Self::load_atomic_f32(incumbent_eval_avg_attack);
         let incumbent_nn_value_weight_before = Self::load_atomic_f32(incumbent_nn_value_weight);
         let incumbent_uses_network_before = incumbent_uses_network.load(Ordering::SeqCst);
         let incumbent_step_before = incumbent_model_step.load(Ordering::SeqCst);
-        let auto_promoted = incumbent_games == 0;
+        let auto_promoted = incumbent_avg_attack == 0.0 && !incumbent_uses_network_before;
         let promoted = auto_promoted || candidate_avg_attack > incumbent_avg_attack;
         let promoted_nn_value_weight = if promoted {
             candidate.nn_value_weight
@@ -1663,8 +1625,7 @@ impl GameGenerator {
                 );
             }
             incumbent_model_version.fetch_add(1, Ordering::SeqCst);
-            incumbent_lifetime_games.store(0, Ordering::SeqCst);
-            incumbent_lifetime_attack.store(0, Ordering::SeqCst);
+            Self::store_atomic_f32(incumbent_eval_avg_attack, candidate_avg_attack);
 
             let mut committed = 0usize;
             for r in candidate_results {
@@ -1675,9 +1636,6 @@ impl GameGenerator {
                     examples_generated,
                     game_stats,
                     completed_games,
-                    incumbent_lifetime_games,
-                    incumbent_lifetime_attack,
-                    true,
                 );
                 committed += 1;
             }
@@ -1731,7 +1689,6 @@ impl GameGenerator {
             .push_back(ModelEvalEvent {
                 incumbent_step: incumbent_step_before,
                 incumbent_uses_network: incumbent_uses_network_before,
-                incumbent_games,
                 incumbent_avg_attack,
                 incumbent_nn_value_weight: incumbent_nn_value_weight_before,
                 candidate_step: candidate.model_step,
@@ -1823,9 +1780,6 @@ impl GameGenerator {
         examples_generated: &Arc<AtomicU64>,
         game_stats: &Arc<SharedStats>,
         completed_games: &Arc<RwLock<VecDeque<LastGameInfo>>>,
-        incumbent_lifetime_games: &Arc<AtomicU64>,
-        incumbent_lifetime_attack: &Arc<AtomicU64>,
-        count_toward_incumbent: bool,
     ) {
         let GameResult {
             mut examples,
@@ -1867,11 +1821,6 @@ impl GameGenerator {
             cache_misses,
             cache_size,
         });
-
-        if count_toward_incumbent {
-            incumbent_lifetime_games.fetch_add(1, Ordering::SeqCst);
-            incumbent_lifetime_attack.fetch_add(total_attack as u64, Ordering::SeqCst);
-        }
     }
 
     fn persist_buffer_snapshot(
@@ -2237,8 +2186,7 @@ mod tests {
             Some(vec![0]),
             true,
             10,
-            0,
-            0,
+            0.0,
             1.0,
         )
         .expect("generator should construct");
