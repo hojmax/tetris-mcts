@@ -118,6 +118,7 @@ fn simulate<E: LeafEvaluator>(
     root: &mut DecisionNode,
     rng: &mut StdRng,
 ) {
+    let root_cumulative_attack = root.state.attack as f32;
     let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
     let mut current = root as *mut DecisionNode;
 
@@ -127,7 +128,7 @@ fn simulate<E: LeafEvaluator>(
 
         // Align search objective with training targets: no value beyond episode horizon.
         if node.move_number >= config.max_placements {
-            backup_with_value(&path, 0.0, config.track_value_history);
+            backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
             return;
         }
 
@@ -137,12 +138,12 @@ fn simulate<E: LeafEvaluator>(
                 config.max_placements,
                 config.death_penalty,
             );
-            backup_with_value(&path, -penalty, config.track_value_history);
+            backup_with_value(&path, -penalty, root_cumulative_attack, config.track_value_history);
             return;
         }
 
         if node.valid_actions.is_empty() {
-            backup_with_value(&path, 0.0, config.track_value_history);
+            backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
             return;
         }
 
@@ -168,7 +169,7 @@ fn simulate<E: LeafEvaluator>(
                         "BUG: expand_action failed for action {} - action mask is inconsistent",
                         action_idx
                     );
-                    backup_with_value(&path, 0.0, config.track_value_history);
+                    backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
                     return;
                 }
             };
@@ -181,12 +182,12 @@ fn simulate<E: LeafEvaluator>(
                 Some(MCTSNode::Chance(chance_node)) => chance_node,
                 Some(MCTSNode::Decision(_)) => {
                     debug_assert!(false, "BUG: expand_action should create ChanceNode");
-                    backup_with_value(&path, 0.0, config.track_value_history);
+                    backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
                     return;
                 }
                 None => {
                     debug_assert!(false, "BUG: just inserted child but it's missing");
-                    backup_with_value(&path, 0.0, config.track_value_history);
+                    backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
                     return;
                 }
             };
@@ -208,7 +209,7 @@ fn simulate<E: LeafEvaluator>(
             } else {
                 chance_node.nn_value
             };
-            backup_with_value(&path, leaf_value, config.track_value_history);
+            backup_with_value(&path, leaf_value, root_cumulative_attack, config.track_value_history);
             return;
         }
 
@@ -216,12 +217,12 @@ fn simulate<E: LeafEvaluator>(
             Some(MCTSNode::Chance(chance_node)) => chance_node,
             Some(MCTSNode::Decision(_)) => {
                 debug_assert!(false, "BUG: Decision node child should be ChanceNode");
-                backup_with_value(&path, 0.0, config.track_value_history);
+                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
                 return;
             }
             None => {
                 debug_assert!(false, "BUG: child should exist after contains_key check");
-                backup_with_value(&path, 0.0, config.track_value_history);
+                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
                 return;
             }
         };
@@ -238,11 +239,11 @@ fn simulate<E: LeafEvaluator>(
                 config.max_placements,
                 config.death_penalty,
             );
-            backup_with_value(&path, -penalty, config.track_value_history);
+            backup_with_value(&path, -penalty, root_cumulative_attack, config.track_value_history);
             return;
         }
         if chance_node.move_number >= config.max_placements {
-            backup_with_value(&path, 0.0, config.track_value_history);
+            backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
             return;
         }
 
@@ -256,12 +257,12 @@ fn simulate<E: LeafEvaluator>(
             Some(MCTSNode::Decision(decision_node)) => current = decision_node as *mut DecisionNode,
             Some(MCTSNode::Chance(_)) => {
                 debug_assert!(false, "BUG: ChanceNode child should be DecisionNode");
-                backup_with_value(&path, 0.0, config.track_value_history);
+                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
                 return;
             }
             None => {
                 debug_assert!(false, "BUG: child should exist after insertion");
-                backup_with_value(&path, 0.0, config.track_value_history);
+                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
                 return;
             }
         }
@@ -331,27 +332,27 @@ fn expand_chance(parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNod
     MCTSNode::Decision(node)
 }
 
-/// Backpropagate total episode value through the path
+/// Backpropagate total episode value through the path.
 ///
 /// All nodes in the path receive the SAME total value:
-///   total_value = cumulative_reward_along_path + leaf_value
+///   total_value = root_cumulative_attack + path_rewards + leaf_value
 ///
-/// The NN predicts future reward from each state. By adding the cumulative
-/// reward collected along the path to the leaf's NN value, we get the total
-/// expected episode return. This same total is backed up to all nodes so that
-/// Q values represent "expected total return when passing through this node".
+/// `root_cumulative_attack` anchors Q values to total episode attack so that
+/// tanh(Q / q_scale) operates at a consistent scale throughout the game.
+/// The NN predicts future reward; adding the known past attack plus the
+/// rewards collected along the search path gives a total episode estimate.
 fn backup_with_value(
     path: &[(*mut DecisionNode, usize, f32)],
     leaf_value: f32,
+    root_cumulative_attack: f32,
     track_value_history: bool,
 ) {
     if path.is_empty() {
         return;
     }
 
-    // Compute total value = all step rewards along path + leaf's future value estimate
     let total_reward: f32 = path.iter().map(|(_, _, reward)| reward).sum();
-    let total_value = total_reward + leaf_value;
+    let total_value = root_cumulative_attack + total_reward + leaf_value;
 
     // All nodes on the path get the same total value
     for &(node_ptr, action_idx, _) in path.iter() {
@@ -587,9 +588,10 @@ pub(crate) fn search_internal_without_nn(
 /// the hidden queue slot (the 6th piece beyond the visible 5).
 ///
 /// Returns the extracted DecisionNode, or None if the subtree path wasn't explored.
-/// Value sums are NOT adjusted: the constant ancestor-reward offset is identical for
-/// all siblings at the reused root, so relative Q-value ordering is preserved.
-/// The offset washes out as new simulations accumulate.
+/// Value sums are NOT adjusted: old visits used the previous root's cumulative attack
+/// as offset while new simulations will use the reused root's (higher) cumulative attack.
+/// The offset difference is the single step reward from the chosen action, constant across
+/// all siblings, so relative Q-value ordering is preserved and dilutes as new visits accumulate.
 pub(super) fn extract_subtree(
     mut root: DecisionNode,
     action_idx: usize,
