@@ -14,7 +14,7 @@ class ScriptArgs:
 
 
 def find_game_boundaries(move_numbers: np.ndarray) -> list[tuple[int, int]]:
-    game_starts = np.where(move_numbers < 0.001)[0]
+    game_starts = np.where(move_numbers == 0)[0]
     if len(game_starts) == 0:
         raise ValueError("Replay buffer has no game starts (move_numbers never resets)")
 

@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS
+from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, TrainingConfig
 from tetris_mcts.ml.loss import compute_loss
 from tetris_mcts.ml.network import AUX_FEATURES, BOARD_STATS_FEATURES, PIECE_AUX_FEATURES
 
@@ -76,6 +76,7 @@ class ScriptArgs:
     match_num_fusion_blocks_options: list[int] = field(
         default_factory=lambda: [0, 1, 2, 3]
     )
+    max_placements: int = TrainingConfig.max_placements  # For normalizing placement_counts
     match_param_tolerance: float = 0.01  # Relative tolerance
     match_flop_tolerance: float = (  # Relative tolerance on cache-weighted FLOPs
         0.01
@@ -618,6 +619,7 @@ def get_preload_mode(args: ScriptArgs) -> str:
 def build_aux_batch_from_npz(
     data: np.lib.npyio.NpzFile,
     global_indices: np.ndarray,
+    max_placements: int,
 ) -> np.ndarray:
     current_pieces = data["current_pieces"][global_indices].astype(
         np.float32, copy=False
@@ -633,6 +635,7 @@ def build_aux_batch_from_npz(
     )
     placement_counts = (
         data["placement_counts"][global_indices].astype(np.float32).reshape(-1, 1)
+        / max_placements
     )
     combos = data["combos"][global_indices].astype(np.float32).reshape(-1, 1)
     back_to_back = (
@@ -688,9 +691,10 @@ def build_torch_batch_from_npz(
     data: np.lib.npyio.NpzFile,
     global_indices: np.ndarray,
     device: torch.device,
+    max_placements: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     boards_np = data["boards"][global_indices].astype(np.float32, copy=False)
-    aux_np = build_aux_batch_from_npz(data, global_indices)
+    aux_np = build_aux_batch_from_npz(data, global_indices, max_placements)
     policy_targets_np = data["policy_targets"][global_indices].astype(
         np.float32, copy=False
     )
@@ -714,9 +718,10 @@ def build_tensor_dataset(
     selected_global_indices: np.ndarray,
     mode: str,
     train_device: torch.device,
+    max_placements: int,
 ) -> OfflineTensorDataset:
     boards_np = data["boards"][selected_global_indices].astype(np.float32, copy=False)
-    aux_np = build_aux_batch_from_npz(data, selected_global_indices).astype(
+    aux_np = build_aux_batch_from_npz(data, selected_global_indices, max_placements).astype(
         np.float32, copy=False
     )
     policy_targets_np = data["policy_targets"][selected_global_indices].astype(
@@ -759,10 +764,11 @@ def build_torch_batch(
     source: OfflineDataSource,
     local_indices: np.ndarray,
     device: torch.device,
+    max_placements: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if source.tensor_data is None:
         global_indices = source.selected_global_indices[local_indices]
-        return build_torch_batch_from_npz(source.npz, global_indices, device)
+        return build_torch_batch_from_npz(source.npz, global_indices, device, max_placements)
 
     tensor_data = source.tensor_data
     gather_indices = torch.from_numpy(local_indices.astype(np.int64, copy=False)).to(
@@ -811,6 +817,7 @@ def evaluate_losses(
     device: torch.device,
     eval_batch_size: int,
     value_loss_weight: float,
+    max_placements: int,
 ) -> dict[str, float]:
     total_sum = 0.0
     policy_sum = 0.0
@@ -822,7 +829,7 @@ def evaluate_losses(
         for start in range(0, len(local_indices), eval_batch_size):
             batch_indices = local_indices[start : start + eval_batch_size]
             boards, aux, policy_targets, value_targets, action_masks = (
-                build_torch_batch(source, batch_indices, device)
+                build_torch_batch(source, batch_indices, device, max_placements)
             )
             total_loss, policy_loss, value_loss = compute_loss(
                 model=model,
@@ -893,6 +900,7 @@ def train_offline_model(
             device=device,
             eval_batch_size=args.eval_batch_size,
             value_loss_weight=args.value_loss_weight,
+            max_placements=args.max_placements,
         )
         val_metrics = evaluate_losses(
             model=model,
@@ -901,6 +909,7 @@ def train_offline_model(
             device=device,
             eval_batch_size=args.eval_batch_size,
             value_loss_weight=args.value_loss_weight,
+            max_placements=args.max_placements,
         )
         eval_seconds = time.perf_counter() - eval_start
         eval_seconds_total += eval_seconds
@@ -982,7 +991,7 @@ def train_offline_model(
         positions = rng.integers(0, len(train_local_indices), size=args.batch_size)
         batch_indices = train_local_indices[positions]
         boards, aux, policy_targets, value_targets, action_masks = build_torch_batch(
-            source, batch_indices, device
+            source, batch_indices, device, args.max_placements
         )
 
         model.train()
@@ -1142,6 +1151,7 @@ def main(args: ScriptArgs) -> None:
                 selected_global_indices=selected_global_indices,
                 mode=preload_mode,
                 train_device=device,
+                max_placements=args.max_placements,
             )
         preload_sec = time.perf_counter() - preload_start
         source = OfflineDataSource(

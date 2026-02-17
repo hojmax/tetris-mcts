@@ -32,6 +32,7 @@ from tetris_mcts.config import (
     PIECE_NAMES,
     QUEUE_SIZE,
     CHECKPOINT_DIRNAME,
+    TrainingConfig,
 )
 from tetris_mcts.ml.value_predictor import ValuePredictor
 
@@ -51,7 +52,7 @@ def get_piece_type(one_hot: np.ndarray) -> int | None:
 
 
 def find_game_boundaries(move_numbers: np.ndarray) -> list[tuple[int, int]]:
-    game_starts = np.where(move_numbers < 0.001)[0]
+    game_starts = np.where(move_numbers == 0)[0]
     games = []
     for i, start in enumerate(game_starts):
         end = game_starts[i + 1] if i + 1 < len(game_starts) else len(move_numbers)
@@ -121,7 +122,7 @@ class BufferViewer:
                 hold_piece=hold_piece_raw,
                 hold_available=hold_available_raw,
                 next_queue=next_queue_raw,
-                placement_count=placement_count_raw,
+                placement_count=placement_count_raw / TrainingConfig.max_placements,
                 combo_feature=combo_feature,
                 back_to_back=back_to_back_raw,
                 next_hidden_piece_probs=next_hidden_piece_probs_raw,
