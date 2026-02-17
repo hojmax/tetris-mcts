@@ -144,8 +144,9 @@ pub fn calculate_attack(
 ) -> (u32, bool) {
     let base = clear_type.base_attack();
     let combo_bonus = combo_attack(combo);
+    let is_b2b_eligible = clear_type.is_difficult() || is_perfect_clear;
 
-    let b2b_bonus = if back_to_back_active && (clear_type.is_difficult() || is_perfect_clear) {
+    let b2b_bonus = if back_to_back_active && is_b2b_eligible {
         BACK_TO_BACK_BONUS
     } else {
         0
@@ -162,8 +163,8 @@ pub fn calculate_attack(
     // Update back-to-back status
     let new_b2b = if clear_type == ClearType::None {
         back_to_back_active // No clear, keep current status
-    } else if clear_type.is_difficult() || is_perfect_clear {
-        true // Difficult clear or perfect clear, activate B2B
+    } else if is_b2b_eligible {
+        true
     } else {
         false // Easy clear (single/double/triple), break B2B
     };
