@@ -892,14 +892,17 @@ mod tests {
         let mut env = TetrisEnv::new(10, 20);
         env.back_to_back = true;
 
-        // Fill bottom 1 row (not a difficult clear)
+        // Fill bottom 2 rows, but only the bottom one is complete
         for x in 0..10 {
             env.board[19 * env.width + x] = 1;
+        }
+        for x in 0..5 {
+            env.board[18 * env.width + x] = 1;
         }
         env.sync_board_stats();
         env.clear_lines_internal(false, false);
 
-        // Single line clear breaks back-to-back
+        // Single line clear (non-perfect-clear) breaks back-to-back
         assert!(!env.back_to_back);
     }
 

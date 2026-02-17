@@ -23,6 +23,11 @@ impl TetrisEnv {
             return (false, false);
         }
 
+        // If the piece could move up, it was reachable by hard drop — not a real T-spin
+        if self.is_valid_position(piece.piece_type, piece.rotation, piece.x, piece.y - 1) {
+            return (false, false);
+        }
+
         let center_x = piece.x + 1;
         let center_y = piece.y + 1;
 
