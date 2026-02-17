@@ -742,7 +742,6 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 - **`scripts/abalations/compare_offline_architectures.py`** - Baseline vs gated offline architecture benchmark
 - **`scripts/abalations/compare_offline_feature_ablation.py`** - Offline sweep over state-feature ablations
 - **`scripts/abalations/compare_offline_network_scaling.py`** - Default vs scaled trunk/post-fusion offline benchmark
-- **`scripts/utilities/normalize_combo_feature_npz.py`** - In-place combo normalization patch for old NPZ buffers
 
 **Quick access via Makefile:**
 

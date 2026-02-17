@@ -161,23 +161,6 @@ python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
     --num_simulations 500
 ```
 
-### Replay Buffer Combo Patch
-
-```bash
-# Patch older replay buffers where combos are not normalized.
-# Rules used by the script:
-# - If max(combos) > 1.0 => not normalized
-# - If combos contain only 0/1 and no intermediate values => not normalized
-# Then it rewrites the NPZ in-place with combos = combos / 12.
-python tetris_mcts/scripts/utilities/normalize_combo_feature_npz.py \
-    --data_path training_runs/v17/training_data.npz
-
-# Dry-run check (no file rewrite)
-python tetris_mcts/scripts/utilities/normalize_combo_feature_npz.py \
-    --data_path training_runs/v17/training_data.npz \
-    --dry_run true
-```
-
 ### Performance Profiling
 
 **Timing Benchmarks** (saves results to JSONL):
@@ -305,7 +288,6 @@ tetris_mcts/                 # Python package
     │   ├── profile_games.py
     │   └── replay_viewer.py
     └── utilities/
-        └── normalize_combo_feature_npz.py
 ```
 
 ## Key Concepts
@@ -415,7 +397,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
    - Default staged mode: `generator.sample_batch(batch_size * prefetch_batches, max_placements)`, then move staged tensors once to the training device, split into train-sized batches, and keep a queued cache up to `staged_batch_cache_batches` before consuming.
    - Full mirror mode (CUDA/MPS only, `mirror_replay_on_accelerator=true`): `generator.replay_buffer_snapshot(max_placements)` initializes a full device mirror, then `generator.replay_buffer_delta(from_index, max_examples, max_placements)` incrementally appends new examples and drops evicted prefix rows to match FIFO windowing. Rust now snapshots replay rows and logical index bounds atomically from a shared replay state (`SharedBufferState`), so Python deltas stay aligned with FIFO index space under concurrent generation.
    Both modes use `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` tensors; periodic NPZ saves remain resume-only.
-11. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), raw integer counters (`move_numbers` as uint32, `placement_counts` as uint32), normalized `combos` (clamped at 12 then divided by 12), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` normalized from each example's current board) for exact replay/WandB alignment plus future feature experiments
+11. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), raw integer counters (`move_numbers` as uint32, `placement_counts` as uint32, `combos` as uint32), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` normalized from each example's current board) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing
 

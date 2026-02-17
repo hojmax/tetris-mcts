@@ -8,7 +8,6 @@ import structlog
 from simple_parsing import parse
 
 from tetris_mcts.config import DEFAULT_GIF_FRAME_DURATION_MS, PROJECT_ROOT, QUEUE_SIZE
-from tetris_mcts.ml.network import denormalize_combo_feature
 from tetris_mcts.ml.visualization import compute_spawn_and_ghost, render_board
 from tetris_mcts.scripts.inspection.inspect_training_data import (
     build_game_slices,
@@ -75,7 +74,7 @@ def main(args: ScriptArgs) -> None:
                 get_piece_type(data["next_queue"][i][j]) for j in range(QUEUE_SIZE)
             ]
             can_hold = bool(data["hold_available"][i])
-            combo = denormalize_combo_feature(float(data["combos"][i]))
+            combo = int(data["combos"][i])
             back_to_back = bool(data["back_to_back"][i])
             value_target = float(data["value_targets"][i])
 

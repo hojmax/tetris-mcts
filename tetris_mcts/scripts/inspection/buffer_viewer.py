@@ -34,6 +34,7 @@ from tetris_mcts.config import (
     CHECKPOINT_DIRNAME,
     TrainingConfig,
 )
+from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
 from tetris_mcts.ml.value_predictor import ValuePredictor
 
 PIECE_CHARS = PIECE_NAMES
@@ -94,7 +95,8 @@ class BufferViewer:
         hold_available_raw = float(self.data["hold_available"][i])
         next_queue_raw = self.data["next_queue"][i]
         placement_count_raw = float(self.data["placement_counts"][i])
-        combo_feature = float(self.data["combos"][i])
+        combo_raw = int(self.data["combos"][i])
+        combo_feature = min(combo_raw, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
         back_to_back_raw = float(self.data["back_to_back"][i])
         next_hidden_piece_probs_raw = self.data["next_hidden_piece_probs"][i]
         column_heights_raw = self.data["column_heights"][i]

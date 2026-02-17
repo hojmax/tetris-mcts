@@ -12,7 +12,6 @@ use zip::CompressionMethod;
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::mcts::{TrainingExample, NUM_ACTIONS};
-use crate::nn::{denormalize_combo_feature, normalize_combo_for_feature};
 
 /// Write training examples to NPZ format (compatible with Python numpy).
 ///
@@ -38,7 +37,7 @@ pub fn write_examples_to_npz(
 /// - next_queue: (N, 5, 7) float32 one-hot
 /// - move_numbers: (N,) uint32 raw frame indices (includes holds)
 /// - placement_counts: (N,) uint32 raw placement counts (excludes holds)
-/// - combos: (N,) float32 normalized combo feature (clamped to 0.0..1.0)
+/// - combos: (N,) uint32 raw combo counts
 /// - back_to_back: (N,) bool
 /// - next_hidden_piece_probs: (N, 7) float32
 /// - column_heights: (N, 10) float32 normalized by board height
@@ -150,7 +149,7 @@ pub(crate) fn write_examples_slices_to_npz(
         options,
         "combos.npy",
         &[n64],
-        examples().map(|ex| normalize_combo_for_feature(ex.combo)),
+        examples().map(|ex| ex.combo),
     )?;
 
     stream_npy_to_zip(
@@ -295,7 +294,7 @@ pub fn read_examples_from_npz(
         read_npy_array::<u32>(&mut archive, "move_numbers.npy")?;
     let (placement_counts, placement_counts_shape) =
         read_npy_array::<u32>(&mut archive, "placement_counts.npy")?;
-    let (combos, combos_shape) = read_npy_array::<f32>(&mut archive, "combos.npy")?;
+    let (combos, combos_shape) = read_npy_array::<u32>(&mut archive, "combos.npy")?;
     let (back_to_back, back_to_back_shape) =
         read_npy_array_bool_like(&mut archive, "back_to_back.npy")?;
     let (next_hidden_piece_probs, next_hidden_piece_probs_shape) =
@@ -391,13 +390,6 @@ pub fn read_examples_from_npz(
     let row_fill_counts_size = BOARD_HEIGHT;
 
     for i in 0..n {
-        let combo_feature = combos[i];
-        if !combo_feature.is_finite() || !(0.0..=1.0).contains(&combo_feature) {
-            return Err(format!(
-                "combos[{}] must be finite and in [0, 1], got {}",
-                i, combo_feature
-            ));
-        }
         let overhang_feature = overhang_fields[i];
         if !overhang_feature.is_finite() || !(0.0..=1.0).contains(&overhang_feature) {
             return Err(format!(
@@ -449,7 +441,7 @@ pub fn read_examples_from_npz(
             next_queue: next_queue_pieces,
             move_number: move_numbers[i],
             placement_count: placement_counts[i],
-            combo: denormalize_combo_feature(combo_feature),
+            combo: combos[i],
             back_to_back: back_to_back[i] != 0,
             next_hidden_piece_probs: next_hidden_piece_probs[hidden_probs_start..hidden_probs_end]
                 .to_vec(),
@@ -574,7 +566,6 @@ fn stream_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::COMBO_NORMALIZATION_MAX;
     use crate::generator::test_utils;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
@@ -674,8 +665,8 @@ mod tests {
     }
 
     #[test]
-    fn test_npz_combo_round_trip_saturates_to_feature_cap() {
-        let path = unique_temp_path("combo_saturation");
+    fn test_npz_combo_round_trip_preserves_raw_value() {
+        let path = unique_temp_path("combo_raw");
         let examples = vec![make_example(0, 7, 99)];
 
         write_examples_to_npz(&path, &examples).expect("write should succeed");
@@ -683,7 +674,7 @@ mod tests {
         fs::remove_file(&path).expect("temp file cleanup should succeed");
 
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].combo, COMBO_NORMALIZATION_MAX);
+        assert_eq!(loaded[0].combo, 99);
     }
 
     #[test]

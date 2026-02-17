@@ -15,6 +15,7 @@ from simple_parsing import parse
 
 from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, PROJECT_ROOT, TrainingConfig
 from tetris_mcts.ml.loss import compute_loss
+from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
 
 logger = structlog.get_logger()
 
@@ -437,7 +438,7 @@ def build_base_aux_batch_from_npz(
         data["placement_counts"][global_indices].astype(np.float32).reshape(-1, 1)
         / max_placements
     )
-    combos = data["combos"][global_indices].astype(np.float32).reshape(-1, 1)
+    combos = data["combos"][global_indices].astype(np.float32).reshape(-1, 1) / COMBO_NORMALIZATION_MAX
     back_to_back = (
         data["back_to_back"][global_indices].astype(np.float32).reshape(-1, 1)
     )

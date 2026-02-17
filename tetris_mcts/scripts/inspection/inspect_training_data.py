@@ -18,7 +18,7 @@ from tetris_mcts.config import (
     QUEUE_SIZE,
     TrainingConfig,
 )
-from tetris_mcts.ml.network import denormalize_combo_feature
+from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
 from tetris_mcts.ml.value_predictor import try_load_value_predictor
 from tetris_mcts.ml.visualization import compute_spawn_and_ghost, render_board
 
@@ -373,8 +373,7 @@ def main(args: ScriptArgs) -> None:
                 get_piece_type(data["next_queue"][i][j]) for j in range(QUEUE_SIZE)
             ]
             can_hold = bool(data["hold_available"][i])
-            combo_feature = float(data["combos"][i])
-            combo = denormalize_combo_feature(combo_feature)
+            combo = int(data["combos"][i])
             back_to_back = bool(data["back_to_back"][i])
             move_number = frame_idx
             value_target = float(data["value_targets"][i])
@@ -390,7 +389,7 @@ def main(args: ScriptArgs) -> None:
                     hold_available=float(data["hold_available"][i]),
                     next_queue=data["next_queue"][i],
                     placement_count=float(data["placement_counts"][i]) / TrainingConfig.max_placements,
-                    combo_feature=combo_feature,
+                    combo_feature=min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX,
                     back_to_back=float(data["back_to_back"][i]),
                     next_hidden_piece_probs=data["next_hidden_piece_probs"][i],
                     column_heights=data["column_heights"][i],

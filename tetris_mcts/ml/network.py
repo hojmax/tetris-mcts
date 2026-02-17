@@ -96,10 +96,6 @@ def normalize_combo_for_feature(combo: float) -> float:
     return min(max(combo, 0.0), COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
 
 
-def denormalize_combo_feature(combo_feature: float) -> int:
-    return int(round(min(max(combo_feature, 0.0), 1.0) * COMBO_NORMALIZATION_MAX))
-
-
 def build_aux_features(
     current_piece: np.ndarray,
     hold_piece: np.ndarray,
