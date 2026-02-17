@@ -9,6 +9,7 @@
 - [ ] Multi machine RL environment generation?
 - [ ] Replay buffer should grow gradually
 
+- [ ] maybe just compare candidate scores on evals instead of lifetime average?
 - [ ] What is so inherently noisy about the values? Why does it have such a high variance?
 - [ ] Deeper search depth potentially.
 - [ ] What AWS instance would be well suited for this workload?
