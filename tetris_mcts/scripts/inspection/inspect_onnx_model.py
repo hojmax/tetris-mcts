@@ -53,12 +53,12 @@ def inspect_onnx(model_path: Path) -> None:
         name = initializer.name
         if any(
             key in name
-            for key in ["conv1.weight", "conv2.weight", "fc1.weight", "bn1", "bn2"]
-        ):
-            logger.info(f"  {name}: {list(dims)}")
-        if any(
-            key in name
             for key in [
+                "conv_initial.weight",
+                "conv_reduce.weight",
+                "res_blocks.",
+                "bn_initial",
+                "bn_reduce",
                 "board_proj.weight",
                 "aux_fc.weight",
                 "gate_fc.weight",
@@ -73,54 +73,31 @@ def inspect_onnx(model_path: Path) -> None:
     logger.info(f"Total parameters: {total_params:,}")
     logger.info("=" * 80)
 
-    # Infer architecture from conv1.weight shape
-    conv1_weight = None
+    # Infer architecture from conv layer shapes
+    init_channels = None
+    reduce_channels = None
+    num_res_blocks = 0
     for initializer in model.graph.initializer:
-        if "conv1.weight" in initializer.name:
-            conv1_weight = list(initializer.dims)
-            break
+        if "conv_initial.weight" in initializer.name:
+            init_channels = initializer.dims[0]
+        elif "conv_reduce.weight" in initializer.name:
+            reduce_channels = initializer.dims[0]
+        elif "res_blocks." in initializer.name and ".conv1.weight" in initializer.name:
+            num_res_blocks += 1
 
-    if conv1_weight:
-        out_channels = conv1_weight[0]  # [out, in, h, w]
+    has_gating = any(
+        "gate_fc.weight" in init.name for init in model.graph.initializer
+    )
+
+    if init_channels is not None:
         logger.info(
-            "Detected architecture",
-            conv1_filters=out_channels,
-            note="Check conv2.weight for second layer",
+            "Detected deep conv backbone" + (" with gated-fusion" if has_gating else ""),
+            trunk_channels=init_channels,
+            num_res_blocks=num_res_blocks,
+            reduction_channels=reduce_channels,
         )
-
-        # Find conv2
-        conv2_filters = None
-        for initializer in model.graph.initializer:
-            if "conv2.weight" in initializer.name:
-                conv2_weight = list(initializer.dims)
-                conv2_filters = conv2_weight[0]
-                logger.info(f"  Conv filters: [{out_channels}, {conv2_filters}]")
-                break
-
-        # Determine model family
-        has_gating = any(
-            "gate_fc.weight" in init.name for init in model.graph.initializer
-        )
-        has_concat_fc = any(
-            "fc1.weight" in init.name for init in model.graph.initializer
-        )
-
-        if conv2_filters is None:
-            logger.warning("Could not locate conv2.weight in model initializers")
-        elif has_gating:
-            logger.info(
-                "✓ Detected gated-fusion architecture",
-                conv_filters=[out_channels, conv2_filters],
-            )
-        elif has_concat_fc:
-            logger.info(
-                "✓ Detected concat+fc architecture",
-                conv_filters=[out_channels, conv2_filters],
-            )
-        else:
-            logger.info(
-                f"Unrecognized architecture family: [{out_channels}, {conv2_filters}] filters"
-            )
+    else:
+        logger.warning("Could not detect conv backbone architecture from initializer names")
 
 
 def main() -> None:

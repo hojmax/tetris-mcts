@@ -39,9 +39,10 @@ class BenchmarkArgs:
 
 
 def export_model(fc_hidden: int, label: str, output_dir: Path) -> Path:
-    conv_filters = DEFAULT_CONFIG.conv_filters
     model = TetrisNet(
-        conv_filters=conv_filters,
+        trunk_channels=DEFAULT_CONFIG.trunk_channels,
+        num_conv_residual_blocks=DEFAULT_CONFIG.num_conv_residual_blocks,
+        reduction_channels=DEFAULT_CONFIG.reduction_channels,
         fc_hidden=fc_hidden,
         conv_kernel_size=DEFAULT_CONFIG.conv_kernel_size,
         conv_padding=DEFAULT_CONFIG.conv_padding,
@@ -53,7 +54,6 @@ def export_model(fc_hidden: int, label: str, output_dir: Path) -> Path:
         "Created model",
         label=label,
         fc_hidden=fc_hidden,
-        conv_filters=conv_filters,
         total_params=total_params,
     )
 

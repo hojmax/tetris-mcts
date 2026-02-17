@@ -37,7 +37,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections.abc import Sequence
 
 from tetris_mcts.config import (
     BOARD_HEIGHT,
@@ -151,44 +150,73 @@ def build_aux_features(
     )
 
 
+class ResidualConvBlock(nn.Module):
+    """Pre-activation residual block: BN -> ReLU -> Conv -> BN -> ReLU -> Conv + skip."""
+
+    def __init__(self, channels: int, kernel_size: int = 3, padding: int = 1):
+        super().__init__()
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.conv1 = nn.Conv2d(
+            channels, channels, kernel_size=kernel_size, padding=padding
+        )
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.conv2 = nn.Conv2d(
+            channels, channels, kernel_size=kernel_size, padding=padding
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = F.relu(self.bn1(x))
+        h = self.conv1(h)
+        h = F.relu(self.bn2(h))
+        h = self.conv2(h)
+        return x + h
+
+
 class TetrisNet(nn.Module):
     """Gated-fusion model with cached board embedding support."""
 
     def __init__(
         self,
-        conv_filters: Sequence[int],
+        trunk_channels: int,
+        num_conv_residual_blocks: int,
+        reduction_channels: int,
         fc_hidden: int,
         conv_kernel_size: int,
         conv_padding: int,
-        aux_hidden: int = 24,
+        aux_hidden: int = 64,
         num_fusion_blocks: int = 0,
     ):
         super().__init__()
 
         self.num_actions = NUM_ACTIONS
-        if len(conv_filters) != 2:
-            raise ValueError(
-                f"Expected exactly 2 convolutional filters, got {len(conv_filters)}"
-            )
-        conv0 = conv_filters[0]
-        conv1 = conv_filters[1]
 
-        self.conv1 = nn.Conv2d(
-            1, conv0, kernel_size=conv_kernel_size, padding=conv_padding
+        # Conv backbone: initial -> res blocks -> stride-2 reduction
+        self.conv_initial = nn.Conv2d(
+            1, trunk_channels, kernel_size=conv_kernel_size, padding=conv_padding
         )
-        self.bn1 = nn.BatchNorm2d(conv0)
-        self.conv2 = nn.Conv2d(
-            conv0,
-            conv1,
+        self.bn_initial = nn.BatchNorm2d(trunk_channels)
+        self.res_blocks = nn.ModuleList(
+            [
+                ResidualConvBlock(trunk_channels, kernel_size=conv_kernel_size, padding=conv_padding)
+                for _ in range(num_conv_residual_blocks)
+            ]
+        )
+        self.conv_reduce = nn.Conv2d(
+            trunk_channels,
+            reduction_channels,
             kernel_size=conv_kernel_size,
             padding=conv_padding,
+            stride=2,
         )
-        self.bn2 = nn.BatchNorm2d(conv1)
+        self.bn_reduce = nn.BatchNorm2d(reduction_channels)
 
         if num_fusion_blocks < 0:
             raise ValueError("num_fusion_blocks must be >= 0")
 
-        conv_flat_size = BOARD_HEIGHT * BOARD_WIDTH * conv1
+        # Compute reduced spatial dims: stride-2 halves each dimension (ceil division)
+        reduced_h = (BOARD_HEIGHT + 1) // 2  # 10
+        reduced_w = (BOARD_WIDTH + 1) // 2   # 5
+        conv_flat_size = reduction_channels * reduced_h * reduced_w
         fusion_hidden = fc_hidden
 
         # Board projection: conv features + board stats, cached by Rust inference.
@@ -206,8 +234,13 @@ class TetrisNet(nn.Module):
             [ResidualFusionBlock(fusion_hidden) for _ in range(num_fusion_blocks)]
         )
 
-        self.policy_head = nn.Linear(fusion_hidden, NUM_ACTIONS)
-        self.value_head = nn.Linear(fusion_hidden, 1)
+        # 2-layer MLP heads
+        policy_hidden = fusion_hidden * 2
+        value_hidden = fusion_hidden // 2
+        self.policy_fc = nn.Linear(fusion_hidden, policy_hidden)
+        self.policy_head = nn.Linear(policy_hidden, NUM_ACTIONS)
+        self.value_fc = nn.Linear(fusion_hidden, value_hidden)
+        self.value_head = nn.Linear(value_hidden, 1)
 
     def forward_from_board_embedding(
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
@@ -220,8 +253,8 @@ class TetrisNet(nn.Module):
         for block in self.fusion_blocks:
             fused = block(fused)
 
-        policy_logits = self.policy_head(fused)
-        value = self.value_head(fused)
+        policy_logits = self.policy_head(F.relu(self.policy_fc(fused)))
+        value = self.value_head(F.relu(self.value_fc(fused)))
         return policy_logits, value
 
     def forward(
@@ -243,8 +276,10 @@ class TetrisNet(nn.Module):
         """
         piece_aux = aux_features[:, :PIECE_AUX_FEATURES]
         board_stats = aux_features[:, PIECE_AUX_FEATURES:]
-        x = F.relu(self.bn1(self.conv1(board)))
-        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn_initial(self.conv_initial(board)))
+        for block in self.res_blocks:
+            x = block(x)
+        x = F.relu(self.bn_reduce(self.conv_reduce(x)))
         board_h = self.board_proj(torch.cat([x.view(x.size(0), -1), board_stats], dim=1))
         return self.forward_from_board_embedding(board_h, piece_aux)
 
@@ -272,14 +307,17 @@ class ConvBackbone(nn.Module):
 
     def __init__(self, parent: TetrisNet):
         super().__init__()
-        self.conv1 = parent.conv1
-        self.bn1 = parent.bn1
-        self.conv2 = parent.conv2
-        self.bn2 = parent.bn2
+        self.conv_initial = parent.conv_initial
+        self.bn_initial = parent.bn_initial
+        self.res_blocks = parent.res_blocks
+        self.conv_reduce = parent.conv_reduce
+        self.bn_reduce = parent.bn_reduce
 
     def forward(self, board: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.bn1(self.conv1(board)))
-        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn_initial(self.conv_initial(board)))
+        for block in self.res_blocks:
+            x = block(x)
+        x = F.relu(self.bn_reduce(self.conv_reduce(x)))
         return x.view(x.size(0), -1)
 
 
@@ -294,7 +332,9 @@ class HeadsModel(nn.Module):
         self.aux_proj = parent.aux_proj
         self.fusion_ln = parent.fusion_ln
         self.fusion_blocks = parent.fusion_blocks
+        self.policy_fc = parent.policy_fc
         self.policy_head = parent.policy_head
+        self.value_fc = parent.value_fc
         self.value_head = parent.value_head
 
     def forward(
@@ -306,4 +346,6 @@ class HeadsModel(nn.Module):
         fused = F.relu(self.fusion_ln(fused))
         for block in self.fusion_blocks:
             fused = block(fused)
-        return self.policy_head(fused), self.value_head(fused)
+        policy_logits = self.policy_head(F.relu(self.policy_fc(fused)))
+        value = self.value_head(F.relu(self.value_fc(fused)))
+        return policy_logits, value

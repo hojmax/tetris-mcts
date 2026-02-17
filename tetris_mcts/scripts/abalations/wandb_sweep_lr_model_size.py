@@ -1,4 +1,3 @@
-import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -13,8 +12,8 @@ from tetris_mcts.train import main as train_main
 logger = structlog.get_logger()
 
 MODEL_SIZE_PRESETS = {
-    "baseline": {"conv_filters": [4, 8], "fusion_hidden": 128},
-    "large": {"conv_filters": [8, 8], "fusion_hidden": 256},
+    "baseline": {"trunk_channels": 16, "num_conv_residual_blocks": 1, "reduction_channels": 32, "fusion_hidden": 128},
+    "large": {"trunk_channels": 32, "num_conv_residual_blocks": 2, "reduction_channels": 64, "fusion_hidden": 256},
 }
 
 
@@ -125,8 +124,9 @@ def build_training_config(
         project_name=args.project_name,
         run_name=f"{args.run_name_prefix}-{run_name}",
     )
-    config.conv_filters = copy.deepcopy(model_preset["conv_filters"])
-    # TrainingConfig still uses fc_hidden; in gated fusion this is the fusion hidden size.
+    config.trunk_channels = int(model_preset["trunk_channels"])
+    config.num_conv_residual_blocks = int(model_preset["num_conv_residual_blocks"])
+    config.reduction_channels = int(model_preset["reduction_channels"])
     config.fc_hidden = int(model_preset["fusion_hidden"])
     return config
 
@@ -151,7 +151,9 @@ def run_single_trial(args: SweepArgs) -> None:
         wandb.config.update(
             {
                 "sweep_model_size": model_size,
-                "sweep_conv_filters": copy.deepcopy(model_preset["conv_filters"]),
+                "sweep_trunk_channels": int(model_preset["trunk_channels"]),
+                "sweep_num_conv_residual_blocks": int(model_preset["num_conv_residual_blocks"]),
+                "sweep_reduction_channels": int(model_preset["reduction_channels"]),
                 "sweep_fusion_hidden": int(model_preset["fusion_hidden"]),
                 "sweep_learning_rate": learning_rate,
             },
@@ -163,7 +165,8 @@ def run_single_trial(args: SweepArgs) -> None:
             wandb_run_name=run.name,
             learning_rate=learning_rate,
             model_size=model_size,
-            conv_filters=training_config.conv_filters,
+            trunk_channels=training_config.trunk_channels,
+            reduction_channels=training_config.reduction_channels,
             fusion_hidden=int(model_preset["fusion_hidden"]),
             total_steps=training_config.total_steps,
             batch_size=training_config.batch_size,
