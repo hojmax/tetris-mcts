@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Fix the t-spin logic
 - [ ] Why are the replays always worse than the average attack would suggest?
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
 - [ ] The tetris tspin stuff is still weird.
