@@ -564,30 +564,6 @@ impl MCTSAgent {
         }
     }
 
-    /// Run MCTS search from a given state.
-    pub fn search(
-        &self,
-        env: &TetrisEnv,
-        policy: Vec<f32>,
-        nn_value: f32,
-        add_noise: bool,
-        placement_count: u32,
-    ) -> (MCTSResult, TreeStats) {
-        let nn = self
-            .nn
-            .as_ref()
-            .expect("Neural network required for search");
-        let (result, _root, tree_stats) = search_internal(
-            &self.config,
-            nn,
-            env,
-            policy,
-            nn_value,
-            add_noise,
-            placement_count,
-        );
-        (result, tree_stats)
-    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use std::io::{BufWriter, Write};
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
-use crate::mcts::{MCTSAgent, MCTSConfig, HOLD_ACTION_INDEX};
+use crate::mcts::{MCTSAgent, MCTSConfig};
 
 /// A single move in a game replay.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -103,17 +103,14 @@ fn create_replay_writer(output_path: Option<&str>) -> PyResult<Option<BufWriter<
     }
 }
 
-fn evaluate_with_action_selector<F>(
+fn evaluate_agent(
+    agent: &MCTSAgent,
     seeds: &[u64],
     max_placements: u32,
+    add_noise: bool,
     output_path: Option<String>,
-    mut select_action: F,
-) -> PyResult<EvalResult>
-where
-    F: FnMut(&TetrisEnv, &[bool], u32) -> PyResult<usize>,
-{
+) -> PyResult<EvalResult> {
     let mut replay_writer = create_replay_writer(output_path.as_deref())?;
-    let save_replays = replay_writer.is_some();
 
     let mut total_attack: u32 = 0;
     let mut max_attack: u32 = 0;
@@ -122,48 +119,20 @@ where
     let mut total_moves: u32 = 0;
     let mut game_results: Vec<(u32, u32)> = Vec::with_capacity(seeds.len());
 
-    for seed in seeds {
-        let mut env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, *seed);
-        let mut game_attack: u32 = 0;
-        let mut game_lines: u32 = 0;
-        let mut game_moves: u32 = 0;
-        let mut placement_count: u32 = 0;
-        let mut replay_moves: Vec<ReplayMove> = Vec::new();
+    for &seed in seeds {
+        let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
+        let Some((result, replay_moves)) = agent.play_game_on_env(env, max_placements, add_noise)
+        else {
+            continue;
+        };
 
-        while placement_count < max_placements {
-            if env.game_over {
-                break;
-            }
-
-            let mask = crate::nn::get_action_mask(&env);
-            if !mask.iter().any(|&is_valid| is_valid) {
-                break;
-            }
-
-            let action = select_action(&env, &mask, placement_count)?;
-
-            let attack = env.execute_action_index(action).ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "MCTS returned unexecutable action index: {}",
-                    action
-                ))
-            })?;
-            game_attack += attack;
-            if action != HOLD_ACTION_INDEX {
-                placement_count += 1;
-                game_moves += 1;
-            }
-            if let Some(attack_result) = env.get_last_attack_result() {
-                game_lines += attack_result.lines_cleared;
-            }
-            if save_replays {
-                replay_moves.push(ReplayMove { action, attack });
-            }
-        }
+        let game_attack = result.total_attack;
+        let game_moves = result.num_moves;
+        let game_lines = result.stats.total_lines;
 
         if let Some(writer) = replay_writer.as_mut() {
             let replay = GameReplay {
-                seed: *seed,
+                seed,
                 moves: replay_moves,
                 total_attack: game_attack,
                 num_moves: game_moves,
@@ -199,7 +168,7 @@ where
         })?;
     }
 
-    let num_games = seeds.len() as u32;
+    let num_games = game_results.len() as u32;
     let avg_attack = if num_games > 0 {
         total_attack as f32 / num_games as f32
     } else {
@@ -246,7 +215,8 @@ where
 ///
 /// Plays games using MCTS with the specified model on deterministic seeds,
 /// allowing for reproducible comparison between model versions.
-/// Uses argmax action selection (temperature=0) for deterministic evaluation.
+/// Uses the same game loop as self-play (including tree reuse) with
+/// argmax action selection (temperature=0) for deterministic evaluation.
 ///
 /// Args:
 ///     model_path: Path to ONNX model file
@@ -272,13 +242,11 @@ pub fn evaluate_model(
         ));
     }
 
-    // Use provided config but force temperature=0 for argmax
     let mut config = config.unwrap_or_default();
-    config.temperature = 0.0; // Argmax for deterministic evaluation
+    config.temperature = 0.0;
     config.max_placements = max_placements;
 
     let mut agent = MCTSAgent::new(config);
-
     if !agent.load_model(model_path) {
         return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
             "Failed to load model from {}",
@@ -286,31 +254,13 @@ pub fn evaluate_model(
         )));
     }
 
-    evaluate_with_action_selector(
-        &seeds,
-        max_placements,
-        output_path,
-        |env, mask, placement_count| {
-            let nn = agent.get_nn().expect("Model should be loaded");
-            let (policy, nn_value) = nn
-                .predict_masked(env, placement_count as usize, mask, max_placements as usize)
-                .map_err(|error| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "NN prediction failed: {}",
-                        error
-                    ))
-                })?;
-
-            let (result, _tree_stats) = agent.search(env, policy, nn_value, false, placement_count);
-            Ok(result.action)
-        },
-    )
+    evaluate_agent(&agent, &seeds, max_placements, false, output_path)
 }
 
 /// Evaluate MCTS without a network on fixed seeds (uniform priors + zero value).
 ///
-/// Uses the same deterministic evaluation loop as `evaluate_model`, but without
-/// NN guidance. This matches bootstrap/self-play behavior when no model is loaded.
+/// Uses the same game loop as self-play (including tree reuse) with
+/// argmax action selection (temperature=0) for deterministic evaluation.
 ///
 /// Args:
 ///     seeds: List of random seeds to use (determines piece sequence)
@@ -338,18 +288,6 @@ pub fn evaluate_model_without_nn(
     config.temperature = 0.0;
     config.max_placements = max_placements;
 
-    evaluate_with_action_selector(
-        &seeds,
-        max_placements,
-        output_path,
-        |env, _mask, placement_count| {
-            let (result, _root, _tree_stats) = crate::mcts::search::search_internal_without_nn(
-                &config,
-                env,
-                false,
-                placement_count,
-            );
-            Ok(result.action)
-        },
-    )
+    let agent = MCTSAgent::new(config);
+    evaluate_agent(&agent, &seeds, max_placements, false, output_path)
 }
