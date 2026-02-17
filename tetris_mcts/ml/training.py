@@ -1443,9 +1443,6 @@ class Trainer:
                     metrics["incumbent/uses_network"] = (
                         generator.incumbent_uses_network()
                     )
-                    metrics["incumbent/eval_avg_attack"] = (
-                        generator.incumbent_eval_avg_attack()
-                    )
                     metrics["incumbent/nn_value_weight"] = (
                         generator.incumbent_nn_value_weight()
                     )
