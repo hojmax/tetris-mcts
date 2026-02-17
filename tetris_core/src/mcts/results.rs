@@ -259,6 +259,9 @@ pub struct GameResult {
     /// Number of moves where tree reuse failed (fresh tree created)
     #[pyo3(get)]
     pub tree_reuse_misses: u32,
+    /// Average fraction of tree nodes carried over on successful reuse
+    #[pyo3(get)]
+    pub tree_reuse_carry_fraction: f32,
 }
 
 // =============================================================================
@@ -670,6 +673,7 @@ mod tests {
             cache_size: 0,
             tree_reuse_hits: 0,
             tree_reuse_misses: 0,
+            tree_reuse_carry_fraction: 0.0,
         };
 
         assert!(result.examples.is_empty());
@@ -747,6 +751,7 @@ mod tests {
             cache_size: 0,
             tree_reuse_hits: 0,
             tree_reuse_misses: 0,
+            tree_reuse_carry_fraction: 0.0,
         };
 
         assert_eq!(result.examples.len(), 2);
@@ -775,6 +780,7 @@ mod tests {
             cache_size: 0,
             tree_reuse_hits: 0,
             tree_reuse_misses: 0,
+            tree_reuse_carry_fraction: 0.0,
         };
 
         let cloned = result.clone();

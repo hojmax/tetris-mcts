@@ -285,6 +285,7 @@ impl MCTSAgent {
         let mut reused_root: Option<DecisionNode> = None;
         let mut tree_reuse_hits: u32 = 0;
         let mut tree_reuse_misses: u32 = 0;
+        let mut carry_fraction_sum: f32 = 0.0;
 
         while placement_count < max_placements {
             if env.game_over {
@@ -306,6 +307,7 @@ impl MCTSAgent {
             let (result, root, move_tree_stats) =
                 self.search_maybe_reuse(&env, &mask, add_noise, placement_count, max_placements, reused_root.take())?;
 
+            let tree_total_nodes = move_tree_stats.total_nodes;
             valid_moves_sum += valid_moves;
             max_valid_moves = max_valid_moves.max(valid_moves);
             tree_stats_acc.add(move_tree_stats);
@@ -353,6 +355,12 @@ impl MCTSAgent {
                         if let Some(subtree) =
                             extract_subtree(root, selected_action, piece)
                         {
+                            let subtree_nodes =
+                                super::search::compute_tree_stats(&subtree).total_nodes;
+                            if tree_total_nodes > 0 {
+                                carry_fraction_sum +=
+                                    subtree_nodes as f32 / tree_total_nodes as f32;
+                            }
                             reused_root = Some(subtree);
                             tree_reuse_hits += 1;
                         } else {
@@ -507,6 +515,11 @@ impl MCTSAgent {
                 cache_size,
                 tree_reuse_hits,
                 tree_reuse_misses,
+                tree_reuse_carry_fraction: if tree_reuse_hits > 0 {
+                    carry_fraction_sum / tree_reuse_hits as f32
+                } else {
+                    0.0
+                },
             },
             replay_moves,
         ))
