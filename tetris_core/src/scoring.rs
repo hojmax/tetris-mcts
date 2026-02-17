@@ -145,7 +145,7 @@ pub fn calculate_attack(
     let base = clear_type.base_attack();
     let combo_bonus = combo_attack(combo);
 
-    let b2b_bonus = if back_to_back_active && clear_type.is_difficult() {
+    let b2b_bonus = if back_to_back_active && (clear_type.is_difficult() || is_perfect_clear) {
         BACK_TO_BACK_BONUS
     } else {
         0
@@ -162,8 +162,8 @@ pub fn calculate_attack(
     // Update back-to-back status
     let new_b2b = if clear_type == ClearType::None {
         back_to_back_active // No clear, keep current status
-    } else if clear_type.is_difficult() {
-        true // Difficult clear, activate B2B
+    } else if clear_type.is_difficult() || is_perfect_clear {
+        true // Difficult clear or perfect clear, activate B2B
     } else {
         false // Easy clear (single/double/triple), break B2B
     };
@@ -326,13 +326,20 @@ mod tests {
 
     #[test]
     fn test_calculate_attack_perfect_clear() {
-        // Tetris + perfect clear - 4 + 10 = 14 attack
-        let (attack, _) = calculate_attack(ClearType::Tetris, 0, false, true);
+        // Tetris + perfect clear - 4 + 10 = 14 attack, activates B2B
+        let (attack, b2b) = calculate_attack(ClearType::Tetris, 0, false, true);
         assert_eq!(attack, 14);
+        assert!(b2b);
 
-        // Single + perfect clear - 0 + 10 = 10 attack
-        let (attack, _) = calculate_attack(ClearType::Single, 0, false, true);
+        // Single + perfect clear - 0 + 10 = 10 attack, activates B2B
+        let (attack, b2b) = calculate_attack(ClearType::Single, 0, false, true);
         assert_eq!(attack, 10);
+        assert!(b2b);
+
+        // Double + perfect clear with B2B active - 1 + 1 (B2B) + 10 = 12 attack
+        let (attack, b2b) = calculate_attack(ClearType::Double, 0, true, true);
+        assert_eq!(attack, 12);
+        assert!(b2b);
     }
 
     #[test]
