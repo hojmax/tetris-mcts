@@ -33,7 +33,7 @@ play: $(RELEASE_MARKER)
 # Run the MCTS visualizer (builds first if needed)
 # Usage: make viz RUN_DIR=training_runs/v15
 # Usage (dummy/no-network): make viz RUN_DIR=training_runs/v15 DUMMY_NETWORK=1
-RUN_DIR ?= training_runs/v15
+RUN_DIR ?= training_runs/v41
 DUMMY_NETWORK ?= 0
 viz: $(RELEASE_MARKER)
 	$(PYTHON) tetris_mcts/scripts/inspection/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,)

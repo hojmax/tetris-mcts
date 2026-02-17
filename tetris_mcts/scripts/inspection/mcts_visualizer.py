@@ -31,6 +31,7 @@ from tetris_mcts.config import (
     NUM_PIECE_TYPES,
     PIECE_COLORS,
     PIECE_NAMES,
+    PROJECT_ROOT,
 )
 
 # Global cache for TetrisEnv states (keyed by node ID)
@@ -40,9 +41,9 @@ _env_cache: dict[int, TetrisEnv] = {}
 
 @dataclass
 class ScriptArgs:
-    run_dir: Path = Path(
-        "training_runs/v11"
-    )  # Training run dir (default: training_runs/v11)
+    run_dir: Path = (  # Training run dir (default: training_runs/v11)
+        PROJECT_ROOT / "training_runs" / "v41"
+    )
     use_dummy_network: bool = False  # Use uniform-prior/zero-value bootstrap search
 
 
