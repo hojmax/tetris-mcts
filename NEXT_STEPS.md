@@ -16,6 +16,8 @@
 - [ ] Adding in alpha downweighting of value loss?
 - [ ] Is huber loss even better than MSE loss?
 
+- [ ] Increase buffer size
+- [ ] Increase number of MCTS simulations per move
 - Make nn_value_weight adaptive, not fixed: ramp it up only when value quality is decent (you already log train/value_explained_variance)
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler

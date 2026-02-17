@@ -102,7 +102,7 @@ class TrainingConfig:
     )
 
     # MCTS / Self-play
-    num_simulations: int = 1000  # MCTS simulations per move
+    num_simulations: int = 2000  # MCTS simulations per move
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = (  # Sharpening / Smoothening of MCTS visit-count policy target
         0.8
@@ -150,7 +150,7 @@ class TrainingConfig:
     )
 
     # Replay buffer
-    buffer_size: int = 1_000_000  # Maximum buffer size. FIFO eviction.
+    buffer_size: int = 2_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
     prefetch_batches: int = (  # Number of train batches sampled/staged per generator.sample_batch call
         1
