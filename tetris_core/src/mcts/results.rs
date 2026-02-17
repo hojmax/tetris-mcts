@@ -253,6 +253,12 @@ pub struct GameResult {
     /// Board embedding cache size at end of game
     #[pyo3(get)]
     pub cache_size: usize,
+    /// Number of moves where tree was successfully reused from previous search
+    #[pyo3(get)]
+    pub tree_reuse_hits: u32,
+    /// Number of moves where tree reuse failed (fresh tree created)
+    #[pyo3(get)]
+    pub tree_reuse_misses: u32,
 }
 
 // =============================================================================
@@ -662,6 +668,8 @@ mod tests {
             cache_hits: 0,
             cache_misses: 0,
             cache_size: 0,
+            tree_reuse_hits: 0,
+            tree_reuse_misses: 0,
         };
 
         assert!(result.examples.is_empty());
@@ -737,6 +745,8 @@ mod tests {
             cache_hits: 0,
             cache_misses: 0,
             cache_size: 0,
+            tree_reuse_hits: 0,
+            tree_reuse_misses: 0,
         };
 
         assert_eq!(result.examples.len(), 2);
@@ -763,6 +773,8 @@ mod tests {
             cache_hits: 0,
             cache_misses: 0,
             cache_size: 0,
+            tree_reuse_hits: 0,
+            tree_reuse_misses: 0,
         };
 
         let cloned = result.clone();

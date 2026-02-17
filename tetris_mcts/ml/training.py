@@ -1075,6 +1075,7 @@ class Trainer:
         mcts_config.q_scale = (
             self.config.q_scale if self.config.use_tanh_q_normalization else None
         )
+        mcts_config.reuse_tree = self.config.reuse_tree
 
         # Start background game generator
         training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME

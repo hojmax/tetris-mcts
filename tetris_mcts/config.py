@@ -133,6 +133,7 @@ class TrainingConfig:
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
     )
+    reuse_tree: bool = True  # Reuse MCTS subtree from previous move instead of building fresh tree
     num_workers: int = 7  # Parallel game generation threads
     max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
         50

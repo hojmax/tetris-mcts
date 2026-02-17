@@ -14,8 +14,13 @@ use super::results::{
     GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport, TreeStats,
     TreeStatsAccumulator,
 };
-use super::search::{search_internal, search_internal_without_nn};
+use super::nodes::DecisionNode;
+use super::search::{
+    continue_search_internal, extract_subtree, search_internal, search_internal_without_nn,
+};
+use crate::constants::QUEUE_SIZE;
 use crate::mcts::action_space::HOLD_ACTION_INDEX;
+use crate::nn::TetrisNN;
 
 /// MCTS Agent for Tetris
 #[pyclass]
@@ -277,6 +282,11 @@ impl MCTSAgent {
         let mut frame_index: u32 = 0;
         let mut placement_count: u32 = 0;
 
+        // Tree reuse state: carry the subtree from previous move
+        let mut reused_root: Option<DecisionNode> = None;
+        let mut tree_reuse_hits: u32 = 0;
+        let mut tree_reuse_misses: u32 = 0;
+
         while placement_count < max_placements {
             if env.game_over {
                 break;
@@ -293,29 +303,9 @@ impl MCTSAgent {
             }
             let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
 
-            // Run MCTS search
-            let (result, move_tree_stats) = if let Some(nn) = self.nn.as_ref() {
-                let (policy, nn_value) = match nn.predict_masked(
-                    &env,
-                    placement_count as usize,
-                    &mask,
-                    max_placements as usize,
-                ) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        eprintln!(
-                            "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
-                            placement_count, e
-                        );
-                        return None;
-                    }
-                };
-                self.search(&env, policy, nn_value, add_noise, placement_count)
-            } else {
-                let (mcts_result, _root, tree_stats) =
-                    search_internal_without_nn(&self.config, &env, add_noise, placement_count);
-                (mcts_result, tree_stats)
-            };
+            // Run MCTS search (with tree reuse if available)
+            let (result, root, move_tree_stats) =
+                self.search_maybe_reuse(&env, &mask, add_noise, placement_count, max_placements, reused_root.take())?;
 
             valid_moves_sum += valid_moves;
             max_valid_moves = max_valid_moves.max(valid_moves);
@@ -337,18 +327,43 @@ impl MCTSAgent {
             });
 
             // Execute the selected action
+            let selected_action = result.action;
             let attack = env
-                .execute_action_index(result.action)
+                .execute_action_index(selected_action)
                 .expect("MCTS selected action is not executable");
             attacks.push(attack);
             replay_moves.push(ReplayMove {
-                action: result.action,
+                action: selected_action,
                 attack,
             });
-            if result.action != HOLD_ACTION_INDEX {
+            if selected_action != HOLD_ACTION_INDEX {
                 placement_count += 1;
             }
             frame_index += 1;
+
+            // Try to extract subtree for reuse on the next move.
+            // The hidden piece is at queue position QUEUE_SIZE (index 5) in the real env.
+            // For placement actions: after spawn_piece_internal, fill_queue(7) + pop_front
+            //   → at least 6 items remain, position QUEUE_SIZE is the hidden piece.
+            // For hold actions: queue doesn't change, but the tree still models a chance
+            //   node for the hidden piece, so the same extraction logic applies.
+            if self.config.reuse_tree {
+                if let Some(root) = root {
+                    let hidden_piece = env.piece_queue.get(QUEUE_SIZE).copied();
+                    if let Some(piece) = hidden_piece {
+                        if let Some(subtree) =
+                            extract_subtree(root, selected_action, piece)
+                        {
+                            reused_root = Some(subtree);
+                            tree_reuse_hits += 1;
+                        } else {
+                            tree_reuse_misses += 1;
+                        }
+                    } else {
+                        tree_reuse_misses += 1;
+                    }
+                }
+            }
 
             // Collect stats from the attack result
             if let Some(ref attack_result) = env.get_last_attack_result() {
@@ -491,9 +506,84 @@ impl MCTSAgent {
                 cache_hits,
                 cache_misses,
                 cache_size,
+                tree_reuse_hits,
+                tree_reuse_misses,
             },
             replay_moves,
         ))
+    }
+
+    /// Run MCTS search, optionally reusing a subtree from a previous search.
+    ///
+    /// Returns (MCTSResult, Option<DecisionNode>, TreeStats).
+    /// The DecisionNode is returned for tree reuse extraction on the next move.
+    /// Returns None (propagated from NN prediction failure) to discard the game.
+    fn search_maybe_reuse(
+        &self,
+        env: &TetrisEnv,
+        mask: &[bool],
+        add_noise: bool,
+        placement_count: u32,
+        max_placements: u32,
+        reused_root: Option<DecisionNode>,
+    ) -> Option<(MCTSResult, Option<DecisionNode>, TreeStats)> {
+        if let Some(nn) = self.nn.as_ref() {
+            // NN mode: try tree reuse, fall back to fresh search
+            if let Some(mut root) = reused_root {
+                let (result, tree_stats) = self.continue_search_nn(nn, &mut root, add_noise);
+                return Some((result, Some(root), tree_stats));
+            }
+            let (policy, nn_value) = match nn.predict_masked(
+                env,
+                placement_count as usize,
+                mask,
+                max_placements as usize,
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!(
+                        "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
+                        placement_count, e
+                    );
+                    return None;
+                }
+            };
+            let (mcts_result, root, tree_stats) = search_internal(
+                &self.config,
+                nn,
+                env,
+                policy,
+                nn_value,
+                add_noise,
+                placement_count,
+            );
+            Some((mcts_result, Some(root), tree_stats))
+        } else {
+            // Bootstrap mode: tree reuse still works with uniform priors
+            if let Some(mut root) = reused_root {
+                let evaluator = super::search::BootstrapLeafEvaluator;
+                let (result, tree_stats) =
+                    continue_search_internal(&self.config, &evaluator, &mut root, add_noise);
+                return Some((result, Some(root), tree_stats));
+            }
+            let (mcts_result, root, tree_stats) =
+                search_internal_without_nn(&self.config, env, add_noise, placement_count);
+            Some((mcts_result, Some(root), tree_stats))
+        }
+    }
+
+    /// Continue MCTS search on a reused tree root using NN evaluation.
+    fn continue_search_nn(
+        &self,
+        nn: &TetrisNN,
+        root: &mut DecisionNode,
+        add_noise: bool,
+    ) -> (MCTSResult, TreeStats) {
+        let evaluator = super::search::NeuralLeafEvaluator {
+            nn,
+            nn_value_weight: self.config.nn_value_weight,
+        };
+        continue_search_internal(&self.config, &evaluator, root, add_noise)
     }
 
     /// Run MCTS search from a given state.

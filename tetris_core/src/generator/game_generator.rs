@@ -167,6 +167,8 @@ struct LastGameInfo {
     cache_hits: u64,
     cache_misses: u64,
     cache_size: usize,
+    tree_reuse_hits: u32,
+    tree_reuse_misses: u32,
 }
 
 #[derive(Clone)]
@@ -828,6 +830,16 @@ impl GameGenerator {
             d.insert("cache_hits".to_string(), info.cache_hits as f32);
             d.insert("cache_misses".to_string(), info.cache_misses as f32);
             d.insert("cache_size".to_string(), info.cache_size as f32);
+            // Tree reuse statistics
+            let tree_reuse_total = info.tree_reuse_hits + info.tree_reuse_misses;
+            let tree_reuse_rate = if tree_reuse_total > 0 {
+                info.tree_reuse_hits as f32 / tree_reuse_total as f32
+            } else {
+                0.0
+            };
+            d.insert("tree_reuse_rate".to_string(), tree_reuse_rate);
+            d.insert("tree_reuse_hits".to_string(), info.tree_reuse_hits as f32);
+            d.insert("tree_reuse_misses".to_string(), info.tree_reuse_misses as f32);
             drained.push((info.game_number, d));
         }
         drained
@@ -1793,6 +1805,8 @@ impl GameGenerator {
             cache_hits,
             cache_misses,
             cache_size,
+            tree_reuse_hits,
+            tree_reuse_misses,
             ..
         } = result;
 
@@ -1820,6 +1834,8 @@ impl GameGenerator {
             cache_hits,
             cache_misses,
             cache_size,
+            tree_reuse_hits,
+            tree_reuse_misses,
         });
     }
 

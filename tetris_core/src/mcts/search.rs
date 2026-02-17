@@ -50,7 +50,7 @@ fn scale_nn_value(value: f32, nn_value_weight: f32) -> f32 {
     value * nn_value_weight
 }
 
-trait LeafEvaluator {
+pub(super) trait LeafEvaluator {
     fn evaluate(
         &self,
         state: &TetrisEnv,
@@ -59,9 +59,9 @@ trait LeafEvaluator {
     ) -> Option<(Vec<f32>, f32)>;
 }
 
-struct NeuralLeafEvaluator<'a> {
-    nn: &'a TetrisNN,
-    nn_value_weight: f32,
+pub(super) struct NeuralLeafEvaluator<'a> {
+    pub(super) nn: &'a TetrisNN,
+    pub(super) nn_value_weight: f32,
 }
 
 impl LeafEvaluator for NeuralLeafEvaluator<'_> {
@@ -90,7 +90,7 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
     }
 }
 
-struct BootstrapLeafEvaluator;
+pub(super) struct BootstrapLeafEvaluator;
 
 impl LeafEvaluator for BootstrapLeafEvaluator {
     fn evaluate(
@@ -595,6 +595,56 @@ pub(crate) fn search_internal_without_nn(
     )
 }
 
+/// Continue MCTS search on a reused subtree root with additional simulations.
+pub(super) fn continue_search_internal<E: LeafEvaluator>(
+    config: &MCTSConfig,
+    evaluator: &E,
+    root: &mut DecisionNode,
+    add_noise: bool,
+) -> (MCTSResult, TreeStats) {
+    let mut rng = create_search_rng(config, &root.state, root.move_number);
+    if add_noise {
+        root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
+    }
+
+    for _ in 0..config.num_simulations {
+        simulate(config, evaluator, root, &mut rng);
+    }
+
+    let mcts_result = build_result_from_root(config, root, &mut rng);
+    let tree_stats = compute_tree_stats(root);
+    (mcts_result, tree_stats)
+}
+
+/// Extract the subtree corresponding to a chosen action and actual piece spawn.
+///
+/// After MCTS selects `action_idx`, the real environment executes it and a piece spawns.
+/// `actual_hidden_piece` is the piece type (0-6) that was drawn from the bag to fill
+/// the hidden queue slot (the 6th piece beyond the visible 5).
+///
+/// Returns the extracted DecisionNode, or None if the subtree path wasn't explored.
+/// Value sums are NOT adjusted: the constant ancestor-reward offset is identical for
+/// all siblings at the reused root, so relative Q-value ordering is preserved.
+/// The offset washes out as new simulations accumulate.
+pub(super) fn extract_subtree(
+    mut root: DecisionNode,
+    action_idx: usize,
+    actual_hidden_piece: usize,
+) -> Option<DecisionNode> {
+    // Take the ChanceNode child for the chosen action
+    let mut chance_node = match root.children.remove(&action_idx)? {
+        MCTSNode::Chance(cn) => cn,
+        MCTSNode::Decision(_) => return None,
+    };
+
+    // Take the DecisionNode child for the actual piece that spawned
+    match chance_node.children.remove(&actual_hidden_piece)? {
+        MCTSNode::Decision(dn) => Some(dn),
+        MCTSNode::Chance(_) => None,
+    }
+
+}
+
 #[cfg(test)]
 mod tests {
     use rand::rngs::StdRng;
@@ -752,5 +802,142 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(11);
         let result = build_result_from_root(&config, &root, &mut rng);
         assert_eq!(result.action, 10);
+    }
+
+    #[test]
+    fn test_extract_subtree_returns_matching_decision_node() {
+        let env = TetrisEnv::new(10, 20);
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 200;
+        config.reuse_tree = true;
+
+        let evaluator = ConstantEvaluator { value: 1.0 };
+
+        // Build a tree with a fresh search
+        let root_policy = uniform_action_priors_for_valid_actions(
+            env.get_cached_valid_action_indices_arc().len(),
+        );
+        let mut root = DecisionNode::new(env.clone(), 0);
+        root.set_nn_output_for_valid_actions(&root_policy, 0.0);
+        let mut rng = StdRng::seed_from_u64(42);
+        for _ in 0..config.num_simulations {
+            simulate(&config, &evaluator, &mut root, &mut rng);
+        }
+
+        // Find the best action (most visits)
+        let best_action = root
+            .children
+            .iter()
+            .max_by_key(|(_, child)| child.visit_count())
+            .map(|(&idx, _)| idx)
+            .expect("Root should have children");
+
+        // Get the chance node for the best action and find an explored piece
+        let chance_node = match root.children.get(&best_action).unwrap() {
+            MCTSNode::Chance(cn) => cn,
+            _ => panic!("Expected ChanceNode"),
+        };
+        let explored_piece = chance_node
+            .children
+            .keys()
+            .next()
+            .copied()
+            .expect("ChanceNode should have at least one child");
+
+        let old_visit_count = match chance_node.children.get(&explored_piece).unwrap() {
+            MCTSNode::Decision(dn) => dn.visit_count,
+            _ => panic!("Expected DecisionNode"),
+        };
+
+        // Extract the subtree
+        let subtree = extract_subtree(root, best_action, explored_piece);
+        assert!(subtree.is_some(), "Should extract subtree for explored piece");
+
+        let reused_root = subtree.unwrap();
+        assert_eq!(
+            reused_root.visit_count, old_visit_count,
+            "Reused root should preserve visit count"
+        );
+        assert!(
+            !reused_root.valid_actions.is_empty(),
+            "Reused root should have valid actions"
+        );
+    }
+
+    #[test]
+    fn test_extract_subtree_returns_none_for_unexplored_piece() {
+        let env = TetrisEnv::new(10, 20);
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 5; // Very few sims to leave some pieces unexplored
+
+        let evaluator = ConstantEvaluator { value: 1.0 };
+        let root_policy = uniform_action_priors_for_valid_actions(
+            env.get_cached_valid_action_indices_arc().len(),
+        );
+        let mut root = DecisionNode::new(env.clone(), 0);
+        root.set_nn_output_for_valid_actions(&root_policy, 0.0);
+        let mut rng = StdRng::seed_from_u64(42);
+        for _ in 0..config.num_simulations {
+            simulate(&config, &evaluator, &mut root, &mut rng);
+        }
+
+        // Find an action that was explored
+        let action = root
+            .children
+            .keys()
+            .next()
+            .copied()
+            .expect("Should have at least one child");
+
+        let chance_node = match root.children.get(&action).unwrap() {
+            MCTSNode::Chance(cn) => cn,
+            _ => panic!("Expected ChanceNode"),
+        };
+
+        // Find a piece that was NOT explored in this chance node
+        let unexplored_piece = (0..7).find(|p| !chance_node.children.contains_key(p));
+        if let Some(piece) = unexplored_piece {
+            let result = extract_subtree(root, action, piece);
+            assert!(
+                result.is_none(),
+                "Should return None for unexplored piece"
+            );
+        }
+        // If all pieces were explored (unlikely with 5 sims), test is vacuously true
+    }
+
+    #[test]
+    fn test_continue_search_adds_simulations_to_reused_tree() {
+        let env = TetrisEnv::new(10, 20);
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 50;
+
+        let evaluator = ConstantEvaluator { value: 1.0 };
+        let root_policy = uniform_action_priors_for_valid_actions(
+            env.get_cached_valid_action_indices_arc().len(),
+        );
+        let mut root = DecisionNode::new(env.clone(), 0);
+        root.set_nn_output_for_valid_actions(&root_policy, 0.0);
+
+        // Run initial search
+        let mut rng = StdRng::seed_from_u64(42);
+        for _ in 0..config.num_simulations {
+            simulate(&config, &evaluator, &mut root, &mut rng);
+        }
+        let visits_after_first = root.visit_count;
+
+        // Continue search (simulates tree reuse)
+        let (result, _tree_stats) =
+            continue_search_internal(&config, &evaluator, &mut root, false);
+
+        assert_eq!(
+            root.visit_count,
+            visits_after_first + config.num_simulations,
+            "Visit count should increase by num_simulations"
+        );
+        assert!(
+            result.policy.iter().any(|&p| p > 0.0),
+            "Policy should have non-zero entries"
+        );
     }
 }
