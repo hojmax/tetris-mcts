@@ -7,26 +7,21 @@
     truncated to 5) → DecisionNode (hidden piece added)
   ```
 
+- [ ] The tetris tspin stuff is still weird.
+  - Investigate with make viz
 - [ ] same scale through out mcts
 - [ ] Fix the t-spin logic
 - [ ] Why are the replays always worse than the average attack would suggest?
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
-- [ ] The tetris tspin stuff is still weird.
-  - Investigate with make viz
 - [ ] Speed up data generation
 - [ ] Multi machine RL environment generation?
 - [ ] Replay buffer should grow gradually
 
-- [ ] maybe just compare candidate scores on evals instead of lifetime average?
 - [ ] What is so inherently noisy about the values? Why does it have such a high variance?
-- [ ] Deeper search depth potentially.
 - [ ] What AWS instance would be well suited for this workload?
 - [ ] Adding in alpha downweighting of value loss?
 - [ ] Is huber loss even better than MSE loss?
 
-- [ ] Increase buffer size
-- [ ] Increase number of MCTS simulations per move
-- Make nn_value_weight adaptive, not fixed: ramp it up only when value quality is decent (you already log train/value_explained_variance)
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler
   - Model size
@@ -37,7 +32,6 @@
   - Architecture choices
   - Huber loss vs. MSE loss
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
-- [ ] Batched leaf inference.
 
 # Confusions
 
