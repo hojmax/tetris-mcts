@@ -40,6 +40,46 @@ from tetris_mcts.config import (
 _env_cache: dict[int, TetrisEnv] = {}
 
 
+def _render_board_image(
+    board: list[list[int]],
+    board_piece_types: list[list[int | None]],
+    cell_size: int = 12,
+) -> str:
+    height = len(board)
+    width = len(board[0]) if board else 10
+    # board_piece_types may be empty for MCTS lightweight-cloned states
+    has_piece_types = len(board_piece_types) == height
+
+    img = Image.new("RGB", (width * cell_size, height * cell_size), (20, 20, 20))
+    draw = ImageDraw.Draw(img)
+
+    for y in range(height):
+        for x in range(width):
+            if board[y][x] != 0:
+                color = (80, 80, 80)
+                if has_piece_types:
+                    color_idx = board_piece_types[y][x]
+                    if color_idx is not None and color_idx < len(PIECE_COLORS):
+                        color = PIECE_COLORS[color_idx]
+
+                x1, y1 = x * cell_size, y * cell_size
+                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
+                draw.rectangle([x1, y1, x2, y2], fill=color)
+
+    for x in range(width + 1):
+        draw.line(
+            [(x * cell_size, 0), (x * cell_size, height * cell_size)], fill=(40, 40, 40)
+        )
+    for y in range(height + 1):
+        draw.line(
+            [(0, y * cell_size), (width * cell_size, y * cell_size)], fill=(40, 40, 40)
+        )
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
 @dataclass
 class ScriptArgs:
     run_dir: Path = (  # Training run dir (default: training_runs/v11)
@@ -150,9 +190,9 @@ def build_decision_action_stats(
 
     q_min = min(raw_q_by_action.values())
     q_max = max(raw_q_by_action.values())
-    sqrt_parent = (
-        decision_node["visit_count"] ** 0.5 if decision_node["visit_count"] > 0 else 0.0
-    )
+    # Rust MCTS increments visit_count BEFORE calling select_action, so the
+    # next simulation will use sqrt(visit_count + 1) for PUCT computation.
+    sqrt_parent = (decision_node["visit_count"] + 1) ** 0.5
 
     action_stats: list[dict] = []
     for action_idx in decision_node["valid_actions"]:
@@ -392,39 +432,7 @@ def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
             )
         )
 
-    cell_size = 12
-    height = len(board)
-    width = len(board[0]) if board else 10
-
-    img = Image.new("RGB", (width * cell_size, height * cell_size), (20, 20, 20))
-    draw = ImageDraw.Draw(img)
-
-    for y in range(height):
-        for x in range(width):
-            if board[y][x] != 0:
-                color_idx = board_piece_types[y][x]
-                if color_idx is not None and color_idx < len(PIECE_COLORS):
-                    color = PIECE_COLORS[color_idx]
-                else:
-                    color = (80, 80, 80)
-
-                x1, y1 = x * cell_size, y * cell_size
-                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
-                draw.rectangle([x1, y1, x2, y2], fill=color)
-
-    # Grid
-    for x in range(width + 1):
-        draw.line(
-            [(x * cell_size, 0), (x * cell_size, height * cell_size)], fill=(40, 40, 40)
-        )
-    for y in range(height + 1):
-        draw.line(
-            [(0, y * cell_size), (width * cell_size, y * cell_size)], fill=(40, 40, 40)
-        )
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    img_b64 = base64.b64encode(buffer.getvalue()).decode()
+    img_b64 = _render_board_image(board, board_piece_types)
 
     # State info - from resulting state if computed, otherwise from parent
     if attack is not None and env_copy is not None:
@@ -499,39 +507,7 @@ def display_virtual_piece_node(node_data, tree_dict):
     board = parent["board"]
     board_piece_types = parent["board_piece_types"]
 
-    cell_size = 12
-    height = len(board)
-    width = len(board[0]) if board else 10
-
-    img = Image.new("RGB", (width * cell_size, height * cell_size), (20, 20, 20))
-    draw = ImageDraw.Draw(img)
-
-    for y in range(height):
-        for x in range(width):
-            if board[y][x] != 0:
-                color_idx = board_piece_types[y][x]
-                if color_idx is not None and color_idx < len(PIECE_COLORS):
-                    color = PIECE_COLORS[color_idx]
-                else:
-                    color = (80, 80, 80)
-
-                x1, y1 = x * cell_size, y * cell_size
-                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
-                draw.rectangle([x1, y1, x2, y2], fill=color)
-
-    # Grid
-    for x in range(width + 1):
-        draw.line(
-            [(x * cell_size, 0), (x * cell_size, height * cell_size)], fill=(40, 40, 40)
-        )
-    for y in range(height + 1):
-        draw.line(
-            [(0, y * cell_size), (width * cell_size, y * cell_size)], fill=(40, 40, 40)
-        )
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    img_b64 = base64.b64encode(buffer.getvalue()).decode()
+    img_b64 = _render_board_image(board, board_piece_types)
 
     state_info = [
         html.P(
@@ -650,7 +626,7 @@ def build_cytoscape_elements(
 
         # Add virtual (unvisited) chance nodes for decision nodes
         if show_unvisited and is_decision and node.valid_actions:
-            sqrt_parent = max(node.visit_count, 1) ** 0.5
+            sqrt_parent = (node.visit_count + 1) ** 0.5
             action_to_prior = dict(zip(node.valid_actions, node.action_priors))
 
             for action_idx in node.valid_actions:
@@ -1641,7 +1617,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
             )
             details.append(
                 html.P(
-                    q_desc + "U = c_puct * P * sqrt(N_parent) / (1 + N_child)",
+                    q_desc + "U = c_puct * P * sqrt(N_parent + 1) / (1 + N_child)",
                     style={"fontSize": "11px", "color": "#666", "marginBottom": "10px"},
                 )
             )
@@ -1802,8 +1778,8 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                     details.append(
                         html.P(
                             (
-                                "U = c_puct * P * sqrt(N_parent) / (1 + N_child) = "
-                                f"{c_puct:.3f} * {selection_row['prior']:.6f} * sqrt({n_parent}) "
+                                "U = c_puct * P * sqrt(N_parent + 1) / (1 + N_child) = "
+                                f"{c_puct:.3f} * {selection_row['prior']:.6f} * sqrt({n_parent} + 1) "
                                 f"/ (1 + {n_child}) = {selection_row['u']:.6f}"
                             ),
                             style={"fontFamily": "monospace", "fontSize": "12px"},
@@ -1831,39 +1807,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
     board = node["board"]
     board_piece_types = node["board_piece_types"]
 
-    cell_size = 12
-    height = len(board)
-    width = len(board[0]) if board else 10
-
-    img = Image.new("RGB", (width * cell_size, height * cell_size), (20, 20, 20))
-    draw = ImageDraw.Draw(img)
-
-    for y in range(height):
-        for x in range(width):
-            if board[y][x] != 0:
-                color_idx = board_piece_types[y][x]
-                if color_idx is not None and color_idx < len(PIECE_COLORS):
-                    color = PIECE_COLORS[color_idx]
-                else:
-                    color = (80, 80, 80)
-
-                x1, y1 = x * cell_size, y * cell_size
-                x2, y2 = x1 + cell_size - 1, y1 + cell_size - 1
-                draw.rectangle([x1, y1, x2, y2], fill=color)
-
-    # Grid
-    for x in range(width + 1):
-        draw.line(
-            [(x * cell_size, 0), (x * cell_size, height * cell_size)], fill=(40, 40, 40)
-        )
-    for y in range(height + 1):
-        draw.line(
-            [(0, y * cell_size), (width * cell_size, y * cell_size)], fill=(40, 40, 40)
-        )
-
-    buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
-    img_b64 = base64.b64encode(buffer.getvalue()).decode()
+    img_b64 = _render_board_image(board, board_piece_types)
 
     # State info
     state_info = [

@@ -139,12 +139,12 @@ class ScriptArgs:
     """Inspect training data by rendering games as GIFs."""
 
     data_path: Path = (  # Path to training_data.npz file
-        PROJECT_ROOT / "training_runs" / "v28" / "training_data.npz"
+        PROJECT_ROOT / "training_runs" / "v41" / "training_data.npz"
     )
     checkpoint_path: (  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
         Path | None
     ) = None
-    game_index: int = 133  # Which game to render (-1 for last)
+    game_index: int = 0  # Which game to render (-1 for last)
     save_path: Path | None = (
         None  # Output path (default: script outputs/game_{index}.gif)
     )
@@ -407,9 +407,7 @@ def main(args: ScriptArgs) -> None:
             piece_cells = None
             ghost_cells = None
             if current_piece is not None:
-                piece_cells, ghost_cells = compute_spawn_and_ghost(
-                    current_piece, board
-                )
+                piece_cells, ghost_cells = compute_spawn_and_ghost(current_piece, board)
 
             frame = render_board(
                 board=board,
