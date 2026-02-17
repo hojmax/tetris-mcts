@@ -33,6 +33,8 @@
 
 # Confusions
 
+- [ ] How can there be game with 4 perfect clears but only 30 cleared lines? Should be atelast 40 right?
+- [ ] How come the model is not even better even when doing tree reuse
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
 
 # Deep Review
