@@ -405,7 +405,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
 1. Multiple worker threads (default: 7) run MCTS games in parallel
 2. One dedicated evaluator worker tests queued candidate ONNX models over a fixed game window (default 50 games on seeds `0..N`)
 3. Candidate evaluation games use fixed seeds (default `0..model_promotion_eval_games`) for consistent benchmarking; each eval also records per-game results and best/worst game replays
-4. Candidates are compared against incumbent lifetime average attack; if better, evaluator commits candidate games then promotes the model globally
+4. Candidates are compared against the previous promotion winner's eval avg attack (from the same fixed seeds); if better, evaluator commits candidate games then promotes the model globally
 5. Promotion is atomic for `(model, nn_value_weight)`: evaluator runs candidate games with the queued candidate weight, and if promoted, workers switch to that exact weight with the model
 6. If candidate is worse, evaluator discards candidate games and keeps incumbent
 7. If multiple candidates queue while evaluator is busy, only the newest pending candidate is kept
@@ -488,7 +488,7 @@ training_runs/
 - `--resume-dir` creates a new versioned run (for example `v18`) and initializes it from `source_run/checkpoints/latest.pt` while copying `source_run/training_data.npz` when present
 - Resumed runs also copy `source_run/checkpoints/incumbent.onnx` (+ split artifacts) when present, so self-play can restart from the saved incumbent artifact instead of the trainer's latest checkpoint export
 - Resumed runs restore self-play startup mode from checkpoint field `incumbent_uses_network` (captured on periodic/final saves), so resume starts with NN only if the previous incumbent had been promoted
-- Resumed runs restore incumbent promotion baseline counters (`incumbent_lifetime_games`, `incumbent_lifetime_attack`) from checkpoint, so evaluator gating continues against the same incumbent lifetime average instead of resetting to auto-promote mode
+- Resumed runs restore `incumbent_eval_avg_attack` from checkpoint, so evaluator gating continues against the same promotion baseline instead of resetting to auto-promote mode
 - Older checkpoints that predate `incumbent_uses_network` default to starting with NN and emit a warning
 
 ## WandB Metrics
