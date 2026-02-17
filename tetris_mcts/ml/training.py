@@ -990,7 +990,10 @@ class Trainer:
                 [incumbent_conv_path, incumbent_heads_path, incumbent_fc_path]
             )
 
-        training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME
+        data_dir = self.config.data_dir
+        if data_dir is None:
+            raise RuntimeError("data_dir is not set on training config")
+        training_data_path = data_dir / TRAINING_DATA_FILENAME
         if training_data_path.exists():
             files_to_upload.append(training_data_path)
 

@@ -538,6 +538,7 @@ Eval metrics are derived from candidate model evaluations (not a separate evalua
 
 ### Code Organization
 
+- **Fix all errors you encounter**: When you see a bug, lint error, type error, or warning — even if it's pre-existing and unrelated to your current task — fix it immediately. Never skip over broken code with a "not my problem" attitude.
 - **No fallbacks or backwards compatibility**: When changing file formats, APIs, or data structures, update all code to use the new approach. Don't add fallback code to support old formats.
 - **Clean up old code**: When replacing functionality, delete the old implementation entirely. No legacy code paths, deprecated functions, or "just in case" fallbacks.
 - **Delete unused code**: If something is no longer used, remove it completely. Don't comment it out, don't add `# removed` markers, don't keep it around.
