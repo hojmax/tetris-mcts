@@ -10,13 +10,14 @@ import torch
 import wandb
 from simple_parsing import parse
 
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     NUM_ACTIONS,
 )
 from tetris_mcts.ml.network import BOARD_STATS_FEATURES, PIECE_AUX_FEATURES, TetrisNet
-from compare_offline_architectures import (
+from tetris_mcts.scripts.abalations.compare_offline_architectures import (
     FlopBreakdown,
     OfflineDataSource,
     OfflineTensorDataset,
@@ -54,14 +55,17 @@ class ScriptArgs:
     grad_clip_norm: float = 5.0
     value_loss_weight: float = 1.0
 
-    conv_filters: list[int] = field(default_factory=lambda: [4, 8])
+    trunk_channels: int = 16
+    num_conv_residual_blocks: int = 1
+    reduction_channels: int = 32
     fc_hidden: int = 128
     aux_hidden: int = 24
     num_fusion_blocks: int = 0
     conv_kernel_size: int = 3
     conv_padding: int = 1
+    max_placements: int = TrainingConfig.max_placements
 
-    board_trunk_multiplier: int = 2  # Multiply conv filter counts
+    board_trunk_multiplier: int = 2  # Multiply trunk_channels and reduction_channels
     post_fusion_multiplier: int = 2  # Multiply fc_hidden size
     cache_hit_rate_for_effective_flops: float = 0.96
 
@@ -77,7 +81,9 @@ class ScriptArgs:
 class ScalingVariant:
     name: str
     wandb_prefix: str
-    conv_filters: tuple[int, int]
+    trunk_channels: int
+    num_conv_residual_blocks: int
+    reduction_channels: int
     fc_hidden: int
 
 
@@ -100,10 +106,12 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError("train_fraction must be in (0, 1)")
     if args.grad_clip_norm <= 0:
         raise ValueError("grad_clip_norm must be > 0")
-    if len(args.conv_filters) != 2:
-        raise ValueError("conv_filters must contain exactly two values")
-    if any(f <= 0 for f in args.conv_filters):
-        raise ValueError("conv_filters values must be > 0")
+    if args.trunk_channels <= 0:
+        raise ValueError("trunk_channels must be > 0")
+    if args.num_conv_residual_blocks < 0:
+        raise ValueError("num_conv_residual_blocks must be >= 0")
+    if args.reduction_channels <= 0:
+        raise ValueError("reduction_channels must be > 0")
     if args.fc_hidden <= 0:
         raise ValueError("fc_hidden must be > 0")
     if args.aux_hidden <= 0:
@@ -121,34 +129,45 @@ def validate_args(args: ScriptArgs) -> None:
 
 
 def build_variants(args: ScriptArgs) -> list[ScalingVariant]:
-    base_conv = tuple(args.conv_filters)
-    trunk_scaled = tuple(f * args.board_trunk_multiplier for f in base_conv)
+    trunk_scaled = args.trunk_channels * args.board_trunk_multiplier
+    reduction_scaled = args.reduction_channels * args.board_trunk_multiplier
     post_fusion_scaled_hidden = args.fc_hidden * args.post_fusion_multiplier
 
     variants = [
         ScalingVariant(
             name="default",
             wandb_prefix="default",
-            conv_filters=(int(base_conv[0]), int(base_conv[1])),
+            trunk_channels=args.trunk_channels,
+            num_conv_residual_blocks=args.num_conv_residual_blocks,
+            reduction_channels=args.reduction_channels,
             fc_hidden=args.fc_hidden,
         ),
         ScalingVariant(
             name="double_board_trunk",
             wandb_prefix="double_board_trunk",
-            conv_filters=(int(trunk_scaled[0]), int(trunk_scaled[1])),
+            trunk_channels=trunk_scaled,
+            num_conv_residual_blocks=args.num_conv_residual_blocks,
+            reduction_channels=reduction_scaled,
             fc_hidden=args.fc_hidden,
         ),
         ScalingVariant(
             name="double_post_fusion",
             wandb_prefix="double_post_fusion",
-            conv_filters=(int(base_conv[0]), int(base_conv[1])),
+            trunk_channels=args.trunk_channels,
+            num_conv_residual_blocks=args.num_conv_residual_blocks,
+            reduction_channels=args.reduction_channels,
             fc_hidden=post_fusion_scaled_hidden,
         ),
     ]
 
-    seen: set[tuple[tuple[int, int], int]] = set()
+    seen: set[tuple[int, int, int, int]] = set()
     for variant in variants:
-        key = (variant.conv_filters, variant.fc_hidden)
+        key = (
+            variant.trunk_channels,
+            variant.num_conv_residual_blocks,
+            variant.reduction_channels,
+            variant.fc_hidden,
+        )
         if key in seen:
             raise ValueError(
                 "Variant definitions are not unique; adjust multipliers "
@@ -159,39 +178,43 @@ def build_variants(args: ScriptArgs) -> list[ScalingVariant]:
     return variants
 
 
-def conv_out_size(size: int, kernel_size: int, padding: int) -> int:
-    return size + 2 * padding - kernel_size + 1
-
-
-def conv_output_hw(kernel_size: int, padding: int) -> tuple[int, int, int, int]:
-    h1 = conv_out_size(BOARD_HEIGHT, kernel_size, padding)
-    w1 = conv_out_size(BOARD_WIDTH, kernel_size, padding)
-    h2 = conv_out_size(h1, kernel_size, padding)
-    w2 = conv_out_size(w1, kernel_size, padding)
-    if h1 <= 0 or w1 <= 0 or h2 <= 0 or w2 <= 0:
+def stride2_output_hw(kernel_size: int, padding: int) -> tuple[int, int]:
+    reduced_h = (BOARD_HEIGHT + 2 * padding - kernel_size) // 2 + 1
+    reduced_w = (BOARD_WIDTH + 2 * padding - kernel_size) // 2 + 1
+    if reduced_h <= 0 or reduced_w <= 0:
         raise ValueError(
-            "Invalid conv output shape; adjust conv_kernel_size/conv_padding "
-            f"(got h2={h2}, w2={w2})"
+            "Invalid stride-2 conv output shape; adjust conv_kernel_size/conv_padding "
+            f"(got reduced_h={reduced_h}, reduced_w={reduced_w})"
         )
-    return h1, w1, h2, w2
+    return reduced_h, reduced_w
 
 
 def variant_flop_breakdown(
     variant: ScalingVariant,
     args: ScriptArgs,
 ) -> FlopBreakdown:
-    conv0, conv1 = variant.conv_filters
+    trunk = variant.trunk_channels
+    reduction = variant.reduction_channels
     k = args.conv_kernel_size
-    h1, w1, h2, w2 = conv_output_hw(k, args.conv_padding)
-    conv_flat = h2 * w2 * conv1
+    p = args.conv_padding
+    reduced_h, reduced_w = stride2_output_hw(k, p)
+    conv_flat = reduction * reduced_h * reduced_w
     fusion_hidden = variant.fc_hidden
 
     miss_only = 0
-    miss_only += h1 * w1 * conv0 * (2 * 1 * k * k + 1)
-    miss_only += 2 * h1 * w1 * conv0
-    miss_only += h2 * w2 * conv1 * (2 * conv0 * k * k + 1)
-    miss_only += 2 * h2 * w2 * conv1
-    miss_only += h1 * w1 * conv0 + h2 * w2 * conv1
+    # conv_initial: 1 -> trunk, same spatial
+    miss_only += BOARD_HEIGHT * BOARD_WIDTH * trunk * (2 * 1 * k * k + 1)
+    miss_only += 2 * BOARD_HEIGHT * BOARD_WIDTH * trunk  # BN
+    # residual blocks: trunk -> trunk, same spatial
+    for _ in range(variant.num_conv_residual_blocks):
+        miss_only += BOARD_HEIGHT * BOARD_WIDTH * trunk * (2 * trunk * k * k + 1)
+        miss_only += 2 * BOARD_HEIGHT * BOARD_WIDTH * trunk  # BN
+        miss_only += BOARD_HEIGHT * BOARD_WIDTH * trunk * (2 * trunk * k * k + 1)
+        miss_only += 2 * BOARD_HEIGHT * BOARD_WIDTH * trunk  # BN
+    # conv_reduce: trunk -> reduction, stride-2
+    miss_only += reduced_h * reduced_w * reduction * (2 * trunk * k * k + 1)
+    miss_only += 2 * reduced_h * reduced_w * reduction  # BN
+    # board_proj: conv_flat + board_stats -> fusion_hidden
     miss_only += fusion_hidden * (2 * (conv_flat + BOARD_STATS_FEATURES) + 1)
 
     hit_path = 0
@@ -236,7 +259,9 @@ def normalize_args_for_wandb(
         {
             "name": variant.name,
             "wandb_prefix": variant.wandb_prefix,
-            "conv_filters": list(variant.conv_filters),
+            "trunk_channels": variant.trunk_channels,
+            "num_conv_residual_blocks": variant.num_conv_residual_blocks,
+            "reduction_channels": variant.reduction_channels,
             "fc_hidden": variant.fc_hidden,
         }
         for variant in variants
@@ -302,6 +327,7 @@ def main(args: ScriptArgs) -> None:
                 selected_global_indices=selected_global_indices,
                 mode=preload_mode,
                 train_device=device,
+                max_placements=args.max_placements,
             )
         preload_sec = time.perf_counter() - preload_start
         source = OfflineDataSource(
@@ -351,7 +377,9 @@ def main(args: ScriptArgs) -> None:
         for index, variant in enumerate(variants):
             torch.manual_seed(args.seed)
             model = TetrisNet(
-                conv_filters=list(variant.conv_filters),
+                trunk_channels=variant.trunk_channels,
+                num_conv_residual_blocks=variant.num_conv_residual_blocks,
+                reduction_channels=variant.reduction_channels,
                 fc_hidden=variant.fc_hidden,
                 conv_kernel_size=args.conv_kernel_size,
                 conv_padding=args.conv_padding,
@@ -364,12 +392,15 @@ def main(args: ScriptArgs) -> None:
             wandb.log(
                 {
                     f"variants/{variant.wandb_prefix}/num_parameters": num_parameters,
-                    f"variants/{variant.wandb_prefix}/conv_filter_0": variant.conv_filters[
-                        0
-                    ],
-                    f"variants/{variant.wandb_prefix}/conv_filter_1": variant.conv_filters[
-                        1
-                    ],
+                    f"variants/{variant.wandb_prefix}/trunk_channels": (
+                        variant.trunk_channels
+                    ),
+                    f"variants/{variant.wandb_prefix}/num_conv_residual_blocks": (
+                        variant.num_conv_residual_blocks
+                    ),
+                    f"variants/{variant.wandb_prefix}/reduction_channels": (
+                        variant.reduction_channels
+                    ),
                     f"variants/{variant.wandb_prefix}/fc_hidden": variant.fc_hidden,
                     f"variants/{variant.wandb_prefix}/aux_hidden": args.aux_hidden,
                     f"variants/{variant.wandb_prefix}/num_fusion_blocks": (
@@ -389,7 +420,8 @@ def main(args: ScriptArgs) -> None:
                 variant=variant.name,
                 variant_index=index,
                 num_variants=len(variants),
-                conv_filters=variant.conv_filters,
+                trunk_channels=variant.trunk_channels,
+                reduction_channels=variant.reduction_channels,
                 fc_hidden=variant.fc_hidden,
                 params=num_parameters,
                 effective_flops=flops.effective,

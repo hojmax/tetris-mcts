@@ -1631,7 +1631,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
             details.append(
                 dash_table.DataTable(
                     id="action-stats-table",
-                    columns=columns,
+                    columns=columns,  # type: ignore[arg-type]
                     data=table_data,
                     sort_action="native",
                     sort_by=[{"column_id": "PUCT", "direction": "desc"}],
@@ -1642,7 +1642,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                         "fontFamily": "monospace",
                         "minWidth": "50px",
                     },
-                    style_cell_conditional=[
+                    style_cell_conditional=[  # type: ignore[arg-type]
                         {
                             "if": {"column_id": "Action"},
                             "textAlign": "left",
@@ -1655,7 +1655,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                         "fontWeight": "bold",
                         "cursor": "pointer",
                     },
-                    style_data_conditional=[
+                    style_data_conditional=[  # type: ignore[arg-type]
                         {"if": {"column_id": "U"}, "color": "#0066cc"},
                         {"if": {"column_id": "PUCT"}, "fontWeight": "bold"},
                     ],

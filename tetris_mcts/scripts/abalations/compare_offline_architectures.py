@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 import structlog
@@ -27,6 +28,25 @@ from tetris_mcts.ml.network import (
 )
 
 logger = structlog.get_logger()
+
+
+class _PreloadArgs(Protocol):
+    preload_to_gpu: bool
+    preload_to_ram: bool
+
+
+class _TrainOfflineArgs(_PreloadArgs, Protocol):
+    learning_rate: float
+    weight_decay: float
+    steps: int
+    batch_size: int
+    max_placements: int
+    value_loss_weight: float
+    grad_clip_norm: float
+    log_train_metrics_every: int
+    eval_interval: int
+    eval_batch_size: int
+
 
 REQUIRED_NPZ_KEYS = (
     "boards",
@@ -620,7 +640,7 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
     return n
 
 
-def get_preload_mode(args: ScriptArgs) -> str:
+def get_preload_mode(args: _PreloadArgs) -> str:
     if args.preload_to_gpu and args.preload_to_ram:
         raise ValueError("preload_to_gpu and preload_to_ram cannot both be true")
     if args.preload_to_gpu:
@@ -888,7 +908,7 @@ def train_offline_model(
     train_local_indices: np.ndarray,
     train_eval_local_indices: np.ndarray,
     val_eval_local_indices: np.ndarray,
-    args: ScriptArgs,
+    args: _TrainOfflineArgs,
     device: torch.device,
     schedule_seed: int,
 ) -> dict:
