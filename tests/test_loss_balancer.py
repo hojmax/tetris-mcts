@@ -1,6 +1,6 @@
 import pytest
 
-from tetris_mcts.ml.loss import RunningLossBalancer
+from tetris_bot.ml.loss import RunningLossBalancer
 
 
 def test_running_loss_balancer_requires_positive_window() -> None:

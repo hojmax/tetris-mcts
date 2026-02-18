@@ -1,6 +1,6 @@
 import pytest
 
-from tetris_mcts.config import (
+from tetris_bot.ml.config import (
     NetworkConfig,
     OptimizerConfig,
     ReplayConfig,
@@ -8,7 +8,7 @@ from tetris_mcts.config import (
     SelfPlayConfig,
     TrainingConfig,
 )
-from tetris_mcts.ml.trainer import Trainer
+from tetris_bot.ml.trainer import Trainer
 
 
 def _make_config(self_play: SelfPlayConfig) -> TrainingConfig:

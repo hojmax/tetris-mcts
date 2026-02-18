@@ -519,8 +519,8 @@ The implementation uses **integrated parallel game generation** via Rust `GameGe
 ```python
 # Python training loop (simplified)
 from tetris_core import GameGenerator, MCTSConfig
-from tetris_mcts.config import TrainingConfig
-from tetris_mcts.ml.network import TetrisNet
+from tetris.config import TrainingConfig
+from tetris.ml.network import TetrisNet
 
 def train():
     config = TrainingConfig()
@@ -708,10 +708,10 @@ training_runs/
 
 ```bash
 # New run (auto-creates training_runs/v0)
-python tetris_mcts/train.py --total-steps 100000
+python scripts/train.py --total-steps 100000
 
 # Resume from checkpoint
-python tetris_mcts/train.py --resume-dir training_runs/v0
+python scripts/train.py --resume-dir training_runs/v0
 ```
 
 ---
@@ -739,9 +739,9 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 
 ### Ablations & Utilities
 
-- **`scripts/abalations/compare_offline_architectures.py`** - Baseline vs gated offline architecture benchmark
-- **`scripts/abalations/compare_offline_feature_ablation.py`** - Offline sweep over state-feature ablations
-- **`scripts/abalations/compare_offline_network_scaling.py`** - Default vs scaled trunk/post-fusion offline benchmark
+- **`scripts/ablations/compare_offline_architectures.py`** - Baseline vs gated offline architecture benchmark
+- **`scripts/ablations/compare_offline_feature_ablation.py`** - Offline sweep over state-feature ablations
+- **`scripts/ablations/compare_offline_network_scaling.py`** - Default vs scaled trunk/post-fusion offline benchmark
 
 **Quick access via Makefile:**
 
