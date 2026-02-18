@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     PIECE_COLORS,

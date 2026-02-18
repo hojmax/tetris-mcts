@@ -9,7 +9,7 @@ import structlog
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
-from tetris_mcts.config import PROJECT_ROOT
+from tetris_mcts.constants import PROJECT_ROOT
 
 logger = structlog.get_logger()
 

@@ -7,7 +7,11 @@ import numpy as np
 import structlog
 from simple_parsing import parse
 
-from tetris_mcts.config import DEFAULT_GIF_FRAME_DURATION_MS, PROJECT_ROOT, QUEUE_SIZE
+from tetris_mcts.constants import (
+    DEFAULT_GIF_FRAME_DURATION_MS,
+    PROJECT_ROOT,
+    QUEUE_SIZE,
+)
 from tetris_mcts.ml.visualization import compute_spawn_and_ghost, render_board
 from tetris_mcts.scripts.inspection.inspect_training_data import (
     build_game_slices,

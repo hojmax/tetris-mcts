@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.table import Table
 from simple_parsing import parse
 
-from tetris_mcts.config import NUM_ACTIONS
+from tetris_mcts.constants import NUM_ACTIONS
 
 console = Console()
 

@@ -22,7 +22,7 @@ import structlog
 import torch
 import wandb
 
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     DEFAULT_GIF_FRAME_DURATION_MS,
@@ -32,8 +32,8 @@ from tetris_mcts.config import (
     NUM_ACTIONS,
     PARALLEL_ONNX_FILENAME,
     TRAINING_DATA_FILENAME,
-    TrainingConfig,
 )
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import (
     AUX_FEATURES,
     BACK_TO_BACK_FEATURES,

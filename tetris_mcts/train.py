@@ -9,11 +9,13 @@ import torch
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     CHECKPOINT_DIRNAME,
     INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
     TRAINING_DATA_FILENAME,
+)
+from tetris_mcts.config import (
     TrainingConfig,
     setup_run_directory,
 )

@@ -12,7 +12,12 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, PROJECT_ROOT
+from tetris_mcts.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_ACTIONS,
+    PROJECT_ROOT,
+)
 from tetris_mcts.ml.network import BOARD_STATS_FEATURES, PIECE_AUX_FEATURES
 from tetris_mcts.scripts.abalations.compare_offline_architectures import (
     GatedFusionTetrisNet,

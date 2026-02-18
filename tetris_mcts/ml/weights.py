@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import structlog
 
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     CHECKPOINT_FILENAME_PREFIX,

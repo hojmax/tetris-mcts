@@ -12,7 +12,12 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, TrainingConfig
+from tetris_mcts.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_ACTIONS,
+)
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.loss import compute_loss
 from tetris_mcts.ml.network import (
     AUX_FEATURES,

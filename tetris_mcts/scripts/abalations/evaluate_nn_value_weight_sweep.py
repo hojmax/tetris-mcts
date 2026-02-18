@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     LATEST_ONNX_FILENAME,

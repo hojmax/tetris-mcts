@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 import tetris_core
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     NUM_ACTIONS,

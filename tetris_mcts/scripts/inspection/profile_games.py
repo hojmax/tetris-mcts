@@ -10,11 +10,11 @@ import structlog
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BENCHMARKS_DIR,
     PARALLEL_ONNX_FILENAME,
-    TrainingConfig,
 )
+from tetris_mcts.config import TrainingConfig
 
 logger = structlog.get_logger()
 DEFAULT_TRAINING_CONFIG = TrainingConfig()

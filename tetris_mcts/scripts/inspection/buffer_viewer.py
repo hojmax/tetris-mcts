@@ -24,16 +24,16 @@ from rich.table import Table
 from rich.text import Text
 from simple_parsing import parse
 
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
+    CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
     PIECE_NAMES,
     QUEUE_SIZE,
-    CHECKPOINT_DIRNAME,
-    TrainingConfig,
 )
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
 from tetris_mcts.ml.value_predictor import ValuePredictor
 

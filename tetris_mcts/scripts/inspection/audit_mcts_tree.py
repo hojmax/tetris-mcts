@@ -13,14 +13,14 @@ from simple_parsing import field as sp_field
 from simple_parsing import parse
 
 from tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     NUM_ACTIONS,
     PIECE_NAMES,
     QUEUE_SIZE,
-    TrainingConfig,
 )
+from tetris_mcts.config import TrainingConfig
 
 logger = structlog.get_logger()
 DEFAULT_TRAINING_CONFIG = TrainingConfig()

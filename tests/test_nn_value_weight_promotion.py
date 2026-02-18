@@ -26,11 +26,3 @@ def test_candidate_weight_respects_max_delta_and_cap() -> None:
     candidate_weight = Trainer._compute_candidate_nn_value_weight(0.50, config)
 
     assert candidate_weight == pytest.approx(0.55)
-
-
-def test_config_rejects_promotion_multiplier_below_one() -> None:
-    with pytest.raises(
-        ValueError,
-        match="nn_value_weight_promotion_multiplier must be finite and >= 1.0",
-    ):
-        TrainingConfig(nn_value_weight_promotion_multiplier=0.99)

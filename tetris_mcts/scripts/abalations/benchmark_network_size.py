@@ -16,7 +16,8 @@ import torch
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model
-from tetris_mcts.config import BENCHMARKS_DIR, TrainingConfig
+from tetris_mcts.constants import BENCHMARKS_DIR
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import export_split_models
 

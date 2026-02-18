@@ -6,7 +6,11 @@ import numpy as np
 import structlog
 import torch
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, TrainingConfig
+from tetris_mcts.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+)
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import TetrisNet, build_aux_features
 from tetris_mcts.ml.weights import load_checkpoint
 

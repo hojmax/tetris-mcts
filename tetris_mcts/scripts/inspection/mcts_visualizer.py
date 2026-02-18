@@ -32,13 +32,13 @@ from PIL import Image, ImageDraw
 from simple_parsing import parse
 
 from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
-    PARALLEL_ONNX_FILENAME,
     NUM_PIECE_TYPES,
+    PARALLEL_ONNX_FILENAME,
     PIECE_COLORS,
     PIECE_NAMES,
     PROJECT_ROOT,

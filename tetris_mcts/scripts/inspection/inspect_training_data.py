@@ -9,15 +9,15 @@ import structlog
 from rich.console import Console
 from simple_parsing import parse
 
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     DEFAULT_GIF_FRAME_DURATION_MS,
     LATEST_CHECKPOINT_FILENAME,
     PROJECT_ROOT,
     QUEUE_SIZE,
-    TrainingConfig,
 )
+from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
 from tetris_mcts.ml.value_predictor import try_load_value_predictor
 from tetris_mcts.ml.visualization import compute_spawn_and_ghost, render_board

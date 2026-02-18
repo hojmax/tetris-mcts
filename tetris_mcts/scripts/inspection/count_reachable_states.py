@@ -5,7 +5,12 @@ for at least one piece.
 800 = 10 columns * 20 rows * 4 rotations
 """
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, PIECE_NAMES
+from tetris_mcts.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_PIECE_TYPES,
+    PIECE_NAMES,
+)
 
 # Tetromino shapes: [piece_type][rotation][row][col]
 # Same as in Rust: I, O, T, S, Z, J, L

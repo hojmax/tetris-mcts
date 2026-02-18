@@ -10,7 +10,7 @@ import torch
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import (
+from tetris_mcts.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     NUM_ACTIONS,
