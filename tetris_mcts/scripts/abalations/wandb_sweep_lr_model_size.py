@@ -5,7 +5,7 @@ import structlog
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import TrainingConfig
+from tetris_mcts.config import NetworkConfig, OptimizerConfig, RunConfig, TrainingConfig
 from tetris_mcts.train import ScriptArgs as TrainScriptArgs
 from tetris_mcts.train import main as train_main
 
@@ -124,21 +124,26 @@ def build_training_config(
     learning_rate = float(sampled["learning_rate"])
     model_preset = MODEL_SIZE_PRESETS[model_size]
 
-    config = TrainingConfig(
-        total_steps=args.total_steps,
-        batch_size=args.batch_size,
-        learning_rate=learning_rate,
-        lr_schedule=args.lr_schedule,
-        lr_decay_steps=args.lr_decay_steps,
-        lr_min_factor=args.lr_min_factor,
-        project_name=args.project_name,
-        run_name=f"{args.run_name_prefix}-{run_name}",
+    return TrainingConfig(
+        network=NetworkConfig(
+            trunk_channels=int(model_preset["trunk_channels"]),
+            num_conv_residual_blocks=int(model_preset["num_conv_residual_blocks"]),
+            reduction_channels=int(model_preset["reduction_channels"]),
+            fc_hidden=int(model_preset["fusion_hidden"]),
+        ),
+        optimizer=OptimizerConfig(
+            total_steps=args.total_steps,
+            batch_size=args.batch_size,
+            learning_rate=learning_rate,
+            lr_schedule=args.lr_schedule,
+            lr_decay_steps=args.lr_decay_steps,
+            lr_min_factor=args.lr_min_factor,
+        ),
+        run=RunConfig(
+            project_name=args.project_name,
+            run_name=f"{args.run_name_prefix}-{run_name}",
+        ),
     )
-    config.trunk_channels = int(model_preset["trunk_channels"])
-    config.num_conv_residual_blocks = int(model_preset["num_conv_residual_blocks"])
-    config.reduction_channels = int(model_preset["reduction_channels"])
-    config.fc_hidden = int(model_preset["fusion_hidden"])
-    return config
 
 
 def run_single_trial(args: SweepArgs) -> None:
@@ -177,11 +182,11 @@ def run_single_trial(args: SweepArgs) -> None:
             wandb_run_name=run.name,
             learning_rate=learning_rate,
             model_size=model_size,
-            trunk_channels=training_config.trunk_channels,
-            reduction_channels=training_config.reduction_channels,
+            trunk_channels=training_config.network.trunk_channels,
+            reduction_channels=training_config.network.reduction_channels,
             fusion_hidden=int(model_preset["fusion_hidden"]),
-            total_steps=training_config.total_steps,
-            batch_size=training_config.batch_size,
+            total_steps=training_config.optimizer.total_steps,
+            batch_size=training_config.optimizer.batch_size,
         )
 
         train_args = TrainScriptArgs(

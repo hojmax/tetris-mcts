@@ -366,7 +366,7 @@ class Trainer:
         self.device = torch.device(device)
 
         # Validate paths are set (should be done by setup_run_directory)
-        if config.checkpoint_dir is None or config.data_dir is None:
+        if config.run.checkpoint_dir is None or config.run.data_dir is None:
             raise ValueError(
                 "checkpoint_dir and data_dir must be set. "
                 "Call setup_run_directory() before creating Trainer."
@@ -375,59 +375,59 @@ class Trainer:
         # Create model
         if model is None:
             model = TetrisNet(
-                trunk_channels=config.trunk_channels,
-                num_conv_residual_blocks=config.num_conv_residual_blocks,
-                reduction_channels=config.reduction_channels,
-                fc_hidden=config.fc_hidden,
-                conv_kernel_size=config.conv_kernel_size,
-                conv_padding=config.conv_padding,
+                trunk_channels=config.network.trunk_channels,
+                num_conv_residual_blocks=config.network.num_conv_residual_blocks,
+                reduction_channels=config.network.reduction_channels,
+                fc_hidden=config.network.fc_hidden,
+                conv_kernel_size=config.network.conv_kernel_size,
+                conv_padding=config.network.conv_padding,
             )
         self.model = model.to(self.device)
 
         # Create optimizer
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
-            lr=config.learning_rate,
-            weight_decay=config.weight_decay,
+            lr=config.optimizer.learning_rate,
+            weight_decay=config.optimizer.weight_decay,
         )
 
         # Create scheduler
         self.scheduler = self._create_scheduler()
 
         # Create weight manager
-        self.weight_manager = WeightManager(config.checkpoint_dir)
+        self.weight_manager = WeightManager(config.run.checkpoint_dir)
 
         # Training state
         self.step = 0
-        self.loss_balancer = RunningLossBalancer(config.value_loss_weight_window)
+        self.loss_balancer = RunningLossBalancer(config.optimizer.value_loss_weight_window)
         self._cached_value_loss_weight: float = 1.0
         self._pending_eval_gif_paths: list[Path] = []
         self.initial_incumbent_model_path: Path | None = None
         self.initial_incumbent_eval_avg_attack: float = 0.0
 
         # Create directories
-        config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        config.data_dir.mkdir(parents=True, exist_ok=True)
+        config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        config.run.data_dir.mkdir(parents=True, exist_ok=True)
 
     def _create_scheduler(self):
-        if self.config.lr_schedule == "linear":
+        if self.config.optimizer.lr_schedule == "linear":
             return torch.optim.lr_scheduler.LinearLR(
                 self.optimizer,
                 start_factor=1.0,
-                end_factor=self.config.lr_min_factor,
-                total_iters=self.config.lr_decay_steps,
+                end_factor=self.config.optimizer.lr_min_factor,
+                total_iters=self.config.optimizer.lr_decay_steps,
             )
-        elif self.config.lr_schedule == "cosine":
+        elif self.config.optimizer.lr_schedule == "cosine":
             return torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
-                T_max=self.config.lr_decay_steps,
-                eta_min=self.config.learning_rate * self.config.lr_min_factor,
+                T_max=self.config.optimizer.lr_decay_steps,
+                eta_min=self.config.optimizer.learning_rate * self.config.optimizer.lr_min_factor,
             )
-        elif self.config.lr_schedule == "step":
+        elif self.config.optimizer.lr_schedule == "step":
             return torch.optim.lr_scheduler.StepLR(
                 self.optimizer,
-                step_size=self.config.lr_decay_steps // self.config.lr_step_divisor,
-                gamma=self.config.lr_step_gamma,
+                step_size=self.config.optimizer.lr_decay_steps // self.config.optimizer.lr_step_divisor,
+                gamma=self.config.optimizer.lr_step_gamma,
             )
         else:
             return None
@@ -442,18 +442,18 @@ class Trainer:
         # LR settings while keeping global step alignment.
         self.scheduler.last_epoch = step
 
-        if self.config.lr_schedule == "linear":
+        if self.config.optimizer.lr_schedule == "linear":
             assert isinstance(self.scheduler, torch.optim.lr_scheduler.LinearLR)
-            total_iters = self.config.lr_decay_steps
+            total_iters = self.config.optimizer.lr_decay_steps
             progress = min(step, total_iters) / total_iters
-            factor = 1.0 + (self.config.lr_min_factor - 1.0) * progress
+            factor = 1.0 + (self.config.optimizer.lr_min_factor - 1.0) * progress
             lrs = [base_lr * factor for base_lr in self.scheduler.base_lrs]
-        elif self.config.lr_schedule == "cosine":
+        elif self.config.optimizer.lr_schedule == "cosine":
             assert isinstance(
                 self.scheduler, torch.optim.lr_scheduler.CosineAnnealingLR
             )
-            t_max = self.config.lr_decay_steps
-            eta_min = self.config.learning_rate * self.config.lr_min_factor
+            t_max = self.config.optimizer.lr_decay_steps
+            eta_min = self.config.optimizer.learning_rate * self.config.optimizer.lr_min_factor
             cosine_factor = (
                 1 + torch.cos(torch.tensor(torch.pi * step / t_max))
             ).item() / 2
@@ -461,13 +461,13 @@ class Trainer:
                 eta_min + (base_lr - eta_min) * cosine_factor
                 for base_lr in self.scheduler.base_lrs
             ]
-        elif self.config.lr_schedule == "step":
+        elif self.config.optimizer.lr_schedule == "step":
             assert isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR)
-            step_size = self.config.lr_decay_steps // self.config.lr_step_divisor
-            decay = self.config.lr_step_gamma ** (step // step_size)
+            step_size = self.config.optimizer.lr_decay_steps // self.config.optimizer.lr_step_divisor
+            decay = self.config.optimizer.lr_step_gamma ** (step // step_size)
             lrs = [base_lr * decay for base_lr in self.scheduler.base_lrs]
         else:
-            raise ValueError(f"Unsupported lr_schedule: {self.config.lr_schedule}")
+            raise ValueError(f"Unsupported lr_schedule: {self.config.optimizer.lr_schedule}")
 
         if len(self.optimizer.param_groups) != len(lrs):
             raise ValueError(
@@ -485,13 +485,13 @@ class Trainer:
         if current_weight < 0.0:
             raise ValueError(f"current_weight must be >= 0 (got {current_weight})")
         promotion_delta = current_weight * (
-            config.nn_value_weight_promotion_multiplier - 1.0
+            config.self_play.nn_value_weight_promotion_multiplier - 1.0
         )
         delta = min(
             promotion_delta,
-            config.nn_value_weight_promotion_max_delta,
+            config.self_play.nn_value_weight_promotion_max_delta,
         )
-        return min(config.nn_value_weight_cap, current_weight + delta)
+        return min(config.self_play.nn_value_weight_cap, current_weight + delta)
 
     def _build_training_batch(
         self,
@@ -517,7 +517,7 @@ class Trainer:
     def _pin_batch_if_needed(self, batch: TrainingBatch) -> TrainingBatch:
         should_pin = (
             self.device.type == "cuda"
-            and self.config.pin_memory_batches
+            and self.config.replay.pin_memory_batches
             and batch.device.type == "cpu"
         )
         if not should_pin:
@@ -627,21 +627,21 @@ class Trainer:
         generator: GameGenerator,
         staged_batch_size: int,
     ) -> list[TrainingBatch] | None:
-        result = generator.sample_batch(staged_batch_size, self.config.max_placements)
+        result = generator.sample_batch(staged_batch_size, self.config.self_play.max_placements)
         if result is None:
             return None
         staged_batch = self._to_training_device(self._build_training_batch(result))
-        return staged_batch.split(self.config.batch_size)
+        return staged_batch.split(self.config.optimizer.batch_size)
 
     def _use_device_replay_mirror(self) -> bool:
-        return self.config.mirror_replay_on_accelerator and self.device.type != "cpu"
+        return self.config.replay.mirror_replay_on_accelerator and self.device.type != "cpu"
 
     def _load_replay_mirror(
         self,
         generator: GameGenerator,
         mirror: CircularReplayMirror | None = None,
     ) -> CircularReplayMirror | None:
-        result = generator.replay_buffer_snapshot(self.config.max_placements)
+        result = generator.replay_buffer_snapshot(self.config.self_play.max_placements)
         if result is None:
             return None
         (
@@ -659,7 +659,7 @@ class Trainer:
             )
         )
         if mirror is None:
-            mirror = CircularReplayMirror(self.config.buffer_size, self.device)
+            mirror = CircularReplayMirror(self.config.replay.buffer_size, self.device)
         mirror.count = 0
         mirror.write_pos = 0
         self._write_to_mirror(mirror, device_batch)
@@ -685,8 +685,8 @@ class Trainer:
         while True:
             result = generator.replay_buffer_delta(
                 mirror.logical_end,
-                self.config.replay_mirror_delta_chunk_examples,
-                self.config.max_placements,
+                self.config.replay.replay_mirror_delta_chunk_examples,
+                self.config.self_play.max_placements,
             )
             if result is None:
                 return None
@@ -754,7 +754,7 @@ class Trainer:
         sample_indices = torch.randint(
             low=0,
             high=mirror.count,
-            size=(self.config.batch_size,),
+            size=(self.config.optimizer.batch_size,),
             device=mirror.boards.device,
         )
         return TrainingBatch(
@@ -791,13 +791,13 @@ class Trainer:
             value_targets,
             masks,
             value_loss_weight,
-            self.config.use_huber_value_loss,
+            self.config.optimizer.use_huber_value_loss,
         )
         total_loss.backward()
 
         # Gradient clipping
         grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.config.grad_clip_norm
+            self.model.parameters(), self.config.optimizer.grad_clip_norm
         )
 
         self.optimizer.step()
@@ -853,9 +853,9 @@ class Trainer:
         if not generator.incumbent_uses_network():
             source_path_string = generator.incumbent_model_path()
             return None, source_path_string
-        if self.config.checkpoint_dir is None:
+        if self.config.run.checkpoint_dir is None:
             raise RuntimeError("checkpoint_dir is not set on training config")
-        destination_path = self.config.checkpoint_dir / INCUMBENT_ONNX_FILENAME
+        destination_path = self.config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
         source_path_string = ""
         for attempt in range(2):
             source_path = Path(generator.incumbent_model_path())
@@ -955,7 +955,7 @@ class Trainer:
             description="Final model snapshot saved when training loop stops",
             metadata={
                 "trainer_step": self.step,
-                "run_name": self.config.run_name,
+                "run_name": self.config.run.run_name,
             },
         )
 
@@ -967,7 +967,7 @@ class Trainer:
             files_to_upload.extend([conv_path, heads_path, fc_path])
         else:
             # WeightManager.save currently always exports ONNX for Rust; fail fast if this changes.
-            checkpoint_dir = self.config.checkpoint_dir
+            checkpoint_dir = self.config.run.checkpoint_dir
             if checkpoint_dir is None:
                 raise RuntimeError("checkpoint_dir is not set on training config")
             expected_onnx_path = checkpoint_dir / LATEST_ONNX_FILENAME
@@ -976,7 +976,7 @@ class Trainer:
                 f"(expected {expected_onnx_path})"
             )
 
-        checkpoint_dir = self.config.checkpoint_dir
+        checkpoint_dir = self.config.run.checkpoint_dir
         if checkpoint_dir is None:
             raise RuntimeError("checkpoint_dir is not set on training config")
         incumbent_onnx_path = checkpoint_dir / INCUMBENT_ONNX_FILENAME
@@ -990,7 +990,7 @@ class Trainer:
                 [incumbent_conv_path, incumbent_heads_path, incumbent_fc_path]
             )
 
-        data_dir = self.config.data_dir
+        data_dir = self.config.run.data_dir
         if data_dir is None:
             raise RuntimeError("data_dir is not set on training config")
         training_data_path = data_dir / TRAINING_DATA_FILENAME
@@ -1025,7 +1025,7 @@ class Trainer:
         Args:
             log_to_wandb: Whether to log metrics to Weights & Biases
         """
-        num_steps = self.config.total_steps
+        num_steps = self.config.optimizer.total_steps
         if self.step >= num_steps:
             logger.info(
                 "Target step already reached; skipping training loop",
@@ -1034,10 +1034,10 @@ class Trainer:
             )
             return
         # Paths for parallel training (validated in __init__)
-        assert self.config.checkpoint_dir is not None
-        assert self.config.data_dir is not None
-        onnx_path = self.config.checkpoint_dir / PARALLEL_ONNX_FILENAME
-        candidate_model_dir = self.config.checkpoint_dir / MODEL_CANDIDATES_DIRNAME
+        assert self.config.run.checkpoint_dir is not None
+        assert self.config.run.data_dir is not None
+        onnx_path = self.config.run.checkpoint_dir / PARALLEL_ONNX_FILENAME
+        candidate_model_dir = self.config.run.checkpoint_dir / MODEL_CANDIDATES_DIRNAME
         candidate_model_dir.mkdir(parents=True, exist_ok=True)
 
         # Export initial model (full ONNX + split models for cached Rust inference)
@@ -1051,7 +1051,7 @@ class Trainer:
 
         # Optionally compile model for faster training forward/backward
         export_model = self.model
-        if self.config.use_torch_compile:
+        if self.config.optimizer.use_torch_compile:
             logger.info("Compiling model with torch.compile")
             self.model = cast(TetrisNet, torch.compile(self.model))
 
@@ -1062,38 +1062,38 @@ class Trainer:
 
         # Create MCTS config for generator
         mcts_config = MCTSConfig()
-        mcts_config.num_simulations = self.config.num_simulations
-        mcts_config.c_puct = self.config.c_puct
-        mcts_config.temperature = self.config.temperature
-        mcts_config.dirichlet_alpha = self.config.dirichlet_alpha
-        mcts_config.dirichlet_epsilon = self.config.dirichlet_epsilon
-        mcts_config.visit_sampling_epsilon = self.config.visit_sampling_epsilon
-        mcts_config.max_placements = self.config.max_placements
-        mcts_config.death_penalty = self.config.death_penalty
-        mcts_config.overhang_penalty_weight = self.config.overhang_penalty_weight
-        mcts_config.nn_value_weight = self.config.nn_value_weight
-        mcts_config.q_scale = (
-            self.config.q_scale if self.config.use_tanh_q_normalization else None
+        mcts_config.self_play.num_simulations = self.config.self_play.num_simulations
+        mcts_config.self_play.c_puct = self.config.self_play.c_puct
+        mcts_config.self_play.temperature = self.config.self_play.temperature
+        mcts_config.self_play.dirichlet_alpha = self.config.self_play.dirichlet_alpha
+        mcts_config.self_play.dirichlet_epsilon = self.config.self_play.dirichlet_epsilon
+        mcts_config.self_play.visit_sampling_epsilon = self.config.self_play.visit_sampling_epsilon
+        mcts_config.self_play.max_placements = self.config.self_play.max_placements
+        mcts_config.self_play.death_penalty = self.config.self_play.death_penalty
+        mcts_config.self_play.overhang_penalty_weight = self.config.self_play.overhang_penalty_weight
+        mcts_config.self_play.nn_value_weight = self.config.self_play.nn_value_weight
+        mcts_config.self_play.q_scale = (
+            self.config.self_play.q_scale if self.config.self_play.use_tanh_q_normalization else None
         )
-        mcts_config.reuse_tree = self.config.reuse_tree
+        mcts_config.self_play.reuse_tree = self.config.self_play.reuse_tree
 
         # Start background game generator
-        training_data_path = self.config.data_dir / TRAINING_DATA_FILENAME
+        training_data_path = self.config.run.data_dir / TRAINING_DATA_FILENAME
         generator = GameGenerator(
             model_path=str(generator_model_path),
             training_data_path=str(training_data_path),
             config=mcts_config,
-            max_placements=self.config.max_placements,
-            add_noise=self.config.add_noise,
-            max_examples=self.config.buffer_size,
-            save_interval_seconds=self.config.save_interval_seconds,
-            num_workers=self.config.num_workers,
+            max_placements=self.config.self_play.max_placements,
+            add_noise=self.config.self_play.add_noise,
+            max_examples=self.config.replay.buffer_size,
+            save_interval_seconds=self.config.run.save_interval_seconds,
+            num_workers=self.config.self_play.num_workers,
             initial_model_step=self.step,
-            candidate_eval_seeds=list(range(self.config.model_promotion_eval_games)),
-            start_with_network=not self.config.bootstrap_without_network,
-            non_network_num_simulations=self.config.bootstrap_num_simulations,
+            candidate_eval_seeds=list(range(self.config.self_play.model_promotion_eval_games)),
+            start_with_network=not self.config.self_play.bootstrap_without_network,
+            non_network_num_simulations=self.config.self_play.bootstrap_num_simulations,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
-            nn_value_weight_cap=self.config.nn_value_weight_cap,
+            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
         )
         generator.start()
         logger.info(
@@ -1101,24 +1101,24 @@ class Trainer:
             model_path=str(generator_model_path),
             trainer_parallel_model_path=str(onnx_path),
             training_data_path=str(training_data_path),
-            num_workers=self.config.num_workers,
-            add_noise=self.config.add_noise,
-            candidate_eval_seeds=self.config.model_promotion_eval_games,
-            bootstrap_without_network=self.config.bootstrap_without_network,
-            bootstrap_num_simulations=self.config.bootstrap_num_simulations,
-            incumbent_nn_value_weight=self.config.nn_value_weight,
+            num_workers=self.config.self_play.num_workers,
+            add_noise=self.config.self_play.add_noise,
+            candidate_eval_seeds=self.config.self_play.model_promotion_eval_games,
+            bootstrap_without_network=self.config.self_play.bootstrap_without_network,
+            bootstrap_num_simulations=self.config.self_play.bootstrap_num_simulations,
+            incumbent_nn_value_weight=self.config.self_play.nn_value_weight,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
-            nn_value_weight_promotion_multiplier=self.config.nn_value_weight_promotion_multiplier,
-            nn_value_weight_promotion_max_delta=self.config.nn_value_weight_promotion_max_delta,
-            nn_value_weight_cap=self.config.nn_value_weight_cap,
+            nn_value_weight_promotion_multiplier=self.config.self_play.nn_value_weight_promotion_multiplier,
+            nn_value_weight_promotion_max_delta=self.config.self_play.nn_value_weight_promotion_max_delta,
+            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
         )
 
         # Wait for minimum buffer size
         logger.info(
             "Waiting for minimum replay buffer size",
-            min_examples=self.config.min_buffer_size,
+            min_examples=self.config.replay.min_buffer_size,
         )
-        while generator.buffer_size() < self.config.min_buffer_size:
+        while generator.buffer_size() < self.config.replay.min_buffer_size:
             time.sleep(1.0)
             logger.info(
                 "Buffer fill progress",
@@ -1134,29 +1134,29 @@ class Trainer:
             config=str(self.config),
         )
         use_device_replay_mirror = self._use_device_replay_mirror()
-        staged_batch_size = self.config.batch_size * self.config.prefetch_batches
-        staged_queue_target_batches = self.config.staged_batch_cache_batches
+        staged_batch_size = self.config.optimizer.batch_size * self.config.replay.prefetch_batches
+        staged_queue_target_batches = self.config.replay.staged_batch_cache_batches
         if use_device_replay_mirror:
             logger.info(
                 "Configured full replay device mirroring",
                 device=str(self.device),
-                train_batch_size=self.config.batch_size,
-                refresh_seconds=self.config.replay_mirror_refresh_seconds,
-                delta_chunk_examples=self.config.replay_mirror_delta_chunk_examples,
+                train_batch_size=self.config.optimizer.batch_size,
+                refresh_seconds=self.config.replay.replay_mirror_refresh_seconds,
+                delta_chunk_examples=self.config.replay.replay_mirror_delta_chunk_examples,
                 pin_memory_batches=(
-                    self.config.pin_memory_batches and self.device.type == "cuda"
+                    self.config.replay.pin_memory_batches and self.device.type == "cuda"
                 ),
             )
         else:
             logger.info(
                 "Configured staged replay sampling",
-                train_batch_size=self.config.batch_size,
-                prefetch_batches=self.config.prefetch_batches,
+                train_batch_size=self.config.optimizer.batch_size,
+                prefetch_batches=self.config.replay.prefetch_batches,
                 staged_batch_size=staged_batch_size,
                 staged_queue_target_batches=staged_queue_target_batches,
                 device=str(self.device),
                 pin_memory_batches=(
-                    self.config.pin_memory_batches and self.device.type == "cuda"
+                    self.config.replay.pin_memory_batches and self.device.type == "cuda"
                 ),
             )
 
@@ -1173,13 +1173,13 @@ class Trainer:
         throughput_window_start_s = interval_anchor_s
         throughput_window_start_games = generator.games_generated()
         throughput_window_start_steps = 0
-        next_log_time_s = interval_anchor_s + self.config.log_interval_seconds
+        next_log_time_s = interval_anchor_s + self.config.run.log_interval_seconds
         next_replay_sync_time_s = interval_anchor_s
         next_model_sync_time_s = (
-            interval_anchor_s + self.config.model_sync_interval_seconds
+            interval_anchor_s + self.config.run.model_sync_interval_seconds
         )
         next_checkpoint_time_s = (
-            interval_anchor_s + self.config.checkpoint_interval_seconds
+            interval_anchor_s + self.config.run.checkpoint_interval_seconds
         )
 
         interrupted = False
@@ -1207,7 +1207,7 @@ class Trainer:
                         replay_sync_time_s += replay_sync_elapsed_s
                         replay_sync_count += 1
                         next_replay_sync_time_s = (
-                            pre_step_time + self.config.replay_mirror_refresh_seconds
+                            pre_step_time + self.config.replay.replay_mirror_refresh_seconds
                         )
                     if replay_mirror is None:
                         raise RuntimeError(
@@ -1243,7 +1243,7 @@ class Trainer:
                 collect_train_metrics = (
                     is_log_step
                     or latest_train_metrics is None
-                    or session_step % self.config.train_step_metrics_interval == 0
+                    or session_step % self.config.optimizer.train_step_metrics_interval == 0
                 )
                 step_metrics = self.train_step(
                     batch,
@@ -1383,7 +1383,7 @@ class Trainer:
                             "No collected train metrics are available for logging"
                         )
                     metrics = dict(latest_train_metrics)
-                    if self.config.compute_extra_train_metrics_on_log:
+                    if self.config.optimizer.compute_extra_train_metrics_on_log:
                         extra_metrics_start = time.perf_counter()
                         metrics.update(self._compute_extra_train_metrics(batch))
                         metrics["timing/extra_metrics_ms"] = 1000.0 * (
@@ -1441,7 +1441,7 @@ class Trainer:
                         metrics["trainer_step"] = self.step
                         wandb.log(metrics)
                         completed_games = generator.drain_completed_game_stats()
-                        if self.config.log_individual_games_to_wandb:
+                        if self.config.optimizer.log_individual_games_to_wandb:
                             for (
                                 game_number,
                                 game_stats,
@@ -1501,7 +1501,7 @@ class Trainer:
                     )
                     next_log_time_s = roll_interval_deadline(
                         next_log_time_s,
-                        self.config.log_interval_seconds,
+                        self.config.run.log_interval_seconds,
                         post_step_time,
                     )
 
@@ -1554,7 +1554,7 @@ class Trainer:
                         )
                     next_model_sync_time_s = roll_interval_deadline(
                         next_model_sync_time_s,
-                        self.config.model_sync_interval_seconds,
+                        self.config.run.model_sync_interval_seconds,
                         time.perf_counter(),
                     )
 
@@ -1583,7 +1583,7 @@ class Trainer:
                     self.model = train_model
                     next_checkpoint_time_s = roll_interval_deadline(
                         next_checkpoint_time_s,
-                        self.config.checkpoint_interval_seconds,
+                        self.config.run.checkpoint_interval_seconds,
                         time.perf_counter(),
                     )
 
