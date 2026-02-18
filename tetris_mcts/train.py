@@ -17,8 +17,8 @@ from tetris_mcts.constants import (
 )
 from tetris_mcts.config import (
     TrainingConfig,
-    setup_run_directory,
 )
+from tetris_mcts.run_setup import config_to_json, setup_run_directory
 from tetris_mcts.ml.training import Trainer, copy_model_artifact_bundle
 from tetris_mcts.ml.weights import load_checkpoint
 
@@ -35,7 +35,7 @@ def get_best_device() -> str:
 
 
 def initialize_or_update_wandb(config: TrainingConfig, device: str) -> None:
-    wandb_config = json.loads(config.to_json())
+    wandb_config = json.loads(config_to_json(config))
     wandb_config["device"] = device
 
     if wandb.run is None:

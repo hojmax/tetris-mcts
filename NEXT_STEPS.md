@@ -59,7 +59,9 @@ In progress: 🟨
 
 ## Python Code
 
-### tetris_mcts/config.py 🟨
+### tetris_mcts/config.py ✅
+
+### tetris_mcts/run_setup.py ✅
 
 # Backlog
 
