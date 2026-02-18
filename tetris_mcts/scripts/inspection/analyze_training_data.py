@@ -191,8 +191,8 @@ def main(args: ScriptArgs) -> None:
 
         print_section("Scalar Features")
         print_distribution("Move Number (raw)", move_numbers, bins=12)
-        print_distribution("Placement Count (raw)", placement_counts, bins=12)
-        print_distribution("Combo (raw)", combos, bins=12)
+        print_distribution("Placement Count (normalized)", placement_counts, bins=12)
+        print_distribution("Combo (normalized)", combos, bins=12)
         print_distribution("Back-to-Back Flag", back_to_back.astype(np.float32), bins=2)
         print_distribution("Value Targets", value_targets, bins=15)
         print_distribution("Total Blocks (normalized)", total_blocks, bins=12)

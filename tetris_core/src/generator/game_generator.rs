@@ -952,11 +952,9 @@ impl GameGenerator {
     /// of the first retained replay example in the current FIFO window.
     ///
     /// Returns None if the buffer is empty.
-    #[pyo3(signature = (max_placements))]
     pub fn replay_buffer_snapshot<'py>(
         &self,
         py: Python<'py>,
-        max_placements: u32,
     ) -> PyResult<
         Option<(
             u64,
@@ -968,19 +966,13 @@ impl GameGenerator {
             &'py PyArray2<f32>,
         )>,
     > {
-        if max_placements == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_placements must be > 0",
-            ));
-        }
-
         let Some((start_index, _end_index, snapshot_examples)) =
             self.buffer.logical_window_snapshot()
         else {
             return Ok(None);
         };
 
-        let arrays = Self::examples_to_numpy(py, &snapshot_examples, max_placements)?;
+        let arrays = Self::examples_to_numpy(py, &snapshot_examples)?;
         Ok(Some((
             start_index,
             arrays.0,
@@ -1001,13 +993,12 @@ impl GameGenerator {
     /// - tensor arrays for up to `max_examples` examples in `[slice_start_index, window_end_index)`
     ///
     /// Returns None if the buffer is empty.
-    #[pyo3(signature = (from_index, max_examples, max_placements))]
+    #[pyo3(signature = (from_index, max_examples))]
     pub fn replay_buffer_delta<'py>(
         &self,
         py: Python<'py>,
         from_index: u64,
         max_examples: usize,
-        max_placements: u32,
     ) -> PyResult<
         Option<(
             u64,
@@ -1026,11 +1017,6 @@ impl GameGenerator {
                 "max_examples must be > 0",
             ));
         }
-        if max_placements == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_placements must be > 0",
-            ));
-        }
 
         let Some((window_start, window_end, slice_start, slice_examples)) =
             self.buffer.logical_delta_slice(from_index, max_examples)
@@ -1038,7 +1024,7 @@ impl GameGenerator {
             return Ok(None);
         };
 
-        let arrays = Self::examples_to_numpy(py, &slice_examples, max_placements)?;
+        let arrays = Self::examples_to_numpy(py, &slice_examples)?;
         Ok(Some((
             window_start,
             window_end,
@@ -1065,12 +1051,11 @@ impl GameGenerator {
     /// )
     ///
     /// Returns None if the buffer is empty.
-    #[pyo3(signature = (batch_size, max_placements))]
+    #[pyo3(signature = (batch_size))]
     pub fn sample_batch<'py>(
         &self,
         py: Python<'py>,
         batch_size: usize,
-        max_placements: u32,
     ) -> PyResult<
         Option<(
             &'py PyArray2<f32>,
@@ -1081,12 +1066,6 @@ impl GameGenerator {
             &'py PyArray2<f32>,
         )>,
     > {
-        if max_placements == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_placements must be > 0",
-            ));
-        }
-
         // Snapshot sampled examples under lock, then release lock before heavy work.
         let sampled_examples: Vec<TrainingExample> = {
             let state = self.buffer.state.read().unwrap();
@@ -1104,7 +1083,7 @@ impl GameGenerator {
                 })
                 .collect()
         };
-        let arrays = Self::examples_to_numpy(py, &sampled_examples, max_placements)?;
+        let arrays = Self::examples_to_numpy(py, &sampled_examples)?;
         Ok(Some((
             arrays.0, arrays.1, arrays.2, arrays.3, arrays.4, arrays.5,
         )))
@@ -1123,7 +1102,6 @@ impl GameGenerator {
     fn examples_to_numpy<'py>(
         py: Python<'py>,
         examples: &[TrainingExample],
-        max_placements: u32,
     ) -> PyResult<(
         &'py PyArray2<f32>,
         &'py PyArray2<f32>,
@@ -1137,7 +1115,6 @@ impl GameGenerator {
         let board_width = BOARD_WIDTH;
         let num_actions = NUM_ACTIONS;
         let aux_features_size = AUX_FEATURES;
-        let max_placements_usize = max_placements as usize;
 
         let mut boards = vec![0.0f32; batch_size * board_height * board_width];
         let mut aux = vec![0.0f32; batch_size * aux_features_size];
@@ -1164,8 +1141,7 @@ impl GameGenerator {
                 hold_piece,
                 ex.hold_available,
                 &ex.next_queue,
-                ex.placement_count as usize,
-                max_placements_usize,
+                ex.placement_count,
                 ex.combo,
                 ex.back_to_back,
                 &ex.next_hidden_piece_probs,
@@ -2010,8 +1986,8 @@ mod tests {
             hold_available: true,
             next_queue: vec![0, 1, 2, 3, 4],
             move_number,
-            placement_count: move_number,
-            combo: 0,
+            placement_count: move_number as f32 / 100.0,
+            combo: 0.0,
             back_to_back: false,
             next_hidden_piece_probs: vec![1.0 / NUM_PIECE_TYPES as f32; NUM_PIECE_TYPES],
             column_heights: vec![0.0; BOARD_WIDTH],
