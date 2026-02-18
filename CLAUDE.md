@@ -124,8 +124,8 @@ python tetris_mcts/scripts/abalations/compare_offline_network_scaling.py \
 # `comparison/curves/*`, a main line-series chart under
 # `comparison/charts/eval_val_total_loss_main`, plus Plotly overlay charts.
 # Requires NPZ snapshots that include:
-# column_heights, max_column_heights, min_column_heights,
-# row_fill_counts, total_blocks, bumpiness (and optionally move_numbers).
+# column_heights, max_column_heights, row_fill_counts,
+# total_blocks, bumpiness (and optionally move_numbers).
 python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
     --data_path training_runs/v32/training_data.npz
 
@@ -160,6 +160,20 @@ python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
     --nn_value_weight 0.05 \
     --num_simulations 500
 ```
+
+### Row Fill Zero-Rate Analysis
+
+```bash
+# Report per-row zero rates for row_fill_counts in a replay snapshot.
+python tetris_mcts/scripts/inspection/row_fill_zero_rates.py \
+    --data_path training_runs/vN/training_data.npz
+
+# Optional: adjust tolerance used for zero checks.
+python tetris_mcts/scripts/inspection/row_fill_zero_rates.py \
+    --data_path training_runs/vN/training_data.npz \
+    --epsilon 1e-8
+```
+
 
 ### Performance Profiling
 
@@ -285,6 +299,7 @@ tetris_mcts/                 # Python package
     │   ├── inspect_training_data.py
     │   ├── mcts_visualizer.py
     │   ├── profile_games.py
+    │   ├── row_fill_zero_rates.py
     │   ├── replay_viewer.py
     │   └── value_predictor.py
     └── utilities/
@@ -308,7 +323,7 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 
 ### Neural Network (TetrisNet)
 
-- **Input**: 297 features (200 board cells + 97 auxiliary). Aux is split into 61 piece/game features (current piece, hold, queue, placement count, combo, back-to-back, hidden-piece distribution) sent to the uncached heads model, and 36 board-derived stats (column heights, max/min column height, row fill counts, total blocks, bumpiness, holes, overhang fields) folded into the cached board embedding. Training data packs all 97 features together; the model splits internally.
+- **Input**: 280 features (200 board cells + 80 auxiliary). Aux is split into 61 piece/game features (current piece, hold, queue, placement count, combo, back-to-back, hidden-piece distribution) sent to the uncached heads model, and 19 board-derived stats (column heights, max column height, bottom-4 row fill counts, total blocks, bumpiness, holes, overhang fields) folded into the cached board embedding. Training data packs all 80 features together; the model splits internally.
 - **Architecture**: Conv2d(1→16) + ResBlock(16) + stride-2 Conv(16→32) + board projection (conv features + board stats → cached embedding) + aux-conditioned gated fusion (61-dim piece/game features) + optional fusion residual blocks + policy/value heads
 - **Output**: Policy probabilities over 735 actions (734 placements + hold), value (trained on raw cumulative-attack `value_targets`)
 
@@ -329,7 +344,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 - `Piece` - Tetromino (piece_type, x, y, rotation)
 - `MCTSAgent` - MCTS search coordinator
 - `MCTSConfig` - Search hyperparameters (num_simulations, c_puct, temperature, etc.)
-- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, where `holes`/`overhang_fields` are normalized from the current state board)
+- `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `row_fill_counts` for bottom 4 rows, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, where `holes`/`overhang_fields` are normalized from the current state board)
 - `GameGenerator` - Background self-play worker
 
 ### Python
@@ -397,7 +412,7 @@ Training uses parallel Rust game generation via `GameGenerator`:
    - Default staged mode: `generator.sample_batch(batch_size * prefetch_batches, max_placements)`, then move staged tensors once to the training device, split into train-sized batches, and keep a queued cache up to `staged_batch_cache_batches` before consuming.
    - Full mirror mode (CUDA/MPS only, `mirror_replay_on_accelerator=true`): `generator.replay_buffer_snapshot(max_placements)` initializes a full device mirror, then `generator.replay_buffer_delta(from_index, max_examples, max_placements)` incrementally appends new examples and drops evicted prefix rows to match FIFO windowing. Rust now snapshots replay rows and logical index bounds atomically from a shared replay state (`SharedBufferState`), so Python deltas stay aligned with FIFO index space under concurrent generation.
    Both modes use `(boards, aux, policy_targets, value_targets, overhang_fields, action_masks)` tensors; periodic NPZ saves remain resume-only.
-11. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), raw integer counters (`move_numbers` as uint32, `placement_counts` as uint32, `combos` as uint32), and saved board diagnostics (`column_heights`, `max_column_height`, `min_column_height`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` normalized from each example's current board) for exact replay/WandB alignment plus future feature experiments
+11. `training_data.npz` snapshots include `value_targets` (per-state cumulative raw attack), `game_numbers` (1-indexed WandB game ids), `game_total_attacks` (raw per-game attack), raw integer counters (`move_numbers` as uint32, `placement_counts` as uint32, `combos` as uint32), and saved board diagnostics (`column_heights`, `max_column_height`, `row_fill_counts` for bottom 4 rows, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, with `holes`/`overhang_fields` normalized from each example's current board) for exact replay/WandB alignment plus future feature experiments
 
 ## Testing
 
@@ -428,7 +443,7 @@ Tests are in:
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
 
-Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board) ++ board_stats)` where `board_stats` is the 36-dim board-derived statistics (column heights, bumpiness, holes, etc.). On cache hits, both conv and board_stats computation are skipped; only the 61-dim piece/game features are encoded for the heads model. `fc.bin` stores `board_proj` weights/bias (now shape `(hidden, conv_out + 36)`), and Rust validates that `fc.bin` columns equal conv output width + `BOARD_STATS_FEATURES`. MCTS leaf expansion keeps NN priors sparse (aligned to valid actions) instead of materializing dense 735-action vectors for chance-node caching. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
+Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board) ++ board_stats)` where `board_stats` is the 19-dim board-derived statistics (column heights, bumpiness, holes, etc.). On cache hits, both conv and board_stats computation are skipped; only the 61-dim piece/game features are encoded for the heads model. `fc.bin` stores `board_proj` weights/bias (now shape `(hidden, conv_out + 19)`), and Rust validates that `fc.bin` columns equal conv output width + `BOARD_STATS_FEATURES`. MCTS leaf expansion keeps NN priors sparse (aligned to valid actions) instead of materializing dense 735-action vectors for chance-node caching. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
 
 ### Training a model
 
@@ -445,7 +460,7 @@ Current behavior: split-model Rust inference caches board embeddings as `board_p
 - `--wandb_game_number <N>` to select by WandB `game_number` when NPZ metadata is present
 - If NPZ metadata is missing (older snapshots), `--wandb_game_number` falls back to local index `N-1` with a warning
 
-`analyze_training_data.py` now targets the modern replay schema and fails fast when required keys are missing. Required keys include `placement_counts`, `combos`, `next_hidden_piece_probs`, `column_heights`, `max_column_heights`, `min_column_heights`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, `game_numbers`, and `game_total_attacks`.
+`analyze_training_data.py` now targets the modern replay schema and fails fast when required keys are missing. Required keys include `placement_counts`, `combos`, `next_hidden_piece_probs`, `column_heights`, `max_column_heights`, `row_fill_counts`, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, `game_numbers`, and `game_total_attacks`.
 
 ## Training Directory Structure
 

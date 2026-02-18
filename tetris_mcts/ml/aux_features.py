@@ -14,7 +14,6 @@ from tetris_mcts.ml.network import (
     HOLD_PIECE_FEATURES,
     HOLES_FEATURES,
     MAX_COLUMN_HEIGHT_FEATURES,
-    MIN_COLUMN_HEIGHT_FEATURES,
     MOVE_NUMBER_FEATURES,
     OVERHANG_FIELDS_FEATURES,
     QUEUE_FEATURES,
@@ -27,7 +26,6 @@ from tetris_mcts.ml.network import (
 class AuxFeatureLayout:
     column_heights: slice
     max_column_height: int
-    min_column_height: int
     row_fill_counts: slice
     total_blocks: int
     bumpiness: int
@@ -50,8 +48,6 @@ def build_aux_feature_layout() -> AuxFeatureLayout:
     aux_idx += COLUMN_HEIGHT_FEATURES
     max_column_height = aux_idx
     aux_idx += MAX_COLUMN_HEIGHT_FEATURES
-    min_column_height = aux_idx
-    aux_idx += MIN_COLUMN_HEIGHT_FEATURES
     row_fill_counts = slice(aux_idx, aux_idx + ROW_FILL_COUNT_FEATURES)
     aux_idx += ROW_FILL_COUNT_FEATURES
     total_blocks = aux_idx
@@ -71,7 +67,6 @@ def build_aux_feature_layout() -> AuxFeatureLayout:
     return AuxFeatureLayout(
         column_heights=column_heights,
         max_column_height=max_column_height,
-        min_column_height=min_column_height,
         row_fill_counts=row_fill_counts,
         total_blocks=total_blocks,
         bumpiness=bumpiness,

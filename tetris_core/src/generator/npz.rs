@@ -10,7 +10,9 @@ use zip::read::ZipArchive;
 use zip::write::{FileOptions, ZipWriter};
 use zip::CompressionMethod;
 
-use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE};
+use crate::constants::{
+    BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE, ROW_FILL_FEATURE_ROWS,
+};
 use crate::mcts::{TrainingExample, NUM_ACTIONS};
 
 /// Write training examples to NPZ format (compatible with Python numpy).
@@ -39,8 +41,7 @@ pub fn write_examples_to_npz(filepath: &Path, examples: &[TrainingExample]) -> R
 /// - next_hidden_piece_probs: (N, 7) float32
 /// - column_heights: (N, 10) float32 normalized by board height
 /// - max_column_heights: (N,) float32
-/// - min_column_heights: (N,) float32
-/// - row_fill_counts: (N, 20) float32 normalized by board width
+/// - row_fill_counts: (N, 4) float32 normalized by board width (bottom rows only)
 /// - total_blocks: (N,) float32 normalized by board area
 /// - bumpiness: (N,) float32 normalized
 /// - holes: (N,) float32 normalized by maximum possible holes
@@ -184,16 +185,8 @@ pub(crate) fn write_examples_slices_to_npz(
     stream_npy_to_zip(
         &mut zip,
         options,
-        "min_column_heights.npy",
-        &[n64],
-        examples().map(|ex| ex.min_column_height),
-    )?;
-
-    stream_npy_to_zip(
-        &mut zip,
-        options,
         "row_fill_counts.npy",
-        &[n64, BOARD_HEIGHT as u64],
+        &[n64, ROW_FILL_FEATURE_ROWS as u64],
         examples().flat_map(|ex| ex.row_fill_counts.iter().copied()),
     )?;
 
@@ -298,8 +291,6 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
         read_npy_array::<f32>(&mut archive, "column_heights.npy")?;
     let (max_column_heights, max_column_heights_shape) =
         read_npy_array::<f32>(&mut archive, "max_column_heights.npy")?;
-    let (min_column_heights, min_column_heights_shape) =
-        read_npy_array::<f32>(&mut archive, "min_column_heights.npy")?;
     let (row_fill_counts, row_fill_counts_shape) =
         read_npy_array::<f32>(&mut archive, "row_fill_counts.npy")?;
     let (total_blocks, total_blocks_shape) =
@@ -352,11 +343,10 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
         &[n as u64, BOARD_WIDTH as u64],
     )?;
     validate_shape("max_column_heights", &max_column_heights_shape, &[n as u64])?;
-    validate_shape("min_column_heights", &min_column_heights_shape, &[n as u64])?;
     validate_shape(
         "row_fill_counts",
         &row_fill_counts_shape,
-        &[n as u64, BOARD_HEIGHT as u64],
+        &[n as u64, ROW_FILL_FEATURE_ROWS as u64],
     )?;
     validate_shape("total_blocks", &total_blocks_shape, &[n as u64])?;
     validate_shape("bumpiness", &bumpiness_shape, &[n as u64])?;
@@ -382,7 +372,7 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
     let next_queue_size = QUEUE_SIZE * NUM_PIECE_TYPES;
     let next_hidden_piece_probs_size = NUM_PIECE_TYPES;
     let column_heights_size = BOARD_WIDTH;
-    let row_fill_counts_size = BOARD_HEIGHT;
+    let row_fill_counts_size = ROW_FILL_FEATURE_ROWS;
 
     for i in 0..n {
         let overhang_feature = overhang_fields[i];
@@ -442,7 +432,6 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
                 .to_vec(),
             column_heights: column_heights[column_heights_start..column_heights_end].to_vec(),
             max_column_height: max_column_heights[i],
-            min_column_height: min_column_heights[i],
             row_fill_counts: row_fill_counts[row_fill_counts_start..row_fill_counts_end].to_vec(),
             total_blocks: total_blocks[i],
             bumpiness: bumpiness[i],
@@ -561,6 +550,7 @@ fn stream_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::{COMBO_NORMALIZATION_MAX, ROW_FILL_FEATURE_ROWS};
     use crate::generator::test_utils;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
@@ -598,8 +588,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.25, 0.25, 0.0, 0.0, 0.25, 0.25, 0.0],
             column_heights: vec![0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45],
             max_column_height: 0.45,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; BOARD_HEIGHT],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.01,
             bumpiness: 0.0025,
             holes: 0.05,
@@ -638,7 +627,6 @@ mod tests {
             );
             assert_eq!(actual.column_heights, expected.column_heights);
             assert_eq!(actual.max_column_height, expected.max_column_height);
-            assert_eq!(actual.min_column_height, expected.min_column_height);
             assert_eq!(actual.row_fill_counts, expected.row_fill_counts);
             assert_eq!(actual.total_blocks, expected.total_blocks);
             assert_eq!(actual.bumpiness, expected.bumpiness);

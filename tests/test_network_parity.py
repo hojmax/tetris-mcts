@@ -30,7 +30,8 @@ HOLES_NORMALIZATION_DIVISOR = 20.0
 TOTAL_BLOCKS_NORMALIZATION_DIVISOR = 60.0
 COLUMN_HEIGHT_NORMALIZATION_DIVISOR = 8.0
 MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR = 20.0
-MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR = 6.0
+ROW_FILL_FEATURE_ROWS = 4
+ROW_FILL_FEATURE_START = BOARD_HEIGHT - ROW_FILL_FEATURE_ROWS
 
 
 def _binary_board(env: tetris_core.TetrisEnv) -> np.ndarray:
@@ -54,7 +55,7 @@ def _hidden_piece_distribution(env: tetris_core.TetrisEnv) -> np.ndarray:
 
 def _compute_diagnostics(
     board: np.ndarray,
-) -> tuple[np.ndarray, float, float, np.ndarray, float, float, float, float]:
+) -> tuple[np.ndarray, float, np.ndarray, float, float, float, float]:
     height, width = board.shape
     filled = board != 0.0
 
@@ -114,10 +115,10 @@ def _compute_diagnostics(
         raw_column_heights.astype(np.float32) / COLUMN_HEIGHT_NORMALIZATION_DIVISOR
     )
     raw_max = int(np.max(raw_column_heights))
-    raw_min = int(np.min(raw_column_heights))
     max_column_height = float(raw_max) / MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
-    min_column_height = float(raw_min) / MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
-    normalized_row_fill_counts = raw_row_fill_counts.astype(np.float32) / float(width)
+    normalized_row_fill_counts = raw_row_fill_counts[ROW_FILL_FEATURE_START:].astype(
+        np.float32
+    ) / float(width)
     normalized_total_blocks = (
         float(raw_total_blocks) / TOTAL_BLOCKS_NORMALIZATION_DIVISOR
     )
@@ -129,7 +130,6 @@ def _compute_diagnostics(
     return (
         normalized_column_heights,
         max_column_height,
-        min_column_height,
         normalized_row_fill_counts,
         normalized_total_blocks,
         normalized_bumpiness,
@@ -167,7 +167,6 @@ def _encode_state_python(
     (
         column_heights,
         max_column_height,
-        min_column_height,
         row_fill_counts,
         total_blocks,
         bumpiness,
@@ -186,7 +185,6 @@ def _encode_state_python(
         next_hidden_piece_probs=_hidden_piece_distribution(env),
         column_heights=column_heights,
         max_column_height=max_column_height,
-        min_column_height=min_column_height,
         row_fill_counts=row_fill_counts,
         total_blocks=total_blocks,
         bumpiness=bumpiness,
@@ -344,7 +342,7 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
 
                 # Split path
                 conv_out = conv_backbone(board)  # (1, 1600)
-                board_stats = aux[:, PIECE_AUX_FEATURES:]  # (1, 36)
+                board_stats = aux[:, PIECE_AUX_FEATURES:]  # (1, 19)
                 board_h = model.board_proj(torch.cat([conv_out, board_stats], dim=1))
                 piece_aux = aux[:, :PIECE_AUX_FEATURES]  # (1, 61)
                 split_logits, split_value = heads(board_h, piece_aux)

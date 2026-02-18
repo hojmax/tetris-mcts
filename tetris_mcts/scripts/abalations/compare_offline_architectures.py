@@ -23,6 +23,7 @@ from tetris_mcts.ml.network import (
     AUX_FEATURES,
     BOARD_STATS_FEATURES,
     PIECE_AUX_FEATURES,
+    ROW_FILL_COUNT_FEATURES,
 )
 
 logger = structlog.get_logger()
@@ -57,7 +58,6 @@ REQUIRED_NPZ_KEYS = (
     "next_hidden_piece_probs",
     "column_heights",
     "max_column_heights",
-    "min_column_heights",
     "row_fill_counts",
     "total_blocks",
     "bumpiness",
@@ -588,10 +588,10 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
         raise ValueError(f"column_heights must have shape ({n}, {BOARD_WIDTH})")
     if data["max_column_heights"].shape != (n,):
         raise ValueError("max_column_heights must have shape (N,)")
-    if data["min_column_heights"].shape != (n,):
-        raise ValueError("min_column_heights must have shape (N,)")
-    if data["row_fill_counts"].shape != (n, BOARD_HEIGHT):
-        raise ValueError(f"row_fill_counts must have shape ({n}, {BOARD_HEIGHT})")
+    if data["row_fill_counts"].shape != (n, ROW_FILL_COUNT_FEATURES):
+        raise ValueError(
+            f"row_fill_counts must have shape ({n}, {ROW_FILL_COUNT_FEATURES})"
+        )
     if data["total_blocks"].shape != (n,):
         raise ValueError("total_blocks must have shape (N,)")
     if data["bumpiness"].shape != (n,):
@@ -616,7 +616,6 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
         "next_hidden_piece_probs",
         "column_heights",
         "max_column_heights",
-        "min_column_heights",
         "row_fill_counts",
         "total_blocks",
         "bumpiness",
@@ -676,9 +675,6 @@ def build_aux_batch_from_npz(
     max_column_heights = (
         data["max_column_heights"][global_indices].astype(np.float32).reshape(-1, 1)
     )
-    min_column_heights = (
-        data["min_column_heights"][global_indices].astype(np.float32).reshape(-1, 1)
-    )
     row_fill_counts = data["row_fill_counts"][global_indices].astype(
         np.float32, copy=False
     )
@@ -702,7 +698,6 @@ def build_aux_batch_from_npz(
             next_hidden_piece_probs,
             column_heights,
             max_column_heights,
-            min_column_heights,
             row_fill_counts,
             total_blocks,
             bumpiness,

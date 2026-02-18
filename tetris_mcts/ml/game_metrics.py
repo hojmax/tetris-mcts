@@ -14,7 +14,6 @@ def compute_batch_feature_metrics(
     layout = AUX_FEATURE_LAYOUT
     row_fill_counts = aux[:, layout.row_fill_counts]
     max_column_heights = aux[:, layout.max_column_height]
-    min_column_heights = aux[:, layout.min_column_height]
     total_blocks = aux[:, layout.total_blocks]
     bumpiness = aux[:, layout.bumpiness]
     holes = aux[:, layout.holes]
@@ -24,7 +23,6 @@ def compute_batch_feature_metrics(
         "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
         "batch/board_fill_mean": total_blocks.mean().item(),
         "batch/max_height_mean": max_column_heights.mean().item(),
-        "batch/min_height_mean": min_column_heights.mean().item(),
         "batch/row_fill_mean": row_fill_counts.mean().item(),
         "batch/bumpiness_mean": bumpiness.mean().item(),
         "batch/holes_mean": holes.mean().item(),

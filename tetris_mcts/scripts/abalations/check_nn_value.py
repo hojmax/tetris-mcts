@@ -41,11 +41,7 @@ COLUMN_HEIGHTS = np.array(
     dtype=np.float32,
 )
 MAX_COLUMN_HEIGHT = 3.0 / 20.0
-MIN_COLUMN_HEIGHT = 0.0 / 6.0
-ROW_FILL_COUNTS = np.array(
-    [0.0] * 17 + [0.1, 0.2, 0.1],
-    dtype=np.float32,
-)
+ROW_FILL_COUNTS = np.array([0.0, 0.1, 0.2, 0.1], dtype=np.float32)
 TOTAL_BLOCKS = 4.0 / 60.0
 BUMPINESS = 5.0 / 200.0
 HOLES = 0.0
@@ -74,7 +70,6 @@ def encode_aux(
     next_hidden_piece_probs: list[float],
     column_heights: np.ndarray,
     max_column_height: float,
-    min_column_height: float,
     row_fill_counts: np.ndarray,
     total_blocks: float,
     bumpiness: float,
@@ -134,11 +129,8 @@ def encode_aux(
     aux[idx] = max_column_height
     idx += 1
 
-    aux[idx] = min_column_height
-    idx += 1
-
-    aux[idx : idx + BOARD_HEIGHT] = row_fill_counts.astype(np.float32)
-    idx += BOARD_HEIGHT
+    aux[idx : idx + row_fill_counts.size] = row_fill_counts.astype(np.float32)
+    idx += row_fill_counts.size
 
     aux[idx] = total_blocks
     idx += 1
@@ -169,7 +161,6 @@ def main(args: ScriptArgs) -> None:
         NEXT_HIDDEN_PIECE_PROBS,
         COLUMN_HEIGHTS,
         MAX_COLUMN_HEIGHT,
-        MIN_COLUMN_HEIGHT,
         ROW_FILL_COUNTS,
         TOTAL_BLOCKS,
         BUMPINESS,
@@ -203,12 +194,12 @@ def main(args: ScriptArgs) -> None:
     print(f"Encoded back-to-back:  {aux[53]}")
     print(f"Encoded hidden dist:   {aux[54:61].tolist()}")
     print(f"Encoded column heights:{aux[61:71].tolist()}")
-    print(f"Encoded max/min h:     {aux[71]:.4f} / {aux[72]:.4f}")
-    print(f"Encoded row fills:     {aux[73:93].tolist()}")
-    print(f"Encoded total blocks:  {aux[93]:.4f}")
-    print(f"Encoded bumpiness:     {aux[94]:.4f}")
-    print(f"Encoded holes:         {aux[95]:.4f}")
-    print(f"Encoded overhang:      {aux[96]:.4f}")
+    print(f"Encoded max height:    {aux[71]:.4f}")
+    print(f"Encoded row fills:     {aux[72:76].tolist()}")
+    print(f"Encoded total blocks:  {aux[76]:.4f}")
+    print(f"Encoded bumpiness:     {aux[77]:.4f}")
+    print(f"Encoded holes:         {aux[78]:.4f}")
+    print(f"Encoded overhang:      {aux[79]:.4f}")
     print()
 
     # Load ONNX and run inference

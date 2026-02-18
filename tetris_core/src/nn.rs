@@ -16,13 +16,13 @@ use tract_onnx::prelude::*;
 use crate::constants::{
     AUX_FEATURES, BOARD_CACHE_MAX_ENTRIES, BOARD_HEIGHT, BOARD_STATS_FEATURES, BOARD_WIDTH,
     COMBO_NORMALIZATION_MAX, NUM_PIECE_TYPES, PIECE_AUX_FEATURES, QUEUE_SIZE,
+    ROW_FILL_FEATURE_ROWS,
 };
 use crate::env::TetrisEnv;
 use crate::mcts::{
     compute_bumpiness, count_overhang_fields_and_holes, normalize_bumpiness,
     normalize_column_heights, normalize_holes, normalize_max_column_height,
-    normalize_min_column_height, normalize_overhang_fields, normalize_row_fill_counts,
-    normalize_total_blocks,
+    normalize_overhang_fields, normalize_row_fill_counts, normalize_total_blocks,
 };
 
 /// Neural network model wrapper with board embedding cache
@@ -123,7 +123,7 @@ impl TetrisNN {
             )
         })?;
 
-        // Concatenate conv output (e.g. 1600) + board_stats (36) → board_proj input
+        // Concatenate conv output (e.g. 1600) + board_stats (19) → board_proj input
         let mut combined = Vec::with_capacity(self.conv_out_size + BOARD_STATS_FEATURES);
         combined.extend_from_slice(conv_slice);
         combined.extend_from_slice(board_stats);
@@ -311,7 +311,7 @@ impl TetrisNN {
         action_mask: &[bool],
     ) -> TractResult<(Vec<f32>, f32)> {
         // No caching for raw tensor inputs (used only by debug functions).
-        // aux_tensor is the full 97-dim vector; split into piece_aux (61) + board_stats (36).
+        // aux_tensor is the full 80-dim vector; split into piece_aux (61) + board_stats (19).
         let piece_aux = &aux_tensor[..PIECE_AUX_FEATURES];
         let board_stats = &aux_tensor[PIECE_AUX_FEATURES..];
         let board_embed = self.compute_board_embedding_from_slice(board_tensor, board_stats)?;
@@ -487,18 +487,13 @@ fn encode_board_features(env: &TetrisEnv) -> Vec<f32> {
         .collect()
 }
 
-/// Encode the 36 board-derived statistics for the cached board embedding path.
+/// Encode the 19 board-derived statistics for the cached board embedding path.
 fn encode_board_stats(env: &TetrisEnv) -> Vec<f32> {
     let normalized_column_heights = normalize_column_heights(&env.column_heights);
     let max_column_height = normalized_column_heights
         .iter()
         .copied()
         .reduce(f32::max)
-        .unwrap_or(0.0);
-    let min_column_height = normalized_column_heights
-        .iter()
-        .copied()
-        .reduce(f32::min)
         .unwrap_or(0.0);
     let normalized_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts, env.width);
     let normalized_total_blocks = normalize_total_blocks(env.total_blocks);
@@ -511,7 +506,6 @@ fn encode_board_stats(env: &TetrisEnv) -> Vec<f32> {
     let mut stats = Vec::with_capacity(BOARD_STATS_FEATURES);
     stats.extend_from_slice(&normalized_column_heights);
     stats.push(max_column_height);
-    stats.push(min_column_height);
     stats.extend_from_slice(&normalized_row_fill_counts);
     stats.push(normalized_total_blocks);
     stats.push(normalized_bumpiness);
@@ -608,13 +602,7 @@ pub fn encode_aux_state_features(
         .copied()
         .max()
         .unwrap_or(0);
-    let raw_min = env.column_heights[..env.width]
-        .iter()
-        .copied()
-        .min()
-        .unwrap_or(0);
     let max_column_height = normalize_max_column_height(raw_max);
-    let min_column_height = normalize_min_column_height(raw_min);
     let normalized_row_fill_counts =
         normalize_row_fill_counts(&env.row_fill_counts[..env.height], env.width);
     let normalized_total_blocks = normalize_total_blocks(env.total_blocks);
@@ -636,7 +624,6 @@ pub fn encode_aux_state_features(
         &hidden_piece_distribution,
         &normalized_column_heights,
         max_column_height,
-        min_column_height,
         &normalized_row_fill_counts,
         normalized_total_blocks,
         normalized_bumpiness,
@@ -669,7 +656,6 @@ pub fn encode_aux_features(
     next_hidden_piece_probs: &[f32],
     column_heights: &[f32],
     max_column_height: f32,
-    min_column_height: f32,
     row_fill_counts: &[f32],
     total_blocks: f32,
     bumpiness: f32,
@@ -731,12 +717,12 @@ pub fn encode_aux_features(
         )
         .into());
     }
-    if row_fill_counts.len() != BOARD_HEIGHT {
+    if row_fill_counts.len() != ROW_FILL_FEATURE_ROWS {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
                 "row_fill_counts length must be {} (got {})",
-                BOARD_HEIGHT,
+                ROW_FILL_FEATURE_ROWS,
                 row_fill_counts.len()
             ),
         )
@@ -806,13 +792,9 @@ pub fn encode_aux_features(
     aux_out[aux_idx] = max_column_height;
     aux_idx += 1;
 
-    // Min column height (1)
-    aux_out[aux_idx] = min_column_height;
-    aux_idx += 1;
-
-    // Row fill counts (20)
-    aux_out[aux_idx..aux_idx + BOARD_HEIGHT].copy_from_slice(row_fill_counts);
-    aux_idx += BOARD_HEIGHT;
+    // Row fill counts (bottom 4 rows)
+    aux_out[aux_idx..aux_idx + ROW_FILL_FEATURE_ROWS].copy_from_slice(row_fill_counts);
+    aux_idx += ROW_FILL_FEATURE_ROWS;
 
     // Total blocks (1)
     aux_out[aux_idx] = total_blocks;
@@ -974,9 +956,9 @@ mod tests {
             .expect("aux tensor should contain f32");
         let aux: Vec<f32> = aux_array.iter().copied().collect();
 
-        // Total size: 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 + 10 + 1 + 1 + 20 + 1 + 1 + 1 + 1 = 97
+        // Total size: 7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 + 10 + 1 + 4 + 1 + 1 + 1 + 1 = 80
         assert_eq!(aux.len(), AUX_FEATURES);
-        assert_eq!(aux.len(), 97);
+        assert_eq!(aux.len(), 80);
 
         let mut idx = 0;
 
@@ -1118,19 +1100,9 @@ mod tests {
         );
         idx += 1;
 
-        let raw_min = env.column_heights.iter().copied().min().unwrap_or(0);
-        let expected_min_column_height = normalize_min_column_height(raw_min);
-        assert!(
-            (aux[idx] - expected_min_column_height).abs() < 1e-6,
-            "Min column height should be {}, got {}",
-            expected_min_column_height,
-            aux[idx]
-        );
-        idx += 1;
-
         let expected_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts, env.width);
-        let encoded_row_fill_counts = &aux[idx..idx + BOARD_HEIGHT];
-        for row in 0..BOARD_HEIGHT {
+        let encoded_row_fill_counts = &aux[idx..idx + ROW_FILL_FEATURE_ROWS];
+        for row in 0..ROW_FILL_FEATURE_ROWS {
             assert!(
                 (encoded_row_fill_counts[row] - expected_row_fill_counts[row]).abs() < 1e-6,
                 "Row fill count mismatch at row {}: expected {}, got {}",
@@ -1139,7 +1111,7 @@ mod tests {
                 encoded_row_fill_counts[row]
             );
         }
-        idx += BOARD_HEIGHT;
+        idx += ROW_FILL_FEATURE_ROWS;
 
         let expected_total_blocks = normalize_total_blocks(env.total_blocks);
         assert!(
@@ -1199,8 +1171,7 @@ mod tests {
         // | Hidden piece   | 7          | 7-bag distribution               |
         // | Column heights | 10         | normalized by board height       |
         // | Max column h   | 1          | max normalized column height     |
-        // | Min column h   | 1          | min normalized column height     |
-        // | Row fill counts| 20         | normalized by board width        |
+        // | Row fill counts| 4          | bottom rows normalized by width  |
         // | Total blocks   | 1          | normalized by board area         |
         // | Bumpiness      | 1          | normalized bumpiness             |
         // | Holes          | 1          | normalized hole count            |
@@ -1220,8 +1191,8 @@ mod tests {
         assert_eq!(board.len(), 20 * 10, "Board should be 20x10 = 200 values");
         assert_eq!(
             aux.len(),
-            7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 + 10 + 1 + 1 + 20 + 1 + 1 + 1 + 1,
-            "Aux should be 97 values"
+            7 + 8 + 1 + 35 + 1 + 1 + 1 + 7 + 10 + 1 + 4 + 1 + 1 + 1 + 1,
+            "Aux should be 80 values"
         );
 
         // Verify board is binary
@@ -1311,21 +1282,12 @@ mod tests {
         }
 
         let max_column_height = aux[71];
-        let min_column_height = aux[72];
         assert!(
             (0.0..=1.0).contains(&max_column_height),
             "Max column height must be in [0, 1]"
         );
-        assert!(
-            (0.0..=1.0).contains(&min_column_height),
-            "Min column height must be in [0, 1]"
-        );
-        assert!(
-            min_column_height <= max_column_height,
-            "Min column height must be <= max column height"
-        );
 
-        let row_fill_counts = &aux[73..93];
+        let row_fill_counts = &aux[72..72 + ROW_FILL_FEATURE_ROWS];
         for &row_fill in row_fill_counts {
             assert!(
                 (0.0..=1.0).contains(&row_fill),
@@ -1333,10 +1295,10 @@ mod tests {
             );
         }
 
-        let total_blocks = aux[93];
-        let bumpiness = aux[94];
-        let holes = aux[95];
-        let overhang = aux[96];
+        let total_blocks = aux[72 + ROW_FILL_FEATURE_ROWS];
+        let bumpiness = aux[73 + ROW_FILL_FEATURE_ROWS];
+        let holes = aux[74 + ROW_FILL_FEATURE_ROWS];
+        let overhang = aux[75 + ROW_FILL_FEATURE_ROWS];
         assert!(
             (0.0..=1.0).contains(&total_blocks),
             "Total blocks must be in [0, 1]"
@@ -1415,14 +1377,9 @@ mod tests {
                 prop_assert!((aux[idx] - expected_max_column_height).abs() < 1e-6);
                 idx += 1;
 
-                let raw_min = env.column_heights.iter().copied().min().unwrap_or(0);
-                let expected_min_column_height = normalize_min_column_height(raw_min);
-                prop_assert!((aux[idx] - expected_min_column_height).abs() < 1e-6);
-                idx += 1;
-
                 let expected_row_fill_counts =
                     normalize_row_fill_counts(&env.row_fill_counts, env.width);
-                for expected in expected_row_fill_counts.iter().take(BOARD_HEIGHT) {
+                for expected in expected_row_fill_counts.iter().take(ROW_FILL_FEATURE_ROWS) {
                     prop_assert!((aux[idx] - *expected).abs() < 1e-6);
                     prop_assert!((0.0..=1.0).contains(&aux[idx]));
                     idx += 1;

@@ -5,7 +5,7 @@ use rand_distr::{Distribution, Gamma};
 use crate::constants::{
     BUMPINESS_NORMALIZATION_DIVISOR, COLUMN_HEIGHT_NORMALIZATION_DIVISOR,
     HOLES_NORMALIZATION_DIVISOR, MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR,
-    MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR, OVERHANG_NORMALIZATION_DIVISOR,
+    OVERHANG_NORMALIZATION_DIVISOR, ROW_FILL_FEATURE_ROWS, ROW_FILL_FEATURE_START,
     TOTAL_BLOCKS_NORMALIZATION_DIVISOR,
 };
 use crate::env::global_cache::{
@@ -209,16 +209,21 @@ pub fn normalize_max_column_height(raw: u8) -> f32 {
     raw as f32 / MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
 }
 
-pub fn normalize_min_column_height(raw: u8) -> f32 {
-    raw as f32 / MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
-}
-
 pub fn normalize_row_fill_counts(row_fill_counts: &[u8], board_width: usize) -> Vec<f32> {
     let denominator = board_width as f32;
-    row_fill_counts
-        .iter()
-        .map(|&count| count as f32 / denominator)
-        .collect()
+    let start = if row_fill_counts.len() >= ROW_FILL_FEATURE_START + ROW_FILL_FEATURE_ROWS {
+        ROW_FILL_FEATURE_START
+    } else {
+        row_fill_counts.len().saturating_sub(ROW_FILL_FEATURE_ROWS)
+    };
+    let selected = &row_fill_counts[start..];
+
+    let mut normalized = vec![0.0; ROW_FILL_FEATURE_ROWS];
+    let write_start = ROW_FILL_FEATURE_ROWS - selected.len();
+    for (i, &count) in selected.iter().enumerate() {
+        normalized[write_start + i] = count as f32 / denominator;
+    }
+    normalized
 }
 
 pub fn normalize_total_blocks(total_blocks: u32) -> f32 {
@@ -333,15 +338,14 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_min_column_height() {
-        // divisor = 6.0
-        assert!((normalize_min_column_height(3) - 0.5).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_normalize_row_fill_counts_divides_by_board_width() {
-        let normalized = normalize_row_fill_counts(&[0, 5, 10], 10);
-        assert_eq!(normalized, vec![0.0, 0.5, 1.0]);
+    fn test_normalize_row_fill_counts_keeps_bottom_rows_only() {
+        let mut row_fills = [0u8; 20];
+        row_fills[16] = 2;
+        row_fills[17] = 4;
+        row_fills[18] = 6;
+        row_fills[19] = 8;
+        let normalized = normalize_row_fill_counts(&row_fills, 10);
+        assert_eq!(normalized, vec![0.2, 0.4, 0.6, 0.8]);
     }
 
     #[test]

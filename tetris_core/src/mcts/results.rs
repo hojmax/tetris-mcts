@@ -64,10 +64,7 @@ pub struct TrainingExample {
     /// Maximum normalized column height
     #[pyo3(get)]
     pub max_column_height: f32,
-    /// Minimum normalized column height
-    #[pyo3(get)]
-    pub min_column_height: f32,
-    /// Filled cells per row normalized by board width (0.0..1.0)
+    /// Filled cells in bottom rows normalized by board width (0.0..1.0)
     #[pyo3(get)]
     pub row_fill_counts: Vec<f32>,
     /// Total filled cells normalized by board area (0.0..1.0)
@@ -425,6 +422,7 @@ impl MCTSTreeExport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::ROW_FILL_FEATURE_ROWS;
     use crate::mcts::normalize_overhang_fields;
     use crate::mcts::NUM_ACTIONS;
 
@@ -474,8 +472,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
             max_column_height: 0.0,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; 20],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.0,
             bumpiness: 0.0,
             holes: 0.0,
@@ -499,8 +496,7 @@ mod tests {
         assert_eq!(example.next_hidden_piece_probs.len(), 7);
         assert_eq!(example.column_heights.len(), 10);
         assert_eq!(example.max_column_height, 0.0);
-        assert_eq!(example.min_column_height, 0.0);
-        assert_eq!(example.row_fill_counts.len(), 20);
+        assert_eq!(example.row_fill_counts.len(), ROW_FILL_FEATURE_ROWS);
         assert_eq!(example.total_blocks, 0.0);
         assert_eq!(example.bumpiness, 0.0);
         assert_eq!(example.holes, 0.0);
@@ -526,8 +522,7 @@ mod tests {
                 next_hidden_piece_probs: vec![0.0; 7],
                 column_heights: vec![0.0; 10],
                 max_column_height: 0.0,
-                min_column_height: 0.0,
-                row_fill_counts: vec![0.0; 20],
+                row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
                 total_blocks: 0.0,
                 bumpiness: 0.0,
                 holes: 0.0,
@@ -557,8 +552,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
             max_column_height: 0.0,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; 20],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.0,
             bumpiness: 0.0,
             holes: 0.0,
@@ -587,8 +581,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
             max_column_height: 0.0,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; 20],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.0,
             bumpiness: 0.0,
             holes: 0.0,
@@ -618,8 +611,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0],
             column_heights: vec![0.2, 0.2, 0.15, 0.15, 0.1, 0.1, 0.05, 0.05, 0.0, 0.0],
             max_column_height: 0.2,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; 20],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.1,
             bumpiness: 0.03,
             holes: 0.12,
@@ -647,7 +639,6 @@ mod tests {
         );
         assert_eq!(cloned.column_heights, example.column_heights);
         assert_eq!(cloned.max_column_height, example.max_column_height);
-        assert_eq!(cloned.min_column_height, example.min_column_height);
         assert_eq!(cloned.row_fill_counts, example.row_fill_counts);
         assert_eq!(cloned.total_blocks, example.total_blocks);
         assert_eq!(cloned.bumpiness, example.bumpiness);
@@ -697,8 +688,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
             max_column_height: 0.0,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; 20],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.0,
             bumpiness: 0.0,
             holes: 0.0,
@@ -723,8 +713,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
             max_column_height: 0.0,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; 20],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.0,
             bumpiness: 0.0,
             holes: 0.0,
@@ -838,8 +827,7 @@ mod tests {
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
             max_column_height: 0.0,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; 20],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.0,
             bumpiness: 0.0,
             holes: 0.0,

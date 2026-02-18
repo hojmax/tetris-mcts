@@ -453,13 +453,7 @@ impl MCTSAgent {
                 .copied()
                 .max()
                 .unwrap_or(0);
-            let raw_min = state.column_heights[..state.width]
-                .iter()
-                .copied()
-                .min()
-                .unwrap_or(0);
             let max_column_height = super::utils::normalize_max_column_height(raw_max);
-            let min_column_height = super::utils::normalize_min_column_height(raw_min);
 
             examples.push(TrainingExample {
                 board,
@@ -474,7 +468,6 @@ impl MCTSAgent {
                 next_hidden_piece_probs,
                 column_heights,
                 max_column_height,
-                min_column_height,
                 row_fill_counts,
                 total_blocks,
                 bumpiness,

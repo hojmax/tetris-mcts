@@ -5,7 +5,7 @@ import numpy as np
 from simple_parsing import parse
 
 EXPECTED_NUM_COLUMNS = 10
-EXPECTED_NUM_ROWS = 20
+EXPECTED_NUM_ROWS = 4
 EXPECTED_NUM_PIECES = 7
 PERCENTILES = [0, 10, 25, 50, 75, 90, 100]
 EPSILON = 1e-6
@@ -18,7 +18,6 @@ REQUIRED_KEYS = (
     "next_hidden_piece_probs",
     "column_heights",
     "max_column_heights",
-    "min_column_heights",
     "row_fill_counts",
     "total_blocks",
     "bumpiness",
@@ -99,7 +98,7 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> None:
         )
     if data["row_fill_counts"].shape[1] != EXPECTED_NUM_ROWS:
         raise ValueError(
-            "row_fill_counts second dimension must be 20, got "
+            "row_fill_counts second dimension must be 4, got "
             f"{data['row_fill_counts'].shape[1]}"
         )
 
@@ -166,7 +165,6 @@ def main(args: ScriptArgs) -> None:
         next_hidden_piece_probs = data["next_hidden_piece_probs"]
         column_heights = data["column_heights"]
         max_column_heights = data["max_column_heights"]
-        min_column_heights = data["min_column_heights"]
         row_fill_counts = data["row_fill_counts"]
         total_blocks = data["total_blocks"]
         bumpiness = data["bumpiness"]
@@ -209,16 +207,12 @@ def main(args: ScriptArgs) -> None:
         print_distribution(
             "Max Column Height (normalized)", max_column_heights, bins=12
         )
-        print_distribution(
-            "Min Column Height (normalized)", min_column_heights, bins=12
-        )
 
         print_section("Normalized Range Checks")
         print_normalized_range_check("next_hidden_piece_probs", next_hidden_piece_probs)
         print_normalized_range_check("column_heights", column_heights)
         print_normalized_range_check("row_fill_counts", row_fill_counts)
         print_normalized_range_check("max_column_heights", max_column_heights)
-        print_normalized_range_check("min_column_heights", min_column_heights)
         print_normalized_range_check("total_blocks", total_blocks)
         print_normalized_range_check("bumpiness", bumpiness)
         print_normalized_range_check("holes", holes)

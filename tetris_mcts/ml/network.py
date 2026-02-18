@@ -14,18 +14,17 @@ Piece/game auxiliary features (61, uncached heads path):
 - Back-to-back: 1 (binary)
 - Next hidden piece distribution: 7 (7-bag probabilities)
 
-Board stats features (36, folded into cached board embedding):
+Board stats features (19, folded into cached board embedding):
 - Column heights: 10 (normalized)
 - Max column height: 1 (normalized)
-- Min column height: 1 (normalized)
-- Row fill counts: 20 (normalized)
+- Row fill counts (bottom 4 rows): 4 (normalized)
 - Total blocks: 1 (normalized)
 - Bumpiness: 1 (normalized)
 - Holes: 1 (normalized)
 - Overhang fields: 1 (normalized)
 
-Total input: 200 board + 97 aux = 297 features.
-Training data packs all 97 aux features together; the model splits internally.
+Total input: 200 board + 80 aux = 280 features.
+Training data packs all 80 aux features together; the model splits internally.
 Rust inference encodes board stats separately for the cached board embedding path.
 
 Output:
@@ -58,8 +57,7 @@ BACK_TO_BACK_FEATURES = 1
 HIDDEN_PIECE_DISTRIBUTION_FEATURES = NUM_PIECE_TYPES  # 7
 COLUMN_HEIGHT_FEATURES = BOARD_WIDTH  # 10
 MAX_COLUMN_HEIGHT_FEATURES = 1
-MIN_COLUMN_HEIGHT_FEATURES = 1
-ROW_FILL_COUNT_FEATURES = BOARD_HEIGHT  # 20
+ROW_FILL_COUNT_FEATURES = 4
 TOTAL_BLOCKS_FEATURES = 1
 BUMPINESS_FEATURES = 1
 HOLES_FEATURES = 1
@@ -79,15 +77,14 @@ PIECE_AUX_FEATURES = (
 BOARD_STATS_FEATURES = (
     COLUMN_HEIGHT_FEATURES
     + MAX_COLUMN_HEIGHT_FEATURES
-    + MIN_COLUMN_HEIGHT_FEATURES
     + ROW_FILL_COUNT_FEATURES
     + TOTAL_BLOCKS_FEATURES
     + BUMPINESS_FEATURES
     + HOLES_FEATURES
     + OVERHANG_FIELDS_FEATURES
-)  # 36
+)  # 19
 
-AUX_FEATURES = PIECE_AUX_FEATURES + BOARD_STATS_FEATURES  # 97
+AUX_FEATURES = PIECE_AUX_FEATURES + BOARD_STATS_FEATURES  # 80
 
 COMBO_NORMALIZATION_MAX = 4.0
 
@@ -107,7 +104,6 @@ def build_aux_features(
     next_hidden_piece_probs: np.ndarray,
     column_heights: np.ndarray,
     max_column_height: float,
-    min_column_height: float,
     row_fill_counts: np.ndarray,
     total_blocks: float,
     bumpiness: float,
@@ -119,11 +115,16 @@ def build_aux_features(
     combo_feature_array = np.array([combo_feature], dtype=np.float32)
     back_to_back_feature = np.array([back_to_back], dtype=np.float32)
     max_column_height_feature = np.array([max_column_height], dtype=np.float32)
-    min_column_height_feature = np.array([min_column_height], dtype=np.float32)
     total_blocks_feature = np.array([total_blocks], dtype=np.float32)
     bumpiness_feature = np.array([bumpiness], dtype=np.float32)
     holes_feature = np.array([holes], dtype=np.float32)
     overhang_fields_feature = np.array([overhang_fields], dtype=np.float32)
+    row_fill_counts_feature = row_fill_counts.astype(np.float32).reshape(-1)
+    if row_fill_counts_feature.size != ROW_FILL_COUNT_FEATURES:
+        raise ValueError(
+            "row_fill_counts must contain "
+            f"{ROW_FILL_COUNT_FEATURES} values, got {row_fill_counts_feature.size}"
+        )
     return np.concatenate(
         [
             current_piece.astype(np.float32),
@@ -136,8 +137,7 @@ def build_aux_features(
             next_hidden_piece_probs.astype(np.float32).reshape(-1),
             column_heights.astype(np.float32).reshape(-1),
             max_column_height_feature,
-            min_column_height_feature,
-            row_fill_counts.astype(np.float32).reshape(-1),
+            row_fill_counts_feature,
             total_blocks_feature,
             bumpiness_feature,
             holes_feature,
@@ -267,7 +267,7 @@ class TetrisNet(nn.Module):
 
         Args:
             board: Shape (batch, 1, 20, 10) - binary board state
-            aux_features: Shape (batch, 97) - auxiliary features (61 piece/game + 36 board stats)
+            aux_features: Shape (batch, 80) - auxiliary features (61 piece/game + 19 board stats)
 
         Returns:
             policy_logits: Shape (batch, 735) - raw logits (caller should apply

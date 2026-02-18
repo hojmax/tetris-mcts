@@ -21,6 +21,7 @@ from tetris_mcts.constants import (
 )
 from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.loss import compute_loss
+from tetris_mcts.ml.network import ROW_FILL_COUNT_FEATURES
 
 logger = structlog.get_logger()
 
@@ -62,14 +63,9 @@ CORE_EXTRA_FEATURE_GROUPS = (
         width=1,
     ),
     ExtraFeatureGroup(
-        name="min_column_height",
-        npz_key="min_column_heights",
-        width=1,
-    ),
-    ExtraFeatureGroup(
         name="row_fill_counts",
         npz_key="row_fill_counts",
-        width=BOARD_HEIGHT,
+        width=ROW_FILL_COUNT_FEATURES,
     ),
     ExtraFeatureGroup(
         name="total_blocks",

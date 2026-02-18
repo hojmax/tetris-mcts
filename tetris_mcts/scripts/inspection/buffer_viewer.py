@@ -98,7 +98,6 @@ class BufferViewer:
         next_hidden_piece_probs_raw = self.data["next_hidden_piece_probs"][i]
         column_heights_raw = self.data["column_heights"][i]
         max_column_height_raw = float(self.data["max_column_heights"][i])
-        min_column_height_raw = float(self.data["min_column_heights"][i])
         row_fill_counts_raw = self.data["row_fill_counts"][i]
         total_blocks_raw = float(self.data["total_blocks"][i])
         bumpiness_raw = float(self.data["bumpiness"][i])
@@ -127,7 +126,6 @@ class BufferViewer:
                 next_hidden_piece_probs=next_hidden_piece_probs_raw,
                 column_heights=column_heights_raw,
                 max_column_height=max_column_height_raw,
-                min_column_height=min_column_height_raw,
                 row_fill_counts=row_fill_counts_raw,
                 total_blocks=total_blocks_raw,
                 bumpiness=bumpiness_raw,

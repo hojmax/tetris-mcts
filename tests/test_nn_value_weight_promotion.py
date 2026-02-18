@@ -1,12 +1,29 @@
 import pytest
 
-from tetris_mcts.config import SelfPlayConfig, TrainingConfig
+from tetris_mcts.config import (
+    NetworkConfig,
+    OptimizerConfig,
+    ReplayConfig,
+    RunConfig,
+    SelfPlayConfig,
+    TrainingConfig,
+)
 from tetris_mcts.ml.trainer import Trainer
 
 
+def _make_config(self_play: SelfPlayConfig) -> TrainingConfig:
+    return TrainingConfig(
+        network=NetworkConfig(),
+        optimizer=OptimizerConfig(),
+        self_play=self_play,
+        replay=ReplayConfig(),
+        run=RunConfig(),
+    )
+
+
 def test_candidate_weight_uses_multiplier_excess_as_delta() -> None:
-    config = TrainingConfig(
-        self_play=SelfPlayConfig(
+    config = _make_config(
+        SelfPlayConfig(
             nn_value_weight_promotion_multiplier=1.4,
             nn_value_weight_promotion_max_delta=0.10,
             nn_value_weight_cap=1.0,
@@ -19,8 +36,8 @@ def test_candidate_weight_uses_multiplier_excess_as_delta() -> None:
 
 
 def test_candidate_weight_respects_max_delta_and_cap() -> None:
-    config = TrainingConfig(
-        self_play=SelfPlayConfig(
+    config = _make_config(
+        SelfPlayConfig(
             nn_value_weight_promotion_multiplier=2.0,
             nn_value_weight_promotion_max_delta=0.10,
             nn_value_weight_cap=0.55,

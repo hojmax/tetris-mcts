@@ -1147,7 +1147,6 @@ impl GameGenerator {
                 &ex.next_hidden_piece_probs,
                 &ex.column_heights,
                 ex.max_column_height,
-                ex.min_column_height,
                 &ex.row_fill_counts,
                 ex.total_blocks,
                 ex.bumpiness,
@@ -1968,7 +1967,7 @@ impl Drop for GameGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
+    use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, ROW_FILL_FEATURE_ROWS};
     use crate::generator::test_utils;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;
@@ -1992,8 +1991,7 @@ mod tests {
             next_hidden_piece_probs: vec![1.0 / NUM_PIECE_TYPES as f32; NUM_PIECE_TYPES],
             column_heights: vec![0.0; BOARD_WIDTH],
             max_column_height: 0.0,
-            min_column_height: 0.0,
-            row_fill_counts: vec![0.0; BOARD_HEIGHT],
+            row_fill_counts: vec![0.0; ROW_FILL_FEATURE_ROWS],
             total_blocks: 0.0,
             bumpiness: 0.0,
             holes: 0.0,
