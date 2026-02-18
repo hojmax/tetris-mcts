@@ -519,8 +519,8 @@ The implementation uses **integrated parallel game generation** via Rust `GameGe
 ```python
 # Python training loop (simplified)
 from tetris_core import GameGenerator, MCTSConfig
-from tetris_ml.config import TrainingConfig
-from tetris_ml.ml.network import TetrisNet
+from tetris.config import TrainingConfig
+from tetris.ml.network import TetrisNet
 
 def train():
     config = TrainingConfig()

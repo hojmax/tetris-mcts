@@ -217,7 +217,7 @@ ONNX Export                  ← Model exported for Rust inference
 **Ownership boundary (strict):**
 
 - Rust (`tetris_core/`) = environment logic, move generation, scoring, MCTS, inference/runtime state.
-- Python (`tetris_ml/`) = training, evaluation UX, and visualization/rendering.
+- Python (`tetris/`) = training, evaluation UX, and visualization/rendering.
 - Color palettes and UI styling are Python-owned. Rust should expose piece identity/state (for example `piece_type`), not display colors.
 
 ## Project Structure
@@ -255,7 +255,7 @@ tetris_core/src/             # Rust game engine
     ├── evaluation.rs
     └── npz.rs
 
-tetris_ml/                 # Python package
+tetris/                 # Python package
 ├── config.py                # TrainingConfig dataclass (all hyperparameters)
 ├── visualization.py         # Board rendering + replay visualization
 ├── ml/
@@ -424,7 +424,7 @@ Tests are in:
 
 ### Modifying the neural network
 
-1. Edit `tetris_ml/ml/network.py`
+1. Edit `tetris/ml/network.py`
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
 
@@ -537,7 +537,7 @@ Use `simple_parsing` with dataclasses for CLI scripts:
 from dataclasses import dataclass
 from pathlib import Path
 from simple_parsing import parse
-from tetris_ml.config import PROJECT_ROOT
+from tetris.config import PROJECT_ROOT
 
 @dataclass
 class ScriptArgs:
@@ -634,11 +634,11 @@ logger.error("Failed to process", error=str(e))
 ### File & Path Handling
 
 - Always use `pathlib.Path` for file paths
-- **Use relative paths with `PROJECT_ROOT`**: Import `PROJECT_ROOT` from `tetris_ml.config` for project-relative paths instead of hardcoding absolute paths
+- **Use relative paths with `PROJECT_ROOT`**: Import `PROJECT_ROOT` from `tetris.config` for project-relative paths instead of hardcoding absolute paths
 - For script-relative paths within the same directory, use `Path(__file__).parent`
 
 ```python
-from tetris_ml.config import PROJECT_ROOT
+from tetris.config import PROJECT_ROOT
 
 # ✅ GOOD: Relative to project root with explicit separators
 model_path = PROJECT_ROOT / "benchmarks" / "models" / "model.onnx"
