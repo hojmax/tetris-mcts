@@ -266,16 +266,18 @@ pub fn evaluate_model(
 ///     seeds: List of random seeds to use (determines piece sequence)
 ///     config: MCTS configuration (temperature is forced to 0 for argmax)
 ///     max_placements: Maximum placements per game (hold actions do not count)
+///     add_noise: Whether to add Dirichlet root noise (matches self-play exploration)
 ///     output_path: Optional path to save replays as JSONL
 ///
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (seeds, config=None, max_placements=100, output_path=None))]
+#[pyo3(signature = (seeds, config=None, max_placements=100, add_noise=false, output_path=None))]
 pub fn evaluate_model_without_nn(
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
     max_placements: u32,
+    add_noise: bool,
     output_path: Option<String>,
 ) -> PyResult<EvalResult> {
     if max_placements == 0 {
@@ -289,5 +291,5 @@ pub fn evaluate_model_without_nn(
     config.max_placements = max_placements;
 
     let agent = MCTSAgent::new(config);
-    evaluate_agent(&agent, &seeds, max_placements, false, output_path)
+    evaluate_agent(&agent, &seeds, max_placements, add_noise, output_path)
 }
