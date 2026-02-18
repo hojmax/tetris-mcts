@@ -29,7 +29,9 @@ class ProfileArgs:
     num_games: int = 10  # Number of games to profile
     simulations: int = 100  # MCTS simulations per move
     seed_start: int = 42  # Starting seed for deterministic games
-    c_puct: float = DEFAULT_TRAINING_CONFIG.self_play.c_puct  # PUCT exploration constant
+    c_puct: float = (  # PUCT exploration constant
+        DEFAULT_TRAINING_CONFIG.self_play.c_puct
+    )
     mcts_seed: int | None = None  # Optional deterministic MCTS RNG seed
     max_placements: int = (
         DEFAULT_TRAINING_CONFIG.self_play.max_placements

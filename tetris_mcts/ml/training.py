@@ -399,7 +399,9 @@ class Trainer:
 
         # Training state
         self.step = 0
-        self.loss_balancer = RunningLossBalancer(config.optimizer.value_loss_weight_window)
+        self.loss_balancer = RunningLossBalancer(
+            config.optimizer.value_loss_weight_window
+        )
         self._cached_value_loss_weight: float = 1.0
         self._pending_eval_gif_paths: list[Path] = []
         self.initial_incumbent_model_path: Path | None = None
@@ -421,12 +423,14 @@ class Trainer:
             return torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 T_max=self.config.optimizer.lr_decay_steps,
-                eta_min=self.config.optimizer.learning_rate * self.config.optimizer.lr_min_factor,
+                eta_min=self.config.optimizer.learning_rate
+                * self.config.optimizer.lr_min_factor,
             )
         elif self.config.optimizer.lr_schedule == "step":
             return torch.optim.lr_scheduler.StepLR(
                 self.optimizer,
-                step_size=self.config.optimizer.lr_decay_steps // self.config.optimizer.lr_step_divisor,
+                step_size=self.config.optimizer.lr_decay_steps
+                // self.config.optimizer.lr_step_divisor,
                 gamma=self.config.optimizer.lr_step_gamma,
             )
         else:
@@ -453,7 +457,10 @@ class Trainer:
                 self.scheduler, torch.optim.lr_scheduler.CosineAnnealingLR
             )
             t_max = self.config.optimizer.lr_decay_steps
-            eta_min = self.config.optimizer.learning_rate * self.config.optimizer.lr_min_factor
+            eta_min = (
+                self.config.optimizer.learning_rate
+                * self.config.optimizer.lr_min_factor
+            )
             cosine_factor = (
                 1 + torch.cos(torch.tensor(torch.pi * step / t_max))
             ).item() / 2
@@ -463,11 +470,16 @@ class Trainer:
             ]
         elif self.config.optimizer.lr_schedule == "step":
             assert isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR)
-            step_size = self.config.optimizer.lr_decay_steps // self.config.optimizer.lr_step_divisor
+            step_size = (
+                self.config.optimizer.lr_decay_steps
+                // self.config.optimizer.lr_step_divisor
+            )
             decay = self.config.optimizer.lr_step_gamma ** (step // step_size)
             lrs = [base_lr * decay for base_lr in self.scheduler.base_lrs]
         else:
-            raise ValueError(f"Unsupported lr_schedule: {self.config.optimizer.lr_schedule}")
+            raise ValueError(
+                f"Unsupported lr_schedule: {self.config.optimizer.lr_schedule}"
+            )
 
         if len(self.optimizer.param_groups) != len(lrs):
             raise ValueError(
@@ -627,14 +639,19 @@ class Trainer:
         generator: GameGenerator,
         staged_batch_size: int,
     ) -> list[TrainingBatch] | None:
-        result = generator.sample_batch(staged_batch_size, self.config.self_play.max_placements)
+        result = generator.sample_batch(
+            staged_batch_size, self.config.self_play.max_placements
+        )
         if result is None:
             return None
         staged_batch = self._to_training_device(self._build_training_batch(result))
         return staged_batch.split(self.config.optimizer.batch_size)
 
     def _use_device_replay_mirror(self) -> bool:
-        return self.config.replay.mirror_replay_on_accelerator and self.device.type != "cpu"
+        return (
+            self.config.replay.mirror_replay_on_accelerator
+            and self.device.type != "cpu"
+        )
 
     def _load_replay_mirror(
         self,
@@ -1066,14 +1083,22 @@ class Trainer:
         mcts_config.self_play.c_puct = self.config.self_play.c_puct
         mcts_config.self_play.temperature = self.config.self_play.temperature
         mcts_config.self_play.dirichlet_alpha = self.config.self_play.dirichlet_alpha
-        mcts_config.self_play.dirichlet_epsilon = self.config.self_play.dirichlet_epsilon
-        mcts_config.self_play.visit_sampling_epsilon = self.config.self_play.visit_sampling_epsilon
+        mcts_config.self_play.dirichlet_epsilon = (
+            self.config.self_play.dirichlet_epsilon
+        )
+        mcts_config.self_play.visit_sampling_epsilon = (
+            self.config.self_play.visit_sampling_epsilon
+        )
         mcts_config.self_play.max_placements = self.config.self_play.max_placements
         mcts_config.self_play.death_penalty = self.config.self_play.death_penalty
-        mcts_config.self_play.overhang_penalty_weight = self.config.self_play.overhang_penalty_weight
+        mcts_config.self_play.overhang_penalty_weight = (
+            self.config.self_play.overhang_penalty_weight
+        )
         mcts_config.self_play.nn_value_weight = self.config.self_play.nn_value_weight
         mcts_config.self_play.q_scale = (
-            self.config.self_play.q_scale if self.config.self_play.use_tanh_q_normalization else None
+            self.config.self_play.q_scale
+            if self.config.self_play.use_tanh_q_normalization
+            else None
         )
         mcts_config.self_play.reuse_tree = self.config.self_play.reuse_tree
 
@@ -1089,7 +1114,9 @@ class Trainer:
             save_interval_seconds=self.config.run.save_interval_seconds,
             num_workers=self.config.self_play.num_workers,
             initial_model_step=self.step,
-            candidate_eval_seeds=list(range(self.config.self_play.model_promotion_eval_games)),
+            candidate_eval_seeds=list(
+                range(self.config.self_play.model_promotion_eval_games)
+            ),
             start_with_network=not self.config.self_play.bootstrap_without_network,
             non_network_num_simulations=self.config.self_play.bootstrap_num_simulations,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
@@ -1134,7 +1161,9 @@ class Trainer:
             config=str(self.config),
         )
         use_device_replay_mirror = self._use_device_replay_mirror()
-        staged_batch_size = self.config.optimizer.batch_size * self.config.replay.prefetch_batches
+        staged_batch_size = (
+            self.config.optimizer.batch_size * self.config.replay.prefetch_batches
+        )
         staged_queue_target_batches = self.config.replay.staged_batch_cache_batches
         if use_device_replay_mirror:
             logger.info(
@@ -1207,7 +1236,8 @@ class Trainer:
                         replay_sync_time_s += replay_sync_elapsed_s
                         replay_sync_count += 1
                         next_replay_sync_time_s = (
-                            pre_step_time + self.config.replay.replay_mirror_refresh_seconds
+                            pre_step_time
+                            + self.config.replay.replay_mirror_refresh_seconds
                         )
                     if replay_mirror is None:
                         raise RuntimeError(
@@ -1243,7 +1273,8 @@ class Trainer:
                 collect_train_metrics = (
                     is_log_step
                     or latest_train_metrics is None
-                    or session_step % self.config.optimizer.train_step_metrics_interval == 0
+                    or session_step % self.config.optimizer.train_step_metrics_interval
+                    == 0
                 )
                 step_metrics = self.train_step(
                     batch,

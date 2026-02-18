@@ -1139,7 +1139,9 @@ class ScriptArgs:
     seed_start: int = 0  # First seed when seeds list is empty
     num_seeds: int = 3  # Number of sequential seeds when seeds list is empty
     num_simulations: int = 400  # MCTS simulations per audited move
-    c_puct: float = DEFAULT_TRAINING_CONFIG.self_play.c_puct  # PUCT exploration constant
+    c_puct: float = (  # PUCT exploration constant
+        DEFAULT_TRAINING_CONFIG.self_play.c_puct
+    )
     temperature: float = 0.0  # Action selection temperature (0 = argmax)
     dirichlet_alpha: float = (
         DEFAULT_TRAINING_CONFIG.self_play.dirichlet_alpha
