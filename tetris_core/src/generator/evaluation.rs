@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::thread;
 
 use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
@@ -105,72 +106,31 @@ fn create_replay_writer(output_path: Option<&str>) -> PyResult<Option<BufWriter<
     }
 }
 
-fn evaluate_agent(
-    agent: &MCTSAgent,
-    seeds: &[u64],
-    max_placements: u32,
-    add_noise: bool,
-    output_path: Option<String>,
-) -> PyResult<EvalResult> {
-    let mut replay_writer = create_replay_writer(output_path.as_deref())?;
+/// Per-game result collected from evaluation (attack, lines, moves).
+struct GameEval {
+    attack: u32,
+    lines: u32,
+    moves: u32,
+}
 
+fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
+    let num_games = evals.len() as u32;
     let mut total_attack: u32 = 0;
     let mut max_attack: u32 = 0;
     let mut total_lines: u32 = 0;
     let mut max_lines: u32 = 0;
     let mut total_moves: u32 = 0;
-    let mut game_results: Vec<(u32, u32)> = Vec::with_capacity(seeds.len());
+    let mut game_results: Vec<(u32, u32)> = Vec::with_capacity(evals.len());
 
-    for &seed in seeds {
-        let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
-        let Some((result, replay_moves)) = agent.play_game_on_env(env, max_placements, add_noise)
-        else {
-            continue;
-        };
-
-        let game_attack = result.total_attack;
-        let game_moves = result.num_moves;
-        let game_lines = result.stats.total_lines;
-
-        if let Some(writer) = replay_writer.as_mut() {
-            let replay = GameReplay {
-                seed,
-                moves: replay_moves,
-                total_attack: game_attack,
-                num_moves: game_moves,
-            };
-            let json = serde_json::to_string(&replay).map_err(|error| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to serialize replay: {}",
-                    error
-                ))
-            })?;
-            writeln!(writer, "{}", json).map_err(|error| {
-                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                    "Failed to write replay: {}",
-                    error
-                ))
-            })?;
-        }
-
-        total_attack += game_attack;
-        max_attack = max_attack.max(game_attack);
-        total_lines += game_lines;
-        max_lines = max_lines.max(game_lines);
-        total_moves += game_moves;
-        game_results.push((game_attack, game_moves));
+    for eval in evals {
+        total_attack += eval.attack;
+        max_attack = max_attack.max(eval.attack);
+        total_lines += eval.lines;
+        max_lines = max_lines.max(eval.lines);
+        total_moves += eval.moves;
+        game_results.push((eval.attack, eval.moves));
     }
 
-    if let Some(writer) = replay_writer.as_mut() {
-        writer.flush().map_err(|error| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to flush output: {}",
-                error
-            ))
-        })?;
-    }
-
-    let num_games = game_results.len() as u32;
     let avg_attack = if num_games > 0 {
         total_attack as f32 / num_games as f32
     } else {
@@ -197,7 +157,7 @@ fn evaluate_agent(
         0.0
     };
 
-    Ok(EvalResult {
+    EvalResult {
         num_games,
         total_attack,
         max_attack,
@@ -210,7 +170,150 @@ fn evaluate_agent(
         attack_per_piece,
         lines_per_piece,
         game_results,
-    })
+    }
+}
+
+fn run_games_on_seeds(
+    agent: &MCTSAgent,
+    seeds: &[u64],
+    max_placements: u32,
+    add_noise: bool,
+) -> Vec<GameEval> {
+    let mut evals = Vec::with_capacity(seeds.len());
+    for &seed in seeds {
+        let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
+        let Some((result, _replay_moves)) = agent.play_game_on_env(env, max_placements, add_noise)
+        else {
+            continue;
+        };
+        evals.push(GameEval {
+            attack: result.total_attack,
+            lines: result.stats.total_lines,
+            moves: result.num_moves,
+        });
+    }
+    evals
+}
+
+fn evaluate_agent(
+    agent: &MCTSAgent,
+    seeds: &[u64],
+    max_placements: u32,
+    add_noise: bool,
+    output_path: Option<String>,
+) -> PyResult<EvalResult> {
+    // Replay writing path (single-threaded only)
+    if let Some(path) = output_path.as_deref() {
+        let mut replay_writer = create_replay_writer(Some(path))?;
+        let mut evals = Vec::with_capacity(seeds.len());
+
+        for &seed in seeds {
+            let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
+            let Some((result, replay_moves)) =
+                agent.play_game_on_env(env, max_placements, add_noise)
+            else {
+                continue;
+            };
+
+            if let Some(writer) = replay_writer.as_mut() {
+                let replay = GameReplay {
+                    seed,
+                    moves: replay_moves,
+                    total_attack: result.total_attack,
+                    num_moves: result.num_moves,
+                };
+                let json = serde_json::to_string(&replay).map_err(|error| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to serialize replay: {}",
+                        error
+                    ))
+                })?;
+                writeln!(writer, "{}", json).map_err(|error| {
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                        "Failed to write replay: {}",
+                        error
+                    ))
+                })?;
+            }
+
+            evals.push(GameEval {
+                attack: result.total_attack,
+                lines: result.stats.total_lines,
+                moves: result.num_moves,
+            });
+        }
+
+        if let Some(writer) = replay_writer.as_mut() {
+            writer.flush().map_err(|error| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                    "Failed to flush output: {}",
+                    error
+                ))
+            })?;
+        }
+
+        return Ok(aggregate_game_evals(&evals));
+    }
+
+    // No replay — simple path
+    let evals = run_games_on_seeds(agent, seeds, max_placements, add_noise);
+    Ok(aggregate_game_evals(&evals))
+}
+
+/// Run evaluation in parallel across multiple threads.
+/// Each thread creates its own MCTSAgent and loads the model independently.
+/// Results are collected and merged in original seed order.
+fn evaluate_parallel(
+    model_path: Option<&str>,
+    seeds: &[u64],
+    config: &MCTSConfig,
+    max_placements: u32,
+    num_workers: u32,
+) -> PyResult<EvalResult> {
+    let num_workers = (num_workers as usize).min(seeds.len());
+    let chunk_size = (seeds.len() + num_workers - 1) / num_workers;
+
+    let seed_chunks: Vec<Vec<u64>> = seeds.chunks(chunk_size).map(|c| c.to_vec()).collect();
+
+    let model_path_owned = model_path.map(|s| s.to_string());
+    let config = config.clone();
+
+    // Spawn worker threads
+    let handles: Vec<_> = seed_chunks
+        .into_iter()
+        .map(|chunk_seeds| {
+            let model_path = model_path_owned.clone();
+            let config = config.clone();
+            thread::spawn(move || -> Result<Vec<GameEval>, String> {
+                let mut agent = MCTSAgent::new(config);
+                if let Some(path) = model_path.as_deref() {
+                    if !agent.load_model(path) {
+                        return Err(format!("Failed to load model from {}", path));
+                    }
+                }
+                Ok(run_games_on_seeds(
+                    &agent,
+                    &chunk_seeds,
+                    max_placements,
+                    false,
+                ))
+            })
+        })
+        .collect();
+
+    // Join all threads and flatten results in seed order
+    let mut all_evals: Vec<GameEval> = Vec::with_capacity(seeds.len());
+    for handle in handles {
+        let thread_evals = handle
+            .join()
+            .map_err(|_| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Evaluation thread panicked")
+            })?
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
+        all_evals.extend(thread_evals);
+    }
+
+    Ok(aggregate_game_evals(&all_evals))
 }
 
 /// Evaluate a model on fixed seeds for consistent benchmarking.
@@ -230,13 +333,14 @@ fn evaluate_agent(
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (model_path, seeds, config=None, max_placements=100, output_path=None))]
+#[pyo3(signature = (model_path, seeds, config=None, max_placements=100, output_path=None, num_workers=1))]
 pub fn evaluate_model(
     model_path: &str,
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
     max_placements: u32,
     output_path: Option<String>,
+    num_workers: u32,
 ) -> PyResult<EvalResult> {
     if max_placements == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -247,6 +351,16 @@ pub fn evaluate_model(
     let mut config = config.unwrap_or_default();
     config.temperature = 0.0;
     config.max_placements = max_placements;
+
+    if num_workers > 1 && output_path.is_some() {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "output_path is not supported with num_workers > 1",
+        ));
+    }
+
+    if num_workers > 1 {
+        return evaluate_parallel(Some(model_path), &seeds, &config, max_placements, num_workers);
+    }
 
     let mut agent = MCTSAgent::new(config);
     if !agent.load_model(model_path) {
@@ -274,13 +388,14 @@ pub fn evaluate_model(
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (seeds, config=None, max_placements=100, add_noise=false, output_path=None))]
+#[pyo3(signature = (seeds, config=None, max_placements=100, add_noise=false, output_path=None, num_workers=1))]
 pub fn evaluate_model_without_nn(
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
     max_placements: u32,
     add_noise: bool,
     output_path: Option<String>,
+    num_workers: u32,
 ) -> PyResult<EvalResult> {
     if max_placements == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -291,6 +406,16 @@ pub fn evaluate_model_without_nn(
     let mut config = config.unwrap_or_default();
     config.temperature = 0.0;
     config.max_placements = max_placements;
+
+    if num_workers > 1 && output_path.is_some() {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "output_path is not supported with num_workers > 1",
+        ));
+    }
+
+    if num_workers > 1 {
+        return evaluate_parallel(None, &seeds, &config, max_placements, num_workers);
+    }
 
     let agent = MCTSAgent::new(config);
     evaluate_agent(&agent, &seeds, max_placements, add_noise, output_path)
