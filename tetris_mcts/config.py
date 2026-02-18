@@ -159,8 +159,8 @@ class RunConfig:
 class TrainingConfig:
     """Training hyperparameters - all configurable via CLI."""
 
-    network: NetworkConfig = field(default_factory=NetworkConfig)
-    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
-    self_play: SelfPlayConfig = field(default_factory=SelfPlayConfig)
-    replay: ReplayConfig = field(default_factory=ReplayConfig)
-    run: RunConfig = field(default_factory=RunConfig)
+    network: NetworkConfig
+    optimizer: OptimizerConfig
+    self_play: SelfPlayConfig
+    replay: ReplayConfig
+    run: RunConfig
