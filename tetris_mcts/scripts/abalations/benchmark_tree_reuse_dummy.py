@@ -32,9 +32,9 @@ class ScriptArgs:
     num_seeds: int = 20  # Number of fixed seeds (0..N)
     seed_start: int = 0  # First seed
     max_placements: int = 50  # Max placements per game (matches training default)
-    output_json: Path = (
+    output_json: Path = (  # Output path
         PROJECT_ROOT / "benchmarks" / "tree_reuse_dummy.jsonl"
-    )  # Output path
+    )
 
 
 def build_config(num_simulations: int, reuse_tree: bool) -> MCTSConfig:

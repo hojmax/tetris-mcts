@@ -65,6 +65,8 @@ In progress: 🟨
 
 ### tetris_mcts/train.py ✅
 
+### tetris_mcts/ml/loss.py ✅
+
 # Backlog
 
 - [ ] Is huber loss even better than MSE loss?
