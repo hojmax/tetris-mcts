@@ -59,13 +59,13 @@ In progress: 🟨
 
 ## Python Code
 
-### tetris_mcts/config.py ✅
+### tetris_ml/config.py ✅
 
-### tetris_mcts/run_setup.py ✅
+### tetris_ml/run_setup.py ✅
 
-### tetris_mcts/train.py ✅
+### scripts/train.py ✅
 
-### tetris_mcts/ml/loss.py ✅
+### tetris_ml/ml/loss.py ✅
 
 # Backlog
 

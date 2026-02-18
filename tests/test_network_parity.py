@@ -5,14 +5,14 @@ import numpy as np
 import torch
 
 import tetris_core
-from tetris_mcts.constants import (
+from tetris_ml.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     NUM_ACTIONS,
     NUM_PIECE_TYPES,
     QUEUE_SIZE,
 )
-from tetris_mcts.ml.network import (
+from tetris_ml.ml.network import (
     AUX_FEATURES,
     PIECE_AUX_FEATURES,
     ConvBackbone,
@@ -21,7 +21,7 @@ from tetris_mcts.ml.network import (
     build_aux_features,
     normalize_combo_for_feature,
 )
-from tetris_mcts.ml.weights import export_onnx, export_split_models
+from tetris_ml.ml.weights import export_onnx, export_split_models
 
 
 OVERHANG_NORMALIZATION_DIVISOR = 25.0

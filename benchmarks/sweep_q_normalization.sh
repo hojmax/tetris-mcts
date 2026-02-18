@@ -19,7 +19,7 @@ echo "Run directory: ${RUN_DIR}"
 echo "Games per config: ${NUM_GAMES}"
 echo ""
 
-"${PYTHON}" "${SCRIPT_DIR}/tetris_mcts/scripts/abalations/sweep_mcts_config.py" \
+"${PYTHON}" "${SCRIPT_DIR}/scripts/ablations/sweep_mcts_config.py" \
     --run_dir "${RUN_DIR}" \
     --sweep_param q_scale \
     --sweep_values '[2, 4, 8, 16, 32]' \

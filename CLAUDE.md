@@ -65,16 +65,16 @@ This caches compiled dependencies across projects, making rebuilds much faster.
 
 ```bash
 # Start new training run (creates training_runs/v0/)
-python tetris_mcts/train.py --training.total-steps 100000
+python scripts/train.py --training.total-steps 100000
 
 # With custom hyperparameters
-python tetris_mcts/train.py \
+python scripts/train.py \
     --training.total-steps 500000 \
     --training.num-simulations 800 \
     --training.learning-rate 0.0005
 
 # Resume from checkpoint (creates a new versioned run initialized from v0/latest.pt)
-python tetris_mcts/train.py --resume-dir training_runs/v0
+python scripts/train.py --resume-dir training_runs/v0
 ```
 
 ### Offline Architecture Comparison
@@ -88,11 +88,11 @@ python tetris_mcts/train.py --resume-dir training_runs/v0
 # Default uses all examples in the NPZ (`max_examples=0`) and 400 training steps.
 # Throughput and system metrics are logged (batches/sec, examples/sec, eval throughput,
 # step time, grad norm, and CUDA memory where available).
-python tetris_mcts/scripts/abalations/compare_offline_architectures.py \
+python scripts/ablations/compare_offline_architectures.py \
     --data_path training_runs/v32/training_data.npz
 
 # Optional: preload selected examples to GPU once to reduce per-batch transfer overhead
-python tetris_mcts/scripts/abalations/compare_offline_architectures.py \
+python scripts/ablations/compare_offline_architectures.py \
     --data_path training_runs/v32/training_data.npz \
     --preload_to_gpu true
 ```
@@ -105,11 +105,11 @@ python tetris_mcts/scripts/abalations/compare_offline_architectures.py \
 # 2) 2x board trunk (cached conv path)
 # 3) 2x post-fusion hidden size
 # Logs losses, throughput, parameter counts, and cache-weighted FLOPs to WandB.
-python tetris_mcts/scripts/abalations/compare_offline_network_scaling.py \
+python scripts/ablations/compare_offline_network_scaling.py \
     --data_path training_runs/v32/training_data.npz
 
 # Optional: tune multipliers (defaults are both 2)
-python tetris_mcts/scripts/abalations/compare_offline_network_scaling.py \
+python scripts/ablations/compare_offline_network_scaling.py \
     --data_path training_runs/v32/training_data.npz \
     --board_trunk_multiplier 2 \
     --post_fusion_multiplier 2
@@ -126,11 +126,11 @@ python tetris_mcts/scripts/abalations/compare_offline_network_scaling.py \
 # Requires NPZ snapshots that include:
 # column_heights, max_column_heights, min_column_heights,
 # row_fill_counts, total_blocks, bumpiness (and optionally move_numbers).
-python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
+python scripts/ablations/compare_offline_feature_ablation.py \
     --data_path training_runs/v32/training_data.npz
 
 # Optional: include move_numbers as an additional ablation group
-python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
+python scripts/ablations/compare_offline_feature_ablation.py \
     --data_path training_runs/v32/training_data.npz \
     --include_move_number_feature true
 ```
@@ -140,20 +140,20 @@ python tetris_mcts/scripts/abalations/compare_offline_feature_ablation.py \
 ```bash
 # Sweep q_scale (tanh divisor) over multiple values using a trained model.
 # Runs MCTS evaluation games in Rust for each value and outputs JSON + PNG plot.
-python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
+python scripts/ablations/sweep_mcts_config.py \
     --run_dir training_runs/v32 \
     --sweep_param q_scale \
     --sweep_values '[2, 4, 8, 16, 32]'
 
 # Sweep any other float MCTSConfig param (e.g. c_puct, nn_value_weight)
-python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
+python scripts/ablations/sweep_mcts_config.py \
     --run_dir training_runs/v32 \
     --sweep_param c_puct \
     --sweep_values '[0.5, 1.0, 1.5, 2.0, 3.0]' \
     --num_games 100
 
 # Override base MCTS config values that aren't being swept
-python tetris_mcts/scripts/abalations/sweep_mcts_config.py \
+python scripts/ablations/sweep_mcts_config.py \
     --run_dir training_runs/v32 \
     --sweep_param q_scale \
     --sweep_values '[4, 8, 16]' \
@@ -191,7 +191,7 @@ cargo install samply
 make profile-samply SIMS=50
 
 # Or run directly
-samply record python tetris_mcts/scripts/inspection/profile_games.py --num_games 3 --simulations 50
+samply record python scripts/inspection/profile_games.py --num_games 3 --simulations 50
 ```
 
 Opens interactive flamegraph viewer showing ALL function calls automatically. Best for finding bottlenecks during development.
@@ -199,7 +199,7 @@ Opens interactive flamegraph viewer showing ALL function calls automatically. Be
 **macOS native profiling** (Instruments):
 
 ```bash
-instruments -t "Time Profiler" python tetris_mcts/scripts/inspection/profile_games.py --num_games 3
+instruments -t "Time Profiler" python scripts/inspection/profile_games.py --num_games 3
 ```
 
 ## Architecture
@@ -217,7 +217,7 @@ ONNX Export                  ← Model exported for Rust inference
 **Ownership boundary (strict):**
 
 - Rust (`tetris_core/`) = environment logic, move generation, scoring, MCTS, inference/runtime state.
-- Python (`tetris_mcts/`) = training, evaluation UX, and visualization/rendering.
+- Python (`tetris_ml/`) = training, evaluation UX, and visualization/rendering.
 - Color palettes and UI styling are Python-owned. Rust should expose piece identity/state (for example `piece_type`), not display colors.
 
 ## Project Structure
@@ -255,7 +255,7 @@ tetris_core/src/             # Rust game engine
     ├── evaluation.rs
     └── npz.rs
 
-tetris_mcts/                 # Python package
+tetris_ml/                 # Python package
 ├── config.py                # TrainingConfig dataclass (all hyperparameters)
 ├── visualization.py         # Board rendering + replay visualization
 ├── ml/
@@ -265,7 +265,7 @@ tetris_mcts/                 # Python package
 │   └── weights.py           # Checkpoint/ONNX export
 └── scripts/
     ├── tetris_game.py              # Interactive Pygame game
-    ├── abalations/                 # Network ablation/architecture experiments
+    ├── ablations/                 # Network ablation/architecture experiments
     │   ├── average_value_target.py
     │   ├── benchmark_batch_size.py
     │   ├── check_nn_value.py
@@ -424,7 +424,7 @@ Tests are in:
 
 ### Modifying the neural network
 
-1. Edit `tetris_mcts/ml/network.py`
+1. Edit `tetris_ml/ml/network.py`
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
 
@@ -432,7 +432,7 @@ Current behavior: split-model Rust inference caches board embeddings as `board_p
 
 ### Training a model
 
-1. Run `python tetris_mcts/train.py --training.total-steps N`
+1. Run `python scripts/train.py --training.total-steps N`
 2. Creates versioned directory: `training_runs/v0/`, `v1/`, etc.
 3. Checkpoints saved to `training_runs/vN/checkpoints/checkpoint_*.pt` with `latest.pt` symlink
 4. ONNX exported in `training_runs/vN/checkpoints/` (`latest.onnx`, `parallel.onnx`, and incumbent snapshot `incumbent.onnx` + split artifacts when NN incumbent is active)
@@ -537,7 +537,7 @@ Use `simple_parsing` with dataclasses for CLI scripts:
 from dataclasses import dataclass
 from pathlib import Path
 from simple_parsing import parse
-from tetris_mcts.config import PROJECT_ROOT
+from tetris_ml.config import PROJECT_ROOT
 
 @dataclass
 class ScriptArgs:
@@ -634,11 +634,11 @@ logger.error("Failed to process", error=str(e))
 ### File & Path Handling
 
 - Always use `pathlib.Path` for file paths
-- **Use relative paths with `PROJECT_ROOT`**: Import `PROJECT_ROOT` from `tetris_mcts.config` for project-relative paths instead of hardcoding absolute paths
+- **Use relative paths with `PROJECT_ROOT`**: Import `PROJECT_ROOT` from `tetris_ml.config` for project-relative paths instead of hardcoding absolute paths
 - For script-relative paths within the same directory, use `Path(__file__).parent`
 
 ```python
-from tetris_mcts.config import PROJECT_ROOT
+from tetris_ml.config import PROJECT_ROOT
 
 # ✅ GOOD: Relative to project root with explicit separators
 model_path = PROJECT_ROOT / "benchmarks" / "models" / "model.onnx"
