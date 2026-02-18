@@ -45,7 +45,7 @@ def setup_run(
     """Set up training run directory. Returns (config, resume_checkpoint, resume_incumbent_model_path)."""
     if not args.resume_dir:
         config = setup_run_directory(config)
-        logger.info("Created new training run", run_dir=str(config.run_dir))
+        logger.info("Created new training run", run_dir=str(config.run.run_dir))
         return config, None, None
 
     source_run_dir = args.resume_dir
@@ -66,14 +66,14 @@ def setup_run(
     logger.info(
         "Created resumed training run",
         source_run_dir=str(source_run_dir),
-        run_dir=str(config.run_dir),
+        run_dir=str(config.run.run_dir),
         checkpoint=str(source_checkpoint),
     )
 
     source_training_data = source_run_dir / TRAINING_DATA_FILENAME
     if source_training_data.exists():
-        assert config.data_dir is not None
-        destination = config.data_dir / TRAINING_DATA_FILENAME
+        assert config.run.data_dir is not None
+        destination = config.run.data_dir / TRAINING_DATA_FILENAME
         shutil.copy2(source_training_data, destination)
         logger.info(
             "Copied replay buffer snapshot",
@@ -89,8 +89,8 @@ def setup_run(
     source_incumbent = source_run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
     resume_incumbent_model_path: Path | None = None
     if source_incumbent.exists():
-        assert config.checkpoint_dir is not None
-        destination_incumbent = config.checkpoint_dir / INCUMBENT_ONNX_FILENAME
+        assert config.run.checkpoint_dir is not None
+        destination_incumbent = config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
         copy_model_artifact_bundle(source_incumbent, destination_incumbent)
         resume_incumbent_model_path = destination_incumbent
         logger.info(
@@ -134,7 +134,7 @@ def restore_trainer_from_checkpoint(
 
     incumbent_uses_network = state.get("incumbent_uses_network")
     if incumbent_uses_network is None:
-        config.bootstrap_without_network = False
+        config.self_play.bootstrap_without_network = False
         start_with_network = True
         logger.warning(
             "Checkpoint missing incumbent network state; starting self-play with network",
@@ -143,7 +143,7 @@ def restore_trainer_from_checkpoint(
         )
     else:
         start_with_network = bool(incumbent_uses_network)
-        config.bootstrap_without_network = not start_with_network
+        config.self_play.bootstrap_without_network = not start_with_network
         logger.info(
             "Restored self-play startup mode from checkpoint",
             checkpoint=str(checkpoint),
@@ -156,7 +156,7 @@ def restore_trainer_from_checkpoint(
         logger.warning(
             "Checkpoint missing incumbent nn_value_weight; using config value",
             checkpoint=str(checkpoint),
-            nn_value_weight=config.nn_value_weight,
+            nn_value_weight=config.self_play.nn_value_weight,
         )
     else:
         restored_nn_value_weight = float(incumbent_nn_value_weight)
@@ -164,7 +164,7 @@ def restore_trainer_from_checkpoint(
             raise ValueError(
                 f"Checkpoint incumbent_nn_value_weight must be >= 0 (got {restored_nn_value_weight})"
             )
-        config.nn_value_weight = restored_nn_value_weight
+        config.self_play.nn_value_weight = restored_nn_value_weight
         logger.info(
             "Restored incumbent nn_value_weight from checkpoint",
             checkpoint=str(checkpoint),
@@ -201,8 +201,8 @@ def restore_trainer_from_checkpoint(
         logger.warning(
             "Resuming with network but no incumbent model artifact bundle; falling back to trainer checkpoint model",
             expected_path=(
-                str(config.checkpoint_dir / INCUMBENT_ONNX_FILENAME)
-                if config.checkpoint_dir is not None
+                str(config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME)
+                if config.run.checkpoint_dir is not None
                 else None
             ),
         )
@@ -212,7 +212,7 @@ def restore_trainer_from_checkpoint(
         checkpoint=str(checkpoint),
         step=trainer.step,
         learning_rate=trainer.optimizer.param_groups[0]["lr"],
-        lr_schedule=config.lr_schedule,
+        lr_schedule=config.optimizer.lr_schedule,
         restored_optimizer_scheduler=args.resume_restore_optimizer_scheduler,
     )
 

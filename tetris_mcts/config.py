@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
 @dataclass
-class TrainingConfig:
-    """Training hyperparameters - all configurable via CLI."""
+class NetworkConfig:
+    """Neural network architecture hyperparameters."""
 
-    # Network architecture
     trunk_channels: int = 16
     num_conv_residual_blocks: int = 1
     reduction_channels: int = 32
@@ -18,7 +17,11 @@ class TrainingConfig:
     conv_kernel_size: int = 3
     conv_padding: int = 1
 
-    # Training
+
+@dataclass
+class OptimizerConfig:
+    """Training loop, optimizer, loss, and logging hyperparameters."""
+
     total_steps: int = 100_000_000_000
     batch_size: int = 1024
     learning_rate: float = 0.0005
@@ -32,6 +35,12 @@ class TrainingConfig:
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
         2000
     )
+    use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
+        False
+    )
+    use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
+        True
+    )
     train_step_metrics_interval: int = (  # Collect full train-step scalar metrics every N updates (1 = every step)
         16
     )
@@ -41,14 +50,12 @@ class TrainingConfig:
     log_individual_games_to_wandb: bool = (  # If True, log one WandB row per completed game instead of aggregated replay summaries
         True
     )
-    use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
-        False
-    )
-    use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
-        True
-    )
 
-    # MCTS / Self-play
+
+@dataclass
+class SelfPlayConfig:
+    """MCTS and self-play generation hyperparameters."""
+
     num_simulations: int = 2000  # MCTS simulations per move
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = (  # Sharpening / Smoothening of MCTS visit-count policy target
@@ -99,7 +106,11 @@ class TrainingConfig:
         4000
     )
 
-    # Replay buffer
+
+@dataclass
+class ReplayConfig:
+    """Replay buffer and batch sampling hyperparameters."""
+
     buffer_size: int = 2_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
     prefetch_batches: int = (  # Number of train batches sampled/staged per generator.sample_batch call
@@ -121,6 +132,15 @@ class TrainingConfig:
         True
     )
 
+
+@dataclass
+class RunConfig:
+    """Run management: WandB identity, timing intervals, and auto-populated paths."""
+
+    # WandB
+    project_name: str = "tetris-alphazero"
+    run_name: str | None = None
+
     # Intervals (seconds)
     model_sync_interval_seconds: float = 300  # Seconds between ONNX exports
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
@@ -134,6 +154,13 @@ class TrainingConfig:
     checkpoint_dir: Path | None = None  # e.g., training_runs/v0/checkpoints
     data_dir: Path | None = None  # e.g., training_runs/v0 (for training_data.npz)
 
-    # WandB
-    project_name: str = "tetris-alphazero"
-    run_name: str | None = None
+
+@dataclass
+class TrainingConfig:
+    """Training hyperparameters - all configurable via CLI."""
+
+    network: NetworkConfig = field(default_factory=NetworkConfig)
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    self_play: SelfPlayConfig = field(default_factory=SelfPlayConfig)
+    replay: ReplayConfig = field(default_factory=ReplayConfig)
+    run: RunConfig = field(default_factory=RunConfig)

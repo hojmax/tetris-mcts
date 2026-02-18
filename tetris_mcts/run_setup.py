@@ -16,8 +16,8 @@ from tetris_mcts.constants import CHECKPOINT_DIRNAME, CONFIG_FILENAME, TRAINING_
 def config_to_json(config: TrainingConfig) -> str:
     d = asdict(config)
     for key in ["run_dir", "checkpoint_dir", "data_dir"]:
-        if d[key] is not None:
-            d[key] = str(d[key])
+        if d["run"][key] is not None:
+            d["run"][key] = str(d["run"][key])
     return json.dumps(d, indent=2)
 
 
@@ -50,12 +50,12 @@ def setup_run_directory(
     run_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(exist_ok=True)
 
-    config.run_dir = run_dir
-    config.checkpoint_dir = checkpoint_dir
-    config.data_dir = run_dir
+    config.run.run_dir = run_dir
+    config.run.checkpoint_dir = checkpoint_dir
+    config.run.data_dir = run_dir
 
-    if config.run_name is None:
-        config.run_name = run_dir.name
+    if config.run.run_name is None:
+        config.run.run_name = run_dir.name
 
     save_config(config, run_dir / CONFIG_FILENAME)
 
@@ -76,8 +76,8 @@ def initialize_or_update_wandb(config: TrainingConfig, device: str) -> None:
 
     if wandb.run is None:
         wandb.init(
-            project=config.project_name,
-            name=config.run_name,
+            project=config.run.project_name,
+            name=config.run.run_name,
             config=wandb_config,
         )
         return
