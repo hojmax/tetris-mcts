@@ -90,6 +90,7 @@ In progress: 🟨
   - can t-spin filter?
 - [ ] Try to handcraft great Tetris bot.
 - [ ] Another round of benchmarking and optimizing?
+- [ ] Make a readme
 
 ## Test Environment State
 
