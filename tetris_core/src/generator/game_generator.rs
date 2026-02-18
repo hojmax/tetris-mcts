@@ -195,10 +195,10 @@ struct ModelEvalEvent {
     promoted: bool,
     auto_promoted: bool,
     evaluation_seconds: f32,
-    /// Best (max attack) game replay as JSON, if available.
-    best_game_replay_json: Option<String>,
-    /// Worst (min attack) game replay as JSON, if available.
-    worst_game_replay_json: Option<String>,
+    /// Best (max attack) game replay, if available.
+    best_game_replay: Option<GameReplay>,
+    /// Worst (min attack) game replay, if available.
+    worst_game_replay: Option<GameReplay>,
     /// Per-game results: (seed, attack, lines, moves)
     per_game_results: Vec<(u64, u32, u32, u32)>,
 }
@@ -924,14 +924,13 @@ impl GameGenerator {
                 "evaluation_seconds".into(),
                 (event.evaluation_seconds as f64).into_py(py),
             );
-            // New fields for fixed-seed eval
             d.insert(
-                "best_game_replay_json".into(),
-                event.best_game_replay_json.into_py(py),
+                "best_game_replay".into(),
+                event.best_game_replay.into_py(py),
             );
             d.insert(
-                "worst_game_replay_json".into(),
-                event.worst_game_replay_json.into_py(py),
+                "worst_game_replay".into(),
+                event.worst_game_replay.into_py(py),
             );
             d.insert(
                 "per_game_results".into(),
@@ -1632,24 +1631,23 @@ impl GameGenerator {
             .min_by_key(|(_, r)| r.game_result.total_attack)
             .map(|(i, _)| i);
 
-        let serialize_replay = |idx: usize| -> Option<String> {
+        let build_replay = |idx: usize| -> GameReplay {
             let r = &candidate_results[idx];
-            let replay = GameReplay {
+            GameReplay {
                 seed: r.seed,
                 moves: r.replay_moves.clone(),
                 total_attack: r.game_result.total_attack,
                 num_moves: r.game_result.num_moves,
-            };
-            serde_json::to_string(&replay).ok()
+            }
         };
 
-        let best_game_replay_json = best_idx.and_then(serialize_replay);
-        let worst_game_replay_json = worst_idx.and_then(|i| {
+        let best_game_replay = best_idx.map(build_replay);
+        let worst_game_replay = worst_idx.and_then(|i| {
             // Avoid duplicating if best and worst are the same game
             if Some(i) == best_idx {
                 None
             } else {
-                serialize_replay(i)
+                Some(build_replay(i))
             }
         });
 
@@ -1775,8 +1773,8 @@ impl GameGenerator {
                 promoted,
                 auto_promoted,
                 evaluation_seconds,
-                best_game_replay_json,
-                worst_game_replay_json,
+                best_game_replay,
+                worst_game_replay,
                 per_game_results,
             });
 

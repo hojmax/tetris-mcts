@@ -16,7 +16,7 @@ from tetris_mcts.constants import (
     PIECE_SPAWN_CELLS,
     QUEUE_SIZE,
 )
-from tetris_core import TetrisEnv
+from tetris_core import GameReplay, TetrisEnv
 
 # Board cell size
 CELL_SIZE = 20
@@ -345,24 +345,21 @@ def _capture_frame(
     )
 
 
-def render_replay(replay: dict) -> list[Image.Image]:
-    seed = int(replay["seed"])
-    moves = replay["moves"]
-    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed)
+def render_replay(replay: GameReplay) -> list[Image.Image]:
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, replay.seed)
     frames: list[Image.Image] = []
     total_attack = 0
 
-    for move_idx, move in enumerate(moves):
+    for move_idx, move in enumerate(replay.moves):
         if env.game_over:
             break
 
         frames.append(_capture_frame(env, move_idx, total_attack))
 
-        action = int(move["action"])
-        attack = env.execute_action_index(action)
+        attack = env.execute_action_index(move.action)
         if attack is None:
-            raise ValueError(f"Invalid replay action index: {action}")
-        total_attack += int(move["attack"])
+            raise ValueError(f"Invalid replay action index: {move.action}")
+        total_attack += move.attack
 
     # Final frame (post-last-action)
     frames.append(

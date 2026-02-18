@@ -9,7 +9,6 @@ Implements:
 
 from __future__ import annotations
 
-import json
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -1388,21 +1387,19 @@ class Trainer:
                                 )
 
                             # Render best/worst trajectory GIFs
-                            best_replay_json = event.get("best_game_replay_json")
-                            worst_replay_json = event.get("worst_game_replay_json")
-                            if best_replay_json is not None:
-                                replay = json.loads(best_replay_json)
-                                frames = render_replay(replay)
+                            best_replay = event.get("best_game_replay")
+                            worst_replay = event.get("worst_game_replay")
+                            if best_replay is not None:
+                                frames = render_replay(best_replay)
                                 video, _ = self._create_wandb_gif_video(
-                                    frames, attack=replay["total_attack"]
+                                    frames, attack=best_replay.total_attack
                                 )
                                 if video is not None:
                                     wandb_data["eval/best_trajectory"] = video
-                            if worst_replay_json is not None:
-                                replay = json.loads(worst_replay_json)
-                                frames = render_replay(replay)
+                            if worst_replay is not None:
+                                frames = render_replay(worst_replay)
                                 video, _ = self._create_wandb_gif_video(
-                                    frames, attack=replay["total_attack"]
+                                    frames, attack=worst_replay.total_attack
                                 )
                                 if video is not None:
                                     wandb_data["eval/worst_trajectory"] = video

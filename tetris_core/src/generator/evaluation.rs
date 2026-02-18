@@ -13,6 +13,7 @@ use crate::env::TetrisEnv;
 use crate::mcts::{MCTSAgent, MCTSConfig};
 
 /// A single move in a game replay.
+#[pyclass(get_all)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReplayMove {
     pub action: usize,
@@ -20,6 +21,7 @@ pub struct ReplayMove {
 }
 
 /// A complete game replay that can be saved and replayed.
+#[pyclass(get_all)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GameReplay {
     pub seed: u64,
