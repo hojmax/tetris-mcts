@@ -53,6 +53,8 @@ class ScriptArgs:
     q_scale: float | None = None  # Override from run config
     mcts_seed: int | None = None  # Override from run config
 
+    num_workers: int = 1  # Parallel evaluation threads (each loads its own model)
+
     output_json: Path | None = None  # Output JSON path
     output_plot: Path | None = None  # Output PNG path
 
@@ -240,6 +242,7 @@ def evaluate_sweep_value(
         seeds=[int(s) for s in seeds],
         config=config,
         max_placements=config.max_placements,
+        num_workers=args.num_workers,
     )
     return aggregate_eval_result(
         label=f"{args.sweep_param}={sweep_value:g}",
@@ -261,6 +264,7 @@ def evaluate_minmax(
         seeds=[int(s) for s in seeds],
         config=config,
         max_placements=config.max_placements,
+        num_workers=args.num_workers,
     )
     return aggregate_eval_result(
         label="minmax",
@@ -446,6 +450,7 @@ def main(args: ScriptArgs) -> None:
         model_path=str(model_path),
         num_games=args.num_games,
         seed_start=args.seed_start,
+        num_workers=args.num_workers,
     )
 
     results: list[dict] = []
