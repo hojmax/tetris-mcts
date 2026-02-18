@@ -33,8 +33,8 @@ pub fn write_examples_to_npz(filepath: &Path, examples: &[TrainingExample]) -> R
 /// - hold_available: (N,) bool
 /// - next_queue: (N, 5, 7) float32 one-hot
 /// - move_numbers: (N,) uint32 raw frame indices (includes holds)
-/// - placement_counts: (N,) uint32 raw placement counts (excludes holds)
-/// - combos: (N,) uint32 raw combo counts
+/// - placement_counts: (N,) float32 normalized (placement_idx / max_placements, [0,1])
+/// - combos: (N,) float32 normalized (min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX, [0,1])
 /// - back_to_back: (N,) bool
 /// - next_hidden_piece_probs: (N, 7) float32
 /// - column_heights: (N, 10) float32 normalized by board height
@@ -288,8 +288,8 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
     let (move_numbers, move_numbers_shape) =
         read_npy_array::<u32>(&mut archive, "move_numbers.npy")?;
     let (placement_counts, placement_counts_shape) =
-        read_npy_array::<u32>(&mut archive, "placement_counts.npy")?;
-    let (combos, combos_shape) = read_npy_array::<u32>(&mut archive, "combos.npy")?;
+        read_npy_array::<f32>(&mut archive, "placement_counts.npy")?;
+    let (combos, combos_shape) = read_npy_array::<f32>(&mut archive, "combos.npy")?;
     let (back_to_back, back_to_back_shape) =
         read_npy_array_bool_like(&mut archive, "back_to_back.npy")?;
     let (next_hidden_piece_probs, next_hidden_piece_probs_shape) =
@@ -570,7 +570,9 @@ mod tests {
         test_utils::unique_temp_path("tetris_core", name)
     }
 
-    fn make_example(move_number: u32, hold_piece: usize, combo: u32) -> TrainingExample {
+    fn make_example(move_number: u32, hold_piece: usize, combo_raw: u32) -> TrainingExample {
+        use crate::nn::normalize_combo_for_feature;
+
         let mut board = vec![0u8; BOARD_HEIGHT * BOARD_WIDTH];
         board[0] = 1;
         board[42] = 1;
@@ -590,8 +592,8 @@ mod tests {
             hold_available: true,
             next_queue: vec![0, 1, 2, 3, 4],
             move_number,
-            placement_count: move_number,
-            combo,
+            placement_count: move_number as f32 / 100.0,
+            combo: normalize_combo_for_feature(combo_raw),
             back_to_back: true,
             next_hidden_piece_probs: vec![0.25, 0.25, 0.0, 0.0, 0.25, 0.25, 0.0],
             column_heights: vec![0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45],
@@ -660,8 +662,11 @@ mod tests {
     }
 
     #[test]
-    fn test_npz_combo_round_trip_preserves_raw_value() {
-        let path = unique_temp_path("combo_raw");
+    fn test_npz_combo_round_trip_preserves_normalized_value() {
+        use crate::nn::normalize_combo_for_feature;
+
+        let path = unique_temp_path("combo_normalized");
+        // combo=99 clamps to COMBO_NORMALIZATION_MAX and normalizes to 1.0
         let examples = vec![make_example(0, 7, 99)];
 
         write_examples_to_npz(&path, &examples).expect("write should succeed");
@@ -669,7 +674,7 @@ mod tests {
         fs::remove_file(&path).expect("temp file cleanup should succeed");
 
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].combo, 99);
+        assert!((loaded[0].combo - normalize_combo_for_feature(99)).abs() < 1e-6);
     }
 
     #[test]

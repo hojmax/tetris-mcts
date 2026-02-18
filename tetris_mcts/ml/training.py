@@ -638,9 +638,7 @@ class Trainer:
         generator: GameGenerator,
         staged_batch_size: int,
     ) -> list[TrainingBatch] | None:
-        result = generator.sample_batch(
-            staged_batch_size, self.config.self_play.max_placements
-        )
+        result = generator.sample_batch(staged_batch_size)
         if result is None:
             return None
         staged_batch = self._to_training_device(self._build_training_batch(result))
@@ -657,7 +655,7 @@ class Trainer:
         generator: GameGenerator,
         mirror: CircularReplayMirror | None = None,
     ) -> CircularReplayMirror | None:
-        result = generator.replay_buffer_snapshot(self.config.self_play.max_placements)
+        result = generator.replay_buffer_snapshot()
         if result is None:
             return None
         (
@@ -702,7 +700,6 @@ class Trainer:
             result = generator.replay_buffer_delta(
                 mirror.logical_end,
                 self.config.replay.replay_mirror_delta_chunk_examples,
-                self.config.self_play.max_placements,
             )
             if result is None:
                 return None

@@ -33,8 +33,6 @@ from tetris_mcts.constants import (
     PIECE_NAMES,
     QUEUE_SIZE,
 )
-from tetris_mcts.config import TrainingConfig
-from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
 from tetris_mcts.ml.value_predictor import ValuePredictor
 
 PIECE_CHARS = PIECE_NAMES
@@ -95,10 +93,7 @@ class BufferViewer:
         hold_available_raw = float(self.data["hold_available"][i])
         next_queue_raw = self.data["next_queue"][i]
         placement_count_raw = float(self.data["placement_counts"][i])
-        combo_raw = int(self.data["combos"][i])
-        combo_feature = (
-            min(combo_raw, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
-        )
+        combo_feature = float(self.data["combos"][i])
         back_to_back_raw = float(self.data["back_to_back"][i])
         next_hidden_piece_probs_raw = self.data["next_hidden_piece_probs"][i]
         column_heights_raw = self.data["column_heights"][i]
@@ -126,7 +121,7 @@ class BufferViewer:
                 hold_piece=hold_piece_raw,
                 hold_available=hold_available_raw,
                 next_queue=next_queue_raw,
-                placement_count=placement_count_raw / TrainingConfig.max_placements,
+                placement_count=placement_count_raw,
                 combo_feature=combo_feature,
                 back_to_back=back_to_back_raw,
                 next_hidden_piece_probs=next_hidden_piece_probs_raw,

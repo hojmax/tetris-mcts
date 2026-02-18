@@ -630,9 +630,8 @@ pub fn encode_aux_state_features(
         hold_piece,
         !env.is_hold_used(),
         &queue,
-        placement_count,
-        max_placements,
-        env.combo,
+        placement_count as f32 / max_placements as f32,
+        normalize_combo_for_feature(env.combo),
         env.back_to_back,
         &hidden_piece_distribution,
         &normalized_column_heights,
@@ -664,9 +663,8 @@ pub fn encode_aux_features(
     hold_piece: Option<usize>,
     hold_available: bool,
     next_queue: &[usize],
-    placement_count: usize,
-    max_placements: usize,
-    combo: u32,
+    placement_count_feature: f32,
+    combo_feature: f32,
     back_to_back: bool,
     next_hidden_piece_probs: &[f32],
     column_heights: &[f32],
@@ -678,13 +676,6 @@ pub fn encode_aux_features(
     holes: f32,
     overhang_fields: f32,
 ) -> TractResult<()> {
-    if max_placements == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "max_placements must be > 0",
-        )
-        .into());
-    }
     if aux_out.len() != AUX_FEATURES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -791,12 +782,12 @@ pub fn encode_aux_features(
     }
     aux_idx += QUEUE_SIZE * NUM_PIECE_TYPES;
 
-    // Placement count: normalized (1)
-    aux_out[aux_idx] = placement_count as f32 / max_placements as f32;
+    // Placement count: pre-normalized (1)
+    aux_out[aux_idx] = placement_count_feature;
     aux_idx += 1;
 
-    // Combo: normalized (1)
-    aux_out[aux_idx] = normalize_combo_for_feature(combo);
+    // Combo: pre-normalized (1)
+    aux_out[aux_idx] = combo_feature;
     aux_idx += 1;
 
     // Back-to-back flag: binary (1)

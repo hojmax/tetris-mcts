@@ -9,8 +9,8 @@ Piece/game auxiliary features (61, uncached heads path):
 - Hold piece: 8 (one-hot, 7 pieces + empty)
 - Hold available: 1 (binary)
 - Next queue: 5 x 7 = 35 (one-hot per slot)
-- Placement count: 1 (normalized: placements_so_far / max_placements)
-- Combo: 1 (normalized, capped)
+- Placement count: 1 (pre-normalized: placements_so_far / max_placements, [0,1])
+- Combo: 1 (pre-normalized: min(combo, 4) / 4, [0,1])
 - Back-to-back: 1 (binary)
 - Next hidden piece distribution: 7 (7-bag probabilities)
 
@@ -93,7 +93,7 @@ COMBO_NORMALIZATION_MAX = 4.0
 
 
 def normalize_combo_for_feature(combo: float) -> float:
-    return min(max(combo, 0.0), COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
+    return min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
 
 
 def build_aux_features(

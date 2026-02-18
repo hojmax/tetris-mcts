@@ -46,12 +46,12 @@ pub struct TrainingExample {
     /// Frame index in the game trajectory (includes hold actions)
     #[pyo3(get)]
     pub move_number: u32,
-    /// Placement count at this frame (excludes hold actions)
+    /// Placement count normalized by max_placements (0.0..1.0)
     #[pyo3(get)]
-    pub placement_count: u32,
-    /// Current combo counter at this frame
+    pub placement_count: f32,
+    /// Combo counter normalized by COMBO_NORMALIZATION_MAX (0.0..1.0, capped)
     #[pyo3(get)]
-    pub combo: u32,
+    pub combo: f32,
     /// Whether back-to-back is active at this frame
     #[pyo3(get)]
     pub back_to_back: bool,
@@ -468,8 +468,8 @@ mod tests {
             hold_available: true,
             next_queue: vec![0, 1, 2, 3, 4],
             move_number: 50,
-            placement_count: 45,
-            combo: 0,
+            placement_count: 45.0 / 100.0,
+            combo: 0.0,
             back_to_back: false,
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
@@ -493,8 +493,8 @@ mod tests {
         assert!(example.hold_available);
         assert_eq!(example.next_queue.len(), 5);
         assert_eq!(example.move_number, 50);
-        assert_eq!(example.placement_count, 45);
-        assert_eq!(example.combo, 0);
+        assert!((example.placement_count - 0.45).abs() < 1e-6);
+        assert_eq!(example.combo, 0.0);
         assert!(!example.back_to_back);
         assert_eq!(example.next_hidden_piece_probs.len(), 7);
         assert_eq!(example.column_heights.len(), 10);
@@ -520,8 +520,8 @@ mod tests {
                 hold_available: true,
                 next_queue: vec![],
                 move_number: 0,
-                placement_count: 0,
-                combo: 0,
+                placement_count: 0.0,
+                combo: 0.0,
                 back_to_back: false,
                 next_hidden_piece_probs: vec![0.0; 7],
                 column_heights: vec![0.0; 10],
@@ -551,8 +551,8 @@ mod tests {
             hold_available: true,
             next_queue: vec![],
             move_number: 0,
-            placement_count: 0,
-            combo: 0,
+            placement_count: 0.0,
+            combo: 0.0,
             back_to_back: false,
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
@@ -581,8 +581,8 @@ mod tests {
             hold_available: false, // Already used hold this turn
             next_queue: vec![],
             move_number: 0,
-            placement_count: 0,
-            combo: 0,
+            placement_count: 0.0,
+            combo: 0.0,
             back_to_back: false,
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
@@ -612,8 +612,8 @@ mod tests {
             hold_available: false,
             next_queue: vec![6, 0, 1],
             move_number: 99,
-            placement_count: 75,
-            combo: 4,
+            placement_count: 0.75,
+            combo: 1.0,
             back_to_back: true,
             next_hidden_piece_probs: vec![0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0],
             column_heights: vec![0.2, 0.2, 0.15, 0.15, 0.1, 0.1, 0.05, 0.05, 0.0, 0.0],
@@ -691,8 +691,8 @@ mod tests {
             hold_available: true,
             next_queue: vec![1, 2, 3, 4, 5],
             move_number: 0,
-            placement_count: 0,
-            combo: 0,
+            placement_count: 0.0,
+            combo: 0.0,
             back_to_back: false,
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
@@ -717,8 +717,8 @@ mod tests {
             hold_available: false,
             next_queue: vec![2, 3, 4, 5, 6],
             move_number: 1,
-            placement_count: 1,
-            combo: 1,
+            placement_count: 0.02,
+            combo: 0.25,
             back_to_back: false,
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
@@ -757,8 +757,8 @@ mod tests {
         assert_eq!(result.examples.len(), 2);
         assert_eq!(result.examples[0].move_number, 0);
         assert_eq!(result.examples[1].move_number, 1);
-        assert_eq!(result.examples[0].placement_count, 0);
-        assert_eq!(result.examples[1].placement_count, 1);
+        assert_eq!(result.examples[0].placement_count, 0.0);
+        assert!((result.examples[1].placement_count - 0.02).abs() < 1e-6);
         // Value should decrease as game progresses (less future attack remaining)
         assert!(result.examples[0].value > result.examples[1].value);
     }
@@ -832,8 +832,8 @@ mod tests {
             hold_available: true,
             next_queue: vec![],
             move_number: 0,
-            placement_count: 0,
-            combo: 0,
+            placement_count: 0.0,
+            combo: 0.0,
             back_to_back: false,
             next_hidden_piece_probs: vec![0.0; 7],
             column_heights: vec![0.0; 10],
