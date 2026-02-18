@@ -359,7 +359,13 @@ pub fn evaluate_model(
     }
 
     if num_workers > 1 {
-        return evaluate_parallel(Some(model_path), &seeds, &config, max_placements, num_workers);
+        return evaluate_parallel(
+            Some(model_path),
+            &seeds,
+            &config,
+            max_placements,
+            num_workers,
+        );
     }
 
     let mut agent = MCTSAgent::new(config);

@@ -5,7 +5,12 @@ import structlog
 import wandb
 from simple_parsing import parse
 
-from tetris_bot.ml.config import NetworkConfig, OptimizerConfig, RunConfig, TrainingConfig
+from tetris_bot.ml.config import (
+    NetworkConfig,
+    OptimizerConfig,
+    RunConfig,
+    TrainingConfig,
+)
 from tetris_bot.train import ScriptArgs as TrainScriptArgs
 from tetris_bot.train import main as train_main
 

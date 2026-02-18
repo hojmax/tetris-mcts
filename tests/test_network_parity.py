@@ -180,7 +180,8 @@ def _encode_state_python(
         hold_available=1.0 if not env.is_hold_used() else 0.0,
         next_queue=queue_features,
         placement_count=float(move_number) / float(max_placements),
-        combo_feature=min(float(env.combo), COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX,
+        combo_feature=min(float(env.combo), COMBO_NORMALIZATION_MAX)
+        / COMBO_NORMALIZATION_MAX,
         back_to_back=1.0 if env.back_to_back else 0.0,
         next_hidden_piece_probs=_hidden_piece_distribution(env),
         column_heights=column_heights,
