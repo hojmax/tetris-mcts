@@ -16,7 +16,8 @@ from tetris_mcts.constants import (
 )
 from tetris_mcts.config import TrainingConfig
 from tetris_mcts.run_setup import configure_wandb, get_best_device, setup_run_directory
-from tetris_mcts.ml.training import Trainer, copy_model_artifact_bundle
+from tetris_mcts.ml.trainer import Trainer
+from tetris_mcts.ml.artifacts import copy_model_artifact_bundle
 from tetris_mcts.ml.weights import load_checkpoint
 
 logger = structlog.get_logger()
