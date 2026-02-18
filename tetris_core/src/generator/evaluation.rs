@@ -3,7 +3,6 @@
 //! Evaluate models on fixed seeds for consistent benchmarking.
 
 use pyo3::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -13,23 +12,7 @@ use crate::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::env::TetrisEnv;
 use crate::mcts::{MCTSAgent, MCTSConfig};
 
-/// A single move in a game replay.
-#[pyclass(get_all)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ReplayMove {
-    pub action: usize,
-    pub attack: u32,
-}
-
-/// A complete game replay that can be saved and replayed.
-#[pyclass(get_all)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GameReplay {
-    pub seed: u64,
-    pub moves: Vec<ReplayMove>,
-    pub total_attack: u32,
-    pub num_moves: u32,
-}
+pub use super::types::{GameReplay, ReplayMove};
 
 /// Result of evaluating a model on fixed seeds.
 #[pyclass]
