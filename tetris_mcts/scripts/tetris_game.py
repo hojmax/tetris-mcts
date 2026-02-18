@@ -385,7 +385,10 @@ class TetrisGame:
                 base = self._piece_color(hold_piece.piece_type)
                 color = (base[0] // 3, base[1] // 3, base[2] // 3)
             self.draw_mini_piece(
-                hold_piece, left_cx, TOP_PADDING + 28 + SLOT_HEIGHT // 2, color_override=color
+                hold_piece,
+                left_cx,
+                TOP_PADDING + 28 + SLOT_HEIGHT // 2,
+                color_override=color,
             )
 
         # --- Stats under hold piece ---

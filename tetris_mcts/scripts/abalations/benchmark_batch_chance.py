@@ -18,7 +18,9 @@ logger = structlog.get_logger()
 class ScriptArgs:
     """Benchmark batch chance node expansion vs lazy expansion."""
 
-    model_path: Path = Path("/Users/axelhojmark/Desktop/v37/checkpoints/parallel.onnx")  # ONNX model
+    model_path: Path = Path(
+        "/Users/axelhojmark/Desktop/v37/checkpoints/parallel.onnx"
+    )  # ONNX model
     use_dummy_network: bool = False  # Run bootstrap MCTS without loading an ONNX model
     num_games: int = 5  # Number of games per configuration
     simulations: int = 1000  # MCTS simulations per move
@@ -80,7 +82,11 @@ def main(args: ScriptArgs) -> None:
         logger.error("Model not found", path=str(args.model_path))
         return
 
-    mode = "bootstrap (no NN)" if args.use_dummy_network else f"NN ({args.model_path.name})"
+    mode = (
+        "bootstrap (no NN)"
+        if args.use_dummy_network
+        else f"NN ({args.model_path.name})"
+    )
     logger.info(
         "Benchmark config",
         mode=mode,
@@ -135,8 +141,16 @@ def main(args: ScriptArgs) -> None:
         print(f"  Sims/sec:      {r['sims_per_sec']:.0f}")
         print()
 
-    speedup = baseline["elapsed_sec"] / experiment["elapsed_sec"] if experiment["elapsed_sec"] > 0 else 0
-    sims_speedup = experiment["sims_per_sec"] / baseline["sims_per_sec"] if baseline["sims_per_sec"] > 0 else 0
+    speedup = (
+        baseline["elapsed_sec"] / experiment["elapsed_sec"]
+        if experiment["elapsed_sec"] > 0
+        else 0
+    )
+    sims_speedup = (
+        experiment["sims_per_sec"] / baseline["sims_per_sec"]
+        if baseline["sims_per_sec"] > 0
+        else 0
+    )
 
     print("--- COMPARISON ---")
     print(f"  Wall-clock speedup:  {speedup:.3f}x")
@@ -145,10 +159,15 @@ def main(args: ScriptArgs) -> None:
     print(f"  Moves/sec (batch):   {experiment['moves_per_sec']:.1f}")
 
     # Verify game outcomes match (deterministic seed)
-    if baseline["avg_attack"] == experiment["avg_attack"] and baseline["total_moves"] == experiment["total_moves"]:
+    if (
+        baseline["avg_attack"] == experiment["avg_attack"]
+        and baseline["total_moves"] == experiment["total_moves"]
+    ):
         print("  Outcomes:            MATCH (deterministic)")
     else:
-        print(f"  Outcomes:            DIFFER (lazy avg_attack={baseline['avg_attack']:.1f}, batch avg_attack={experiment['avg_attack']:.1f})")
+        print(
+            f"  Outcomes:            DIFFER (lazy avg_attack={baseline['avg_attack']:.1f}, batch avg_attack={experiment['avg_attack']:.1f})"
+        )
 
     print("=" * 70)
 

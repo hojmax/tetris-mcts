@@ -85,19 +85,20 @@ def inspect_onnx(model_path: Path) -> None:
         elif "res_blocks." in initializer.name and ".conv1.weight" in initializer.name:
             num_res_blocks += 1
 
-    has_gating = any(
-        "gate_fc.weight" in init.name for init in model.graph.initializer
-    )
+    has_gating = any("gate_fc.weight" in init.name for init in model.graph.initializer)
 
     if init_channels is not None:
         logger.info(
-            "Detected deep conv backbone" + (" with gated-fusion" if has_gating else ""),
+            "Detected deep conv backbone"
+            + (" with gated-fusion" if has_gating else ""),
             trunk_channels=init_channels,
             num_res_blocks=num_res_blocks,
             reduction_channels=reduce_channels,
         )
     else:
-        logger.warning("Could not detect conv backbone architecture from initializer names")
+        logger.warning(
+            "Could not detect conv backbone architecture from initializer names"
+        )
 
 
 def main() -> None:

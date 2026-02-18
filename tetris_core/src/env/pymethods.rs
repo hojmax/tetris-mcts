@@ -307,6 +307,8 @@ impl TetrisEnv {
                 self.hold_used = true;
                 self.spawn_piece_internal();
             }
+            // Clear stale attack result so hold actions don't double-count stats
+            self.last_attack_result = None;
             return true;
         }
         false
@@ -560,9 +562,8 @@ impl TetrisEnv {
             return;
         };
         let piece = piece.clone();
-        let hold_is_available = !self.game_over
-            && !self.is_hold_used()
-            && self.hold_piece != Some(piece.piece_type);
+        let hold_is_available =
+            !self.game_over && !self.is_hold_used() && self.hold_piece != Some(piece.piece_type);
         let global_cache_key = build_placement_lookup_key(self, &piece, hold_is_available);
 
         if let Some(cache_key) = global_cache_key {

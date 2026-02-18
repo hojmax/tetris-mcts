@@ -748,9 +748,7 @@ class Trainer:
                     )
                 return mirror
 
-    def _sample_from_replay_mirror(
-        self, mirror: CircularReplayMirror
-    ) -> TrainingBatch:
+    def _sample_from_replay_mirror(self, mirror: CircularReplayMirror) -> TrainingBatch:
         if mirror.count <= 0:
             raise ValueError("Replay mirror is empty")
         sample_indices = torch.randint(
@@ -891,7 +889,9 @@ class Trainer:
         if not frames:
             return None, None
 
-        gif_path = Path(tempfile.gettempdir()) / f"eval_step{self.step}_attack{attack}.gif"
+        gif_path = (
+            Path(tempfile.gettempdir()) / f"eval_step{self.step}_attack{attack}.gif"
+        )
 
         try:
             create_trajectory_gif(
@@ -1268,9 +1268,7 @@ class Trainer:
                         promoted_nn_value_weight = float(
                             event["promoted_nn_value_weight"]
                         )
-                        promoted_death_penalty = float(
-                            event["promoted_death_penalty"]
-                        )
+                        promoted_death_penalty = float(event["promoted_death_penalty"])
                         promoted_overhang_penalty_weight = float(
                             event["promoted_overhang_penalty_weight"]
                         )
@@ -1300,12 +1298,8 @@ class Trainer:
                         if log_to_wandb:
                             wandb_data: dict[str, object] = {
                                 "trainer_step": self.step,
-                                "model_gate/candidate_step": event[
-                                    "candidate_step"
-                                ],
-                                "model_gate/candidate_games": event[
-                                    "candidate_games"
-                                ],
+                                "model_gate/candidate_step": event["candidate_step"],
+                                "model_gate/candidate_games": event["candidate_games"],
                                 "model_gate/candidate_avg_attack": event[
                                     "candidate_avg_attack"
                                 ],
@@ -1313,9 +1307,7 @@ class Trainer:
                                     "candidate_attack_variance"
                                 ],
                                 "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
-                                "model_gate/incumbent_step": event[
-                                    "incumbent_step"
-                                ],
+                                "model_gate/incumbent_step": event["incumbent_step"],
                                 "model_gate/incumbent_uses_network": event[
                                     "incumbent_uses_network"
                                 ],
@@ -1327,9 +1319,7 @@ class Trainer:
                                 "model_gate/promoted_death_penalty": promoted_death_penalty,
                                 "model_gate/promoted_overhang_penalty_weight": promoted_overhang_penalty_weight,
                                 "model_gate/promoted": event["promoted"],
-                                "model_gate/auto_promoted": event[
-                                    "auto_promoted"
-                                ],
+                                "model_gate/auto_promoted": event["auto_promoted"],
                                 "model_gate/evaluation_seconds": event[
                                     "evaluation_seconds"
                                 ],
@@ -1339,31 +1329,19 @@ class Trainer:
                             per_game_results = event["per_game_results"]
                             if per_game_results:
                                 num_games = len(per_game_results)
-                                total_attack = sum(
-                                    r[1] for r in per_game_results
-                                )
-                                total_lines = sum(
-                                    r[2] for r in per_game_results
-                                )
-                                total_moves = sum(
-                                    r[3] for r in per_game_results
-                                )
+                                total_attack = sum(r[1] for r in per_game_results)
+                                total_lines = sum(r[2] for r in per_game_results)
+                                total_moves = sum(r[3] for r in per_game_results)
                                 wandb_data["eval/num_games"] = num_games
-                                wandb_data["eval/avg_attack"] = (
-                                    total_attack / num_games
-                                )
+                                wandb_data["eval/avg_attack"] = total_attack / num_games
                                 wandb_data["eval/max_attack"] = max(
                                     r[1] for r in per_game_results
                                 )
-                                wandb_data["eval/avg_lines"] = (
-                                    total_lines / num_games
-                                )
+                                wandb_data["eval/avg_lines"] = total_lines / num_games
                                 wandb_data["eval/max_lines"] = max(
                                     r[2] for r in per_game_results
                                 )
-                                wandb_data["eval/avg_moves"] = (
-                                    total_moves / num_games
-                                )
+                                wandb_data["eval/avg_moves"] = total_moves / num_games
                                 wandb_data["eval/attack_per_piece"] = (
                                     total_attack / total_moves
                                     if total_moves > 0
@@ -1379,12 +1357,8 @@ class Trainer:
                                 )
 
                             # Render best/worst trajectory GIFs
-                            best_replay_json = event.get(
-                                "best_game_replay_json"
-                            )
-                            worst_replay_json = event.get(
-                                "worst_game_replay_json"
-                            )
+                            best_replay_json = event.get("best_game_replay_json")
+                            worst_replay_json = event.get("worst_game_replay_json")
                             if best_replay_json is not None:
                                 replay = json.loads(best_replay_json)
                                 frames = render_replay(replay)
@@ -1400,9 +1374,7 @@ class Trainer:
                                     frames, attack=replay["total_attack"]
                                 )
                                 if video is not None:
-                                    wandb_data["eval/worst_trajectory"] = (
-                                        video
-                                    )
+                                    wandb_data["eval/worst_trajectory"] = video
 
                             wandb.log(wandb_data)
 
@@ -1426,21 +1398,15 @@ class Trainer:
                     metrics["replay/examples_generated"] = (
                         generator.examples_generated()
                     )
-                    metrics["replay/source"] = (
-                        1.0 if use_device_replay_mirror else 0.0
-                    )
+                    metrics["replay/source"] = 1.0 if use_device_replay_mirror else 0.0
                     if use_device_replay_mirror:
                         if replay_mirror is None:
                             raise RuntimeError(
                                 "Replay mirror mode active but replay_mirror is missing"
                             )
                         metrics["replay/mirror_size"] = replay_mirror.size
-                        metrics["replay/mirror_logical_end"] = (
-                            replay_mirror.logical_end
-                        )
-                    metrics["incumbent/model_step"] = (
-                        generator.incumbent_model_step()
-                    )
+                        metrics["replay/mirror_logical_end"] = replay_mirror.logical_end
+                    metrics["incumbent/model_step"] = generator.incumbent_model_step()
                     metrics["incumbent/uses_network"] = (
                         generator.incumbent_uses_network()
                     )
@@ -1448,22 +1414,17 @@ class Trainer:
                         generator.incumbent_nn_value_weight()
                     )
                     metrics["throughput/games_per_second"] = (
-                        games_delta / window_elapsed_s
-                        if window_elapsed_s > 0
-                        else 0.0
+                        games_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
                     )
                     metrics["throughput/steps_per_second"] = (
-                        steps_delta / window_elapsed_s
-                        if window_elapsed_s > 0
-                        else 0.0
+                        steps_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
                     )
                     throughput_window_start_s = post_step_time
                     throughput_window_start_games = games
                     throughput_window_start_steps = session_step
                     metrics["timing/sample_batch_ms"] = (
                         1000.0 * sample_batch_time_s / sample_batch_count
-                        if sample_batch_count > 0
-                        and not use_device_replay_mirror
+                        if sample_batch_count > 0 and not use_device_replay_mirror
                         else 0.0
                     )
                     metrics["timing/replay_sync_ms"] = (
@@ -1479,9 +1440,7 @@ class Trainer:
                     if log_to_wandb:
                         metrics["trainer_step"] = self.step
                         wandb.log(metrics)
-                        completed_games = (
-                            generator.drain_completed_game_stats()
-                        )
+                        completed_games = generator.drain_completed_game_stats()
                         if self.config.log_individual_games_to_wandb:
                             for (
                                 game_number,
@@ -1519,9 +1478,7 @@ class Trainer:
                                 completed_games
                             )
                             if game_summary_metrics:
-                                game_summary_metrics["trainer_step"] = (
-                                    self.step
-                                )
+                                game_summary_metrics["trainer_step"] = self.step
                                 wandb.log(game_summary_metrics)
                     sample_batch_time_s = 0.0
                     sample_batch_count = 0
@@ -1554,9 +1511,7 @@ class Trainer:
                         candidate_model_dir / f"candidate_step_{self.step}.onnx"
                     )
                     onnx_export_start = time.perf_counter()
-                    full_export_ok = export_onnx(
-                        export_model, candidate_onnx_path
-                    )
+                    full_export_ok = export_onnx(export_model, candidate_onnx_path)
                     split_export_ok = export_split_models(
                         export_model, candidate_onnx_path
                     )
@@ -1569,17 +1524,11 @@ class Trainer:
                             "Candidate split-model export failed due to missing dependencies"
                         )
                     assert_rust_inference_artifacts(candidate_onnx_path)
-                    onnx_export_ms = 1000.0 * (
-                        time.perf_counter() - onnx_export_start
-                    )
-                    incumbent_nn_value_weight = (
-                        generator.incumbent_nn_value_weight()
-                    )
-                    candidate_nn_value_weight = (
-                        self._compute_candidate_nn_value_weight(
-                            current_weight=incumbent_nn_value_weight,
-                            config=self.config,
-                        )
+                    onnx_export_ms = 1000.0 * (time.perf_counter() - onnx_export_start)
+                    incumbent_nn_value_weight = generator.incumbent_nn_value_weight()
+                    candidate_nn_value_weight = self._compute_candidate_nn_value_weight(
+                        current_weight=incumbent_nn_value_weight,
+                        config=self.config,
                     )
                     queued = generator.queue_candidate_model(
                         str(candidate_onnx_path),

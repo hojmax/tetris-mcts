@@ -128,7 +128,12 @@ fn simulate<E: LeafEvaluator>(
 
         // Align search objective with training targets: no value beyond episode horizon.
         if node.move_number >= config.max_placements {
-            backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+            backup_with_value(
+                &path,
+                0.0,
+                root_cumulative_attack,
+                config.track_value_history,
+            );
             return;
         }
 
@@ -138,12 +143,22 @@ fn simulate<E: LeafEvaluator>(
                 config.max_placements,
                 config.death_penalty,
             );
-            backup_with_value(&path, -penalty, root_cumulative_attack, config.track_value_history);
+            backup_with_value(
+                &path,
+                -penalty,
+                root_cumulative_attack,
+                config.track_value_history,
+            );
             return;
         }
 
         if node.valid_actions.is_empty() {
-            backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+            backup_with_value(
+                &path,
+                0.0,
+                root_cumulative_attack,
+                config.track_value_history,
+            );
             return;
         }
 
@@ -169,7 +184,12 @@ fn simulate<E: LeafEvaluator>(
                         "BUG: expand_action failed for action {} - action mask is inconsistent",
                         action_idx
                     );
-                    backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+                    backup_with_value(
+                        &path,
+                        0.0,
+                        root_cumulative_attack,
+                        config.track_value_history,
+                    );
                     return;
                 }
             };
@@ -182,12 +202,22 @@ fn simulate<E: LeafEvaluator>(
                 Some(MCTSNode::Chance(chance_node)) => chance_node,
                 Some(MCTSNode::Decision(_)) => {
                     debug_assert!(false, "BUG: expand_action should create ChanceNode");
-                    backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+                    backup_with_value(
+                        &path,
+                        0.0,
+                        root_cumulative_attack,
+                        config.track_value_history,
+                    );
                     return;
                 }
                 None => {
                     debug_assert!(false, "BUG: just inserted child but it's missing");
-                    backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+                    backup_with_value(
+                        &path,
+                        0.0,
+                        root_cumulative_attack,
+                        config.track_value_history,
+                    );
                     return;
                 }
             };
@@ -209,7 +239,12 @@ fn simulate<E: LeafEvaluator>(
             } else {
                 chance_node.nn_value
             };
-            backup_with_value(&path, leaf_value, root_cumulative_attack, config.track_value_history);
+            backup_with_value(
+                &path,
+                leaf_value,
+                root_cumulative_attack,
+                config.track_value_history,
+            );
             return;
         }
 
@@ -217,12 +252,22 @@ fn simulate<E: LeafEvaluator>(
             Some(MCTSNode::Chance(chance_node)) => chance_node,
             Some(MCTSNode::Decision(_)) => {
                 debug_assert!(false, "BUG: Decision node child should be ChanceNode");
-                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+                backup_with_value(
+                    &path,
+                    0.0,
+                    root_cumulative_attack,
+                    config.track_value_history,
+                );
                 return;
             }
             None => {
                 debug_assert!(false, "BUG: child should exist after contains_key check");
-                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+                backup_with_value(
+                    &path,
+                    0.0,
+                    root_cumulative_attack,
+                    config.track_value_history,
+                );
                 return;
             }
         };
@@ -239,11 +284,21 @@ fn simulate<E: LeafEvaluator>(
                 config.max_placements,
                 config.death_penalty,
             );
-            backup_with_value(&path, -penalty, root_cumulative_attack, config.track_value_history);
+            backup_with_value(
+                &path,
+                -penalty,
+                root_cumulative_attack,
+                config.track_value_history,
+            );
             return;
         }
         if chance_node.move_number >= config.max_placements {
-            backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+            backup_with_value(
+                &path,
+                0.0,
+                root_cumulative_attack,
+                config.track_value_history,
+            );
             return;
         }
 
@@ -257,12 +312,22 @@ fn simulate<E: LeafEvaluator>(
             Some(MCTSNode::Decision(decision_node)) => current = decision_node as *mut DecisionNode,
             Some(MCTSNode::Chance(_)) => {
                 debug_assert!(false, "BUG: ChanceNode child should be DecisionNode");
-                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+                backup_with_value(
+                    &path,
+                    0.0,
+                    root_cumulative_attack,
+                    config.track_value_history,
+                );
                 return;
             }
             None => {
                 debug_assert!(false, "BUG: child should exist after insertion");
-                backup_with_value(&path, 0.0, root_cumulative_attack, config.track_value_history);
+                backup_with_value(
+                    &path,
+                    0.0,
+                    root_cumulative_attack,
+                    config.track_value_history,
+                );
                 return;
             }
         }
@@ -608,7 +673,6 @@ pub(super) fn extract_subtree(
         MCTSNode::Decision(dn) => Some(dn),
         MCTSNode::Chance(_) => None,
     }
-
 }
 
 #[cfg(test)]
@@ -817,7 +881,10 @@ mod tests {
 
         // Extract the subtree
         let subtree = extract_subtree(root, best_action, explored_piece);
-        assert!(subtree.is_some(), "Should extract subtree for explored piece");
+        assert!(
+            subtree.is_some(),
+            "Should extract subtree for explored piece"
+        );
 
         let reused_root = subtree.unwrap();
         assert_eq!(
@@ -864,10 +931,7 @@ mod tests {
         let unexplored_piece = (0..7).find(|p| !chance_node.children.contains_key(p));
         if let Some(piece) = unexplored_piece {
             let result = extract_subtree(root, action, piece);
-            assert!(
-                result.is_none(),
-                "Should return None for unexplored piece"
-            );
+            assert!(result.is_none(), "Should return None for unexplored piece");
         }
         // If all pieces were explored (unlikely with 5 sims), test is vacuously true
     }

@@ -111,9 +111,7 @@ def _draw_mini_piece(
     for cx, cy in cells:
         px = sx + (cx - min_x) * MINI_CELL
         py = sy + (cy - min_y) * MINI_CELL
-        draw.rectangle(
-            [px, py, px + MINI_CELL - 2, py + MINI_CELL - 2], fill=color
-        )
+        draw.rectangle([px, py, px + MINI_CELL - 2, py + MINI_CELL - 2], fill=color)
 
 
 def _draw_board_area(
@@ -269,9 +267,7 @@ def render_board(
         )
 
         if hold_piece_type is not None:
-            _draw_mini_piece(
-                draw, hold_piece_type, left_cx, board_y + SIDEBAR_PIECE_Y
-            )
+            _draw_mini_piece(draw, hold_piece_type, left_cx, board_y + SIDEBAR_PIECE_Y)
 
         # Stats below hold piece
         sy = board_y + STATS_Y
@@ -369,7 +365,9 @@ def render_replay(replay: dict) -> list[Image.Image]:
         total_attack += int(move["attack"])
 
     # Final frame (post-last-action)
-    frames.append(_capture_frame(env, len(frames), total_attack, is_terminal=env.game_over))
+    frames.append(
+        _capture_frame(env, len(frames), total_attack, is_terminal=env.game_over)
+    )
 
     return frames
 

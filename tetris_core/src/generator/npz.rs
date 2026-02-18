@@ -16,10 +16,7 @@ use crate::mcts::{TrainingExample, NUM_ACTIONS};
 /// Write training examples to NPZ format (compatible with Python numpy).
 ///
 /// Convenience wrapper over [`write_examples_slices_to_npz`] for a single contiguous slice.
-pub fn write_examples_to_npz(
-    filepath: &Path,
-    examples: &[TrainingExample],
-) -> Result<(), String> {
+pub fn write_examples_to_npz(filepath: &Path, examples: &[TrainingExample]) -> Result<(), String> {
     write_examples_slices_to_npz(filepath, examples, &[])
 }
 
@@ -277,9 +274,7 @@ pub(crate) fn write_examples_slices_to_npz(
 }
 
 /// Read training examples from NPZ format.
-pub fn read_examples_from_npz(
-    filepath: &Path,
-) -> Result<Vec<TrainingExample>, String> {
+pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, String> {
     let file = File::open(filepath).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
 

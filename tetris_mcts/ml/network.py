@@ -193,7 +193,9 @@ class TetrisNet(nn.Module):
         self.bn_initial = nn.BatchNorm2d(trunk_channels)
         self.res_blocks = nn.ModuleList(
             [
-                ResidualConvBlock(trunk_channels, kernel_size=conv_kernel_size, padding=conv_padding)
+                ResidualConvBlock(
+                    trunk_channels, kernel_size=conv_kernel_size, padding=conv_padding
+                )
                 for _ in range(num_conv_residual_blocks)
             ]
         )
@@ -211,12 +213,14 @@ class TetrisNet(nn.Module):
 
         # Compute reduced spatial dims: stride-2 halves each dimension (ceil division)
         reduced_h = (BOARD_HEIGHT + 1) // 2  # 10
-        reduced_w = (BOARD_WIDTH + 1) // 2   # 5
+        reduced_w = (BOARD_WIDTH + 1) // 2  # 5
         conv_flat_size = reduction_channels * reduced_h * reduced_w
         fusion_hidden = fc_hidden
 
         # Board projection: conv features + board stats, cached by Rust inference.
-        self.board_proj = nn.Linear(conv_flat_size + BOARD_STATS_FEATURES, fusion_hidden)
+        self.board_proj = nn.Linear(
+            conv_flat_size + BOARD_STATS_FEATURES, fusion_hidden
+        )
 
         # Aux-conditioned modulation (piece/game features only).
         self.aux_fc = nn.Linear(PIECE_AUX_FEATURES, aux_hidden)
@@ -276,7 +280,9 @@ class TetrisNet(nn.Module):
         for block in self.res_blocks:
             x = block(x)
         x = F.relu(self.bn_reduce(self.conv_reduce(x)))
-        board_h = self.board_proj(torch.cat([x.view(x.size(0), -1), board_stats], dim=1))
+        board_h = self.board_proj(
+            torch.cat([x.view(x.size(0), -1), board_stats], dim=1)
+        )
         return self.forward_from_board_embedding(board_h, piece_aux)
 
 

@@ -388,8 +388,10 @@ def main(args: ScriptArgs) -> None:
                     hold_piece=data["hold_pieces"][i],
                     hold_available=float(data["hold_available"][i]),
                     next_queue=data["next_queue"][i],
-                    placement_count=float(data["placement_counts"][i]) / TrainingConfig.max_placements,
-                    combo_feature=min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX,
+                    placement_count=float(data["placement_counts"][i])
+                    / TrainingConfig.max_placements,
+                    combo_feature=min(combo, COMBO_NORMALIZATION_MAX)
+                    / COMBO_NORMALIZATION_MAX,
                     back_to_back=float(data["back_to_back"][i]),
                     next_hidden_piece_probs=data["next_hidden_piece_probs"][i],
                     column_heights=data["column_heights"][i],

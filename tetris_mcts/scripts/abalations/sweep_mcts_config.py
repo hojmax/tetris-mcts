@@ -40,7 +40,9 @@ class ScriptArgs:
     sweep_values: list[float] = field(
         default_factory=lambda: [2.0, 4.0, 8.0, 16.0, 32.0]
     )  # Values to sweep
-    include_minmax: bool = False  # Include min-max Q normalization baseline (q_scale sweep only)
+    include_minmax: bool = (
+        False  # Include min-max Q normalization baseline (q_scale sweep only)
+    )
     num_games: int = 50  # Games per sweep value
     seed_start: int = 1  # First env seed
 
@@ -106,9 +108,7 @@ def resolve_model_path(args: ScriptArgs) -> Path:
 
 def resolve_output_paths(args: ScriptArgs) -> tuple[Path, Path]:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    default_base = (
-        args.run_dir / "analysis" / f"{args.sweep_param}_sweep_{timestamp}"
-    )
+    default_base = args.run_dir / "analysis" / f"{args.sweep_param}_sweep_{timestamp}"
     output_json = args.output_json or default_base.with_suffix(".json")
     output_plot = args.output_plot or default_base.with_suffix(".png")
     output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -138,9 +138,7 @@ def build_base_mcts_config(
     config.num_simulations = int(
         resolve_config_value(args.num_simulations, run_config, "num_simulations", 1000)
     )
-    config.c_puct = float(
-        resolve_config_value(args.c_puct, run_config, "c_puct", 1.5)
-    )
+    config.c_puct = float(resolve_config_value(args.c_puct, run_config, "c_puct", 1.5))
     config.max_placements = int(
         resolve_config_value(args.max_placements, run_config, "max_placements", 50)
     )
@@ -153,9 +151,7 @@ def build_base_mcts_config(
         )
     )
     config.nn_value_weight = float(
-        resolve_config_value(
-            args.nn_value_weight, run_config, "nn_value_weight", 0.01
-        )
+        resolve_config_value(args.nn_value_weight, run_config, "nn_value_weight", 0.01)
     )
     config.q_scale = float(
         resolve_config_value(args.q_scale, run_config, "q_scale", 8.0)
@@ -387,9 +383,7 @@ def create_plot(
 
         r = 5
         fill_color = (180, 180, 180) if row["sweep_value"] is None else (218, 64, 82)
-        draw.ellipse(
-            [(x - r, y - r), (x + r, y + r)], fill=fill_color, outline="black"
-        )
+        draw.ellipse([(x - r, y - r), (x + r, y + r)], fill=fill_color, outline="black")
 
         x_label = row["label"]
         tw, th = text_size(draw, x_label, font)
@@ -516,9 +510,7 @@ def main(args: ScriptArgs) -> None:
         "sweep_values": [float(v) for v in args.sweep_values],
         "results": results,
         "summary": {
-            "avg_attack_by_label": {
-                row["label"]: row["avg_attack"] for row in results
-            },
+            "avg_attack_by_label": {row["label"]: row["avg_attack"] for row in results},
             "best_label": best_row["label"],
             "best_avg_attack": float(best_row["avg_attack"]),
         },

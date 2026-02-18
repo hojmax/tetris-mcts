@@ -12,8 +12,18 @@ from tetris_mcts.train import main as train_main
 logger = structlog.get_logger()
 
 MODEL_SIZE_PRESETS = {
-    "baseline": {"trunk_channels": 16, "num_conv_residual_blocks": 1, "reduction_channels": 32, "fusion_hidden": 128},
-    "large": {"trunk_channels": 32, "num_conv_residual_blocks": 2, "reduction_channels": 64, "fusion_hidden": 256},
+    "baseline": {
+        "trunk_channels": 16,
+        "num_conv_residual_blocks": 1,
+        "reduction_channels": 32,
+        "fusion_hidden": 128,
+    },
+    "large": {
+        "trunk_channels": 32,
+        "num_conv_residual_blocks": 2,
+        "reduction_channels": 64,
+        "fusion_hidden": 256,
+    },
 }
 
 
@@ -152,7 +162,9 @@ def run_single_trial(args: SweepArgs) -> None:
             {
                 "sweep_model_size": model_size,
                 "sweep_trunk_channels": int(model_preset["trunk_channels"]),
-                "sweep_num_conv_residual_blocks": int(model_preset["num_conv_residual_blocks"]),
+                "sweep_num_conv_residual_blocks": int(
+                    model_preset["num_conv_residual_blocks"]
+                ),
                 "sweep_reduction_channels": int(model_preset["reduction_channels"]),
                 "sweep_fusion_hidden": int(model_preset["fusion_hidden"]),
                 "sweep_learning_rate": learning_rate,

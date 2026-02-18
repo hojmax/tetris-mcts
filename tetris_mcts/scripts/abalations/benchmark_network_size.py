@@ -152,29 +152,37 @@ def main(args: BenchmarkArgs) -> None:
         logger.info("Starting interleaved run pair", run=run_idx)
 
         # Current model
-        current_results = run_benchmark(current_path, "current_128", BenchmarkArgs(
-            num_games=args.num_games,
-            simulations=args.simulations,
-            seed_start=args.seed_start,
-            mcts_seed=args.mcts_seed,
-            max_placements=args.max_placements,
-            c_puct=args.c_puct,
-            num_runs=1,
-            output=args.output,
-        ))
+        current_results = run_benchmark(
+            current_path,
+            "current_128",
+            BenchmarkArgs(
+                num_games=args.num_games,
+                simulations=args.simulations,
+                seed_start=args.seed_start,
+                mcts_seed=args.mcts_seed,
+                max_placements=args.max_placements,
+                c_puct=args.c_puct,
+                num_runs=1,
+                output=args.output,
+            ),
+        )
         all_results.extend(current_results)
 
         # Half model
-        half_results = run_benchmark(half_path, "half_64", BenchmarkArgs(
-            num_games=args.num_games,
-            simulations=args.simulations,
-            seed_start=args.seed_start,
-            mcts_seed=args.mcts_seed,
-            max_placements=args.max_placements,
-            c_puct=args.c_puct,
-            num_runs=1,
-            output=args.output,
-        ))
+        half_results = run_benchmark(
+            half_path,
+            "half_64",
+            BenchmarkArgs(
+                num_games=args.num_games,
+                simulations=args.simulations,
+                seed_start=args.seed_start,
+                mcts_seed=args.mcts_seed,
+                max_placements=args.max_placements,
+                c_puct=args.c_puct,
+                num_runs=1,
+                output=args.output,
+            ),
+        )
         all_results.extend(half_results)
 
     # Save all results

@@ -96,7 +96,9 @@ class BufferViewer:
         next_queue_raw = self.data["next_queue"][i]
         placement_count_raw = float(self.data["placement_counts"][i])
         combo_raw = int(self.data["combos"][i])
-        combo_feature = min(combo_raw, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
+        combo_feature = (
+            min(combo_raw, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
+        )
         back_to_back_raw = float(self.data["back_to_back"][i])
         next_hidden_piece_probs_raw = self.data["next_hidden_piece_probs"][i]
         column_heights_raw = self.data["column_heights"][i]

@@ -1,12 +1,5 @@
 # Next Steps
 
-- [ ] Do we even need an additional node here?:
-
-  ```
-  1. MCTS builds a tree: DecisionNode → ChanceNode (action executed, queue
-    truncated to 5) → DecisionNode (hidden piece added)
-  ```
-
 - [ ] What if you subtracted the root node value from all the child values before tanh? Then you immediately see if it is worse or better than expected.
 - [ ] look at mcts tree across multiple moves, not just root
 
@@ -23,7 +16,6 @@
 - [ ] What is so inherently noisy about the values? Why does it have such a high variance?
 - [ ] What AWS instance would be well suited for this workload?
 - [ ] Adding in alpha downweighting of value loss?
-- [ ] Is huber loss even better than MSE loss?
 
 - [ ] Do offline learning experiments. Things to validate:
   - Learning rate and scheduler
@@ -38,7 +30,6 @@
 
 # Confusions
 
-- [ ] How can there be game with 4 perfect clears but only 30 cleared lines? Should be atelast 40 right?
 - [ ] Also twice the number of simulations???
 - [ ] How come the model is not even better even when doing tree reuse
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
@@ -66,6 +57,7 @@ In progress: 🟨
 
 # Backlog
 
+- [ ] Is huber loss even better than MSE loss?
 - [ ] Reading through and validating all code
 - [ ] Do we need a larger network?
 - [ ] What alternative hardware could we run on?

@@ -33,7 +33,9 @@ def try_load_value_predictor(
     try:
         return ValuePredictor(checkpoint_path, config_path)
     except RuntimeError as e:
-        logger.warning("Model predictions disabled: incompatible checkpoint", error=str(e))
+        logger.warning(
+            "Model predictions disabled: incompatible checkpoint", error=str(e)
+        )
         return None
 
 

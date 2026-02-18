@@ -17,7 +17,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import dash
-from dash import html, dcc, callback, Output, Input, State, clientside_callback, dash_table
+from dash import (
+    html,
+    dcc,
+    callback,
+    Output,
+    Input,
+    State,
+    clientside_callback,
+    dash_table,
+)
 import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
 from simple_parsing import parse
@@ -226,7 +235,6 @@ def build_decision_action_stats(
         )
 
     return action_stats
-
 
 
 def parse_piece_token(token: str) -> int:
@@ -1635,7 +1643,13 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
                         "minWidth": "50px",
                     },
                     style_cell_conditional=[
-                        {"if": {"column_id": "Action"}, "textAlign": "left", "cursor": "pointer", "color": "#0066cc", "textDecoration": "underline"},
+                        {
+                            "if": {"column_id": "Action"},
+                            "textAlign": "left",
+                            "cursor": "pointer",
+                            "color": "#0066cc",
+                            "textDecoration": "underline",
+                        },
                     ],
                     style_header={
                         "fontWeight": "bold",

@@ -463,7 +463,9 @@ impl GameGenerator {
                 initial_overhang_penalty_weight_bits,
             )),
             nn_value_weight_cap,
-            incumbent_eval_avg_attack: Arc::new(AtomicU32::new(initial_incumbent_eval_avg_attack.to_bits())),
+            incumbent_eval_avg_attack: Arc::new(AtomicU32::new(
+                initial_incumbent_eval_avg_attack.to_bits(),
+            )),
             thread_handles: Vec::new(),
         })
     }
@@ -496,15 +498,13 @@ impl GameGenerator {
         // Load existing replay buffer snapshot if present.
         if self.training_data_path.exists() {
             let loaded_examples =
-                read_examples_from_npz(&self.training_data_path).map_err(
-                    |e| {
-                        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                            "Failed to load replay data from {}: {}",
-                            self.training_data_path.display(),
-                            e
-                        ))
-                    },
-                )?;
+                read_examples_from_npz(&self.training_data_path).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to load replay data from {}: {}",
+                        self.training_data_path.display(),
+                        e
+                    ))
+                })?;
 
             if !loaded_examples.is_empty() {
                 let loaded_examples_count = loaded_examples.len();
@@ -840,7 +840,10 @@ impl GameGenerator {
             };
             d.insert("tree_reuse_rate".to_string(), tree_reuse_rate);
             d.insert("tree_reuse_hits".to_string(), info.tree_reuse_hits as f32);
-            d.insert("tree_reuse_misses".to_string(), info.tree_reuse_misses as f32);
+            d.insert(
+                "tree_reuse_misses".to_string(),
+                info.tree_reuse_misses as f32,
+            );
             d.insert(
                 "tree_reuse_carry_fraction".to_string(),
                 info.tree_reuse_carry_fraction,
@@ -856,28 +859,84 @@ impl GameGenerator {
         let mut drained = Vec::with_capacity(queue.len());
         while let Some(event) = queue.pop_front() {
             let mut d: HashMap<String, PyObject> = HashMap::new();
-            d.insert("incumbent_step".into(), (event.incumbent_step as f64).into_py(py));
+            d.insert(
+                "incumbent_step".into(),
+                (event.incumbent_step as f64).into_py(py),
+            );
             d.insert(
                 "incumbent_uses_network".into(),
-                (if event.incumbent_uses_network { 1.0 } else { 0.0_f64 }).into_py(py),
+                (if event.incumbent_uses_network {
+                    1.0
+                } else {
+                    0.0_f64
+                })
+                .into_py(py),
             );
-            d.insert("incumbent_avg_attack".into(), (event.incumbent_avg_attack as f64).into_py(py));
-            d.insert("incumbent_nn_value_weight".into(), (event.incumbent_nn_value_weight as f64).into_py(py));
-            d.insert("candidate_step".into(), (event.candidate_step as f64).into_py(py));
-            d.insert("candidate_games".into(), (event.candidate_games as f64).into_py(py));
-            d.insert("candidate_avg_attack".into(), (event.candidate_avg_attack as f64).into_py(py));
-            d.insert("candidate_attack_variance".into(), (event.candidate_attack_variance as f64).into_py(py));
-            d.insert("candidate_nn_value_weight".into(), (event.candidate_nn_value_weight as f64).into_py(py));
-            d.insert("promoted_nn_value_weight".into(), (event.promoted_nn_value_weight as f64).into_py(py));
-            d.insert("promoted_death_penalty".into(), (event.promoted_death_penalty as f64).into_py(py));
-            d.insert("promoted_overhang_penalty_weight".into(), (event.promoted_overhang_penalty_weight as f64).into_py(py));
-            d.insert("promoted".into(), (if event.promoted { 1.0 } else { 0.0_f64 }).into_py(py));
-            d.insert("auto_promoted".into(), (if event.auto_promoted { 1.0 } else { 0.0_f64 }).into_py(py));
-            d.insert("evaluation_seconds".into(), (event.evaluation_seconds as f64).into_py(py));
+            d.insert(
+                "incumbent_avg_attack".into(),
+                (event.incumbent_avg_attack as f64).into_py(py),
+            );
+            d.insert(
+                "incumbent_nn_value_weight".into(),
+                (event.incumbent_nn_value_weight as f64).into_py(py),
+            );
+            d.insert(
+                "candidate_step".into(),
+                (event.candidate_step as f64).into_py(py),
+            );
+            d.insert(
+                "candidate_games".into(),
+                (event.candidate_games as f64).into_py(py),
+            );
+            d.insert(
+                "candidate_avg_attack".into(),
+                (event.candidate_avg_attack as f64).into_py(py),
+            );
+            d.insert(
+                "candidate_attack_variance".into(),
+                (event.candidate_attack_variance as f64).into_py(py),
+            );
+            d.insert(
+                "candidate_nn_value_weight".into(),
+                (event.candidate_nn_value_weight as f64).into_py(py),
+            );
+            d.insert(
+                "promoted_nn_value_weight".into(),
+                (event.promoted_nn_value_weight as f64).into_py(py),
+            );
+            d.insert(
+                "promoted_death_penalty".into(),
+                (event.promoted_death_penalty as f64).into_py(py),
+            );
+            d.insert(
+                "promoted_overhang_penalty_weight".into(),
+                (event.promoted_overhang_penalty_weight as f64).into_py(py),
+            );
+            d.insert(
+                "promoted".into(),
+                (if event.promoted { 1.0 } else { 0.0_f64 }).into_py(py),
+            );
+            d.insert(
+                "auto_promoted".into(),
+                (if event.auto_promoted { 1.0 } else { 0.0_f64 }).into_py(py),
+            );
+            d.insert(
+                "evaluation_seconds".into(),
+                (event.evaluation_seconds as f64).into_py(py),
+            );
             // New fields for fixed-seed eval
-            d.insert("best_game_replay_json".into(), event.best_game_replay_json.into_py(py));
-            d.insert("worst_game_replay_json".into(), event.worst_game_replay_json.into_py(py));
-            d.insert("per_game_results".into(), event.per_game_results.into_py(py));
+            d.insert(
+                "best_game_replay_json".into(),
+                event.best_game_replay_json.into_py(py),
+            );
+            d.insert(
+                "worst_game_replay_json".into(),
+                event.worst_game_replay_json.into_py(py),
+            );
+            d.insert(
+                "per_game_results".into(),
+                event.per_game_results.into_py(py),
+            );
             drained.push(d);
         }
         drained
@@ -1843,10 +1902,7 @@ impl GameGenerator {
         });
     }
 
-    fn persist_buffer_snapshot(
-        training_data_path: &Path,
-        buffer: &Arc<SharedBuffer>,
-    ) {
+    fn persist_buffer_snapshot(training_data_path: &Path, buffer: &Arc<SharedBuffer>) {
         if let Err(error) = buffer.persist_to_npz(training_data_path) {
             eprintln!("[GameGenerator] Failed to write NPZ: {}", error);
         }
@@ -2124,8 +2180,7 @@ mod tests {
         assert_eq!(bootstrap_config.q_scale, None);
 
         // Verify penalties are overridden when passed as 0
-        let zeroed_config =
-            GameGenerator::build_rollout_config(&config, true, 999, 1.0, 0.0, 0.0);
+        let zeroed_config = GameGenerator::build_rollout_config(&config, true, 999, 1.0, 0.0, 0.0);
         assert_eq!(zeroed_config.death_penalty, 0.0);
         assert_eq!(zeroed_config.overhang_penalty_weight, 0.0);
     }

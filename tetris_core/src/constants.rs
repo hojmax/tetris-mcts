@@ -65,14 +65,7 @@ pub const PIECE_AUX_FEATURES: usize = NUM_PIECE_TYPES
 /// column heights (10) + max column height (1) + min column height (1)
 /// + row fill counts (20) + total blocks (1) + bumpiness (1)
 /// + holes (1) + overhang fields (1).
-pub const BOARD_STATS_FEATURES: usize = BOARD_WIDTH
-    + 1
-    + 1
-    + BOARD_HEIGHT
-    + 1
-    + 1
-    + 1
-    + 1; // 36
+pub const BOARD_STATS_FEATURES: usize = BOARD_WIDTH + 1 + 1 + BOARD_HEIGHT + 1 + 1 + 1 + 1; // 36
 
 /// Full auxiliary feature vector size (training data packing).
 pub const AUX_FEATURES: usize = PIECE_AUX_FEATURES + BOARD_STATS_FEATURES; // 97

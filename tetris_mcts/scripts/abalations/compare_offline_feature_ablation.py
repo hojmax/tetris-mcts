@@ -13,7 +13,13 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
-from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, PROJECT_ROOT, TrainingConfig
+from tetris_mcts.config import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    NUM_ACTIONS,
+    PROJECT_ROOT,
+    TrainingConfig,
+)
 from tetris_mcts.ml.loss import compute_loss
 from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
 
@@ -120,7 +126,9 @@ class ScriptArgs:
     aux_hidden: int = 24
     num_fusion_blocks: int = 0
 
-    max_placements: int = TrainingConfig.max_placements  # For normalizing placement_counts/move_numbers
+    max_placements: int = (
+        TrainingConfig.max_placements
+    )  # For normalizing placement_counts/move_numbers
     include_move_number_feature: bool = False
 
     wandb_project: str = "tetris-mcts-offline"
@@ -250,12 +258,14 @@ def get_extra_feature_groups(
 ) -> tuple[ExtraFeatureGroup, ...]:
     groups: list[ExtraFeatureGroup] = list(CORE_EXTRA_FEATURE_GROUPS)
     if include_move_number_feature:
-        groups.append(ExtraFeatureGroup(
-            name=MOVE_NUMBER_EXTRA_FEATURE_GROUP_NAME,
-            npz_key=MOVE_NUMBER_EXTRA_FEATURE_GROUP_NPZ_KEY,
-            width=1,
-            normalize_by=float(max_placements),
-        ))
+        groups.append(
+            ExtraFeatureGroup(
+                name=MOVE_NUMBER_EXTRA_FEATURE_GROUP_NAME,
+                npz_key=MOVE_NUMBER_EXTRA_FEATURE_GROUP_NPZ_KEY,
+                width=1,
+                normalize_by=float(max_placements),
+            )
+        )
     return tuple(groups)
 
 
@@ -438,7 +448,10 @@ def build_base_aux_batch_from_npz(
         data["placement_counts"][global_indices].astype(np.float32).reshape(-1, 1)
         / max_placements
     )
-    combos = data["combos"][global_indices].astype(np.float32).reshape(-1, 1) / COMBO_NORMALIZATION_MAX
+    combos = (
+        data["combos"][global_indices].astype(np.float32).reshape(-1, 1)
+        / COMBO_NORMALIZATION_MAX
+    )
     back_to_back = (
         data["back_to_back"][global_indices].astype(np.float32).reshape(-1, 1)
     )
@@ -500,7 +513,9 @@ def build_torch_batch_from_npz(
     max_placements: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     boards_np = data["boards"][global_indices].astype(np.float32, copy=False)
-    aux_np = build_aux_batch_from_npz(data, global_indices, included_groups, max_placements)
+    aux_np = build_aux_batch_from_npz(
+        data, global_indices, included_groups, max_placements
+    )
     policy_targets_np = data["policy_targets"][global_indices].astype(
         np.float32, copy=False
     )
@@ -1046,7 +1061,9 @@ def main(args: ScriptArgs) -> None:
     if args.data_path.suffix != ".npz":
         raise ValueError(f"Expected .npz file, got: {args.data_path}")
 
-    extra_feature_groups = get_extra_feature_groups(args.include_move_number_feature, args.max_placements)
+    extra_feature_groups = get_extra_feature_groups(
+        args.include_move_number_feature, args.max_placements
+    )
     variants = build_feature_variants(extra_feature_groups)
 
     device_str = pick_device(args.device)

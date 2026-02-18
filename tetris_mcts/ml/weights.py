@@ -20,7 +20,13 @@ from tetris_mcts.config import (
     LATEST_METADATA_FILENAME,
     LATEST_ONNX_FILENAME,
 )
-from tetris_mcts.ml.network import AUX_FEATURES, PIECE_AUX_FEATURES, ConvBackbone, HeadsModel, TetrisNet
+from tetris_mcts.ml.network import (
+    AUX_FEATURES,
+    PIECE_AUX_FEATURES,
+    ConvBackbone,
+    HeadsModel,
+    TetrisNet,
+)
 
 logger = structlog.get_logger()
 
@@ -203,7 +209,6 @@ def export_metadata(
 
 
 class WeightManager:
-
     def __init__(self, checkpoint_dir: str | Path):
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)

@@ -110,9 +110,7 @@ def build_mcts_config(
     config.num_simulations = int(
         resolve_config_value(args.num_simulations, run_config, "num_simulations", 1000)
     )
-    config.c_puct = float(
-        resolve_config_value(args.c_puct, run_config, "c_puct", 1.5)
-    )
+    config.c_puct = float(resolve_config_value(args.c_puct, run_config, "c_puct", 1.5))
     config.max_placements = int(
         resolve_config_value(args.max_placements, run_config, "max_placements", 50)
     )

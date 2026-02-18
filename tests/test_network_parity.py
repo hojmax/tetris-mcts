@@ -110,16 +110,22 @@ def _compute_diagnostics(
             if not reachable[y, x]:
                 raw_holes += 1
 
-    normalized_column_heights = raw_column_heights.astype(np.float32) / COLUMN_HEIGHT_NORMALIZATION_DIVISOR
+    normalized_column_heights = (
+        raw_column_heights.astype(np.float32) / COLUMN_HEIGHT_NORMALIZATION_DIVISOR
+    )
     raw_max = int(np.max(raw_column_heights))
     raw_min = int(np.min(raw_column_heights))
     max_column_height = float(raw_max) / MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
     min_column_height = float(raw_min) / MIN_COLUMN_HEIGHT_NORMALIZATION_DIVISOR
     normalized_row_fill_counts = raw_row_fill_counts.astype(np.float32) / float(width)
-    normalized_total_blocks = float(raw_total_blocks) / TOTAL_BLOCKS_NORMALIZATION_DIVISOR
+    normalized_total_blocks = (
+        float(raw_total_blocks) / TOTAL_BLOCKS_NORMALIZATION_DIVISOR
+    )
     normalized_bumpiness = float(raw_bumpiness) / BUMPINESS_NORMALIZATION_DIVISOR
     normalized_holes = float(raw_holes) / HOLES_NORMALIZATION_DIVISOR
-    normalized_overhang_fields = float(raw_overhang_fields) / OVERHANG_NORMALIZATION_DIVISOR
+    normalized_overhang_fields = (
+        float(raw_overhang_fields) / OVERHANG_NORMALIZATION_DIVISOR
+    )
     return (
         normalized_column_heights,
         max_column_height,

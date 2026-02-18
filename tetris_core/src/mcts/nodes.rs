@@ -300,7 +300,6 @@ mod tests {
         assert!(node.is_terminal);
         assert!(node.valid_actions.is_empty());
         assert_eq!(node.move_number, 5);
-
     }
 
     #[test]

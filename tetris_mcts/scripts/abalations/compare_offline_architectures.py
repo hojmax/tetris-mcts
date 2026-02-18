@@ -14,7 +14,12 @@ from simple_parsing import parse
 
 from tetris_mcts.config import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS, TrainingConfig
 from tetris_mcts.ml.loss import compute_loss
-from tetris_mcts.ml.network import AUX_FEATURES, BOARD_STATS_FEATURES, COMBO_NORMALIZATION_MAX, PIECE_AUX_FEATURES
+from tetris_mcts.ml.network import (
+    AUX_FEATURES,
+    BOARD_STATS_FEATURES,
+    COMBO_NORMALIZATION_MAX,
+    PIECE_AUX_FEATURES,
+)
 
 logger = structlog.get_logger()
 
@@ -76,7 +81,9 @@ class ScriptArgs:
     match_num_fusion_blocks_options: list[int] = field(
         default_factory=lambda: [0, 1, 2, 3]
     )
-    max_placements: int = TrainingConfig.max_placements  # For normalizing placement_counts
+    max_placements: int = (
+        TrainingConfig.max_placements
+    )  # For normalizing placement_counts
     match_param_tolerance: float = 0.01  # Relative tolerance
     match_flop_tolerance: float = (  # Relative tolerance on cache-weighted FLOPs
         0.01
@@ -229,7 +236,9 @@ class GatedFusionTetrisNet(nn.Module):
         )
         self.bn2 = nn.BatchNorm2d(conv1)
 
-        self.board_proj = nn.Linear(conv_flat_size + BOARD_STATS_FEATURES, fusion_hidden)
+        self.board_proj = nn.Linear(
+            conv_flat_size + BOARD_STATS_FEATURES, fusion_hidden
+        )
         self.aux_fc = nn.Linear(PIECE_AUX_FEATURES, aux_hidden)
         self.aux_ln = nn.LayerNorm(aux_hidden)
         self.gate_fc = nn.Linear(aux_hidden, fusion_hidden)
@@ -637,7 +646,10 @@ def build_aux_batch_from_npz(
         data["placement_counts"][global_indices].astype(np.float32).reshape(-1, 1)
         / max_placements
     )
-    combos = data["combos"][global_indices].astype(np.float32).reshape(-1, 1) / COMBO_NORMALIZATION_MAX
+    combos = (
+        data["combos"][global_indices].astype(np.float32).reshape(-1, 1)
+        / COMBO_NORMALIZATION_MAX
+    )
     back_to_back = (
         data["back_to_back"][global_indices].astype(np.float32).reshape(-1, 1)
     )
@@ -721,9 +733,9 @@ def build_tensor_dataset(
     max_placements: int,
 ) -> OfflineTensorDataset:
     boards_np = data["boards"][selected_global_indices].astype(np.float32, copy=False)
-    aux_np = build_aux_batch_from_npz(data, selected_global_indices, max_placements).astype(
-        np.float32, copy=False
-    )
+    aux_np = build_aux_batch_from_npz(
+        data, selected_global_indices, max_placements
+    ).astype(np.float32, copy=False)
     policy_targets_np = data["policy_targets"][selected_global_indices].astype(
         np.float32, copy=False
     )
@@ -768,7 +780,9 @@ def build_torch_batch(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if source.tensor_data is None:
         global_indices = source.selected_global_indices[local_indices]
-        return build_torch_batch_from_npz(source.npz, global_indices, device, max_placements)
+        return build_torch_batch_from_npz(
+            source.npz, global_indices, device, max_placements
+        )
 
     tensor_data = source.tensor_data
     gather_indices = torch.from_numpy(local_indices.astype(np.int64, copy=False)).to(

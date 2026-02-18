@@ -95,7 +95,7 @@ class TrainingConfig:
         True
     )
     use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
-        True
+        False
     )
     use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
         True
@@ -133,7 +133,9 @@ class TrainingConfig:
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
     )
-    reuse_tree: bool = True  # Reuse MCTS subtree from previous move instead of building fresh tree
+    reuse_tree: bool = (  # Reuse MCTS subtree from previous move instead of building fresh tree
+        True
+    )
     num_workers: int = 7  # Parallel game generation threads
     max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
         50

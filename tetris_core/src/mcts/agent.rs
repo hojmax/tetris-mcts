@@ -10,14 +10,12 @@ use crate::generator::evaluation::ReplayMove;
 
 use super::config::MCTSConfig;
 use super::export::export_decision_node;
+use super::nodes::DecisionNode;
 use super::results::{
     GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport, TreeStats,
     TreeStatsAccumulator,
 };
-use super::nodes::DecisionNode;
-use super::search::{
-    extract_subtree, run_search, search_internal, search_internal_without_nn,
-};
+use super::search::{extract_subtree, run_search, search_internal, search_internal_without_nn};
 use crate::constants::QUEUE_SIZE;
 use crate::mcts::action_space::HOLD_ACTION_INDEX;
 
@@ -304,8 +302,14 @@ impl MCTSAgent {
             let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
 
             // Run MCTS search (with tree reuse if available)
-            let (result, root, move_tree_stats) =
-                self.search_maybe_reuse(&env, &mask, add_noise, placement_count, max_placements, reused_root.take())?;
+            let (result, root, move_tree_stats) = self.search_maybe_reuse(
+                &env,
+                &mask,
+                add_noise,
+                placement_count,
+                max_placements,
+                reused_root.take(),
+            )?;
 
             let tree_total_nodes = move_tree_stats.total_nodes;
             valid_moves_sum += valid_moves;
@@ -315,8 +319,7 @@ impl MCTSAgent {
                 stats.holds += 1;
             }
 
-            let (overhang_count, hole_count) =
-                super::utils::count_overhang_fields_and_holes(&env);
+            let (overhang_count, hole_count) = super::utils::count_overhang_fields_and_holes(&env);
             states.push(StateSnapshot {
                 state: env.clone(),
                 frame_idx: frame_index,
@@ -352,9 +355,7 @@ impl MCTSAgent {
                 if let Some(root) = root {
                     let hidden_piece = env.piece_queue.get(QUEUE_SIZE).copied();
                     if let Some(piece) = hidden_piece {
-                        if let Some(subtree) =
-                            extract_subtree(root, selected_action, piece)
-                        {
+                        if let Some(subtree) = extract_subtree(root, selected_action, piece) {
                             let subtree_nodes =
                                 super::search::compute_tree_stats(&subtree).total_nodes;
                             if tree_total_nodes > 0 {
@@ -435,18 +436,28 @@ impl MCTSAgent {
             let hold_available = !state.is_hold_used();
             let next_queue = state.get_queue(5);
             let next_hidden_piece_probs = crate::nn::next_hidden_piece_distribution(state);
-            let raw_bumpiness = super::utils::compute_bumpiness(&state.column_heights[..state.width]);
+            let raw_bumpiness =
+                super::utils::compute_bumpiness(&state.column_heights[..state.width]);
             let column_heights =
                 super::utils::normalize_column_heights(&state.column_heights[..state.width]);
-            let row_fill_counts =
-                super::utils::normalize_row_fill_counts(&state.row_fill_counts[..state.height], state.width);
+            let row_fill_counts = super::utils::normalize_row_fill_counts(
+                &state.row_fill_counts[..state.height],
+                state.width,
+            );
             let total_blocks = super::utils::normalize_total_blocks(state.total_blocks);
             let bumpiness = super::utils::normalize_bumpiness(raw_bumpiness);
             let holes = super::utils::normalize_holes(snapshot.hole_count);
-            let overhang_fields =
-                super::utils::normalize_overhang_fields(snapshot.overhang_fields);
-            let raw_max = state.column_heights[..state.width].iter().copied().max().unwrap_or(0);
-            let raw_min = state.column_heights[..state.width].iter().copied().min().unwrap_or(0);
+            let overhang_fields = super::utils::normalize_overhang_fields(snapshot.overhang_fields);
+            let raw_max = state.column_heights[..state.width]
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(0);
+            let raw_min = state.column_heights[..state.width]
+                .iter()
+                .copied()
+                .min()
+                .unwrap_or(0);
             let max_column_height = super::utils::normalize_max_column_height(raw_max);
             let min_column_height = super::utils::normalize_min_column_height(raw_min);
 
@@ -563,20 +574,30 @@ impl MCTSAgent {
                     }
                 };
                 search_internal(
-                    &self.config, nn, env, policy, nn_value, add_noise, placement_count,
+                    &self.config,
+                    nn,
+                    env,
+                    policy,
+                    nn_value,
+                    add_noise,
+                    placement_count,
                 )
             };
             Some((result, Some(root), tree_stats))
         } else {
             let (result, root, tree_stats) = if let Some(root) = reused_root {
-                run_search(&self.config, &super::search::BootstrapLeafEvaluator, root, add_noise)
+                run_search(
+                    &self.config,
+                    &super::search::BootstrapLeafEvaluator,
+                    root,
+                    add_noise,
+                )
             } else {
                 search_internal_without_nn(&self.config, env, add_noise, placement_count)
             };
             Some((result, Some(root), tree_stats))
         }
     }
-
 }
 
 #[cfg(test)]
@@ -684,8 +705,7 @@ mod tests {
                 super::super::utils::count_overhang_fields_and_holes(&env);
             let expected_normalized_overhang =
                 super::super::utils::normalize_overhang_fields(expected_overhang);
-            let expected_holes =
-                super::super::utils::normalize_holes(expected_holes_raw);
+            let expected_holes = super::super::utils::normalize_holes(expected_holes_raw);
 
             assert!(
                 (example.overhang_fields - expected_normalized_overhang).abs() < 1e-6,

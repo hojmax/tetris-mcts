@@ -603,11 +603,20 @@ pub fn encode_aux_state_features(
     let queue = env.get_queue(QUEUE_SIZE);
     let hidden_piece_distribution = next_hidden_piece_distribution(env);
     let normalized_column_heights = normalize_column_heights(&env.column_heights[..env.width]);
-    let raw_max = env.column_heights[..env.width].iter().copied().max().unwrap_or(0);
-    let raw_min = env.column_heights[..env.width].iter().copied().min().unwrap_or(0);
+    let raw_max = env.column_heights[..env.width]
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0);
+    let raw_min = env.column_heights[..env.width]
+        .iter()
+        .copied()
+        .min()
+        .unwrap_or(0);
     let max_column_height = normalize_max_column_height(raw_max);
     let min_column_height = normalize_min_column_height(raw_min);
-    let normalized_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts[..env.height], env.width);
+    let normalized_row_fill_counts =
+        normalize_row_fill_counts(&env.row_fill_counts[..env.height], env.width);
     let normalized_total_blocks = normalize_total_blocks(env.total_blocks);
     let raw_bumpiness = compute_bumpiness(&env.column_heights[..env.width]);
     let normalized_bumpiness = normalize_bumpiness(raw_bumpiness);
