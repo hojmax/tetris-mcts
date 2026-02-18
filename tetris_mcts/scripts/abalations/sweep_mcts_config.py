@@ -17,7 +17,7 @@ from tetris_mcts.constants import (
     CONFIG_FILENAME,
     LATEST_ONNX_FILENAME,
 )
-from tetris_mcts.ml.training import assert_rust_inference_artifacts
+from tetris_mcts.ml.artifacts import assert_rust_inference_artifacts
 
 logger = structlog.get_logger()
 

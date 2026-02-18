@@ -1,18 +1,7 @@
-"""
-Training Loop for Tetris AlphaZero
-
-Implements:
-- Training loop with WandB logging
-- Learning rate scheduling
-- Parallel Rust game generation via GameGenerator
-"""
-
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 from pathlib import Path
-import shutil
 import tempfile
 import time
 from typing import cast
@@ -28,31 +17,11 @@ from tetris_mcts.constants import (
     INCUMBENT_ONNX_FILENAME,
     LATEST_ONNX_FILENAME,
     MODEL_CANDIDATES_DIRNAME,
-    NUM_ACTIONS,
     PARALLEL_ONNX_FILENAME,
     TRAINING_DATA_FILENAME,
 )
 from tetris_mcts.config import TrainingConfig
-from tetris_mcts.ml.network import (
-    AUX_FEATURES,
-    BACK_TO_BACK_FEATURES,
-    BUMPINESS_FEATURES,
-    COLUMN_HEIGHT_FEATURES,
-    COMBO_FEATURES,
-    CURRENT_PIECE_FEATURES,
-    HIDDEN_PIECE_DISTRIBUTION_FEATURES,
-    HOLD_AVAILABLE_FEATURES,
-    HOLD_PIECE_FEATURES,
-    HOLES_FEATURES,
-    MAX_COLUMN_HEIGHT_FEATURES,
-    MIN_COLUMN_HEIGHT_FEATURES,
-    MOVE_NUMBER_FEATURES,
-    OVERHANG_FIELDS_FEATURES,
-    QUEUE_FEATURES,
-    ROW_FILL_COUNT_FEATURES,
-    TOTAL_BLOCKS_FEATURES,
-    TetrisNet,
-)
+from tetris_mcts.ml.network import TetrisNet
 from tetris_mcts.ml.weights import (
     WeightManager,
     export_onnx,
@@ -61,286 +30,19 @@ from tetris_mcts.ml.weights import (
 )
 from tetris_mcts.ml.loss import RunningLossBalancer, compute_loss, compute_metrics
 from tetris_mcts.ml.visualization import create_trajectory_gif, render_replay
+from tetris_mcts.ml.artifacts import (
+    assert_rust_inference_artifacts,
+    copy_model_artifact_bundle,
+)
+from tetris_mcts.ml.replay_buffer import TrainingBatch, CircularReplayMirror
+from tetris_mcts.ml.game_metrics import (
+    compute_batch_feature_metrics,
+    summarize_completed_games,
+)
 
 from tetris_core import MCTSConfig, GameGenerator
 
 logger = structlog.get_logger()
-
-
-@dataclass
-class TrainingBatch:
-    boards: torch.Tensor
-    aux: torch.Tensor
-    policy_targets: torch.Tensor
-    value_targets: torch.Tensor
-    overhang_fields: torch.Tensor
-    masks: torch.Tensor
-
-    @property
-    def size(self) -> int:
-        return int(self.boards.shape[0])
-
-    @property
-    def device(self) -> torch.device:
-        return self.boards.device
-
-    def split(self, batch_size: int) -> list[TrainingBatch]:
-        if batch_size <= 0:
-            raise ValueError(f"batch_size must be > 0 (got {batch_size})")
-        batches: list[TrainingBatch] = []
-        for start in range(0, self.size, batch_size):
-            end = min(start + batch_size, self.size)
-            batches.append(
-                TrainingBatch(
-                    boards=self.boards[start:end],
-                    aux=self.aux[start:end],
-                    policy_targets=self.policy_targets[start:end],
-                    value_targets=self.value_targets[start:end],
-                    overhang_fields=self.overhang_fields[start:end],
-                    masks=self.masks[start:end],
-                )
-            )
-        if not batches:
-            raise ValueError("Cannot split empty staged batch")
-        return batches
-
-
-class CircularReplayMirror:
-    """Pre-allocated circular buffer for device-resident replay mirror.
-
-    All tensors are allocated once at full capacity. Incremental updates
-    use in-place copy_() to avoid any new GPU allocations.
-    """
-
-    def __init__(self, capacity: int, device: torch.device) -> None:
-        self.boards = torch.zeros(capacity, 1, BOARD_HEIGHT, BOARD_WIDTH, device=device)
-        self.aux = torch.zeros(capacity, AUX_FEATURES, device=device)
-        self.policy_targets = torch.zeros(capacity, NUM_ACTIONS, device=device)
-        self.value_targets = torch.zeros(capacity, device=device)
-        self.overhang_fields = torch.zeros(capacity, device=device)
-        self.masks = torch.zeros(capacity, NUM_ACTIONS, device=device)
-
-        self.capacity = capacity
-        self.count = 0
-        self.write_pos = 0
-        self.logical_end = 0
-
-    @property
-    def size(self) -> int:
-        return self.count
-
-
-@dataclass(frozen=True)
-class AuxFeatureLayout:
-    column_heights: slice
-    max_column_height: int
-    min_column_height: int
-    row_fill_counts: slice
-    total_blocks: int
-    bumpiness: int
-    holes: int
-    overhang_fields: int
-
-
-def build_aux_feature_layout() -> AuxFeatureLayout:
-    aux_idx = 0
-    aux_idx += CURRENT_PIECE_FEATURES
-    aux_idx += HOLD_PIECE_FEATURES
-    aux_idx += HOLD_AVAILABLE_FEATURES
-    aux_idx += QUEUE_FEATURES
-    aux_idx += MOVE_NUMBER_FEATURES
-    aux_idx += COMBO_FEATURES
-    aux_idx += BACK_TO_BACK_FEATURES
-    aux_idx += HIDDEN_PIECE_DISTRIBUTION_FEATURES
-
-    column_heights = slice(aux_idx, aux_idx + COLUMN_HEIGHT_FEATURES)
-    aux_idx += COLUMN_HEIGHT_FEATURES
-    max_column_height = aux_idx
-    aux_idx += MAX_COLUMN_HEIGHT_FEATURES
-    min_column_height = aux_idx
-    aux_idx += MIN_COLUMN_HEIGHT_FEATURES
-    row_fill_counts = slice(aux_idx, aux_idx + ROW_FILL_COUNT_FEATURES)
-    aux_idx += ROW_FILL_COUNT_FEATURES
-    total_blocks = aux_idx
-    aux_idx += TOTAL_BLOCKS_FEATURES
-    bumpiness = aux_idx
-    aux_idx += BUMPINESS_FEATURES
-    holes = aux_idx
-    aux_idx += HOLES_FEATURES
-    overhang_fields = aux_idx
-    aux_idx += OVERHANG_FIELDS_FEATURES
-
-    if aux_idx != AUX_FEATURES:
-        raise ValueError(
-            f"Aux feature layout mismatch: computed {aux_idx}, expected {AUX_FEATURES}"
-        )
-
-    return AuxFeatureLayout(
-        column_heights=column_heights,
-        max_column_height=max_column_height,
-        min_column_height=min_column_height,
-        row_fill_counts=row_fill_counts,
-        total_blocks=total_blocks,
-        bumpiness=bumpiness,
-        holes=holes,
-        overhang_fields=overhang_fields,
-    )
-
-
-AUX_FEATURE_LAYOUT = build_aux_feature_layout()
-
-
-def compute_batch_feature_metrics(
-    boards: torch.Tensor,
-    aux: torch.Tensor,
-    value_targets: torch.Tensor,
-    overhang_fields: torch.Tensor,
-    masks: torch.Tensor,
-) -> dict[str, float]:
-    layout = AUX_FEATURE_LAYOUT
-    row_fill_counts = aux[:, layout.row_fill_counts]
-    max_column_heights = aux[:, layout.max_column_height]
-    min_column_heights = aux[:, layout.min_column_height]
-    total_blocks = aux[:, layout.total_blocks]
-    bumpiness = aux[:, layout.bumpiness]
-    holes = aux[:, layout.holes]
-
-    return {
-        "batch/value_target_mean": value_targets.mean().item(),
-        "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
-        "batch/board_fill_mean": total_blocks.mean().item(),
-        "batch/max_height_mean": max_column_heights.mean().item(),
-        "batch/min_height_mean": min_column_heights.mean().item(),
-        "batch/row_fill_mean": row_fill_counts.mean().item(),
-        "batch/bumpiness_mean": bumpiness.mean().item(),
-        "batch/holes_mean": holes.mean().item(),
-        "batch/overhang_fields_mean": overhang_fields.mean().item(),
-    }
-
-
-def summarize_completed_games(
-    completed_games: list[tuple[int, dict[str, float | int]]],
-) -> dict[str, float]:
-    if not completed_games:
-        return {}
-
-    attack_sum = 0.0
-    line_sum = 0.0
-    episode_length_sum = 0.0
-    holds_sum = 0.0
-    max_attack = float("-inf")
-    max_lines = float("-inf")
-
-    for _, game_stats in completed_games:
-        total_attack = float(game_stats["total_attack"])
-        total_lines = float(game_stats["total_lines"])
-        episode_length = float(game_stats["episode_length"])
-        holds = float(game_stats["holds"])
-        if episode_length <= 0.0:
-            raise ValueError(
-                "Invalid episode_length while aggregating completed games: "
-                f"{episode_length}"
-            )
-        attack_sum += total_attack
-        line_sum += total_lines
-        episode_length_sum += episode_length
-        holds_sum += holds
-        max_attack = max(max_attack, total_attack)
-        max_lines = max(max_lines, total_lines)
-
-    completed_count = float(len(completed_games))
-    first_game_number = float(completed_games[0][0])
-    last_game_number = float(completed_games[-1][0])
-    return {
-        "replay/completed_games_logged": completed_count,
-        "replay/completed_games_first_number": first_game_number,
-        "replay/completed_games_last_number": last_game_number,
-        "replay/completed_games_avg_attack": attack_sum / completed_count,
-        "replay/completed_games_avg_lines": line_sum / completed_count,
-        "replay/completed_games_avg_moves": episode_length_sum / completed_count,
-        "replay/completed_games_max_attack": max_attack,
-        "replay/completed_games_max_lines": max_lines,
-        "replay/completed_games_avg_attack_per_move": attack_sum / episode_length_sum,
-        "replay/completed_games_avg_hold_rate": holds_sum / episode_length_sum,
-    }
-
-
-def assert_rust_inference_artifacts(onnx_path: Path) -> None:
-    conv_path, heads_path, fc_path = split_model_paths(onnx_path)
-    required_paths = [onnx_path, conv_path, heads_path, fc_path]
-    missing_paths = [str(path) for path in required_paths if not path.exists()]
-    if missing_paths:
-        raise RuntimeError(
-            "Model export incomplete for Rust inference; missing artifacts: "
-            + ", ".join(missing_paths)
-        )
-
-
-def required_model_artifact_paths(onnx_path: Path) -> list[Path]:
-    conv_path, heads_path, fc_path = split_model_paths(onnx_path)
-    return [onnx_path, conv_path, heads_path, fc_path]
-
-
-def optional_model_artifact_paths(onnx_path: Path) -> list[Path]:
-    conv_path, heads_path, _ = split_model_paths(onnx_path)
-    return [
-        onnx_path.with_suffix(".onnx.data"),
-        conv_path.with_suffix(".onnx.data"),
-        heads_path.with_suffix(".onnx.data"),
-    ]
-
-
-def _fix_onnx_external_data_references(onnx_path: Path) -> None:
-    """Patch external data location references in an ONNX file to match its filename.
-
-    When an ONNX file with external data (e.g. candidate_step_1000.conv.onnx) is
-    copied to a new name (e.g. incumbent.conv.onnx), the protobuf still references
-    the original data filename. This rewrites those references so tract/onnxruntime
-    can find the co-located .data file.
-    """
-    import onnx
-
-    model = onnx.load(str(onnx_path), load_external_data=False)
-    expected_data_filename = onnx_path.name + ".data"
-    changed = False
-    for tensor in model.graph.initializer:
-        if tensor.data_location == onnx.TensorProto.EXTERNAL:
-            for entry in tensor.external_data:
-                if entry.key == "location" and entry.value != expected_data_filename:
-                    entry.value = expected_data_filename
-                    changed = True
-    if changed:
-        onnx.save_model(model, str(onnx_path))
-
-
-def copy_model_artifact_bundle(
-    source_onnx_path: Path, destination_onnx_path: Path
-) -> None:
-    assert_rust_inference_artifacts(source_onnx_path)
-    destination_onnx_path.parent.mkdir(parents=True, exist_ok=True)
-
-    source_required = required_model_artifact_paths(source_onnx_path)
-    destination_required = required_model_artifact_paths(destination_onnx_path)
-    for source_path, destination_path in zip(source_required, destination_required):
-        shutil.copy2(source_path, destination_path)
-
-    source_optional = optional_model_artifact_paths(source_onnx_path)
-    destination_optional = optional_model_artifact_paths(destination_onnx_path)
-    for source_path, destination_path in zip(source_optional, destination_optional):
-        if source_path.exists():
-            shutil.copy2(source_path, destination_path)
-        else:
-            destination_path.unlink(missing_ok=True)
-
-    # Fix external data references in copied ONNX files — the protobuf embeds
-    # the original source filename (e.g. "candidate_step_68937.conv.onnx.data")
-    # which becomes stale after renaming to incumbent/latest.
-    onnx_files = [destination_onnx_path]
-    dest_conv, dest_heads, _ = split_model_paths(destination_onnx_path)
-    onnx_files.extend([dest_conv, dest_heads])
-    for onnx_file in onnx_files:
-        if onnx_file.exists():
-            _fix_onnx_external_data_references(onnx_file)
 
 
 def roll_interval_deadline(deadline_s: float, interval_s: float, now_s: float) -> float:

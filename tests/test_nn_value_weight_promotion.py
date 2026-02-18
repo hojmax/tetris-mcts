@@ -1,7 +1,7 @@
 import pytest
 
 from tetris_mcts.config import SelfPlayConfig, TrainingConfig
-from tetris_mcts.ml.training import Trainer
+from tetris_mcts.ml.trainer import Trainer
 
 
 def test_candidate_weight_uses_multiplier_excess_as_delta() -> None:
