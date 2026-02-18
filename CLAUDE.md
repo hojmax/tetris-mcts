@@ -257,12 +257,12 @@ tetris_core/src/             # Rust game engine
 
 tetris_mcts/                 # Python package
 ├── config.py                # TrainingConfig dataclass (all hyperparameters)
+├── visualization.py         # Board rendering + replay visualization
 ├── ml/
 │   ├── network.py           # TetrisNet (PyTorch CNN)
 │   ├── training.py          # Trainer class, training loop
 │   ├── loss.py              # Loss functions and metrics
-│   ├── weights.py           # Checkpoint/ONNX export
-│   └── visualization.py     # Board rendering + replay visualization
+│   └── weights.py           # Checkpoint/ONNX export
 └── scripts/
     ├── tetris_game.py              # Interactive Pygame game
     ├── abalations/                 # Network ablation/architecture experiments
