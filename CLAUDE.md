@@ -65,16 +65,16 @@ This caches compiled dependencies across projects, making rebuilds much faster.
 
 ```bash
 # Start new training run (creates training_runs/v0/)
-python scripts/train.py --training.total-steps 100000
+python tetris_bot/scripts/train.py --total_steps 100000
 
 # With custom hyperparameters
-python scripts/train.py \
-    --training.total-steps 500000 \
-    --training.num-simulations 800 \
-    --training.learning-rate 0.0005
+python tetris_bot/scripts/train.py \
+    --total_steps 500000 \
+    --num_simulations 800 \
+    --learning_rate 0.0005
 
 # Resume from checkpoint (creates a new versioned run initialized from v0/latest.pt)
-python scripts/train.py --resume-dir training_runs/v0
+python tetris_bot/scripts/train.py --resume_dir training_runs/v0
 ```
 
 ### Offline Architecture Comparison
@@ -165,11 +165,11 @@ python scripts/ablations/sweep_mcts_config.py \
 
 ```bash
 # Report per-row zero rates for row_fill_counts in a replay snapshot.
-python tetris_mcts/scripts/inspection/row_fill_zero_rates.py \
+python tetris_bot/scripts/inspection/row_fill_zero_rates.py \
     --data_path training_runs/vN/training_data.npz
 
 # Optional: adjust tolerance used for zero checks.
-python tetris_mcts/scripts/inspection/row_fill_zero_rates.py \
+python tetris_bot/scripts/inspection/row_fill_zero_rates.py \
     --data_path training_runs/vN/training_data.npz \
     --epsilon 1e-8
 ```
@@ -267,42 +267,54 @@ tetris_core/src/             # Rust game engine
 └── generator/               # Background game generation
     ├── game_generator.rs
     ├── evaluation.rs
-    └── npz.rs
+    ├── npz.rs
+    └── types.rs             # GameReplay, ReplayMove types
 
 tetris_bot/                 # Python package
-├── config.py                # TrainingConfig dataclass (all hyperparameters)
+├── constants.py             # PROJECT_ROOT, board/action constants
 ├── visualization.py         # Board rendering + replay visualization
+├── run_setup.py             # Run directory management
 ├── ml/
+│   ├── config.py            # TrainingConfig and all hyperparameter dataclasses
 │   ├── network.py           # TetrisNet (PyTorch CNN)
-│   ├── training.py          # Trainer class, training loop
+│   ├── trainer.py           # Trainer class, training loop
 │   ├── loss.py              # Loss functions and metrics
-│   └── weights.py           # Checkpoint/ONNX export
+│   ├── weights.py           # Checkpoint/ONNX export
+│   ├── aux_features.py      # Auxiliary feature encoding
+│   ├── replay_buffer.py     # Replay buffer management and sampling
+│   ├── game_metrics.py      # Per-game metric tracking and aggregation
+│   └── artifacts.py         # WandB artifact management
 └── scripts/
+    ├── train.py                    # Main training entry point
     ├── tetris_game.py              # Interactive Pygame game
     ├── ablations/                 # Network ablation/architecture experiments
     │   ├── average_value_target.py
+    │   ├── benchmark_batch_chance.py
     │   ├── benchmark_batch_size.py
+    │   ├── benchmark_network_size.py
+    │   ├── benchmark_tree_reuse_dummy.py
     │   ├── check_nn_value.py
     │   ├── compare_offline_architectures.py
+    │   ├── compare_offline_conv_depth.py
     │   ├── compare_offline_feature_ablation.py
     │   ├── compare_offline_network_scaling.py
     │   ├── evaluate_nn_value_weight_sweep.py
     │   ├── sweep_mcts_config.py
     │   └── wandb_sweep_lr_model_size.py
-    ├── inspection/                 # Data/MCTS inspection and debugging tools
-    │   ├── analyze_training_data.py
-    │   ├── audit_mcts_tree.py
-    │   ├── buffer_viewer.py
-    │   ├── count_reachable_states.py
-    │   ├── inspect_dirichlet_noise.py
-    │   ├── inspect_onnx_model.py
-    │   ├── inspect_training_data.py
-    │   ├── mcts_visualizer.py
-    │   ├── profile_games.py
-    │   ├── row_fill_zero_rates.py
-    │   ├── replay_viewer.py
-    │   └── value_predictor.py
-    └── utilities/
+    └── inspection/                 # Data/MCTS inspection and debugging tools
+        ├── analyze_training_data.py
+        ├── audit_mcts_tree.py
+        ├── buffer_viewer.py
+        ├── count_reachable_states.py
+        ├── inspect_dirichlet_noise.py
+        ├── inspect_onnx_model.py
+        ├── inspect_training_data.py
+        ├── mcts_visualizer.py
+        ├── profile_games.py
+        ├── render_buffer_frames.py
+        ├── replay_viewer.py
+        ├── row_fill_zero_rates.py
+        └── value_predictor.py
 ```
 
 ## Key Concepts
@@ -359,9 +371,9 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 
 From `config.py` TrainingConfig defaults:
 
-- **MCTS**: 1000 simulations, c_puct=1.5, temperature=0.8
-- **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4
-- **Value Loss**: `use_huber_value_loss=true` by default (Huber loss for value head; set false for MSE)
+- **MCTS**: 2000 simulations, c_puct=1.5, temperature=0.8, reuse_tree=true, max_placements=50, death_penalty=5.0, overhang_penalty_weight=5.0
+- **Training**: batch_size=1024, lr=0.0005, linear schedule to 0.0001 over 200k steps (then constant), weight_decay=1e-4, use_torch_compile=true
+- **Value Loss**: `use_huber_value_loss=false` by default (MSE for value head; set true for Huber)
 - **Architecture**: Conv(1→16) + 1 ResBlock(16) + stride-2 Conv(16→32), gated-fusion hidden size 128, 735 policy outputs, 1 value output
 - **Buffer**: 2M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=1` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=1` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
@@ -374,7 +386,7 @@ From `config.py` TrainingConfig defaults:
 - **Model Promotion Gate**: candidate window=50 games on fixed seeds `0..N`, evaluator noise enabled by default; candidate evaluation carries an explicit `candidate_nn_value_weight`, and promotion atomically updates `(incumbent model, incumbent nn_value_weight)` together. Candidate eval events include per-game results and best/worst game replays for trajectory GIF rendering.
 - **Bootstrap Mode**: starts without NN, uses 4000 simulations until first promoted model
 
-Override via CLI: `--training.num-simulations 800 --training.learning-rate 0.0005`
+Override via CLI: `--num_simulations 800 --learning_rate 0.0005`
 
 Temperature behavior:
 
@@ -385,8 +397,8 @@ Temperature behavior:
 
 ```python
 policy_loss = -sum(target_policy * log(masked_policy))  # Cross-entropy
-value_loss = Huber(predicted_value, target_value)  # default
-# or MSE when use_huber_value_loss = false
+value_loss = MSE(predicted_value, target_value)  # default
+# or Huber when use_huber_value_loss = true
 total_loss = policy_loss + value_loss
 ```
 
@@ -552,7 +564,7 @@ Use `simple_parsing` with dataclasses for CLI scripts:
 from dataclasses import dataclass
 from pathlib import Path
 from simple_parsing import parse
-from tetris.config import PROJECT_ROOT
+from tetris_bot.constants import PROJECT_ROOT
 
 @dataclass
 class ScriptArgs:
@@ -653,7 +665,7 @@ logger.error("Failed to process", error=str(e))
 - For script-relative paths within the same directory, use `Path(__file__).parent`
 
 ```python
-from tetris.config import PROJECT_ROOT
+from tetris_bot.constants import PROJECT_ROOT
 
 # ✅ GOOD: Relative to project root with explicit separators
 model_path = PROJECT_ROOT / "benchmarks" / "models" / "model.onnx"

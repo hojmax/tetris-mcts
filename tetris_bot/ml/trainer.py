@@ -776,28 +776,22 @@ class Trainer:
 
         # Create MCTS config for generator
         mcts_config = MCTSConfig()
-        mcts_config.self_play.num_simulations = self.config.self_play.num_simulations
-        mcts_config.self_play.c_puct = self.config.self_play.c_puct
-        mcts_config.self_play.temperature = self.config.self_play.temperature
-        mcts_config.self_play.dirichlet_alpha = self.config.self_play.dirichlet_alpha
-        mcts_config.self_play.dirichlet_epsilon = (
-            self.config.self_play.dirichlet_epsilon
-        )
-        mcts_config.self_play.visit_sampling_epsilon = (
-            self.config.self_play.visit_sampling_epsilon
-        )
-        mcts_config.self_play.max_placements = self.config.self_play.max_placements
-        mcts_config.self_play.death_penalty = self.config.self_play.death_penalty
-        mcts_config.self_play.overhang_penalty_weight = (
-            self.config.self_play.overhang_penalty_weight
-        )
-        mcts_config.self_play.nn_value_weight = self.config.self_play.nn_value_weight
-        mcts_config.self_play.q_scale = (
+        mcts_config.num_simulations = self.config.self_play.num_simulations
+        mcts_config.c_puct = self.config.self_play.c_puct
+        mcts_config.temperature = self.config.self_play.temperature
+        mcts_config.dirichlet_alpha = self.config.self_play.dirichlet_alpha
+        mcts_config.dirichlet_epsilon = self.config.self_play.dirichlet_epsilon
+        mcts_config.visit_sampling_epsilon = self.config.self_play.visit_sampling_epsilon
+        mcts_config.max_placements = self.config.self_play.max_placements
+        mcts_config.death_penalty = self.config.self_play.death_penalty
+        mcts_config.overhang_penalty_weight = self.config.self_play.overhang_penalty_weight
+        mcts_config.nn_value_weight = self.config.self_play.nn_value_weight
+        mcts_config.q_scale = (
             self.config.self_play.q_scale
             if self.config.self_play.use_tanh_q_normalization
             else None
         )
-        mcts_config.self_play.reuse_tree = self.config.self_play.reuse_tree
+        mcts_config.reuse_tree = self.config.self_play.reuse_tree
 
         # Start background game generator
         training_data_path = self.config.run.data_dir / TRAINING_DATA_FILENAME
