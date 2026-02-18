@@ -39,21 +39,27 @@
 Done: ✅
 In progress: 🟨
 
-## tetris_core/src/scoring.rs ✅
+## Rust Code
 
-## tetris_core/src/piece.rs ✅
+### tetris_core/src/scoring.rs ✅
 
-## tetris_core/src/nn.rs ✅
+### tetris_core/src/piece.rs ✅
 
-## tetris_core/src/moves.rs ✅
+### tetris_core/src/nn.rs ✅
 
-## tetris_core/src/kicks.rs ✅
+### tetris_core/src/moves.rs ✅
 
-## tetris_core/src/constants.rs ✅
+### tetris_core/src/kicks.rs ✅
 
-## tetris_core/src/env/board.rs ✅
+### tetris_core/src/constants.rs ✅
 
-## tetris_core/src/env/clearing.rs ✅
+### tetris_core/src/env/board.rs ✅
+
+### tetris_core/src/env/clearing.rs ✅
+
+## Python Code
+
+### tetris_mcts/config.py 🟨
 
 # Backlog
 
