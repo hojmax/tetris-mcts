@@ -89,10 +89,6 @@ AUX_FEATURES = PIECE_AUX_FEATURES + BOARD_STATS_FEATURES  # 80
 COMBO_NORMALIZATION_MAX = 4.0
 
 
-def normalize_combo_for_feature(combo: float) -> float:
-    return min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
-
-
 def build_aux_features(
     current_piece: np.ndarray,
     hold_piece: np.ndarray,
