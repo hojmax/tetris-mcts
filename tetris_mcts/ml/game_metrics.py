@@ -6,7 +6,6 @@ from tetris_mcts.ml.aux_features import AUX_FEATURE_LAYOUT
 
 
 def compute_batch_feature_metrics(
-    boards: torch.Tensor,
     aux: torch.Tensor,
     value_targets: torch.Tensor,
     overhang_fields: torch.Tensor,

@@ -545,7 +545,6 @@ class Trainer:
         }
         metrics.update(
             compute_batch_feature_metrics(
-                boards=boards,
                 aux=aux,
                 value_targets=value_targets,
                 overhang_fields=overhang_fields,
