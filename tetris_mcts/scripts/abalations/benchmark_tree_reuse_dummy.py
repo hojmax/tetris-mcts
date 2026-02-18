@@ -4,6 +4,7 @@ Runs evaluate_model_without_nn for each combination of
 (num_simulations, reuse_tree) on fixed seeds and reports avg attack,
 std, and attack/piece.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,9 @@ class ScriptArgs:
     num_seeds: int = 20  # Number of fixed seeds (0..N)
     seed_start: int = 0  # First seed
     max_placements: int = 50  # Max placements per game (matches training default)
-    output_json: Path = PROJECT_ROOT / "benchmarks" / "tree_reuse_dummy.jsonl"  # Output path
+    output_json: Path = (
+        PROJECT_ROOT / "benchmarks" / "tree_reuse_dummy.jsonl"
+    )  # Output path
 
 
 def build_config(num_simulations: int, reuse_tree: bool) -> MCTSConfig:
