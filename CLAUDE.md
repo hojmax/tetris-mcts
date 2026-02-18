@@ -262,8 +262,7 @@ tetris_mcts/                 # Python package
 │   ├── training.py          # Trainer class, training loop
 │   ├── loss.py              # Loss functions and metrics
 │   ├── weights.py           # Checkpoint/ONNX export
-│   ├── visualization.py     # Board rendering + replay visualization
-│   └── value_predictor.py
+│   └── visualization.py     # Board rendering + replay visualization
 └── scripts/
     ├── tetris_game.py              # Interactive Pygame game
     ├── abalations/                 # Network ablation/architecture experiments
@@ -286,7 +285,8 @@ tetris_mcts/                 # Python package
     │   ├── inspect_training_data.py
     │   ├── mcts_visualizer.py
     │   ├── profile_games.py
-    │   └── replay_viewer.py
+    │   ├── replay_viewer.py
+    │   └── value_predictor.py
     └── utilities/
 ```
 

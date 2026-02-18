@@ -19,7 +19,7 @@ from tetris_mcts.constants import (
 )
 from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
-from tetris_mcts.ml.value_predictor import try_load_value_predictor
+from tetris_mcts.scripts.inspection.value_predictor import try_load_value_predictor
 from tetris_mcts.ml.visualization import compute_spawn_and_ghost, render_board
 
 SCRIPT_DIR = Path(__file__).parent

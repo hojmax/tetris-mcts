@@ -35,7 +35,7 @@ from tetris_mcts.constants import (
 )
 from tetris_mcts.config import TrainingConfig
 from tetris_mcts.ml.network import COMBO_NORMALIZATION_MAX
-from tetris_mcts.ml.value_predictor import ValuePredictor
+from tetris_mcts.scripts.inspection.value_predictor import ValuePredictor
 
 PIECE_CHARS = PIECE_NAMES
 PIECE_COLORS = ["cyan", "yellow", "magenta", "green", "red", "blue", "bright_red"]
