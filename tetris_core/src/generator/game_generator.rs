@@ -20,7 +20,7 @@ use crate::env::TetrisEnv;
 use crate::mcts::GameStats;
 use crate::mcts::{GameResult, GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS};
 
-use super::evaluation::{GameReplay, ReplayMove};
+use super::types::{GameReplay, ReplayMove};
 use super::npz::{read_examples_from_npz, write_examples_slices_to_npz};
 
 /// Aggregate game statistics (thread-safe counters).
