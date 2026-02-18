@@ -12,7 +12,7 @@ from tetris_mcts.constants import (
     PROJECT_ROOT,
     QUEUE_SIZE,
 )
-from tetris_mcts.ml.visualization import compute_spawn_and_ghost, render_board
+from tetris_mcts.visualization import compute_spawn_and_ghost, render_board
 from tetris_mcts.scripts.inspection.inspect_training_data import (
     build_game_slices,
     get_piece_type,

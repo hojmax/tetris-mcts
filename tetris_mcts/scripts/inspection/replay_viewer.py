@@ -20,7 +20,7 @@ from tetris_mcts.constants import (
     DEFAULT_GIF_FRAME_DURATION_MS,
     QUEUE_SIZE,
 )
-from tetris_mcts.ml.visualization import render_board
+from tetris_mcts.visualization import render_board
 
 
 def load_and_render_replay(replay_data: dict, output_path: Path):

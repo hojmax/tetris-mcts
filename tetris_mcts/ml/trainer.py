@@ -29,7 +29,7 @@ from tetris_mcts.ml.weights import (
     split_model_paths,
 )
 from tetris_mcts.ml.loss import RunningLossBalancer, compute_loss, compute_metrics
-from tetris_mcts.ml.visualization import create_trajectory_gif, render_replay
+from tetris_mcts.visualization import create_trajectory_gif, render_replay
 from tetris_mcts.ml.artifacts import (
     assert_rust_inference_artifacts,
     copy_model_artifact_bundle,
