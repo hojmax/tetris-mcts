@@ -33,6 +33,7 @@ from tetris_mcts.config import (
     PIECE_COLORS,
     PIECE_NAMES,
     PROJECT_ROOT,
+    QUEUE_SIZE,
 )
 
 # Global cache for TetrisEnv states (keyed by node ID)
@@ -1392,11 +1393,36 @@ def run_mcts(
         tree, max_nodes_limit, show_unvisited, config.c_puct
     )
 
-    # Cache TetrisEnv states for computing resulting boards of virtual nodes
+    # Cache TetrisEnv states by replaying actions from the root.
+    # Tree nodes from mcts_clone() have empty board_piece_types (performance opt).
+    # Replaying from root preserves board_piece_types so child boards render with
+    # correct piece colors instead of uniform gray.
     global _env_cache
     _env_cache.clear()
+
+    # Build a node_type lookup from tree.nodes (needed before tree_dict is built)
+    _node_types = {n.id: n.node_type for n in tree.nodes}
+
     for n in tree.nodes:
-        _env_cache[n.id] = n.state.clone_state()
+        if n.parent_id is None:
+            # Root: full clone preserves board_piece_types from the original env
+            _env_cache[n.id] = n.state.clone_state()
+        elif n.parent_id in _env_cache and n.edge_from_parent is not None:
+            parent_env = _env_cache[n.parent_id].clone_state()
+            if _node_types[n.parent_id] == "decision":
+                # Chance node child: parent executed this action
+                result = parent_env.execute_action_index(n.edge_from_parent)
+                if result is None:
+                    _env_cache[n.id] = n.state.clone_state()
+                    continue
+                parent_env.truncate_queue(QUEUE_SIZE)
+            else:
+                # Decision node child: chance outcome added this piece to queue
+                parent_env.push_queue_piece(n.edge_from_parent)
+            _env_cache[n.id] = parent_env
+        else:
+            # Fallback: use tree node state directly (no board_piece_types)
+            _env_cache[n.id] = n.state.clone_state()
 
     # Store tree data for click handling (nn_value now comes from Rust)
     tree_dict = {
@@ -1418,7 +1444,11 @@ def run_mcts(
                 "parent_id": n.parent_id,
                 "edge_from_parent": n.edge_from_parent,
                 "board": list(n.state.get_board()),
-                "board_piece_types": list(n.state.get_board_piece_types()),
+                "board_piece_types": list(
+                    _env_cache[n.id].get_board_piece_types()
+                    if n.id in _env_cache
+                    else n.state.get_board_piece_types()
+                ),
                 "current_piece": n.state.get_current_piece().piece_type
                 if n.state.get_current_piece()
                 else None,
