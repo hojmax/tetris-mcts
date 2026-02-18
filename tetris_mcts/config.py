@@ -137,4 +137,3 @@ class TrainingConfig:
     # WandB
     project_name: str = "tetris-alphazero"
     run_name: str | None = None
-
