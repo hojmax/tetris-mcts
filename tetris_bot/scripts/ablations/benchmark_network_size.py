@@ -17,12 +17,13 @@ from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model
 from tetris_bot.constants import BENCHMARKS_DIR
-from tetris_bot.ml.config import TrainingConfig
+from tetris_bot.ml.config import NetworkConfig, SelfPlayConfig
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import export_split_models
 
 logger = structlog.get_logger()
-DEFAULT_CONFIG = TrainingConfig()
+_DEFAULT_NETWORK = NetworkConfig()
+_DEFAULT_SELF_PLAY = SelfPlayConfig()
 
 
 @dataclass
@@ -33,20 +34,20 @@ class BenchmarkArgs:
     simulations: int = 200  # MCTS simulations per move
     seed_start: int = 42  # Starting seed for deterministic games
     mcts_seed: int = 123  # Fixed MCTS RNG seed for reproducibility
-    max_placements: int = DEFAULT_CONFIG.max_placements
-    c_puct: float = DEFAULT_CONFIG.c_puct
+    max_placements: int = _DEFAULT_SELF_PLAY.max_placements
+    c_puct: float = _DEFAULT_SELF_PLAY.c_puct
     num_runs: int = 5  # Repeat each variant this many times
     output: Path = BENCHMARKS_DIR / "network_size_benchmark.jsonl"
 
 
 def export_model(fc_hidden: int, label: str, output_dir: Path) -> Path:
     model = TetrisNet(
-        trunk_channels=DEFAULT_CONFIG.trunk_channels,
-        num_conv_residual_blocks=DEFAULT_CONFIG.num_conv_residual_blocks,
-        reduction_channels=DEFAULT_CONFIG.reduction_channels,
+        trunk_channels=_DEFAULT_NETWORK.trunk_channels,
+        num_conv_residual_blocks=_DEFAULT_NETWORK.num_conv_residual_blocks,
+        reduction_channels=_DEFAULT_NETWORK.reduction_channels,
         fc_hidden=fc_hidden,
-        conv_kernel_size=DEFAULT_CONFIG.conv_kernel_size,
-        conv_padding=DEFAULT_CONFIG.conv_padding,
+        conv_kernel_size=_DEFAULT_NETWORK.conv_kernel_size,
+        conv_padding=_DEFAULT_NETWORK.conv_padding,
     )
     model.eval()
 

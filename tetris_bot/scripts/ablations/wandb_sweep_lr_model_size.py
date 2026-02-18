@@ -8,11 +8,13 @@ from simple_parsing import parse
 from tetris_bot.ml.config import (
     NetworkConfig,
     OptimizerConfig,
+    ReplayConfig,
     RunConfig,
+    SelfPlayConfig,
     TrainingConfig,
 )
-from tetris_bot.train import ScriptArgs as TrainScriptArgs
-from tetris_bot.train import main as train_main
+from tetris_bot.scripts.train import ScriptArgs as TrainScriptArgs
+from tetris_bot.scripts.train import main as train_main
 
 logger = structlog.get_logger()
 
@@ -144,6 +146,8 @@ def build_training_config(
             lr_decay_steps=args.lr_decay_steps,
             lr_min_factor=args.lr_min_factor,
         ),
+        self_play=SelfPlayConfig(),
+        replay=ReplayConfig(),
         run=RunConfig(
             project_name=args.project_name,
             run_name=f"{args.run_name_prefix}-{run_name}",

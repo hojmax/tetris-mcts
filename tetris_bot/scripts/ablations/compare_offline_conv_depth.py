@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
-from tetris_bot.ml.config import TrainingConfig
+from tetris_bot.ml.config import SelfPlayConfig
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -72,7 +72,7 @@ class ScriptArgs:
     aux_hidden: int = 24
     conv_kernel_size: int = 3
     conv_padding: int = 1
-    max_placements: int = TrainingConfig.max_placements
+    max_placements: int = SelfPlayConfig().max_placements
 
     wandb_project: str = "tetris-mcts-offline"
     wandb_run_name: str | None = None
@@ -299,7 +299,6 @@ def main(args: ScriptArgs) -> None:
                 selected_global_indices=selected_global_indices,
                 mode=preload_mode,
                 train_device=device,
-                max_placements=args.max_placements,
             )
         preload_sec = time.perf_counter() - preload_start
         source = OfflineDataSource(
