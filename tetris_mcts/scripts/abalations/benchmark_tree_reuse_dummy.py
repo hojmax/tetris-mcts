@@ -17,7 +17,6 @@ import structlog
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model_without_nn
-from tetris_mcts.constants import PROJECT_ROOT
 
 logger = structlog.get_logger()
 
@@ -32,9 +31,9 @@ class ScriptArgs:
     num_seeds: int = 20  # Number of fixed seeds (0..N)
     seed_start: int = 0  # First seed
     max_placements: int = 50  # Max placements per game (matches training default)
-    output_json: Path = (  # Output path
-        PROJECT_ROOT / "benchmarks" / "tree_reuse_dummy.jsonl"
-    )
+    output_json: Path = Path(
+        "benchmarks/tree_reuse_dummy.jsonl"
+    )  # Output path (relative to cwd)
 
 
 def build_config(num_simulations: int, reuse_tree: bool) -> MCTSConfig:
@@ -43,9 +42,13 @@ def build_config(num_simulations: int, reuse_tree: bool) -> MCTSConfig:
     config.reuse_tree = reuse_tree
     # Match training bootstrap settings (game_generator.rs build_rollout_config):
     # bootstrap mode forces q_scale=None (min-max normalization, not tanh)
-    # so sparse line-clear rewards get full [0,1] signal instead of being tanh-squashed.
     config.q_scale = None
     config.dirichlet_alpha = 0.02  # training default (not MCTSConfig default 0.15)
+    # death_penalty: negative signal for topout, discoverable with 1-2 levels of lookahead
+    config.death_penalty = 5.0
+    # overhang_penalty_weight: penalizes holes covered by pieces during search,
+    # teaches flat stacking without needing deep line-clear lookahead
+    config.overhang_penalty_weight = 5.0
     return config
 
 
