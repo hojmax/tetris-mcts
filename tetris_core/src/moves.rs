@@ -41,6 +41,8 @@ const X_STATES: usize = 16; // x in [-3, 12]
 const Y_MIN: i32 = -3;
 const Y_STATES: usize = 26; // y in [-3, 22]
 const ROT_STATES: usize = 4;
+const X_STRIDE: usize = Y_STATES * ROT_STATES;
+const Y_STRIDE: usize = ROT_STATES;
 const NUM_STATE_INDICES: usize = X_STATES * Y_STATES * ROT_STATES; // 1,664
 const VISITED_WORDS: usize = (NUM_STATE_INDICES + 63) / 64; // 26
 
@@ -86,20 +88,37 @@ pub struct PlacementParams {
 /// Board representation for collision checking (borrows cells to avoid cloning)
 pub struct Board<'a> {
     width: usize,
-    width_i32: i32,
-    height_i32: i32,
+    width_u32: u32,
+    height_u32: u32,
     cells: &'a [u8],
+    column_masks: Option<Vec<u32>>,
 }
 
 impl<'a> Board<'a> {
     pub fn new(width: usize, height: usize, cells: &'a [u8]) -> Self {
-        debug_assert!(width <= i32::MAX as usize);
-        debug_assert!(height <= i32::MAX as usize);
+        debug_assert!(width <= u32::MAX as usize);
+        debug_assert!(height <= u32::MAX as usize);
+        let column_masks = if height <= u32::BITS as usize {
+            let mut masks = vec![0u32; width];
+            for y in 0..height {
+                let row = &cells[y * width..(y + 1) * width];
+                let row_bit = 1u32 << (y as u32);
+                for (x, &cell) in row.iter().enumerate() {
+                    if cell != 0 {
+                        masks[x] |= row_bit;
+                    }
+                }
+            }
+            Some(masks)
+        } else {
+            None
+        };
         Board {
             width,
-            width_i32: width as i32,
-            height_i32: height as i32,
+            width_u32: width as u32,
+            height_u32: height as u32,
             cells,
+            column_masks,
         }
     }
 
@@ -110,6 +129,33 @@ impl<'a> Board<'a> {
 
     /// Get the final y position after hard dropping from a state
     fn get_drop_y(&self, piece_type: usize, state: &PieceState) -> i32 {
+        if let Some(column_masks) = &self.column_masks {
+            let offsets = &TETROMINO_CELLS[piece_type][state.rotation];
+            let mut min_drop = i32::MAX;
+            for &(dx, dy) in offsets.iter() {
+                let cx = state.x + dx as i32;
+                let cy = state.y + dy as i32;
+                debug_assert!((cx as u32) < self.width_u32);
+                debug_assert!((cy as u32) < self.height_u32);
+
+                let search_start = cy as u32 + 1;
+                let next_occupied_row = if search_start >= self.height_u32 {
+                    self.height_u32 as i32
+                } else {
+                    let shifted = column_masks[cx as usize] >> search_start;
+                    if shifted == 0 {
+                        self.height_u32 as i32
+                    } else {
+                        (search_start + shifted.trailing_zeros()) as i32
+                    }
+                };
+                let cell_drop = next_occupied_row - 1 - cy;
+                min_drop = min_drop.min(cell_drop);
+            }
+            debug_assert!(min_drop >= 0);
+            return state.y + min_drop;
+        }
+
         // Intentionally step downward with exact collision checks.
         // In move-generation BFS we evaluate arbitrary intermediate states
         // (including kick/slide positions under overhangs), where a simple
@@ -123,19 +169,50 @@ impl<'a> Board<'a> {
 
     #[inline]
     fn is_valid_position_at(&self, piece_type: usize, rotation: usize, x: i32, y: i32) -> bool {
-        let offsets = &TETROMINO_CELLS[piece_type][rotation];
-        for &(dx, dy) in offsets.iter() {
-            let cx = x + dx as i32;
-            let cy = y + dy as i32;
-            if cx < 0 || cx >= self.width_i32 || cy < 0 || cy >= self.height_i32 {
-                return false;
-            }
-            let row_base = cy as usize * self.width;
-            let cell_idx = row_base + cx as usize;
-            if unsafe { *self.cells.get_unchecked(cell_idx) } != 0 {
-                return false;
-            }
+        let [(dx0, dy0), (dx1, dy1), (dx2, dy2), (dx3, dy3)] =
+            TETROMINO_CELLS[piece_type][rotation];
+        let cells_ptr = self.cells.as_ptr();
+
+        let cx0 = x + dx0 as i32;
+        let cy0 = y + dy0 as i32;
+        if (cx0 as u32) >= self.width_u32 || (cy0 as u32) >= self.height_u32 {
+            return false;
         }
+        let idx0 = cy0 as usize * self.width + cx0 as usize;
+        if unsafe { *cells_ptr.add(idx0) } != 0 {
+            return false;
+        }
+
+        let cx1 = x + dx1 as i32;
+        let cy1 = y + dy1 as i32;
+        if (cx1 as u32) >= self.width_u32 || (cy1 as u32) >= self.height_u32 {
+            return false;
+        }
+        let idx1 = cy1 as usize * self.width + cx1 as usize;
+        if unsafe { *cells_ptr.add(idx1) } != 0 {
+            return false;
+        }
+
+        let cx2 = x + dx2 as i32;
+        let cy2 = y + dy2 as i32;
+        if (cx2 as u32) >= self.width_u32 || (cy2 as u32) >= self.height_u32 {
+            return false;
+        }
+        let idx2 = cy2 as usize * self.width + cx2 as usize;
+        if unsafe { *cells_ptr.add(idx2) } != 0 {
+            return false;
+        }
+
+        let cx3 = x + dx3 as i32;
+        let cy3 = y + dy3 as i32;
+        if (cx3 as u32) >= self.width_u32 || (cy3 as u32) >= self.height_u32 {
+            return false;
+        }
+        let idx3 = cy3 as usize * self.width + cx3 as usize;
+        if unsafe { *cells_ptr.add(idx3) } != 0 {
+            return false;
+        }
+
         true
     }
 }
@@ -182,21 +259,21 @@ fn try_rotate(
 }
 
 /// Convert piece state to bitset index
-#[inline]
+#[inline(always)]
 fn state_to_index(state: &PieceState) -> usize {
-    debug_assert!((X_MIN..(X_MIN + X_STATES as i32)).contains(&state.x));
-    debug_assert!((Y_MIN..(Y_MIN + Y_STATES as i32)).contains(&state.y));
+    debug_assert!(state.x >= X_MIN && state.x < X_MIN + X_STATES as i32);
+    debug_assert!(state.y >= Y_MIN && state.y < Y_MIN + Y_STATES as i32);
     debug_assert!(state.rotation < ROT_STATES);
 
     let x_offset = (state.x - X_MIN) as usize;
     let y_offset = (state.y - Y_MIN) as usize;
-    x_offset * (Y_STATES * ROT_STATES) + y_offset * ROT_STATES + state.rotation
+    x_offset * X_STRIDE + y_offset * Y_STRIDE + state.rotation
 }
 
 #[inline]
 fn index_to_state(idx: usize) -> PieceState {
-    let x_offset = idx / (Y_STATES * ROT_STATES);
-    let rem = idx % (Y_STATES * ROT_STATES);
+    let x_offset = idx / X_STRIDE;
+    let rem = idx % X_STRIDE;
     let y_offset = rem / ROT_STATES;
     let rotation = rem % ROT_STATES;
     PieceState {
@@ -454,17 +531,19 @@ pub fn find_all_placement_params(
     }
 
     let mut visited = [0u64; VISITED_WORDS];
-    let mut queue: VecDeque<PieceState> = VecDeque::with_capacity(128);
+    let mut queue: Vec<(PieceState, usize)> = Vec::with_capacity(128);
+    let mut queue_head = 0usize;
     let mut depth = [u16::MAX; NUM_STATE_INDICES];
     let mut last_kick_index = [0u8; NUM_STATE_INDICES];
     let mut last_move_was_rotation = [false; NUM_STATE_INDICES];
     let mut final_best_source = [None; NUM_STATE_INDICES];
     let mut final_best_depth = [u16::MAX; NUM_STATE_INDICES];
+    let mut final_candidate_indices = Vec::with_capacity(128);
 
     let start_idx = state_to_index(&start_state);
     visited[start_idx / 64] |= 1u64 << (start_idx % 64);
     depth[start_idx] = 0;
-    queue.push_back(start_state);
+    queue.push((start_state, start_idx));
 
     let transitions = [
         (-1, 0, None),
@@ -474,16 +553,17 @@ pub fn find_all_placement_params(
         (0, 0, Some(false)),
     ];
 
-    while let Some(state) = queue.pop_front() {
-        let state_idx = state_to_index(&state);
+    while queue_head < queue.len() {
+        let (state, state_idx) = queue[queue_head];
+        queue_head += 1;
 
         let final_y = board.get_drop_y(piece_type, &state);
-        let final_state = PieceState {
-            x: state.x,
-            y: final_y,
-            rotation: state.rotation,
-        };
-        let final_idx = state_to_index(&final_state);
+        let final_idx = ((state.x - X_MIN) as usize) * X_STRIDE
+            + ((final_y - Y_MIN) as usize) * Y_STRIDE
+            + state.rotation;
+        if final_best_source[final_idx].is_none() {
+            final_candidate_indices.push(final_idx);
+        }
         if depth[state_idx] < final_best_depth[final_idx] {
             final_best_depth[final_idx] = depth[state_idx];
             final_best_source[final_idx] = Some(state_idx);
@@ -521,7 +601,19 @@ pub fn find_all_placement_params(
                 continue;
             };
 
-            let idx = state_to_index(&new_state);
+            let idx = if is_rotation {
+                state_to_index(&new_state)
+            } else {
+                match (dx, dy) {
+                    (-1, 0) => {
+                        debug_assert!(state_idx >= X_STRIDE);
+                        state_idx - X_STRIDE
+                    }
+                    (1, 0) => state_idx + X_STRIDE,
+                    (0, 1) => state_idx + Y_STRIDE,
+                    _ => state_to_index(&new_state),
+                }
+            };
             let word = idx / 64;
             let bit = idx % 64;
             let is_visited = (visited[word] & (1u64 << bit)) != 0;
@@ -537,7 +629,7 @@ pub fn find_all_placement_params(
                 depth[idx] = candidate_depth;
                 last_kick_index[idx] = candidate_last_kick_index;
                 last_move_was_rotation[idx] = is_rotation;
-                queue.push_back(new_state);
+                queue.push((new_state, idx));
             } else if depth[idx] == candidate_depth
                 && prefer_tspin_safe_path(is_rotation, last_move_was_rotation[idx])
             {
@@ -547,12 +639,16 @@ pub fn find_all_placement_params(
         }
     }
 
-    let mut seen_cells: HashSet<u64> = HashSet::new();
-    let mut placements: Vec<PlacementParams> = Vec::new();
+    final_candidate_indices.sort_unstable();
+
+    let mut seen_cells = [0u64; crate::mcts::NUM_PLACEMENT_ACTIONS];
+    let mut seen_cells_len = 0usize;
+    let mut placements_by_action: [Option<PlacementParams>; crate::mcts::NUM_ACTIONS] =
+        [None; crate::mcts::NUM_ACTIONS];
     let action_space = get_action_space();
 
-    for (final_idx, source_idx) in final_best_source.iter().enumerate() {
-        let Some(source_idx) = source_idx else {
+    for &final_idx in &final_candidate_indices {
+        let Some(source_idx) = final_best_source[final_idx] else {
             continue;
         };
 
@@ -575,9 +671,21 @@ pub fn find_all_placement_params(
             | ((packed_cells[2] as u64) << 16)
             | packed_cells[3] as u64;
 
-        if !seen_cells.insert(cell_key) {
+        if seen_cells[..seen_cells_len]
+            .iter()
+            .any(|&existing_key| existing_key == cell_key)
+        {
             continue;
         }
+        debug_assert!(
+            seen_cells_len < seen_cells.len(),
+            "Seen-cell cache overflow while deduplicating placements"
+        );
+        if seen_cells_len >= seen_cells.len() {
+            continue;
+        }
+        seen_cells[seen_cells_len] = cell_key;
+        seen_cells_len += 1;
 
         let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
             debug_assert!(
@@ -587,19 +695,25 @@ pub fn find_all_placement_params(
             );
             continue;
         };
-
-        placements.push(PlacementParams {
+        debug_assert!(
+            placements_by_action[action_index].is_none(),
+            "Duplicate action index {} in placement params",
+            action_index
+        );
+        placements_by_action[action_index] = Some(PlacementParams {
             x,
             y,
             rotation,
-            last_kick_index: last_kick_index[*source_idx] as usize,
-            last_move_was_rotation: last_move_was_rotation[*source_idx],
+            last_kick_index: last_kick_index[source_idx] as usize,
+            last_move_was_rotation: last_move_was_rotation[source_idx],
             action_index,
         });
     }
 
-    // Action-index order gives deterministic cache-index mapping.
-    placements.sort_unstable_by_key(|placement| placement.action_index);
+    let mut placements = Vec::with_capacity(seen_cells_len);
+    for placement in placements_by_action.into_iter().flatten() {
+        placements.push(placement);
+    }
     placements
 }
 
