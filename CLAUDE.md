@@ -11,7 +11,8 @@ Treat this document as a living resource, not static documentation.
 
 ## Feature Worktree Policy (All Agents)
 
-- For any feature work that changes code, create a dedicated git worktree under:
+- Small changes can be done directly in the primary checkout on `main` (for example: tiny bug fixes, docs tweaks, or narrowly scoped edits that do not need isolation).
+- For feature work or larger/riskier code changes, create a dedicated git worktree under:
   `/Users/axelhojmark/Desktop/tetris-mcts-worktrees/`
 - Do not implement feature changes directly in the primary checkout at:
   `/Users/axelhojmark/Desktop/tetris-mcts`
