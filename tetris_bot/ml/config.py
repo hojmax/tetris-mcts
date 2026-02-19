@@ -13,7 +13,7 @@ class NetworkConfig:
     trunk_channels: int = 16
     num_conv_residual_blocks: int = 1
     reduction_channels: int = 32
-    fc_hidden: int = 128
+    fc_hidden: int = 48
     conv_kernel_size: int = 3
     conv_padding: int = 1
 
