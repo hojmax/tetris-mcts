@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::mcts::HOLD_ACTION_INDEX;
-use crate::moves::{find_all_placements, Board, Placement};
+use crate::moves::{find_all_placement_params, find_all_placements, Board, Placement};
 use crate::piece::{spawn_x, spawn_y, Piece};
 use crate::scoring::AttackResult;
 
@@ -498,14 +498,11 @@ impl TetrisEnv {
     }
 
     pub fn get_possible_placements(&self) -> Vec<Placement> {
-        self.ensure_placements_cache();
-        let cache_ref = self.placements_cache.borrow();
-        cache_ref
-            .as_ref()
-            .expect("placements cache should exist after ensure_placements_cache")
-            .placements
-            .as_ref()
-            .clone()
+        let Some(piece) = self.current_piece.as_ref() else {
+            return Vec::new();
+        };
+        let board = Board::new(self.width, self.height, self.board_cells());
+        find_all_placements(&board, piece.piece_type, piece.x, piece.y)
     }
 
     pub fn get_placements_for_piece(&self, piece_type: usize) -> Vec<Placement> {
@@ -574,7 +571,7 @@ impl TetrisEnv {
         }
 
         let board = Board::new(self.width, self.height, self.board_cells());
-        let placements = find_all_placements(&board, piece.piece_type, piece.x, piece.y);
+        let placements = find_all_placement_params(&board, piece.piece_type, piece.x, piece.y);
 
         let mut action_to_placement_idx = vec![None; crate::mcts::NUM_ACTIONS];
         let mut placement_action_indices = Vec::with_capacity(placements.len());
@@ -642,9 +639,9 @@ impl TetrisEnv {
             .flatten()?;
         let placement = &cache.placements[placement_idx];
         Some((
-            placement.piece.x,
-            placement.piece.y,
-            placement.piece.rotation,
+            placement.x,
+            placement.y,
+            placement.rotation,
             placement.last_move_was_rotation,
             placement.last_kick_index,
         ))

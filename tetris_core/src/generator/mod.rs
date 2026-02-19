@@ -11,9 +11,9 @@ pub mod npz;
 pub(crate) mod types;
 
 pub use evaluation::{evaluate_model, evaluate_model_without_nn, EvalResult};
-pub use types::{GameReplay, ReplayMove};
 pub use game_generator::GameGenerator;
 pub use npz::{read_examples_from_npz, write_examples_to_npz};
+pub use types::{GameReplay, ReplayMove};
 
 #[cfg(test)]
 pub(crate) mod test_utils {

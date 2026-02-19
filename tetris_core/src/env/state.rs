@@ -12,12 +12,12 @@ use std::sync::Arc;
 use crate::constants::{
     BOARD_HEIGHT, BOARD_WIDTH, DEFAULT_LOCK_DELAY_MS, DEFAULT_LOCK_MOVES, MAX_BOARD_CELLS,
 };
-use crate::moves::Placement;
+use crate::moves::PlacementParams;
 use crate::scoring::AttackResult;
 
 #[derive(Clone)]
 pub(crate) struct PlacementCache {
-    pub placements: Arc<Vec<Placement>>,
+    pub placements: Arc<Vec<PlacementParams>>,
     pub action_to_placement_idx: Arc<Vec<Option<usize>>>,
     pub valid_action_indices: Arc<Vec<usize>>,
     pub action_mask: Arc<Vec<bool>>,

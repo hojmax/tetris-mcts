@@ -66,6 +66,41 @@ This automatically:
 
 **No code changes needed** - samply captures everything automatically!
 
+### Function-Level Profiling (Dummy vs ONNX)
+
+Use paired sampled profiles with identical seeds/config so hotspot shifts are meaningful:
+
+```bash
+# 1) MCTS-only profile (no NN inference)
+samply record --save-only --unstable-presymbolicate \
+  -o benchmarks/samply_dummy_profile.json.gz -- \
+  python tetris_bot/scripts/inspection/profile_games.py \
+    --use_dummy_network true \
+    --num_games 3 \
+    --simulations 300 \
+    --max_placements 50 \
+    --seed_start 100 \
+    --mcts_seed 123
+
+# 2) Full MCTS + ONNX profile
+samply record --save-only --unstable-presymbolicate \
+  -o benchmarks/samply_onnx_profile.json.gz -- \
+  python tetris_bot/scripts/inspection/profile_games.py \
+    --model_path training_runs/v45/checkpoints/latest.onnx \
+    --num_games 3 \
+    --simulations 300 \
+    --max_placements 50 \
+    --seed_start 100 \
+    --mcts_seed 123
+```
+
+What to inspect:
+- `tetris_core::moves::*` and `tetris_core::mcts::*` for search/move-gen costs.
+- `tetris_core::nn::*`, `tract_core::*`, and `tract_linalg::*` for inference costs.
+
+Important interpretation detail:
+- If you summarize only `tetris_core::*`, ONNX compute can look missing because much of inference time is attributed to `tract_*` symbols.
+
 ### macOS Native Profiling
 
 Use Instruments for Apple-optimized profiling:

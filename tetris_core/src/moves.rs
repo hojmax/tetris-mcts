@@ -9,7 +9,7 @@ use std::collections::{HashSet, VecDeque};
 
 use crate::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::mcts::get_action_space;
-use crate::piece::{get_cells, Piece};
+use crate::piece::{get_cells, Piece, TETROMINO_CELLS};
 
 /// Actions that can be taken during piece movement
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,18 +72,33 @@ pub struct Placement {
     pub action_index: usize,
 }
 
+/// Compact placement metadata used by MCTS action execution/cache paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacementParams {
+    pub x: i32,
+    pub y: i32,
+    pub rotation: usize,
+    pub last_kick_index: usize,
+    pub last_move_was_rotation: bool,
+    pub action_index: usize,
+}
+
 /// Board representation for collision checking (borrows cells to avoid cloning)
 pub struct Board<'a> {
     width: usize,
-    height: usize,
+    width_i32: i32,
+    height_i32: i32,
     cells: &'a [u8],
 }
 
 impl<'a> Board<'a> {
     pub fn new(width: usize, height: usize, cells: &'a [u8]) -> Self {
+        debug_assert!(width <= i32::MAX as usize);
+        debug_assert!(height <= i32::MAX as usize);
         Board {
             width,
-            height,
+            width_i32: width as i32,
+            height_i32: height as i32,
             cells,
         }
     }
@@ -106,12 +121,18 @@ impl<'a> Board<'a> {
         y
     }
 
+    #[inline]
     fn is_valid_position_at(&self, piece_type: usize, rotation: usize, x: i32, y: i32) -> bool {
-        for (cx, cy) in get_cells(piece_type, rotation, x, y) {
-            if cx < 0 || cx >= self.width as i32 || cy < 0 || cy >= self.height as i32 {
+        let offsets = &TETROMINO_CELLS[piece_type][rotation];
+        for &(dx, dy) in offsets.iter() {
+            let cx = x + dx as i32;
+            let cy = y + dy as i32;
+            if cx < 0 || cx >= self.width_i32 || cy < 0 || cy >= self.height_i32 {
                 return false;
             }
-            if self.cells[cy as usize * self.width + cx as usize] != 0 {
+            let row_base = cy as usize * self.width;
+            let cell_idx = row_base + cx as usize;
+            if unsafe { *self.cells.get_unchecked(cell_idx) } != 0 {
                 return false;
             }
         }
@@ -412,10 +433,180 @@ pub fn find_all_placements(
     placements
 }
 
+/// Find all possible placements needed by MCTS.
+///
+/// This variant skips move-sequence reconstruction and returns only placement
+/// parameters used by action execution and valid-action masking.
+pub fn find_all_placement_params(
+    board: &Board<'_>,
+    piece_type: usize,
+    spawn_x: i32,
+    spawn_y: i32,
+) -> Vec<PlacementParams> {
+    let start_state = PieceState {
+        x: spawn_x,
+        y: spawn_y,
+        rotation: 0,
+    };
+
+    if !board.is_valid_position(piece_type, &start_state) {
+        return Vec::new();
+    }
+
+    let mut visited = [0u64; VISITED_WORDS];
+    let mut queue: VecDeque<PieceState> = VecDeque::with_capacity(128);
+    let mut depth = [u16::MAX; NUM_STATE_INDICES];
+    let mut last_kick_index = [0u8; NUM_STATE_INDICES];
+    let mut last_move_was_rotation = [false; NUM_STATE_INDICES];
+    let mut final_best_source = [None; NUM_STATE_INDICES];
+    let mut final_best_depth = [u16::MAX; NUM_STATE_INDICES];
+
+    let start_idx = state_to_index(&start_state);
+    visited[start_idx / 64] |= 1u64 << (start_idx % 64);
+    depth[start_idx] = 0;
+    queue.push_back(start_state);
+
+    let transitions = [
+        (-1, 0, None),
+        (1, 0, None),
+        (0, 1, None),
+        (0, 0, Some(true)),
+        (0, 0, Some(false)),
+    ];
+
+    while let Some(state) = queue.pop_front() {
+        let state_idx = state_to_index(&state);
+
+        let final_y = board.get_drop_y(piece_type, &state);
+        let final_state = PieceState {
+            x: state.x,
+            y: final_y,
+            rotation: state.rotation,
+        };
+        let final_idx = state_to_index(&final_state);
+        if depth[state_idx] < final_best_depth[final_idx] {
+            final_best_depth[final_idx] = depth[state_idx];
+            final_best_source[final_idx] = Some(state_idx);
+        } else if depth[state_idx] == final_best_depth[final_idx] {
+            if let Some(existing_source_idx) = final_best_source[final_idx] {
+                if prefer_tspin_safe_path(
+                    last_move_was_rotation[state_idx],
+                    last_move_was_rotation[existing_source_idx],
+                ) {
+                    final_best_source[final_idx] = Some(state_idx);
+                }
+            }
+        }
+
+        for &(dx, dy, rotate) in &transitions {
+            let (new_state, kick_index, is_rotation) = if let Some(clockwise) = rotate {
+                match try_rotate(board, piece_type, &state, clockwise) {
+                    Some((state, kick)) => (Some(state), kick as u8, true),
+                    None => (None, 0, false),
+                }
+            } else {
+                let candidate = PieceState {
+                    x: state.x + dx,
+                    y: state.y + dy,
+                    rotation: state.rotation,
+                };
+                if board.is_valid_position(piece_type, &candidate) {
+                    (Some(candidate), 0, false)
+                } else {
+                    (None, 0, false)
+                }
+            };
+
+            let Some(new_state) = new_state else {
+                continue;
+            };
+
+            let idx = state_to_index(&new_state);
+            let word = idx / 64;
+            let bit = idx % 64;
+            let is_visited = (visited[word] & (1u64 << bit)) != 0;
+            let candidate_depth = depth[state_idx] + 1;
+            let candidate_last_kick_index = if is_rotation {
+                kick_index
+            } else {
+                last_kick_index[state_idx]
+            };
+
+            if !is_visited {
+                visited[word] |= 1u64 << bit;
+                depth[idx] = candidate_depth;
+                last_kick_index[idx] = candidate_last_kick_index;
+                last_move_was_rotation[idx] = is_rotation;
+                queue.push_back(new_state);
+            } else if depth[idx] == candidate_depth
+                && prefer_tspin_safe_path(is_rotation, last_move_was_rotation[idx])
+            {
+                last_kick_index[idx] = candidate_last_kick_index;
+                last_move_was_rotation[idx] = is_rotation;
+            }
+        }
+    }
+
+    let mut seen_cells: HashSet<u64> = HashSet::new();
+    let mut placements: Vec<PlacementParams> = Vec::new();
+    let action_space = get_action_space();
+
+    for (final_idx, source_idx) in final_best_source.iter().enumerate() {
+        let Some(source_idx) = source_idx else {
+            continue;
+        };
+
+        let final_state = index_to_state(final_idx);
+        let x = final_state.x;
+        let y = final_state.y;
+        let rotation = final_state.rotation;
+
+        let cells = get_cells(piece_type, rotation, x, y);
+        debug_assert_eq!(cells.len(), 4, "Tetromino should have exactly 4 cells");
+        let mut packed_cells = [0u16; 4];
+        for (cell_idx, (cx, cy)) in cells.into_iter().enumerate() {
+            let packed = cy as usize * board.width + cx as usize;
+            debug_assert!(packed <= u16::MAX as usize);
+            packed_cells[cell_idx] = packed as u16;
+        }
+        packed_cells.sort_unstable();
+        let cell_key = ((packed_cells[0] as u64) << 48)
+            | ((packed_cells[1] as u64) << 32)
+            | ((packed_cells[2] as u64) << 16)
+            | packed_cells[3] as u64;
+
+        if !seen_cells.insert(cell_key) {
+            continue;
+        }
+
+        let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
+            debug_assert!(
+                false,
+                "BUG: valid placement ({}, {}, {}) missing from action space",
+                x, y, rotation
+            );
+            continue;
+        };
+
+        placements.push(PlacementParams {
+            x,
+            y,
+            rotation,
+            last_kick_index: last_kick_index[*source_idx] as usize,
+            last_move_was_rotation: last_move_was_rotation[*source_idx],
+            action_index,
+        });
+    }
+
+    // Action-index order gives deterministic cache-index mapping.
+    placements.sort_unstable_by_key(|placement| placement.action_index);
+    placements
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     fn empty_cells(width: usize, height: usize) -> Vec<u8> {
         vec![0u8; width * height]
@@ -445,6 +636,48 @@ mod tests {
                 "Piece type {} should have placements",
                 piece_type
             );
+        }
+    }
+
+    #[test]
+    fn test_find_placement_params_matches_full_placements() {
+        let cells = empty_cells(10, 20);
+        let board = Board::new(10, 20, &cells);
+
+        for piece_type in 0..7 {
+            let full = find_all_placements(&board, piece_type, 3, 0);
+            let params = find_all_placement_params(&board, piece_type, 3, 0);
+
+            let full_by_action: HashMap<usize, &Placement> = full
+                .iter()
+                .map(|placement| (placement.action_index, placement))
+                .collect();
+            assert_eq!(
+                full_by_action.len(),
+                full.len(),
+                "Full placements should not contain duplicate action indices"
+            );
+            assert_eq!(
+                params.len(),
+                full.len(),
+                "Fast params count should match full placement count for piece {}",
+                piece_type
+            );
+
+            for param in params {
+                let full_match = full_by_action
+                    .get(&param.action_index)
+                    .copied()
+                    .expect("Fast params produced an unknown action index");
+                assert_eq!(param.x, full_match.piece.x);
+                assert_eq!(param.y, full_match.piece.y);
+                assert_eq!(param.rotation, full_match.piece.rotation);
+                assert_eq!(param.last_kick_index, full_match.last_kick_index);
+                assert_eq!(
+                    param.last_move_was_rotation,
+                    full_match.last_move_was_rotation
+                );
+            }
         }
     }
 
