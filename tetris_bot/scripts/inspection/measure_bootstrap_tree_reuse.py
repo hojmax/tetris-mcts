@@ -185,7 +185,9 @@ def print_summary(metrics: list[GameMetric], aggregate: dict[str, float | int]) 
 
     if metrics:
         print("\nPer-game tree reuse carry fraction")
-        print(f"{'Game':>4}  {'Atk':>5}  {'Moves':>5}  {'Hits':>5}  {'Miss':>5}  {'Reuse':>6}  {'Carry':>6}")
+        print(
+            f"{'Game':>4}  {'Atk':>5}  {'Moves':>5}  {'Hits':>5}  {'Miss':>5}  {'Reuse':>6}  {'Carry':>6}"
+        )
         for row in metrics:
             print(
                 f"{row.game_idx:>4}  {row.total_attack:>5}  {row.num_moves:>5}  "
@@ -202,7 +204,9 @@ def main(args: ScriptArgs) -> None:
 
     # Validate bootstrap config values early.
     _ = build_bootstrap_config(args)
-    requested_workers = args.num_workers if args.num_workers > 0 else (os.cpu_count() or 1)
+    requested_workers = (
+        args.num_workers if args.num_workers > 0 else (os.cpu_count() or 1)
+    )
     worker_count = min(requested_workers, args.num_games)
 
     logger.info(

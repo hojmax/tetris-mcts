@@ -22,7 +22,7 @@ Treat this document as a living resource, not static documentation.
 
 ## Game Parallelism Policy (All Agents)
 
-- **ALWAYS PARALLELIZE GENERATING AND EVALUATING GAMES.**
+- **ALWAYS PARALLELIZE GENERATING AND EVALUATING GAMES (MANDATORY, NO EXCEPTIONS IN NORMAL RUNS).**
 - Do not run single-worker game generation/evaluation loops when a parallel path exists.
 - For Rust evaluation entry points (`evaluate_model`, `evaluate_model_without_nn`), set `num_workers > 1` (typically near available CPU cores).
 - For Python inspection/benchmark scripts that generate games, expose and use a worker-count argument so multi-process execution is the default behavior.
@@ -186,14 +186,16 @@ python tetris_bot/scripts/inspection/row_fill_zero_rates.py \
 
 ```bash
 # Measure tree reuse metrics (including tree_reuse_carry_fraction) in bootstrap/no-NN mode.
-# Defaults: 10 games, 4000 simulations, 50 max placements, add_noise=true.
+# Defaults: 10 games, 4000 simulations, 50 max placements, add_noise=true,
+# and auto-parallel workers (all available CPU cores, capped by num_games).
 python tetris_bot/scripts/inspection/measure_bootstrap_tree_reuse.py
 
-# Optional: override run size/output path.
+# Optional: override run size/worker count/output path.
 python tetris_bot/scripts/inspection/measure_bootstrap_tree_reuse.py \
     --num_games 20 \
     --simulations 4000 \
     --max_placements 50 \
+    --num_workers 8 \
     --output_json benchmarks/bootstrap_tree_reuse_run2.json
 ```
 

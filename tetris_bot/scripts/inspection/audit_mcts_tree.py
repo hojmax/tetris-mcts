@@ -1141,7 +1141,9 @@ class ScriptArgs:
     num_simulations: int = 400  # MCTS simulations per audited move
     c_puct: float = _DEFAULT_SELF_PLAY.c_puct  # PUCT exploration constant
     temperature: float = 0.0  # Action selection temperature (0 = argmax)
-    dirichlet_alpha: float = _DEFAULT_SELF_PLAY.dirichlet_alpha  # Dirichlet alpha (unused with epsilon=0)
+    dirichlet_alpha: float = (  # Dirichlet alpha (unused with epsilon=0)
+        _DEFAULT_SELF_PLAY.dirichlet_alpha
+    )
     dirichlet_epsilon: float = 0.0  # Dirichlet epsilon (0 for deterministic audits)
     mcts_seed: int = 12345  # MCTS RNG seed for reproducibility
     top_k_actions: int = 8  # Number of top root actions logged per move

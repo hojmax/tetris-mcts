@@ -31,7 +31,9 @@ class ProfileArgs:
     seed_start: int = 42  # Starting seed for deterministic games
     c_puct: float = _DEFAULT_SELF_PLAY.c_puct  # PUCT exploration constant
     mcts_seed: int | None = None  # Optional deterministic MCTS RNG seed
-    max_placements: int = _DEFAULT_SELF_PLAY.max_placements  # Maximum placements per game
+    max_placements: int = (  # Maximum placements per game
+        _DEFAULT_SELF_PLAY.max_placements
+    )
     output: Path = BENCHMARKS_DIR / "profile_results.jsonl"  # Output JSONL file
 
 

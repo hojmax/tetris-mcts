@@ -373,7 +373,6 @@ impl MCTSTreeExport {
     fn max_depth(&self) -> usize {
         self.compute_depth(self.root_id)
     }
-
 }
 
 impl MCTSTreeExport {
@@ -393,7 +392,6 @@ impl MCTSTreeExport {
             0
         }
     }
-
 }
 
 #[cfg(test)]

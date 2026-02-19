@@ -781,10 +781,14 @@ class Trainer:
         mcts_config.temperature = self.config.self_play.temperature
         mcts_config.dirichlet_alpha = self.config.self_play.dirichlet_alpha
         mcts_config.dirichlet_epsilon = self.config.self_play.dirichlet_epsilon
-        mcts_config.visit_sampling_epsilon = self.config.self_play.visit_sampling_epsilon
+        mcts_config.visit_sampling_epsilon = (
+            self.config.self_play.visit_sampling_epsilon
+        )
         mcts_config.max_placements = self.config.self_play.max_placements
         mcts_config.death_penalty = self.config.self_play.death_penalty
-        mcts_config.overhang_penalty_weight = self.config.self_play.overhang_penalty_weight
+        mcts_config.overhang_penalty_weight = (
+            self.config.self_play.overhang_penalty_weight
+        )
         mcts_config.nn_value_weight = self.config.self_play.nn_value_weight
         mcts_config.q_scale = (
             self.config.self_play.q_scale
