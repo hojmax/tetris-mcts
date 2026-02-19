@@ -20,6 +20,13 @@ Treat this document as a living resource, not static documentation.
 - Keep each feature isolated to its own worktree; merge to `main` only after validation.
 - After merging a feature branch into `main`, always clean up the feature worktree and branch immediately (for example: `git -C /Users/axelhojmark/Desktop/tetris-mcts worktree remove /Users/axelhojmark/Desktop/tetris-mcts-worktrees/<worktree-name>` and `git -C /Users/axelhojmark/Desktop/tetris-mcts branch -d <branch-name>`).
 
+## Game Parallelism Policy (All Agents)
+
+- **ALWAYS PARALLELIZE GENERATING AND EVALUATING GAMES.**
+- Do not run single-worker game generation/evaluation loops when a parallel path exists.
+- For Rust evaluation entry points (`evaluate_model`, `evaluate_model_without_nn`), set `num_workers > 1` (typically near available CPU cores).
+- For Python inspection/benchmark scripts that generate games, expose and use a worker-count argument so multi-process execution is the default behavior.
+
 ## Project Overview
 
 This is **tetris-mcts**, an AlphaZero-style reinforcement learning system for Tetris that combines:
@@ -173,6 +180,21 @@ python tetris_bot/scripts/inspection/row_fill_zero_rates.py \
 python tetris_bot/scripts/inspection/row_fill_zero_rates.py \
     --data_path training_runs/vN/training_data.npz \
     --epsilon 1e-8
+```
+
+### Bootstrap Tree Reuse Analysis
+
+```bash
+# Measure tree reuse metrics (including tree_reuse_carry_fraction) in bootstrap/no-NN mode.
+# Defaults: 10 games, 4000 simulations, 50 max placements, add_noise=true.
+python tetris_bot/scripts/inspection/measure_bootstrap_tree_reuse.py
+
+# Optional: override run size/output path.
+python tetris_bot/scripts/inspection/measure_bootstrap_tree_reuse.py \
+    --num_games 20 \
+    --simulations 4000 \
+    --max_placements 50 \
+    --output_json benchmarks/bootstrap_tree_reuse_run2.json
 ```
 
 
@@ -332,6 +354,7 @@ tetris_bot/                 # Python package
         ├── inspect_dirichlet_noise.py
         ├── inspect_onnx_model.py
         ├── inspect_training_data.py
+        ├── measure_bootstrap_tree_reuse.py
         ├── mcts_visualizer.py
         ├── profile_games.py
         ├── render_buffer_frames.py

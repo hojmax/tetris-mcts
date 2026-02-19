@@ -63,6 +63,8 @@ In progress: 🟨
 
 ### tetris_core/src/mcts/search.rs ✅
 
+### tetris_core/src/mcts/results.rs ✅
+
 ## Python Code
 
 ### tetris_bot/config.py ✅

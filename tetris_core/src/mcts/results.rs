@@ -284,7 +284,7 @@ pub struct TreeNodeExport {
     /// Mean value (value_sum / visit_count)
     #[pyo3(get)]
     pub mean_value: f32,
-    /// Individual backed-up values averaged into mean_value
+    /// Backed-up total values that contribute to value_sum (empty unless track_value_history=true)
     #[pyo3(get)]
     pub value_history: Vec<f32>,
     /// Raw neural network value estimate (for decision nodes)
@@ -374,12 +374,6 @@ impl MCTSTreeExport {
         self.compute_depth(self.root_id)
     }
 
-    /// Get all nodes at a given depth
-    fn nodes_at_depth(&self, depth: usize) -> Vec<TreeNodeExport> {
-        let mut result = Vec::new();
-        self.collect_at_depth(self.root_id, 0, depth, &mut result);
-        result
-    }
 }
 
 impl MCTSTreeExport {
@@ -400,23 +394,6 @@ impl MCTSTreeExport {
         }
     }
 
-    fn collect_at_depth(
-        &self,
-        node_id: usize,
-        current_depth: usize,
-        target_depth: usize,
-        result: &mut Vec<TreeNodeExport>,
-    ) {
-        if let Some(node) = self.nodes.get(node_id) {
-            if current_depth == target_depth {
-                result.push(node.clone());
-            } else {
-                for &child_id in &node.children {
-                    self.collect_at_depth(child_id, current_depth + 1, target_depth, result);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

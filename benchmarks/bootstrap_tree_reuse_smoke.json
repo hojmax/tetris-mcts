@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-02-19T23:51:08.610353+00:00",
+  "config": {
+    "num_games": 1,
+    "num_simulations": 10,
+    "max_placements": 5,
+    "add_noise": true,
+    "reuse_tree": true,
+    "q_scale": null,
+    "dirichlet_alpha": 0.02,
+    "death_penalty": 5.0,
+    "overhang_penalty_weight": 5.0
+  },
+  "num_games_completed": 1,
+  "aggregate": {
+    "tree_reuse_hits": 1,
+    "tree_reuse_misses": 4,
+    "tree_reuse_rate": 0.2,
+    "tree_reuse_carry_fraction_weighted_by_hits": 0.1666666716337204,
+    "tree_reuse_carry_fraction_mean_per_game": 0.1666666716337204,
+    "tree_reuse_carry_fraction_min": 0.1666666716337204,
+    "tree_reuse_carry_fraction_max": 0.1666666716337204,
+    "avg_attack": 0.0,
+    "avg_moves": 5.0
+  },
+  "per_game": [
+    {
+      "game_idx": 0,
+      "total_attack": 0,
+      "num_moves": 5,
+      "tree_reuse_hits": 1,
+      "tree_reuse_misses": 4,
+      "tree_reuse_rate": 0.2,
+      "tree_reuse_carry_fraction": 0.1666666716337204
+    }
+  ]
+}
