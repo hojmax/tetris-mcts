@@ -129,11 +129,8 @@ fn simulate<E: LeafEvaluator>(
         let node = unsafe { &mut *current };
         node.visit_count += 1;
 
-        // No value tail beyond horizon. Also treat non-terminal empty-action
-        // states as zero-value fallback (terminal uses death-penalty branch below).
-        if node.move_number >= config.max_placements
-            || (!node.is_terminal && node.valid_actions.is_empty())
-        {
+        // No value tail beyond horizon.
+        if node.move_number >= config.max_placements {
             backup_with_value(
                 &path,
                 root_cumulative_attack + path_attack_sum,
@@ -154,6 +151,10 @@ fn simulate<E: LeafEvaluator>(
                 config.track_value_history,
             );
             return;
+        }
+
+        if node.valid_actions.is_empty() {
+            panic!("BUG: non-terminal DecisionNode has no valid actions");
         }
 
         let action_idx = node.select_action(config.c_puct, config.q_scale);
@@ -697,6 +698,24 @@ mod tests {
 
         assert_eq!(root.value_sum, 0.0);
         assert!(root.children.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "non-terminal DecisionNode has no valid actions")]
+    fn test_simulate_panics_when_non_terminal_node_has_no_valid_actions() {
+        let env = TetrisEnv::new(10, 20);
+        let mut root = DecisionNode::new(env, 0);
+        root.valid_actions.clear();
+        root.action_priors.clear();
+
+        let mut config = MCTSConfig::default();
+        config.max_placements = 3;
+        config.death_penalty = 5.0;
+        config.overhang_penalty_weight = 0.0;
+
+        let evaluator = ConstantEvaluator { value: 0.0 };
+        let mut rng = StdRng::seed_from_u64(123);
+        simulate(&config, &evaluator, &mut root, &mut rng);
     }
 
     #[test]
