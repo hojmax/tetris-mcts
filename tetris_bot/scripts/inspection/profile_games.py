@@ -90,10 +90,16 @@ def main(args: ProfileArgs) -> None:
 
     total_moves = int(result.avg_moves * result.num_games)
     total_attack = int(result.avg_attack * result.num_games)
-    avg_time_per_game = total_time / result.num_games
+    avg_time_per_game = total_time / result.num_games if result.num_games > 0 else 0.0
     avg_time_per_move = total_time / total_moves if total_moves > 0 else 0
     moves_per_second = total_moves / total_time if total_time > 0 else 0
     games_per_second = result.num_games / total_time if total_time > 0 else 0
+
+    if result.num_games == 0:
+        logger.warning(
+            "No games completed during profiling",
+            note="This usually means model loading/inference failed for all seeds.",
+        )
 
     print("\n" + "=" * 60)
     print("PERFORMANCE SUMMARY")

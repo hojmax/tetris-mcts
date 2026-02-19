@@ -195,6 +195,7 @@ For optimization validation on a busy desktop machine, run baseline and candidat
 with identical flags and a fixed `--mcts_seed` (for example `123`) to reduce run-to-run variance.
 
 Results saved to `benchmarks/profile_results.jsonl` with timing data for comparison across runs.
+If profiling ends with zero completed games (for example model load/inference failure), `profile_games.py` now logs a warning and reports zero throughput instead of crashing.
 
 **Interactive Profiling** (requires [samply](https://github.com/mstange/samply)):
 
@@ -210,6 +211,27 @@ samply record python scripts/inspection/profile_games.py --num_games 3 --simulat
 ```
 
 Opens interactive flamegraph viewer showing ALL function calls automatically. Best for finding bottlenecks during development.
+
+**Function-level profiling workflow** (CPU sampled, not per-call stopwatch timing):
+
+```bash
+# 1) MCTS-only hotspot profile (no NN inference)
+samply record python tetris_bot/scripts/inspection/profile_games.py \
+  --use_dummy_network true \
+  --num_games 3 \
+  --simulations 300 \
+  --mcts_seed 123
+
+# 2) Full MCTS + ONNX profile (includes NN inference)
+samply record python tetris_bot/scripts/inspection/profile_games.py \
+  --model_path training_runs/v32/checkpoints/latest.onnx \
+  --num_games 3 \
+  --simulations 300 \
+  --mcts_seed 123
+```
+
+Use the flamegraph search to inspect specific functions/namespaces (for example `tetris_core::moves::find_all_placements`, `tetris_core::nn::TetrisNN`, `tract_onnx::`, `tract_linalg::`).
+If your summary only groups `tetris_core::*`, NN compute can appear missing because much of ONNX runtime time is attributed to `tract_*`/backend symbols rather than `tetris_core::*`.
 
 **macOS native profiling** (Instruments):
 
@@ -325,7 +347,7 @@ tetris_bot/                 # Python package
 All valid (x, y, rotation) placements are enumerated. The `ActionSpace` struct maps between action indices and placements.
 
 Placement metadata includes `last_move_was_rotation` and `last_kick_index` for T-spin scoring when executing action indices directly. If multiple shortest input paths reach the same placement, move generation prefers paths whose last move is **not** a rotation to avoid accidental T-spin attribution from arbitrary path tie breaks.
-Per-state placement caching now also stores a precomputed sorted list of placement action indices, so valid-action lookup no longer rescans all 735 slots on cache hits. Global placement-cache keys include hold availability to avoid stale hold action masks across otherwise identical board/current-piece states.
+Per-state placement caching now also stores a precomputed sorted list of placement action indices, so valid-action lookup no longer rescans all 735 slots on cache hits. Global placement-cache keys include hold availability to avoid stale hold action masks across otherwise identical board/current-piece states. For MCTS/runtime paths, cache construction now uses a lightweight placement-params generator (`find_all_placement_params`) that skips move-sequence reconstruction; full `Placement.moves` sequences are generated on demand for Python-facing placement inspection (`get_possible_placements`).
 
 ### MCTS with Chance Nodes
 
