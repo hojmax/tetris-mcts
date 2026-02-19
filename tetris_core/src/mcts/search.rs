@@ -233,10 +233,6 @@ fn simulate<E: LeafEvaluator>(
             }
         };
         chance_node.visit_count += 1;
-        let step_overhang = super::utils::compute_overhang_penalty(
-            chance_node.overhang_fields,
-            config.overhang_penalty_weight,
-        );
         path.push((current, action_idx));
         path_attack_sum += chance_node.attack as f32;
         if chance_node.state.game_over {
@@ -247,7 +243,7 @@ fn simulate<E: LeafEvaluator>(
             );
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_attack_sum - step_overhang - penalty,
+                root_cumulative_attack + path_attack_sum - penalty,
                 config.track_value_history,
             );
             return;
@@ -255,7 +251,7 @@ fn simulate<E: LeafEvaluator>(
         if chance_node.move_number >= config.max_placements {
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_attack_sum - step_overhang,
+                root_cumulative_attack + path_attack_sum,
                 config.track_value_history,
             );
             return;
