@@ -59,6 +59,8 @@ In progress: 🟨
 
 ### tetris_core/src/env/clearing.rs ✅
 
+### tetris_core/src/mcts/utils.rs ✅
+
 ## Python Code
 
 ### tetris_bot/config.py ✅
