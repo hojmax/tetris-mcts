@@ -5,8 +5,7 @@ use rand_distr::{Distribution, Gamma};
 use crate::constants::{
     BUMPINESS_NORMALIZATION_DIVISOR, COLUMN_HEIGHT_NORMALIZATION_DIVISOR,
     HOLES_NORMALIZATION_DIVISOR, MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR,
-    OVERHANG_NORMALIZATION_DIVISOR, ROW_FILL_FEATURE_ROWS, ROW_FILL_FEATURE_START,
-    TOTAL_BLOCKS_NORMALIZATION_DIVISOR,
+    OVERHANG_NORMALIZATION_DIVISOR, ROW_FILL_FEATURE_ROWS, TOTAL_BLOCKS_NORMALIZATION_DIVISOR,
 };
 use crate::env::global_cache::{
     build_board_key, get_cached_board_analysis, insert_cached_board_analysis,
@@ -210,18 +209,17 @@ pub fn normalize_max_column_height(raw: u8) -> f32 {
 }
 
 pub fn normalize_row_fill_counts(row_fill_counts: &[u8], board_width: usize) -> Vec<f32> {
+    debug_assert!(board_width > 0, "board_width must be > 0");
     let denominator = board_width as f32;
-    let start = if row_fill_counts.len() >= ROW_FILL_FEATURE_START + ROW_FILL_FEATURE_ROWS {
-        ROW_FILL_FEATURE_START
-    } else {
-        row_fill_counts.len().saturating_sub(ROW_FILL_FEATURE_ROWS)
-    };
+    let start = row_fill_counts
+        .len()
+        .checked_sub(ROW_FILL_FEATURE_ROWS)
+        .expect("row_fill_counts must include at least ROW_FILL_FEATURE_ROWS rows");
     let selected = &row_fill_counts[start..];
 
     let mut normalized = vec![0.0; ROW_FILL_FEATURE_ROWS];
-    let write_start = ROW_FILL_FEATURE_ROWS - selected.len();
     for (i, &count) in selected.iter().enumerate() {
-        normalized[write_start + i] = count as f32 / denominator;
+        normalized[i] = count as f32 / denominator;
     }
     normalized
 }
@@ -346,6 +344,23 @@ mod tests {
         row_fills[19] = 8;
         let normalized = normalize_row_fill_counts(&row_fills, 10);
         assert_eq!(normalized, vec![0.2, 0.4, 0.6, 0.8]);
+    }
+
+    #[test]
+    fn test_normalize_row_fill_counts_keeps_bottom_rows_for_taller_input() {
+        let mut row_fills = [0u8; 24];
+        row_fills[20] = 1;
+        row_fills[21] = 3;
+        row_fills[22] = 5;
+        row_fills[23] = 7;
+        let normalized = normalize_row_fill_counts(&row_fills, 10);
+        assert_eq!(normalized, vec![0.1, 0.3, 0.5, 0.7]);
+    }
+
+    #[test]
+    #[should_panic(expected = "row_fill_counts must include at least ROW_FILL_FEATURE_ROWS rows")]
+    fn test_normalize_row_fill_counts_panics_when_input_too_short() {
+        let _ = normalize_row_fill_counts(&[1, 2, 3], 10);
     }
 
     #[test]

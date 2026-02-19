@@ -550,7 +550,7 @@ fn stream_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{COMBO_NORMALIZATION_MAX, ROW_FILL_FEATURE_ROWS};
+    use crate::constants::ROW_FILL_FEATURE_ROWS;
     use crate::generator::test_utils;
     use crate::mcts::NUM_ACTIONS;
     use std::fs;

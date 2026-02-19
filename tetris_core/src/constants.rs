@@ -49,9 +49,6 @@ pub const MAX_COLUMN_HEIGHT_NORMALIZATION_DIVISOR: f32 = 20.0;
 /// Keep only the bottom N row-fill diagnostics in aux features.
 pub const ROW_FILL_FEATURE_ROWS: usize = 4;
 
-/// First absolute board row index included in row-fill diagnostics.
-pub const ROW_FILL_FEATURE_START: usize = BOARD_HEIGHT - ROW_FILL_FEATURE_ROWS;
-
 /// Piece/game auxiliary features sent to the uncached heads model:
 /// current piece (7) + hold piece (8) + hold available (1) + queue (35) + placement count (1)
 /// + combo (1) + back-to-back (1) + hidden-piece distribution (7).
