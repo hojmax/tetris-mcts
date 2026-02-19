@@ -121,19 +121,22 @@ fn simulate<E: LeafEvaluator>(
     rng: &mut StdRng,
 ) {
     let root_cumulative_attack = root.state.attack as f32;
-    let mut path: Vec<(*mut DecisionNode, usize, f32)> = Vec::new();
+    let mut path: Vec<(*mut DecisionNode, usize)> = Vec::new();
+    let mut path_reward_sum: f32 = 0.0;
     let mut current = root as *mut DecisionNode;
 
     loop {
         let node = unsafe { &mut *current };
         node.visit_count += 1;
 
-        // Align search objective with training targets: no value beyond episode horizon.
-        if node.move_number >= config.max_placements {
+        // No value tail beyond horizon. Also treat non-terminal empty-action
+        // states as zero-value fallback (terminal uses death-penalty branch below).
+        if node.move_number >= config.max_placements
+            || (!node.is_terminal && node.valid_actions.is_empty())
+        {
             backup_with_value(
                 &path,
-                0.0,
-                root_cumulative_attack,
+                root_cumulative_attack + path_reward_sum,
                 config.track_value_history,
             );
             return;
@@ -147,18 +150,7 @@ fn simulate<E: LeafEvaluator>(
             );
             backup_with_value(
                 &path,
-                -penalty,
-                root_cumulative_attack,
-                config.track_value_history,
-            );
-            return;
-        }
-
-        if node.valid_actions.is_empty() {
-            backup_with_value(
-                &path,
-                0.0,
-                root_cumulative_attack,
+                root_cumulative_attack + path_reward_sum - penalty,
                 config.track_value_history,
             );
             return;
@@ -209,7 +201,8 @@ fn simulate<E: LeafEvaluator>(
                     chance_node.overhang_fields,
                     config.overhang_penalty_weight,
                 );
-            path.push((current, action_idx, leaf_reward));
+            path.push((current, action_idx));
+            path_reward_sum += leaf_reward;
             let leaf_value = if chance_node.state.game_over {
                 -super::utils::compute_death_penalty(
                     chance_node.move_number,
@@ -224,8 +217,7 @@ fn simulate<E: LeafEvaluator>(
             };
             backup_with_value(
                 &path,
-                leaf_value,
-                root_cumulative_attack,
+                root_cumulative_attack + path_reward_sum + leaf_value,
                 config.track_value_history,
             );
             return;
@@ -246,7 +238,8 @@ fn simulate<E: LeafEvaluator>(
                 chance_node.overhang_fields,
                 config.overhang_penalty_weight,
             );
-        path.push((current, action_idx, step_reward));
+        path.push((current, action_idx));
+        path_reward_sum += step_reward;
         if chance_node.state.game_over {
             let penalty = super::utils::compute_death_penalty(
                 chance_node.move_number,
@@ -255,8 +248,7 @@ fn simulate<E: LeafEvaluator>(
             );
             backup_with_value(
                 &path,
-                -penalty,
-                root_cumulative_attack,
+                root_cumulative_attack + path_reward_sum - penalty,
                 config.track_value_history,
             );
             return;
@@ -264,8 +256,7 @@ fn simulate<E: LeafEvaluator>(
         if chance_node.move_number >= config.max_placements {
             backup_with_value(
                 &path,
-                0.0,
-                root_cumulative_attack,
+                root_cumulative_attack + path_reward_sum,
                 config.track_value_history,
             );
             return;
@@ -351,28 +342,20 @@ fn expand_chance(parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNod
 
 /// Backpropagate total episode value through the path.
 ///
-/// All nodes in the path receive the SAME total value:
+/// Callers precompute:
 ///   total_value = root_cumulative_attack + path_rewards + leaf_value
-///
-/// `root_cumulative_attack` anchors Q values to total episode attack so that
-/// tanh(Q / q_scale) operates at a consistent scale throughout the game.
-/// The NN predicts future reward; adding the known past attack plus the
-/// rewards collected along the search path gives a total episode estimate.
+/// and all nodes in the path receive that same total value.
 fn backup_with_value(
-    path: &[(*mut DecisionNode, usize, f32)],
-    leaf_value: f32,
-    root_cumulative_attack: f32,
+    path: &[(*mut DecisionNode, usize)],
+    total_value: f32,
     track_value_history: bool,
 ) {
     if path.is_empty() {
         return;
     }
 
-    let total_reward: f32 = path.iter().map(|(_, _, reward)| reward).sum();
-    let total_value = root_cumulative_attack + total_reward + leaf_value;
-
     // All nodes on the path get the same total value
-    for &(node_ptr, action_idx, _) in path.iter() {
+    for &(node_ptr, action_idx) in path.iter() {
         // SAFETY: node_ptr was stored during the simulation traversal from valid
         // &mut DecisionNode references. The tree hasn't been modified, so pointers
         // remain valid. Each pointer in the path refers to a distinct node.
