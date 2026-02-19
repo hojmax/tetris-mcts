@@ -38,6 +38,11 @@ fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> 
         .map(|(idx, _)| idx)
 }
 
+enum ExpandActionError {
+    InvariantViolation { action_idx: usize },
+    EvaluatorFailed(String),
+}
+
 fn uniform_action_priors_for_valid_actions(valid_action_count: usize) -> Vec<f32> {
     if valid_action_count == 0 {
         return Vec::new();
@@ -56,7 +61,7 @@ pub(super) trait LeafEvaluator {
         state: &TetrisEnv,
         move_number: u32,
         max_placements: u32,
-    ) -> Option<(Vec<f32>, f32)>;
+    ) -> Result<(Vec<f32>, f32), String>;
 }
 
 pub(super) struct NeuralLeafEvaluator<'a> {
@@ -70,7 +75,7 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
         state: &TetrisEnv,
         move_number: u32,
         max_placements: u32,
-    ) -> Option<(Vec<f32>, f32)> {
+    ) -> Result<(Vec<f32>, f32), String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
         match self.nn.predict_with_valid_actions(
             state,
@@ -78,14 +83,11 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
             valid_actions.as_slice(),
             max_placements as usize,
         ) {
-            Ok((policy, value)) => Some((policy, scale_nn_value(value, self.nn_value_weight))),
-            Err(error) => {
-                eprintln!(
-                    "[MCTS] NN prediction failed during expansion at move {}: {}",
-                    move_number, error
-                );
-                None
-            }
+            Ok((policy, value)) => Ok((policy, scale_nn_value(value, self.nn_value_weight))),
+            Err(error) => Err(format!(
+                "NN prediction failed during expansion at move {}: {}",
+                move_number, error
+            )),
         }
     }
 }
@@ -98,9 +100,9 @@ impl LeafEvaluator for BootstrapLeafEvaluator {
         state: &TetrisEnv,
         _move_number: u32,
         _max_placements: u32,
-    ) -> Option<(Vec<f32>, f32)> {
+    ) -> Result<(Vec<f32>, f32), String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
-        Some((
+        Ok((
             uniform_action_priors_for_valid_actions(valid_actions.len()),
             0.0,
         ))
@@ -177,20 +179,15 @@ fn simulate<E: LeafEvaluator>(
                 next_move_number,
                 config.max_placements,
             ) {
-                Some(child) => child,
-                None => {
-                    debug_assert!(
-                        false,
+                Ok(child) => child,
+                Err(ExpandActionError::InvariantViolation { action_idx }) => {
+                    panic!(
                         "BUG: expand_action failed for action {} - action mask is inconsistent",
                         action_idx
                     );
-                    backup_with_value(
-                        &path,
-                        0.0,
-                        root_cumulative_attack,
-                        config.track_value_history,
-                    );
-                    return;
+                }
+                Err(ExpandActionError::EvaluatorFailed(error)) => {
+                    panic!("MCTS leaf evaluation failed during expansion: {}", error);
                 }
             };
             node.children.insert(action_idx, child);
@@ -201,24 +198,10 @@ fn simulate<E: LeafEvaluator>(
             let chance_node = match node.children.get(&action_idx) {
                 Some(MCTSNode::Chance(chance_node)) => chance_node,
                 Some(MCTSNode::Decision(_)) => {
-                    debug_assert!(false, "BUG: expand_action should create ChanceNode");
-                    backup_with_value(
-                        &path,
-                        0.0,
-                        root_cumulative_attack,
-                        config.track_value_history,
-                    );
-                    return;
+                    unreachable!("BUG: expand_action should create ChanceNode");
                 }
                 None => {
-                    debug_assert!(false, "BUG: just inserted child but it's missing");
-                    backup_with_value(
-                        &path,
-                        0.0,
-                        root_cumulative_attack,
-                        config.track_value_history,
-                    );
-                    return;
+                    unreachable!("BUG: just inserted child but it's missing");
                 }
             };
             let leaf_reward = chance_node.attack as f32
@@ -251,24 +234,10 @@ fn simulate<E: LeafEvaluator>(
         let chance_node = match node.children.get_mut(&action_idx) {
             Some(MCTSNode::Chance(chance_node)) => chance_node,
             Some(MCTSNode::Decision(_)) => {
-                debug_assert!(false, "BUG: Decision node child should be ChanceNode");
-                backup_with_value(
-                    &path,
-                    0.0,
-                    root_cumulative_attack,
-                    config.track_value_history,
-                );
-                return;
+                unreachable!("BUG: Decision node child should be ChanceNode");
             }
             None => {
-                debug_assert!(false, "BUG: child should exist after contains_key check");
-                backup_with_value(
-                    &path,
-                    0.0,
-                    root_cumulative_attack,
-                    config.track_value_history,
-                );
-                return;
+                unreachable!("BUG: child should exist after contains_key check");
             }
         };
         chance_node.visit_count += 1;
@@ -311,24 +280,10 @@ fn simulate<E: LeafEvaluator>(
         match chance_node.children.get_mut(&piece) {
             Some(MCTSNode::Decision(decision_node)) => current = decision_node as *mut DecisionNode,
             Some(MCTSNode::Chance(_)) => {
-                debug_assert!(false, "BUG: ChanceNode child should be DecisionNode");
-                backup_with_value(
-                    &path,
-                    0.0,
-                    root_cumulative_attack,
-                    config.track_value_history,
-                );
-                return;
+                unreachable!("BUG: ChanceNode child should be DecisionNode");
             }
             None => {
-                debug_assert!(false, "BUG: child should exist after insertion");
-                backup_with_value(
-                    &path,
-                    0.0,
-                    root_cumulative_attack,
-                    config.track_value_history,
-                );
-                return;
+                unreachable!("BUG: child should exist after insertion");
             }
         }
     }
@@ -336,33 +291,30 @@ fn simulate<E: LeafEvaluator>(
 
 /// Expand an action from a decision node (creates chance node)
 ///
-/// Returns None if expansion fails (invalid action, missing placement, or evaluator error).
+/// Returns an error if action execution or leaf evaluation fails.
 fn expand_action<E: LeafEvaluator>(
     evaluator: &E,
     parent: &DecisionNode,
     action_idx: usize,
     move_number: u32,
     max_placements: u32,
-) -> Option<MCTSNode> {
+) -> Result<MCTSNode, ExpandActionError> {
     let mut new_state = parent.state.mcts_clone();
     let attack = match new_state.execute_action_index(action_idx) {
         Some(attack) => attack,
         None => {
-            debug_assert!(
-                false,
-                "BUG: action {} selected by MCTS is not executable",
-                action_idx
-            );
-            return None;
+            return Err(ExpandActionError::InvariantViolation { action_idx });
         }
     };
 
     let overhang_fields = super::utils::count_overhang_fields(&new_state);
     new_state.truncate_queue(QUEUE_SIZE);
     let bag_remaining = new_state.get_possible_next_pieces();
-    let (action_priors, value) = evaluator.evaluate(&new_state, move_number, max_placements)?;
+    let (action_priors, value) = evaluator
+        .evaluate(&new_state, move_number, max_placements)
+        .map_err(ExpandActionError::EvaluatorFailed)?;
 
-    Some(MCTSNode::Chance(ChanceNode::new(
+    Ok(MCTSNode::Chance(ChanceNode::new(
         new_state,
         attack,
         overhang_fields,
@@ -694,9 +646,9 @@ mod tests {
             state: &TetrisEnv,
             _move_number: u32,
             _max_placements: u32,
-        ) -> Option<(Vec<f32>, f32)> {
+        ) -> Result<(Vec<f32>, f32), String> {
             let valid_actions = state.get_cached_valid_action_indices_arc();
-            Some((
+            Ok((
                 uniform_action_priors_for_valid_actions(valid_actions.len()),
                 self.value,
             ))
