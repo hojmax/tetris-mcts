@@ -49,7 +49,7 @@ pub struct TrainingExample {
     /// Placement count normalized by max_placements (0.0..1.0)
     #[pyo3(get)]
     pub placement_count: f32,
-    /// Combo counter normalized by COMBO_NORMALIZATION_MAX (0.0..1.0, capped)
+    /// Combo counter normalized by COMBO_NORMALIZATION_MAX (uncapped linear scaling)
     #[pyo3(get)]
     pub combo: f32,
     /// Whether back-to-back is active at this frame
@@ -58,7 +58,7 @@ pub struct TrainingExample {
     /// Distribution over hidden next piece implied by current 7-bag state
     #[pyo3(get)]
     pub next_hidden_piece_probs: Vec<f32>,
-    /// Height per column normalized by board height (0.0..1.0)
+    /// Height per column normalized by COLUMN_HEIGHT_NORMALIZATION_DIVISOR (may exceed 1.0)
     #[pyo3(get)]
     pub column_heights: Vec<f32>,
     /// Maximum normalized column height
@@ -67,13 +67,13 @@ pub struct TrainingExample {
     /// Filled cells in bottom rows normalized by board width (0.0..1.0)
     #[pyo3(get)]
     pub row_fill_counts: Vec<f32>,
-    /// Total filled cells normalized by board area (0.0..1.0)
+    /// Total filled cells normalized by TOTAL_BLOCKS_NORMALIZATION_DIVISOR (may exceed 1.0)
     #[pyo3(get)]
     pub total_blocks: f32,
-    /// Sum of squared adjacent column-height deltas normalized to 0.0..1.0
+    /// Sum of squared adjacent column-height deltas normalized by BUMPINESS_NORMALIZATION_DIVISOR (may exceed 1.0)
     #[pyo3(get)]
     pub bumpiness: f32,
-    /// Hole count normalized by maximum possible holes
+    /// Hole count normalized by HOLES_NORMALIZATION_DIVISOR (may exceed 1.0)
     #[pyo3(get)]
     pub holes: f32,
     /// MCTS policy target (NUM_ACTIONS values)
@@ -85,7 +85,7 @@ pub struct TrainingExample {
     /// Action mask (NUM_ACTIONS values, true = valid)
     #[pyo3(get)]
     pub action_mask: Vec<bool>,
-    /// Overhang fields normalized by maximum possible overhang count
+    /// Overhang fields normalized by OVERHANG_NORMALIZATION_DIVISOR (may exceed 1.0)
     #[pyo3(get)]
     pub overhang_fields: f32,
     /// 1-indexed global game number used for WandB per-game metrics

@@ -61,6 +61,8 @@ In progress: 🟨
 
 ### tetris_core/src/mcts/utils.rs ✅
 
+### tetris_core/src/mcts/search.rs ✅
+
 ## Python Code
 
 ### tetris_bot/config.py ✅

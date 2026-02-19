@@ -36,19 +36,19 @@ pub fn write_examples_to_npz(filepath: &Path, examples: &[TrainingExample]) -> R
 /// - next_queue: (N, 5, 7) float32 one-hot
 /// - move_numbers: (N,) uint32 raw frame indices (includes holds)
 /// - placement_counts: (N,) float32 normalized (placement_idx / max_placements, [0,1])
-/// - combos: (N,) float32 normalized (min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX, [0,1])
+/// - combos: (N,) float32 normalized (combo / COMBO_NORMALIZATION_MAX, uncapped)
 /// - back_to_back: (N,) bool
 /// - next_hidden_piece_probs: (N, 7) float32
-/// - column_heights: (N, 10) float32 normalized by board height
+/// - column_heights: (N, 10) float32 normalized by COLUMN_HEIGHT_NORMALIZATION_DIVISOR (uncapped)
 /// - max_column_heights: (N,) float32
 /// - row_fill_counts: (N, 4) float32 normalized by board width (bottom rows only)
-/// - total_blocks: (N,) float32 normalized by board area
-/// - bumpiness: (N,) float32 normalized
-/// - holes: (N,) float32 normalized by maximum possible holes
+/// - total_blocks: (N,) float32 normalized by TOTAL_BLOCKS_NORMALIZATION_DIVISOR (uncapped)
+/// - bumpiness: (N,) float32 normalized by BUMPINESS_NORMALIZATION_DIVISOR (uncapped)
+/// - holes: (N,) float32 normalized by HOLES_NORMALIZATION_DIVISOR (uncapped)
 /// - policy_targets: (N, 735) float32
 /// - value_targets: (N,) float32
 /// - action_masks: (N, 735) bool
-/// - overhang_fields: (N,) float32 normalized by maximum possible overhang fields
+/// - overhang_fields: (N,) float32 normalized by OVERHANG_NORMALIZATION_DIVISOR (uncapped)
 /// - game_numbers: (N,) uint64 (1-indexed game IDs aligned with WandB game_number)
 /// - game_total_attacks: (N,) uint32 (raw total attack for each example's source game)
 pub(crate) fn write_examples_slices_to_npz(
@@ -376,9 +376,9 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
 
     for i in 0..n {
         let overhang_feature = overhang_fields[i];
-        if !overhang_feature.is_finite() || !(0.0..=1.0).contains(&overhang_feature) {
+        if !overhang_feature.is_finite() || overhang_feature < 0.0 {
             return Err(format!(
-                "overhang_fields[{}] must be finite and in [0, 1], got {}",
+                "overhang_fields[{}] must be finite and >= 0, got {}",
                 i, overhang_feature
             ));
         }
@@ -654,7 +654,7 @@ mod tests {
         use crate::nn::normalize_combo_for_feature;
 
         let path = unique_temp_path("combo_normalized");
-        // combo=99 clamps to COMBO_NORMALIZATION_MAX and normalizes to 1.0
+        // combo normalization is uncapped linear scaling.
         let examples = vec![make_example(0, 7, 99)];
 
         write_examples_to_npz(&path, &examples).expect("write should succeed");

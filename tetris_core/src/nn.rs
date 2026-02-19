@@ -635,13 +635,11 @@ pub fn encode_aux_state_features(
 }
 
 pub fn normalize_combo_for_feature(combo: u32) -> f32 {
-    let capped = combo.min(COMBO_NORMALIZATION_MAX) as f32;
-    capped / COMBO_NORMALIZATION_MAX as f32
+    combo as f32 / COMBO_NORMALIZATION_MAX as f32
 }
 
 pub fn denormalize_combo_feature(combo_feature: f32) -> u32 {
-    let clamped = combo_feature.clamp(0.0, 1.0);
-    (clamped * COMBO_NORMALIZATION_MAX as f32).round() as u32
+    (combo_feature.max(0.0) * COMBO_NORMALIZATION_MAX as f32).round() as u32
 }
 
 pub fn encode_aux_features(
@@ -1166,16 +1164,16 @@ mod tests {
         // | Hold available | 1          | Binary (can use hold this turn) |
         // | Next queue     | 5 x 7 = 35 | One-hot encoded per slot        |
         // | Placement count| 1          | Normalized: placements / 100     |
-        // | Combo          | 1          | Normalized combo                 |
+        // | Combo          | 1          | combo / COMBO_NORMALIZATION_MAX  |
         // | Back-to-back   | 1          | Binary                           |
         // | Hidden piece   | 7          | 7-bag distribution               |
-        // | Column heights | 10         | normalized by board height       |
+        // | Column heights | 10         | normalized by COLUMN_HEIGHT_NORMALIZATION_DIVISOR |
         // | Max column h   | 1          | max normalized column height     |
         // | Row fill counts| 4          | bottom rows normalized by width  |
-        // | Total blocks   | 1          | normalized by board area         |
-        // | Bumpiness      | 1          | normalized bumpiness             |
-        // | Holes          | 1          | normalized hole count            |
-        // | Overhang       | 1          | normalized overhang count        |
+        // | Total blocks   | 1          | normalized by TOTAL_BLOCKS_NORMALIZATION_DIVISOR |
+        // | Bumpiness      | 1          | normalized by BUMPINESS_NORMALIZATION_DIVISOR |
+        // | Holes          | 1          | normalized by HOLES_NORMALIZATION_DIVISOR |
+        // | Overhang       | 1          | normalized by OVERHANG_NORMALIZATION_DIVISOR |
 
         let env = TetrisEnv::new(10, 20);
         let (board, aux) = encode_state(&env, 50, 100).expect("encoding failed");
@@ -1243,12 +1241,9 @@ mod tests {
             "Placement count 50 should normalize to 0.5"
         );
 
-        // Verify combo is normalized [0, 1]
+        // Verify combo feature is non-negative and matches current state.
         let combo_norm = aux[52];
-        assert!(
-            combo_norm >= 0.0 && combo_norm <= 1.0,
-            "Combo must be in [0, 1]"
-        );
+        assert!(combo_norm >= 0.0, "Combo feature must be non-negative");
         assert_eq!(combo_norm, 0.0, "Initial combo should be 0.0");
 
         // Verify back-to-back is binary
@@ -1276,8 +1271,8 @@ mod tests {
         let column_heights = &aux[61..71];
         for &height in column_heights {
             assert!(
-                (0.0..=1.0).contains(&height),
-                "Normalized column heights must be in [0, 1]"
+                height >= 0.0,
+                "Normalized column heights must be non-negative"
             );
         }
 
@@ -1299,19 +1294,10 @@ mod tests {
         let bumpiness = aux[73 + ROW_FILL_FEATURE_ROWS];
         let holes = aux[74 + ROW_FILL_FEATURE_ROWS];
         let overhang = aux[75 + ROW_FILL_FEATURE_ROWS];
-        assert!(
-            (0.0..=1.0).contains(&total_blocks),
-            "Total blocks must be in [0, 1]"
-        );
-        assert!(
-            (0.0..=1.0).contains(&bumpiness),
-            "Bumpiness must be in [0, 1]"
-        );
-        assert!((0.0..=1.0).contains(&holes), "Holes must be in [0, 1]");
-        assert!(
-            (0.0..=1.0).contains(&overhang),
-            "Overhang fields must be in [0, 1]"
-        );
+        assert!(total_blocks >= 0.0, "Total blocks must be non-negative");
+        assert!(bumpiness >= 0.0, "Bumpiness must be non-negative");
+        assert!(holes >= 0.0, "Holes must be non-negative");
+        assert!(overhang >= 0.0, "Overhang fields must be non-negative");
     }
 
     #[test]
@@ -1430,7 +1416,7 @@ mod tests {
         assert_eq!(denormalize_combo_feature(normalize_combo_for_feature(3)), 3);
         assert_eq!(
             denormalize_combo_feature(normalize_combo_for_feature(99)),
-            COMBO_NORMALIZATION_MAX
+            99
         );
     }
 
