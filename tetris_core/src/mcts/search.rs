@@ -213,11 +213,11 @@ fn simulate<E: LeafEvaluator>(
                 // No value tail beyond the placement horizon.
                 0.0
             } else {
-                chance_node.nn_value
+                chance_node.nn_value - leaf_overhang
             };
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_attack_sum - leaf_overhang + leaf_value,
+                root_cumulative_attack + path_attack_sum + leaf_value,
                 config.track_value_history,
             );
             return;
