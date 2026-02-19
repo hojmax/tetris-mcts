@@ -122,7 +122,7 @@ fn simulate<E: LeafEvaluator>(
 ) {
     let root_cumulative_attack = root.state.attack as f32;
     let mut path: Vec<(*mut DecisionNode, usize)> = Vec::new();
-    let mut path_reward_sum: f32 = 0.0;
+    let mut path_attack_sum: f32 = 0.0;
     let mut current = root as *mut DecisionNode;
 
     loop {
@@ -136,7 +136,7 @@ fn simulate<E: LeafEvaluator>(
         {
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_reward_sum,
+                root_cumulative_attack + path_attack_sum,
                 config.track_value_history,
             );
             return;
@@ -150,7 +150,7 @@ fn simulate<E: LeafEvaluator>(
             );
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_reward_sum - penalty,
+                root_cumulative_attack + path_attack_sum - penalty,
                 config.track_value_history,
             );
             return;
@@ -196,13 +196,12 @@ fn simulate<E: LeafEvaluator>(
                     unreachable!("BUG: just inserted child but it's missing");
                 }
             };
-            let leaf_reward = chance_node.attack as f32
-                - super::utils::compute_overhang_penalty(
-                    chance_node.overhang_fields,
-                    config.overhang_penalty_weight,
-                );
+            let leaf_overhang = super::utils::compute_overhang_penalty(
+                chance_node.overhang_fields,
+                config.overhang_penalty_weight,
+            );
             path.push((current, action_idx));
-            path_reward_sum += leaf_reward;
+            path_attack_sum += chance_node.attack as f32;
             let leaf_value = if chance_node.state.game_over {
                 -super::utils::compute_death_penalty(
                     chance_node.move_number,
@@ -217,7 +216,7 @@ fn simulate<E: LeafEvaluator>(
             };
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_reward_sum + leaf_value,
+                root_cumulative_attack + path_attack_sum - leaf_overhang + leaf_value,
                 config.track_value_history,
             );
             return;
@@ -233,13 +232,12 @@ fn simulate<E: LeafEvaluator>(
             }
         };
         chance_node.visit_count += 1;
-        let step_reward = chance_node.attack as f32
-            - super::utils::compute_overhang_penalty(
-                chance_node.overhang_fields,
-                config.overhang_penalty_weight,
-            );
+        let step_overhang = super::utils::compute_overhang_penalty(
+            chance_node.overhang_fields,
+            config.overhang_penalty_weight,
+        );
         path.push((current, action_idx));
-        path_reward_sum += step_reward;
+        path_attack_sum += chance_node.attack as f32;
         if chance_node.state.game_over {
             let penalty = super::utils::compute_death_penalty(
                 chance_node.move_number,
@@ -248,7 +246,7 @@ fn simulate<E: LeafEvaluator>(
             );
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_reward_sum - penalty,
+                root_cumulative_attack + path_attack_sum - step_overhang - penalty,
                 config.track_value_history,
             );
             return;
@@ -256,7 +254,7 @@ fn simulate<E: LeafEvaluator>(
         if chance_node.move_number >= config.max_placements {
             backup_with_value(
                 &path,
-                root_cumulative_attack + path_reward_sum,
+                root_cumulative_attack + path_attack_sum - step_overhang,
                 config.track_value_history,
             );
             return;
