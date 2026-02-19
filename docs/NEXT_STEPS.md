@@ -43,6 +43,8 @@ In progress: 🟨
 
 ### tetris_core/src/scoring.rs ✅
 
+### tetris_core/src/lib.rs ✅
+
 ### tetris_core/src/piece.rs ✅
 
 ### tetris_core/src/nn.rs ✅
