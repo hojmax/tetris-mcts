@@ -188,6 +188,8 @@ python tetris_bot/scripts/inspection/row_fill_zero_rates.py \
 # Measure tree reuse metrics (including tree_reuse_carry_fraction) in bootstrap/no-NN mode.
 # Defaults: 10 games, 4000 simulations, 50 max placements, add_noise=true,
 # and auto-parallel workers (all available CPU cores, capped by num_games).
+# tree_reuse_hits/misses exclude terminal and max-placement transitions
+# where no next search step exists.
 python tetris_bot/scripts/inspection/measure_bootstrap_tree_reuse.py
 
 # Optional: override run size/worker count/output path.

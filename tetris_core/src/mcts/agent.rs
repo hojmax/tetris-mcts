@@ -351,7 +351,11 @@ impl MCTSAgent {
             //   → at least 6 items remain, position QUEUE_SIZE is the hidden piece.
             // For hold actions: queue doesn't change, but the tree still models a chance
             //   node for the hidden piece, so the same extraction logic applies.
-            if self.config.reuse_tree {
+            //
+            // Do not count terminal or max-placement transitions as reuse misses:
+            // there is no next search step, so reuse is not applicable.
+            let should_attempt_tree_reuse = !env.game_over && placement_count < max_placements;
+            if self.config.reuse_tree && should_attempt_tree_reuse {
                 if let Some(root) = root {
                     let hidden_piece = env.piece_queue.get(QUEUE_SIZE).copied();
                     if let Some(piece) = hidden_piece {

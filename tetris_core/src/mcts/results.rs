@@ -250,13 +250,13 @@ pub struct GameResult {
     /// Board embedding cache size at end of game
     #[pyo3(get)]
     pub cache_size: usize,
-    /// Number of moves where tree was successfully reused from previous search
+    /// Number of non-terminal/non-horizon moves where tree reuse was attempted and succeeded
     #[pyo3(get)]
     pub tree_reuse_hits: u32,
-    /// Number of moves where tree reuse failed (fresh tree created)
+    /// Number of non-terminal/non-horizon moves where tree reuse was attempted but failed
     #[pyo3(get)]
     pub tree_reuse_misses: u32,
-    /// Average fraction of tree nodes carried over on successful reuse
+    /// Average fraction of tree nodes carried over on successful reuse attempts
     #[pyo3(get)]
     pub tree_reuse_carry_fraction: f32,
 }

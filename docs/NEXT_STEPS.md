@@ -3,6 +3,8 @@
 - [ ] What if you subtracted the root node value from all the child values before tanh? Then you immediately see if it is worse or better than expected.
 - [ ] look at mcts tree across multiple moves, not just root
 
+- [ ] I screwed up the loose penalty I think
+- [ ] The bootstrapping is way worse now...
 - [ ] Make network smaller and faster
 - [ ] The tetris tspin stuff is still weird.
   - Investigate with make viz
