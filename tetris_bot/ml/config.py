@@ -94,9 +94,9 @@ class SelfPlayConfig:
     max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
         50
     )
-    death_penalty: float = 5.0  # Search-time terminal penalty when game ends in death
+    death_penalty: float = 10.0  # Search-time terminal penalty when game ends in death
     overhang_penalty_weight: float = (  # Search-time weight for normalized overhang penalty
-        5.0
+        35
     )
     model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
         50

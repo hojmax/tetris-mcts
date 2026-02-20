@@ -17,18 +17,21 @@ class ScriptArgs:
         "/Users/axelhojmark/Desktop/v37/checkpoints/parallel.onnx"
     )  # ONNX model
     use_dummy_network: bool = True  # Run bootstrap MCTS without loading an ONNX model
-    reuse_tree: bool = True
+    reuse_tree: bool = False
     num_games: int = 60  # Number of games per configuration
     simulations: int = 4000  # MCTS simulations per move
     max_placements: int = 50  # Maximum placements per game
     seed_start: int = 42  # Starting seed
     mcts_seed: int = 123  # Deterministic MCTS seed for reproducibility
-    death_penalties: list[int] = field(default_factory=lambda: [10])
+    death_penalties: list[int] = field(default_factory=lambda: [5])
     overhang_penalty_weights: list[float] = field(
         # Best so far: 75
-        default_factory=lambda: [6, 35, 70, 75, 80, 120]
+        default_factory=lambda: [35]
     )
     num_workers: int = 7
+    add_noise: bool = True
+    dirichlet_alpha: float = 0.02
+    dirichlet_epsilon: float = 0.25
 
 
 def run_config(
@@ -41,6 +44,8 @@ def run_config(
     config.death_penalty = death_penalty
     config.overhang_penalty_weight = overhang_penalty_weight
     config.reuse_tree = args.reuse_tree
+    config.dirichlet_alpha = args.dirichlet_alpha
+    config.dirichlet_epsilon = args.dirichlet_epsilon
 
     seeds = list(range(args.seed_start, args.seed_start + args.num_games))
 
@@ -52,6 +57,7 @@ def run_config(
             config=config,
             max_placements=args.max_placements,
             num_workers=args.num_workers,
+            add_noise=args.add_noise,
         )
     else:
         result = evaluate_model(
