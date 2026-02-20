@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,6 +43,7 @@ def main(args: ProfileArgs) -> None:
         logger.error("Model not found", path=str(args.model_path))
         return
 
+    runtime_backend = os.getenv("TETRIS_NN_BACKEND", "tract(default)")
     evaluation_mode = (
         "dummy_no_network_uniform" if args.use_dummy_network else "onnx_network"
     )
@@ -52,6 +54,7 @@ def main(args: ProfileArgs) -> None:
         num_games=args.num_games,
         simulations=args.simulations,
         seed_start=args.seed_start,
+        runtime_backend=runtime_backend,
     )
 
     config = MCTSConfig()
@@ -137,6 +140,7 @@ def main(args: ProfileArgs) -> None:
             "max_placements": args.max_placements,
             "evaluation_mode": "deterministic_argmax_no_dirichlet_noise",
             "use_dummy_network": args.use_dummy_network,
+            "runtime_backend": runtime_backend,
         },
         "timing": {
             "total_time_sec": total_time,

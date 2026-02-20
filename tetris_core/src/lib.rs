@@ -10,7 +10,7 @@
 //! - `scoring`: Attack scoring system (T-spins, combos, back-to-back, perfect clears)
 //! - `moves`: Move generation for finding all possible piece placements
 //! - `mcts`: Monte Carlo Tree Search for AlphaZero-style play
-//! - `nn`: Neural network inference using tract-onnx
+//! - `nn`: Neural network inference (tract default, optional ONNX Runtime backend)
 //! - `generator`: Background game generation and evaluation
 #![allow(non_local_definitions)] // PyO3 #[pymethods] triggers this warning with current toolchain.
 

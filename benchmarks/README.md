@@ -46,6 +46,41 @@ tail -1 benchmarks/profile_results.jsonl | python -m json.tool
 cat benchmarks/profile_results.jsonl | jq '.timing.moves_per_second'
 ```
 
+### Backend A/B (tract vs ONNX Runtime)
+
+`tetris_core` now supports two CPU inference backends:
+- `tract` (default)
+- `ort` (ONNX Runtime, when built with `nn-ort`)
+
+Build variants:
+
+```bash
+# 1) Baseline tract backend
+python -m maturin develop --release --manifest-path tetris_core/Cargo.toml
+
+# 2) tract with tract-linalg multithread-mm enabled
+python -m maturin develop --release --manifest-path tetris_core/Cargo.toml \
+  --features "extension-module,nn-tract-multithread-mm"
+
+# 3) Build with ONNX Runtime backend support
+python -m maturin develop --release --manifest-path tetris_core/Cargo.toml \
+  --features "extension-module,nn-ort"
+```
+
+Run identical timed profiles (same seeds and `--mcts_seed`) and switch runtime via env var:
+
+```bash
+# tract runtime
+TETRIS_NN_BACKEND=tract python tetris_bot/scripts/inspection/profile_games.py \
+  --model_path training_runs/v45/checkpoints/latest.onnx \
+  --num_games 5 --simulations 200 --seed_start 42 --mcts_seed 123
+
+# ONNX Runtime runtime (requires nn-ort build)
+TETRIS_NN_BACKEND=ort python tetris_bot/scripts/inspection/profile_games.py \
+  --model_path training_runs/v45/checkpoints/latest.onnx \
+  --num_games 5 --simulations 200 --seed_start 42 --mcts_seed 123
+```
+
 ### Interactive Profiling (Recommended)
 
 Use [samply](https://github.com/mstange/samply) for interactive flamegraph visualization:
@@ -96,7 +131,7 @@ samply record --save-only --unstable-presymbolicate \
 
 What to inspect:
 - `tetris_core::moves::*` and `tetris_core::mcts::*` for search/move-gen costs.
-- `tetris_core::nn::*`, `tract_core::*`, and `tract_linalg::*` for inference costs.
+- `tetris_core::nn::*`, `tract_core::*`, `tract_linalg::*`, and `ort::*` for inference costs.
 
 Important interpretation detail:
 - If you summarize only `tetris_core::*`, ONNX compute can look missing because much of inference time is attributed to `tract_*` symbols.

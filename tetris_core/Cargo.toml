@@ -8,15 +8,24 @@ name = "tetris_core"
 crate-type = ["cdylib"]
 
 [features]
-default = []
+default = ["nn-tract"]
 extension-module = ["pyo3/extension-module"]
+nn-tract = ["dep:tract-onnx"]
+nn-tract-multithread-mm = [
+    "nn-tract",
+    "dep:tract-linalg",
+    "tract-linalg/multithread-mm",
+]
+nn-ort = ["nn-tract", "dep:ort"]
 
 [dependencies]
 pyo3 = { version = "0.20" }
 numpy = "0.20"
 rand = "0.8"
 rand_distr = "0.4"
-tract-onnx = "0.21"
+tract-onnx = { version = "0.21", optional = true }
+tract-linalg = { version = "0.21", optional = true }
+ort = { version = "2.0.0-rc.11", optional = true }
 # For background game generation
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 npyz = "0.8"
