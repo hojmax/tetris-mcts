@@ -1,16 +1,21 @@
-//! Neural Network Inference using tract-onnx
+//! Neural Network Inference
 //!
 //! Loads split ONNX models (conv backbone + heads) and board projection weights from binary.
 //! Caches board embeddings to skip conv + board projection on repeated board states.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
+use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(feature = "nn-ort")]
+use std::sync::Mutex;
 
 use ndarray::{Array1, Array2, ArrayView1};
+#[cfg(feature = "nn-ort")]
+use ort::{inputs, session::Session, value::TensorRef};
 use tract_onnx::prelude::*;
 
 use crate::constants::{
@@ -27,8 +32,7 @@ use crate::mcts::{
 
 /// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
-    conv_model: Arc<TypedRunnableModel<TypedModel>>,
-    heads_model: Arc<TypedRunnableModel<TypedModel>>,
+    backend: InferenceBackend,
     board_proj_weight: Arc<Array2<f32>>, // (board_hidden, conv_out_size + BOARD_STATS_FEATURES)
     board_proj_bias: Arc<Array1<f32>>,   // (board_hidden,)
     board_hidden: usize,
@@ -41,7 +45,138 @@ pub struct TetrisNN {
     cache_enabled: Cell<bool>,
 }
 
+#[derive(Clone)]
+enum InferenceBackend {
+    Tract {
+        conv_model: Arc<TypedRunnableModel<TypedModel>>,
+        heads_model: Arc<TypedRunnableModel<TypedModel>>,
+    },
+    #[cfg(feature = "nn-ort")]
+    Ort {
+        conv_session: Arc<Mutex<Session>>,
+        heads_session: Arc<Mutex<Session>>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RuntimeBackend {
+    Tract,
+    #[cfg(feature = "nn-ort")]
+    Ort,
+}
+
 impl TetrisNN {
+    fn selected_backend_from_env() -> TractResult<RuntimeBackend> {
+        match env::var("TETRIS_NN_BACKEND") {
+            Ok(raw) => {
+                let backend = raw.trim().to_ascii_lowercase();
+                match backend.as_str() {
+                    "" | "tract" => Ok(RuntimeBackend::Tract),
+                    "ort" | "onnxruntime" | "onnx-runtime" => {
+                        #[cfg(feature = "nn-ort")]
+                        {
+                            Ok(RuntimeBackend::Ort)
+                        }
+                        #[cfg(not(feature = "nn-ort"))]
+                        {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "TETRIS_NN_BACKEND=ort requested, but tetris_core was built without feature `nn-ort`",
+                            )
+                            .into())
+                        }
+                    }
+                    _ => Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Unsupported TETRIS_NN_BACKEND='{}' (expected 'tract' or 'ort')",
+                            raw
+                        ),
+                    )
+                    .into()),
+                }
+            }
+            Err(env::VarError::NotPresent) => Ok(RuntimeBackend::Tract),
+            Err(err) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Failed to read TETRIS_NN_BACKEND: {err}"),
+            )
+            .into()),
+        }
+    }
+
+    fn load_tract_backend(conv_path: &Path, heads_path: &Path) -> TractResult<InferenceBackend> {
+        let conv_model = tract_onnx::onnx()
+            .model_for_path(conv_path)?
+            .into_optimized()?
+            .into_runnable()?;
+
+        let heads_model = tract_onnx::onnx()
+            .model_for_path(heads_path)?
+            .into_optimized()?
+            .into_runnable()?;
+
+        Ok(InferenceBackend::Tract {
+            conv_model: Arc::new(conv_model),
+            heads_model: Arc::new(heads_model),
+        })
+    }
+
+    #[cfg(feature = "nn-ort")]
+    fn load_ort_backend(conv_path: &Path, heads_path: &Path) -> TractResult<InferenceBackend> {
+        let conv_session = Session::builder()
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to build ONNX Runtime conv session builder: {e}"),
+                )
+            })?
+            .commit_from_file(conv_path)
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Failed to load ONNX Runtime conv model '{}': {e}",
+                        conv_path.display()
+                    ),
+                )
+            })?;
+
+        let heads_session = Session::builder()
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to build ONNX Runtime heads session builder: {e}"),
+                )
+            })?
+            .commit_from_file(heads_path)
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Failed to load ONNX Runtime heads model '{}': {e}",
+                        heads_path.display()
+                    ),
+                )
+            })?;
+
+        Ok(InferenceBackend::Ort {
+            conv_session: Arc::new(Mutex::new(conv_session)),
+            heads_session: Arc::new(Mutex::new(heads_session)),
+        })
+    }
+
+    fn load_inference_backend(
+        conv_path: &Path,
+        heads_path: &Path,
+    ) -> TractResult<InferenceBackend> {
+        match Self::selected_backend_from_env()? {
+            RuntimeBackend::Tract => Self::load_tract_backend(conv_path, heads_path),
+            #[cfg(feature = "nn-ort")]
+            RuntimeBackend::Ort => Self::load_ort_backend(conv_path, heads_path),
+        }
+    }
+
     /// Load split models from file.
     /// Given a base path like "latest.onnx", loads:
     /// - "latest.conv.onnx" (conv backbone)
@@ -52,16 +187,7 @@ impl TetrisNN {
         let conv_path = base.with_extension("conv.onnx");
         let heads_path = base.with_extension("heads.onnx");
         let fc_path = base.with_extension("fc.bin");
-
-        let conv_model = tract_onnx::onnx()
-            .model_for_path(&conv_path)?
-            .into_optimized()?
-            .into_runnable()?;
-
-        let heads_model = tract_onnx::onnx()
-            .model_for_path(&heads_path)?
-            .into_optimized()?
-            .into_runnable()?;
+        let backend = Self::load_inference_backend(&conv_path, &heads_path)?;
 
         let (board_proj_weight, board_proj_bias) = load_fc_binary(&fc_path)?;
         let board_hidden = board_proj_weight.nrows();
@@ -79,8 +205,7 @@ impl TetrisNN {
         let conv_out_size = board_proj_cols - BOARD_STATS_FEATURES;
 
         Ok(TetrisNN {
-            conv_model: Arc::new(conv_model),
-            heads_model: Arc::new(heads_model),
+            backend,
             board_proj_weight: Arc::new(board_proj_weight),
             board_proj_bias: Arc::new(board_proj_bias),
             board_hidden,
@@ -94,38 +219,177 @@ impl TetrisNN {
         })
     }
 
+    fn run_conv(&self, board_f32: Vec<f32>) -> TractResult<Vec<f32>> {
+        match &self.backend {
+            InferenceBackend::Tract { conv_model, .. } => {
+                let board_tensor = tract_ndarray::Array4::from_shape_vec(
+                    (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
+                    board_f32,
+                )?
+                .into_tensor();
+
+                let conv_output = conv_model.run(tvec!(board_tensor.into()))?;
+                let conv_out = conv_output[0].to_array_view::<f32>()?;
+                let conv_slice = conv_out.as_slice_memory_order().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Conv output tensor is not contiguous",
+                    )
+                })?;
+                Ok(conv_slice.to_vec())
+            }
+            #[cfg(feature = "nn-ort")]
+            InferenceBackend::Ort { conv_session, .. } => {
+                let board_tensor = TensorRef::from_array_view((
+                    [1usize, 1, BOARD_HEIGHT, BOARD_WIDTH],
+                    board_f32.as_slice(),
+                ))
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to build ORT board tensor: {e}"),
+                    )
+                })?;
+
+                let mut session = conv_session.lock().map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("ONNX Runtime conv session lock poisoned: {e}"),
+                    )
+                })?;
+                let outputs = session.run(inputs![board_tensor]).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("ONNX Runtime conv inference failed: {e}"),
+                    )
+                })?;
+
+                let (_shape, conv_slice) = outputs[0].try_extract_tensor::<f32>().map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to extract ORT conv output tensor: {e}"),
+                    )
+                })?;
+                Ok(conv_slice.to_vec())
+            }
+        }
+    }
+
+    fn run_heads(
+        &self,
+        board_embed: Vec<f32>,
+        piece_aux: Vec<f32>,
+    ) -> TractResult<(Vec<f32>, f32)> {
+        match &self.backend {
+            InferenceBackend::Tract { heads_model, .. } => {
+                let board_h_tensor =
+                    tract_ndarray::Array2::from_shape_vec((1, self.board_hidden), board_embed)?
+                        .into_tensor();
+                let aux_tensor =
+                    tract_ndarray::Array2::from_shape_vec((1, PIECE_AUX_FEATURES), piece_aux)?
+                        .into_tensor();
+                let heads_output =
+                    heads_model.run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
+
+                let policy_logits: Vec<f32> = heads_output[0]
+                    .to_array_view::<f32>()?
+                    .iter()
+                    .copied()
+                    .collect();
+                let value = heads_output[1]
+                    .to_array_view::<f32>()?
+                    .iter()
+                    .next()
+                    .copied()
+                    .expect("NN value output tensor is empty - model is malformed");
+                Ok((policy_logits, value))
+            }
+            #[cfg(feature = "nn-ort")]
+            InferenceBackend::Ort { heads_session, .. } => {
+                let board_h_tensor = TensorRef::from_array_view((
+                    [1usize, self.board_hidden],
+                    board_embed.as_slice(),
+                ))
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to build ORT board embedding tensor: {e}"),
+                    )
+                })?;
+                let aux_tensor = TensorRef::from_array_view((
+                    [1usize, PIECE_AUX_FEATURES],
+                    piece_aux.as_slice(),
+                ))
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to build ORT aux tensor: {e}"),
+                    )
+                })?;
+
+                let mut session = heads_session.lock().map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("ONNX Runtime heads session lock poisoned: {e}"),
+                    )
+                })?;
+                let outputs = session
+                    .run(inputs![board_h_tensor, aux_tensor])
+                    .map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("ONNX Runtime heads inference failed: {e}"),
+                        )
+                    })?;
+
+                let (_policy_shape, policy_logits) =
+                    outputs[0].try_extract_tensor::<f32>().map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Failed to extract ORT policy logits tensor: {e}"),
+                        )
+                    })?;
+                let policy_logits = policy_logits.to_vec();
+
+                let (_value_shape, value_slice) =
+                    outputs[1].try_extract_tensor::<f32>().map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Failed to extract ORT value tensor: {e}"),
+                        )
+                    })?;
+                let value = value_slice.first().copied().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "NN value output tensor is empty - model is malformed",
+                    )
+                })?;
+                Ok((policy_logits, value))
+            }
+        }
+    }
+
     fn compute_board_embedding_owned(
         &self,
         board_f32: Vec<f32>,
         board_stats: &[f32],
     ) -> TractResult<Array1<f32>> {
-        let board_tensor =
-            tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_f32)?
-                .into_tensor();
-
-        let conv_output = self.conv_model.run(tvec!(board_tensor.into()))?;
-        let conv_out = conv_output[0].to_array_view::<f32>()?;
-        if conv_out.len() != self.conv_out_size {
+        let conv_values = self.run_conv(board_f32)?;
+        if conv_values.len() != self.conv_out_size {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
                     "Conv output size mismatch: conv.onnx={} fc.bin expects conv_out={} (re-export split models together)",
-                    conv_out.len(),
+                    conv_values.len(),
                     self.conv_out_size
                 ),
             )
             .into());
         }
-        let conv_slice = conv_out.as_slice_memory_order().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Conv output tensor is not contiguous",
-            )
-        })?;
 
-        // Concatenate conv output (e.g. 1600) + board_stats (19) → board_proj input
+        // Concatenate conv output (e.g. 1600) + board_stats (19) -> board_proj input.
         let mut combined = Vec::with_capacity(self.conv_out_size + BOARD_STATS_FEATURES);
-        combined.extend_from_slice(conv_slice);
+        combined.extend_from_slice(&conv_values);
         combined.extend_from_slice(board_stats);
 
         let combined_arr = ArrayView1::from(&combined);
@@ -163,12 +427,12 @@ impl TetrisNN {
         self.cache_order.borrow_mut().clear();
     }
 
-    fn predict_policy_logits_tensor_and_value(
+    fn predict_policy_logits_and_value(
         &self,
         env: &TetrisEnv,
         placement_count: usize,
         max_placements: usize,
-    ) -> TractResult<(Tensor, f32)> {
+    ) -> TractResult<(Vec<f32>, f32)> {
         let board_embed = if self.cache_enabled.get() {
             let board_key = pack_board(env);
             let board_embed = {
@@ -196,47 +460,9 @@ impl TetrisNN {
             self.compute_board_embedding_owned(board_f32, &board_stats)?
         };
 
-        // Encode only piece/game aux features (61-dim) for the heads model
+        // Encode only piece/game aux features (61-dim) for the heads model.
         let piece_aux_vec = encode_piece_aux_features(env, placement_count, max_placements)?;
-
-        let board_h_tensor = tract_ndarray::Array2::from_shape_vec(
-            (1, self.board_hidden),
-            board_embed.into_raw_vec(),
-        )?
-        .into_tensor();
-        let aux_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, PIECE_AUX_FEATURES), piece_aux_vec)?
-                .into_tensor();
-        let heads_output = self
-            .heads_model
-            .run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
-
-        let policy_logits = heads_output[0].clone().into_tensor();
-
-        let value = heads_output[1]
-            .to_array_view::<f32>()?
-            .iter()
-            .next()
-            .copied()
-            .expect("NN value output tensor is empty - model is malformed");
-
-        Ok((policy_logits, value))
-    }
-
-    fn predict_logits_and_value(
-        &self,
-        env: &TetrisEnv,
-        placement_count: usize,
-        max_placements: usize,
-    ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits_tensor, value) =
-            self.predict_policy_logits_tensor_and_value(env, placement_count, max_placements)?;
-        let policy_logits: Vec<f32> = policy_logits_tensor
-            .to_array_view::<f32>()?
-            .iter()
-            .copied()
-            .collect();
-        Ok((policy_logits, value))
+        self.run_heads(board_embed.into_raw_vec(), piece_aux_vec)
     }
 
     /// Run inference with action mask applied, using board embedding cache.
@@ -248,7 +474,7 @@ impl TetrisNN {
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
         let (policy_logits, value) =
-            self.predict_logits_and_value(env, placement_count, max_placements)?;
+            self.predict_policy_logits_and_value(env, placement_count, max_placements)?;
 
         if policy_logits.len() != action_mask.len() {
             return Err(std::io::Error::new(
@@ -263,7 +489,6 @@ impl TetrisNN {
         }
 
         let policy = masked_softmax(&policy_logits, action_mask);
-
         Ok((policy, value))
     }
 
@@ -275,15 +500,8 @@ impl TetrisNN {
         valid_actions: &[usize],
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits_tensor, value) =
-            self.predict_policy_logits_tensor_and_value(env, placement_count, max_placements)?;
-        let policy_logits_view = policy_logits_tensor.to_array_view::<f32>()?;
-        let policy_logits = policy_logits_view.as_slice_memory_order().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "NN policy output tensor is not contiguous",
-            )
-        })?;
+        let (policy_logits, value) =
+            self.predict_policy_logits_and_value(env, placement_count, max_placements)?;
 
         if let Some(&invalid_action) = valid_actions
             .iter()
@@ -300,7 +518,7 @@ impl TetrisNN {
             .into());
         }
 
-        let action_priors = softmax_over_valid_actions(policy_logits, valid_actions);
+        let action_priors = softmax_over_valid_actions(&policy_logits, valid_actions);
         Ok((action_priors, value))
     }
 
@@ -315,23 +533,8 @@ impl TetrisNN {
         let piece_aux = &aux_tensor[..PIECE_AUX_FEATURES];
         let board_stats = &aux_tensor[PIECE_AUX_FEATURES..];
         let board_embed = self.compute_board_embedding_from_slice(board_tensor, board_stats)?;
-        let board_h_tensor = tract_ndarray::Array2::from_shape_vec(
-            (1, self.board_hidden),
-            board_embed.into_raw_vec(),
-        )?
-        .into_tensor();
-        let aux_tensor =
-            tract_ndarray::Array2::from_shape_vec((1, PIECE_AUX_FEATURES), piece_aux.to_vec())?
-                .into_tensor();
-        let heads_output = self
-            .heads_model
-            .run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
-
-        let policy_logits: Vec<f32> = heads_output[0]
-            .to_array_view::<f32>()?
-            .iter()
-            .copied()
-            .collect();
+        let (policy_logits, value) =
+            self.run_heads(board_embed.into_raw_vec(), piece_aux.to_vec())?;
 
         if policy_logits.len() != action_mask.len() {
             return Err(std::io::Error::new(
@@ -345,15 +548,7 @@ impl TetrisNN {
             .into());
         }
 
-        let value = heads_output[1]
-            .to_array_view::<f32>()?
-            .iter()
-            .next()
-            .copied()
-            .expect("NN value output tensor is empty - model is malformed");
-
         let policy = masked_softmax(&policy_logits, action_mask);
-
         Ok((policy, value))
     }
 }
@@ -377,10 +572,9 @@ impl TetrisNN {
 
 impl Clone for TetrisNN {
     fn clone(&self) -> Self {
-        // Share Arc-wrapped models/weights, create fresh empty cache and counters
+        // Share backend sessions/models and weights, create fresh empty cache and counters.
         TetrisNN {
-            conv_model: Arc::clone(&self.conv_model),
-            heads_model: Arc::clone(&self.heads_model),
+            backend: self.backend.clone(),
             board_proj_weight: Arc::clone(&self.board_proj_weight),
             board_proj_bias: Arc::clone(&self.board_proj_bias),
             board_hidden: self.board_hidden,
