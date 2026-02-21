@@ -1,5 +1,7 @@
+import json
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -28,10 +30,16 @@ class ScriptArgs:
     death_penalty: float = 10.0
     overhang_penalty_weight: float = 75.0
     num_workers: int = 7  # Parallel workers for evaluation
-    add_noise: bool = True
+    add_noise: bool = False
     dirichlet_alpha: float = 0.02
     dirichlet_epsilon: float = 0.25
     output_plot: Path = BENCHMARKS_DIR / "simple_evaluate_reuse_vs_no_reuse.png"
+    cache_path: Path = BENCHMARKS_DIR / "simple_evaluate_reuse_vs_no_reuse_cache.json"
+    reuse_cached_results: bool = (
+        True  # Reuse cache when eval args match to skip expensive reruns
+    )
+    force_recompute: bool = False  # Ignore cache and rerun evaluations
+    plot_only: bool = False  # Rebuild plot from cache without running evaluations
 
 
 def run_config(
@@ -272,31 +280,111 @@ def print_results_table(results: list[dict]) -> None:
         )
 
 
-def main(args: ScriptArgs) -> None:
-    if not args.use_dummy_network and not args.model_path.exists():
-        raise FileNotFoundError(f"Model not found: {args.model_path}")
+def normalize_results(results: list[dict]) -> list[dict]:
+    return sorted(
+        results,
+        key=lambda r: (int(r["num_simulations"]), bool(r["reuse_tree"])),
+    )
 
+
+def build_eval_config(args: ScriptArgs, simulations: list[int]) -> dict:
+    return {
+        "use_dummy_network": bool(args.use_dummy_network),
+        "model_path": None if args.use_dummy_network else str(args.model_path),
+        "num_games": int(args.num_games),
+        "simulations": [int(s) for s in simulations],
+        "max_placements": int(args.max_placements),
+        "seed_start": int(args.seed_start),
+        "mcts_seed": int(args.mcts_seed),
+        "death_penalty": float(args.death_penalty),
+        "overhang_penalty_weight": float(args.overhang_penalty_weight),
+        "num_workers": int(args.num_workers),
+        "add_noise": bool(args.add_noise),
+        "dirichlet_alpha": float(args.dirichlet_alpha),
+        "dirichlet_epsilon": float(args.dirichlet_epsilon),
+    }
+
+
+def load_cache(cache_path: Path) -> dict | None:
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "Failed to read cache; ignoring",
+            path=str(cache_path),
+            error=str(exc),
+        )
+        return None
+    if not isinstance(payload, dict):
+        logger.warning("Invalid cache format; ignoring", path=str(cache_path))
+        return None
+    if not isinstance(payload.get("results"), list):
+        logger.warning("Cache missing results; ignoring", path=str(cache_path))
+        return None
+    return payload
+
+
+def save_cache(cache_path: Path, eval_config: dict, results: list[dict]) -> None:
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "eval_config": eval_config,
+        "results": normalize_results(results),
+    }
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def main(args: ScriptArgs) -> None:
     simulations = sorted(set(args.simulations))
     if not simulations:
         raise ValueError("simulations cannot be empty")
 
-    all_results: list[dict] = []
-    for num_simulations in simulations:
-        for reuse_tree in [False, True]:
-            logger.info(
-                "Running evaluation",
-                num_simulations=num_simulations,
-                reuse_tree=reuse_tree,
-                num_games=args.num_games,
-                num_workers=args.num_workers,
+    eval_config = build_eval_config(args, simulations)
+    cached_payload = load_cache(args.cache_path)
+
+    all_results: list[dict] | None = None
+    if args.plot_only:
+        if cached_payload is None:
+            raise FileNotFoundError(
+                f"plot_only=true but cache file not found or invalid: {args.cache_path}"
             )
-            all_results.append(
-                run_config(
-                    args=args,
+        all_results = normalize_results(cached_payload["results"])
+        logger.info("Loaded cached results (plot_only)", path=str(args.cache_path))
+    elif (
+        args.reuse_cached_results
+        and not args.force_recompute
+        and cached_payload is not None
+        and cached_payload.get("eval_config") == eval_config
+    ):
+        all_results = normalize_results(cached_payload["results"])
+        logger.info("Loaded cached results", path=str(args.cache_path))
+
+    if all_results is None:
+        if not args.use_dummy_network and not args.model_path.exists():
+            raise FileNotFoundError(f"Model not found: {args.model_path}")
+
+        all_results = []
+        for num_simulations in simulations:
+            for reuse_tree in [False, True]:
+                logger.info(
+                    "Running evaluation",
                     num_simulations=num_simulations,
                     reuse_tree=reuse_tree,
+                    num_games=args.num_games,
+                    num_workers=args.num_workers,
                 )
-            )
+                all_results.append(
+                    run_config(
+                        args=args,
+                        num_simulations=num_simulations,
+                        reuse_tree=reuse_tree,
+                    )
+                )
+        all_results = normalize_results(all_results)
+        save_cache(args.cache_path, eval_config, all_results)
+        logger.info("Saved cache", path=str(args.cache_path))
 
     print_results_table(all_results)
     create_plot(all_results, args.output_plot)
