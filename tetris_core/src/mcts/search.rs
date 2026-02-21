@@ -12,7 +12,7 @@ use crate::nn::TetrisNN;
 use super::action_space::{HOLD_ACTION_INDEX, NUM_ACTIONS};
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
-use super::results::{MCTSResult, TreeStats};
+use super::results::{MCTSResult, TraversalStats, TreeStats};
 
 fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> {
     let total_mass: f32 = policy.iter().sum();
@@ -41,6 +41,13 @@ fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> 
 enum ExpandActionError {
     InvariantViolation { action_idx: usize },
     EvaluatorFailed(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SimulationOutcome {
+    Expansion,
+    TerminalEnd,
+    HorizonEnd,
 }
 
 fn uniform_action_priors_for_valid_actions(valid_action_count: usize) -> Vec<f32> {
@@ -119,7 +126,7 @@ fn simulate<E: LeafEvaluator>(
     evaluator: &E,
     root: &mut DecisionNode,
     rng: &mut StdRng,
-) {
+) -> SimulationOutcome {
     let root_cumulative_attack = root.state.attack as f32;
     let mut path: Vec<(*mut DecisionNode, usize)> = Vec::new();
     let mut path_attack_sum: f32 = 0.0;
@@ -136,7 +143,7 @@ fn simulate<E: LeafEvaluator>(
                 root_cumulative_attack + path_attack_sum,
                 config.track_value_history,
             );
-            return;
+            return SimulationOutcome::HorizonEnd;
         }
 
         if node.is_terminal {
@@ -150,7 +157,7 @@ fn simulate<E: LeafEvaluator>(
                 root_cumulative_attack + path_attack_sum - penalty,
                 config.track_value_history,
             );
-            return;
+            return SimulationOutcome::TerminalEnd;
         }
 
         if node.valid_actions.is_empty() {
@@ -220,7 +227,7 @@ fn simulate<E: LeafEvaluator>(
                 root_cumulative_attack + path_attack_sum + leaf_value,
                 config.track_value_history,
             );
-            return;
+            return SimulationOutcome::Expansion;
         }
 
         let chance_node = match node.children.get_mut(&action_idx) {
@@ -246,7 +253,7 @@ fn simulate<E: LeafEvaluator>(
                 root_cumulative_attack + path_attack_sum - penalty,
                 config.track_value_history,
             );
-            return;
+            return SimulationOutcome::TerminalEnd;
         }
         if chance_node.move_number >= config.max_placements {
             backup_with_value(
@@ -254,7 +261,7 @@ fn simulate<E: LeafEvaluator>(
                 root_cumulative_attack + path_attack_sum,
                 config.track_value_history,
             );
-            return;
+            return SimulationOutcome::HorizonEnd;
         }
 
         let piece = chance_node.select_piece_random(rng);
@@ -529,19 +536,25 @@ pub(super) fn run_search<E: LeafEvaluator>(
     evaluator: &E,
     mut root: DecisionNode,
     add_noise: bool,
-) -> (MCTSResult, DecisionNode, TreeStats) {
+) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
     let mut rng = create_search_rng(config, &root.state, root.move_number);
     if add_noise {
         root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
     }
 
+    let mut traversal_stats = TraversalStats::default();
     for _ in 0..config.num_simulations {
-        simulate(config, evaluator, &mut root, &mut rng);
+        match simulate(config, evaluator, &mut root, &mut rng) {
+            SimulationOutcome::Expansion => traversal_stats.expansions += 1,
+            SimulationOutcome::TerminalEnd => traversal_stats.terminal_ends += 1,
+            SimulationOutcome::HorizonEnd => traversal_stats.horizon_ends += 1,
+        }
     }
+    debug_assert_eq!(traversal_stats.total(), config.num_simulations);
 
     let mcts_result = build_result_from_root(config, &root, &mut rng);
     let tree_stats = compute_tree_stats(&root);
-    (mcts_result, root, tree_stats)
+    (mcts_result, root, tree_stats, traversal_stats)
 }
 
 /// Run MCTS search with NN guidance from a fresh root.
@@ -553,7 +566,7 @@ pub(super) fn search_internal(
     nn_value: f32,
     add_noise: bool,
     move_number: u32,
-) -> (MCTSResult, DecisionNode, TreeStats) {
+) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
     let evaluator = NeuralLeafEvaluator {
         nn,
         nn_value_weight: config.nn_value_weight,
@@ -569,7 +582,7 @@ pub(crate) fn search_internal_without_nn(
     env: &TetrisEnv,
     add_noise: bool,
     move_number: u32,
-) -> (MCTSResult, DecisionNode, TreeStats) {
+) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
     let root_policy = env.get_cached_uniform_policy().as_ref().clone();
     let mut root = DecisionNode::new(env.clone(), move_number);
     root.set_nn_output(&root_policy, 0.0);
@@ -660,7 +673,8 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 123.0 };
         let mut rng = StdRng::seed_from_u64(1234);
-        simulate(&config, &evaluator, &mut root, &mut rng);
+        let outcome = simulate(&config, &evaluator, &mut root, &mut rng);
+        assert_eq!(outcome, SimulationOutcome::Expansion);
 
         let expected_value = -super::super::utils::compute_death_penalty(
             0,
@@ -690,7 +704,8 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 42.0 };
         let mut rng = StdRng::seed_from_u64(7);
-        simulate(&config, &evaluator, &mut root, &mut rng);
+        let outcome = simulate(&config, &evaluator, &mut root, &mut rng);
+        assert_eq!(outcome, SimulationOutcome::HorizonEnd);
 
         assert_eq!(root.value_sum, 0.0);
         assert!(root.children.is_empty());
@@ -735,7 +750,8 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 123.0 };
         let mut rng = StdRng::seed_from_u64(99);
-        simulate(&config, &evaluator, &mut root, &mut rng);
+        let outcome = simulate(&config, &evaluator, &mut root, &mut rng);
+        assert_eq!(outcome, SimulationOutcome::Expansion);
 
         let chance_node = match root.children.get(&placement_action) {
             Some(MCTSNode::Chance(chance_node)) => chance_node,
@@ -905,7 +921,10 @@ mod tests {
         let visits_after_first = root.visit_count;
 
         // Continue search via run_search (simulates tree reuse)
-        let (result, root, _tree_stats) = run_search(&config, &evaluator, root, false);
+        let (result, root, _tree_stats, traversal_stats) =
+            run_search(&config, &evaluator, root, false);
+        assert_eq!(result.num_simulations, config.num_simulations);
+        assert_eq!(traversal_stats.total(), config.num_simulations);
 
         assert_eq!(
             root.visit_count,
@@ -916,5 +935,53 @@ mod tests {
             result.policy.iter().any(|&p| p > 0.0),
             "Policy should have non-zero entries"
         );
+    }
+
+    #[test]
+    fn test_simulate_revisiting_terminal_child_reports_terminal_outcome() {
+        let mut env = TetrisEnv::new(10, 20);
+        for x in 0..env.width {
+            env.board[x] = 1;
+            env.board[env.width + x] = 1;
+        }
+
+        let mut root = DecisionNode::new(env, 0);
+        let mut root_policy = vec![0.0; NUM_ACTIONS];
+        root_policy[HOLD_ACTION_INDEX] = 1.0;
+        root.set_nn_output(&root_policy, 0.0);
+
+        let mut config = MCTSConfig::default();
+        config.max_placements = 100;
+        config.death_penalty = 5.0;
+        config.overhang_penalty_weight = 0.0;
+
+        let evaluator = ConstantEvaluator { value: 0.0 };
+        let mut rng = StdRng::seed_from_u64(1234);
+        let first = simulate(&config, &evaluator, &mut root, &mut rng);
+        let second = simulate(&config, &evaluator, &mut root, &mut rng);
+
+        assert_eq!(first, SimulationOutcome::Expansion);
+        assert_eq!(second, SimulationOutcome::TerminalEnd);
+    }
+
+    #[test]
+    fn test_run_search_traversal_stats_sum_to_num_simulations() {
+        let env = TetrisEnv::new(10, 20);
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 40;
+        config.max_placements = 6;
+
+        let evaluator = ConstantEvaluator { value: 0.0 };
+        let root_policy = uniform_action_priors_for_valid_actions(
+            env.get_cached_valid_action_indices_arc().len(),
+        );
+        let mut root = DecisionNode::new(env.clone(), 0);
+        root.set_nn_output_for_valid_actions(&root_policy, 0.0);
+
+        let (_result, _root, _tree_stats, traversal_stats) =
+            run_search(&config, &evaluator, root, false);
+
+        assert_eq!(traversal_stats.total(), config.num_simulations);
+        assert!(traversal_stats.expansions > 0);
     }
 }

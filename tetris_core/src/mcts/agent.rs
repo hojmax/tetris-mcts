@@ -12,8 +12,8 @@ use super::config::MCTSConfig;
 use super::export::export_decision_node;
 use super::nodes::DecisionNode;
 use super::results::{
-    GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport, TreeStats,
-    TreeStatsAccumulator,
+    GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TraversalStats,
+    TreeNodeExport, TreeStats, TreeStatsAccumulator,
 };
 use super::search::{extract_subtree, run_search, search_internal, search_internal_without_nn};
 use crate::constants::QUEUE_SIZE;
@@ -168,7 +168,8 @@ impl MCTSAgent {
             return None;
         }
 
-        let (mcts_result, root, _tree_stats) = if let Some(nn) = self.nn.as_ref() {
+        let (mcts_result, root, _tree_stats, _traversal_stats) = if let Some(nn) = self.nn.as_ref()
+        {
             let (policy, nn_value) = nn
                 .predict_masked(
                     env,
@@ -242,7 +243,7 @@ impl MCTSAgent {
             )
             .expect("Neural network prediction failed");
 
-        let (mcts_result, _root, _tree_stats) = search_internal(
+        let (mcts_result, _root, _tree_stats, _traversal_stats) = search_internal(
             &self.config,
             nn,
             env,
@@ -284,6 +285,10 @@ impl MCTSAgent {
         let mut tree_reuse_hits: u32 = 0;
         let mut tree_reuse_misses: u32 = 0;
         let mut carry_fraction_sum: f32 = 0.0;
+        let mut traversal_total: u64 = 0;
+        let mut traversal_expansions: u64 = 0;
+        let mut traversal_terminal_ends: u64 = 0;
+        let mut traversal_horizon_ends: u64 = 0;
 
         while placement_count < max_placements {
             if env.game_over {
@@ -302,7 +307,7 @@ impl MCTSAgent {
             let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
 
             // Run MCTS search (with tree reuse if available)
-            let (result, root, move_tree_stats) = self.search_maybe_reuse(
+            let (result, root, move_tree_stats, move_traversal_stats) = self.search_maybe_reuse(
                 &env,
                 &mask,
                 add_noise,
@@ -315,6 +320,10 @@ impl MCTSAgent {
             valid_moves_sum += valid_moves;
             max_valid_moves = max_valid_moves.max(valid_moves);
             tree_stats_acc.add(move_tree_stats);
+            traversal_total += u64::from(move_traversal_stats.total());
+            traversal_expansions += u64::from(move_traversal_stats.expansions);
+            traversal_terminal_ends += u64::from(move_traversal_stats.terminal_ends);
+            traversal_horizon_ends += u64::from(move_traversal_stats.horizon_ends);
             if result.action == HOLD_ACTION_INDEX {
                 stats.holds += 1;
             }
@@ -499,6 +508,21 @@ impl MCTSAgent {
         } else {
             0.0
         };
+        let traversal_expansion_fraction = if traversal_total > 0 {
+            traversal_expansions as f32 / traversal_total as f32
+        } else {
+            0.0
+        };
+        let traversal_terminal_fraction = if traversal_total > 0 {
+            traversal_terminal_ends as f32 / traversal_total as f32
+        } else {
+            0.0
+        };
+        let traversal_horizon_fraction = if traversal_total > 0 {
+            traversal_horizon_ends as f32 / traversal_total as f32
+        } else {
+            0.0
+        };
 
         let tree_stats = tree_stats_acc.finalize();
         let (cache_hits, cache_misses, cache_size) = if let Some(nn) = self.nn.as_ref() {
@@ -528,6 +552,13 @@ impl MCTSAgent {
                 } else {
                     0.0
                 },
+                traversal_total,
+                traversal_expansions,
+                traversal_terminal_ends,
+                traversal_horizon_ends,
+                traversal_expansion_fraction,
+                traversal_terminal_fraction,
+                traversal_horizon_fraction,
             },
             replay_moves,
         ))
@@ -535,7 +566,7 @@ impl MCTSAgent {
 
     /// Run MCTS search, optionally reusing a subtree from a previous search.
     ///
-    /// Returns (MCTSResult, Option<DecisionNode>, TreeStats).
+    /// Returns (MCTSResult, Option<DecisionNode>, TreeStats, TraversalStats).
     /// The DecisionNode is returned for tree reuse extraction on the next move.
     /// Returns None (propagated from NN prediction failure) to discard the game.
     fn search_maybe_reuse(
@@ -546,9 +577,9 @@ impl MCTSAgent {
         placement_count: u32,
         max_placements: u32,
         reused_root: Option<DecisionNode>,
-    ) -> Option<(MCTSResult, Option<DecisionNode>, TreeStats)> {
+    ) -> Option<(MCTSResult, Option<DecisionNode>, TreeStats, TraversalStats)> {
         if let Some(nn) = self.nn.as_ref() {
-            let (result, root, tree_stats) = if let Some(root) = reused_root {
+            let (result, root, tree_stats, traversal_stats) = if let Some(root) = reused_root {
                 let evaluator = super::search::NeuralLeafEvaluator {
                     nn,
                     nn_value_weight: self.config.nn_value_weight,
@@ -580,9 +611,9 @@ impl MCTSAgent {
                     placement_count,
                 )
             };
-            Some((result, Some(root), tree_stats))
+            Some((result, Some(root), tree_stats, traversal_stats))
         } else {
-            let (result, root, tree_stats) = if let Some(root) = reused_root {
+            let (result, root, tree_stats, traversal_stats) = if let Some(root) = reused_root {
                 run_search(
                     &self.config,
                     &super::search::BootstrapLeafEvaluator,
@@ -592,7 +623,7 @@ impl MCTSAgent {
             } else {
                 search_internal_without_nn(&self.config, env, add_noise, placement_count)
             };
-            Some((result, Some(root), tree_stats))
+            Some((result, Some(root), tree_stats, traversal_stats))
         }
     }
 }
@@ -632,7 +663,7 @@ mod tests {
         let nn = agent.nn.as_ref().unwrap();
         let (nn_policy, nn_value) = nn.predict_masked(&env, 0, &mask, 100).unwrap();
 
-        let (_result, root_after, _tree_stats) =
+        let (_result, root_after, _tree_stats, _traversal_stats) =
             search_internal(&agent.config, nn, &env, nn_policy, nn_value, false, 0);
 
         // The root should have children after search
