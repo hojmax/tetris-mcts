@@ -1,49 +1,51 @@
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import structlog
-from simple_parsing import parse, field
+from PIL import Image, ImageDraw, ImageFont
+from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
-from rich import print as rprint
+from tetris_bot.constants import BENCHMARKS_DIR
 
 logger = structlog.get_logger()
 
 
 @dataclass
 class ScriptArgs:
-    model_path: Path = Path(
+    model_path: Path = Path(  # ONNX model
         "/Users/axelhojmark/Desktop/v37/checkpoints/parallel.onnx"
-    )  # ONNX model
+    )
     use_dummy_network: bool = True  # Run bootstrap MCTS without loading an ONNX model
-    reuse_tree: bool = False
     num_games: int = 60  # Number of games per configuration
-    simulations: int = 4000  # MCTS simulations per move
+    simulations: list[int] = field(  # MCTS simulations per move
+        default_factory=lambda: [50, 100, 200, 500, 1000, 2000, 4000]
+    )
     max_placements: int = 50  # Maximum placements per game
     seed_start: int = 42  # Starting seed
     mcts_seed: int = 123  # Deterministic MCTS seed for reproducibility
-    death_penalties: list[int] = field(default_factory=lambda: [10])
-    overhang_penalty_weights: list[float] = field(
-        # Best so far: 75
-        default_factory=lambda: [75]
-    )
-    num_workers: int = 7
+    death_penalty: float = 10.0
+    overhang_penalty_weight: float = 75.0
+    num_workers: int = 7  # Parallel workers for evaluation
     add_noise: bool = True
     dirichlet_alpha: float = 0.02
     dirichlet_epsilon: float = 0.25
+    output_plot: Path = BENCHMARKS_DIR / "simple_evaluate_reuse_vs_no_reuse.png"
 
 
 def run_config(
-    args: ScriptArgs, death_penalty: int, overhang_penalty_weight: int
+    args: ScriptArgs,
+    num_simulations: int,
+    reuse_tree: bool,
 ) -> dict:
     config = MCTSConfig()
-    config.num_simulations = args.simulations
+    config.num_simulations = num_simulations
     config.max_placements = args.max_placements
     config.seed = args.mcts_seed
-    config.death_penalty = death_penalty
-    config.overhang_penalty_weight = overhang_penalty_weight
-    config.reuse_tree = args.reuse_tree
+    config.death_penalty = args.death_penalty
+    config.overhang_penalty_weight = args.overhang_penalty_weight
+    config.reuse_tree = reuse_tree
     config.dirichlet_alpha = args.dirichlet_alpha
     config.dirichlet_epsilon = args.dirichlet_epsilon
 
@@ -65,6 +67,7 @@ def run_config(
             seeds=seeds,
             config=config,
             max_placements=args.max_placements,
+            num_workers=args.num_workers,
         )
 
     elapsed = time.perf_counter() - start
@@ -72,6 +75,8 @@ def run_config(
     games_per_sec = args.num_games / elapsed if elapsed > 0 else 0
 
     return {
+        "num_simulations": num_simulations,
+        "reuse_tree": reuse_tree,
         "elapsed_sec": elapsed,
         "games_per_sec": games_per_sec,
         "avg_attack": result.avg_attack,
@@ -81,16 +86,221 @@ def run_config(
     }
 
 
-def main(args: ScriptArgs) -> None:
-    print("death_penalty | overhang_penalty_weight | avg_attack")
-    print("------------- | ----------------------- | ----------")
-    for death_penalty in args.death_penalties:
-        for overhang_penalty_weight in args.overhang_penalty_weights:
-            result = run_config(args, death_penalty, overhang_penalty_weight)
-            avg_attack = result["avg_attack"]
-            rprint(
-                f"        {death_penalty:.2f} |                    {overhang_penalty_weight:.2f} |       {avg_attack:.2f}"
+def _coord(
+    value: float,
+    value_min: float,
+    value_max: float,
+    pixel_min: float,
+    pixel_max: float,
+) -> int:
+    if value_max == value_min:
+        return int((pixel_min + pixel_max) / 2)
+    ratio = (value - value_min) / (value_max - value_min)
+    return int(pixel_min + ratio * (pixel_max - pixel_min))
+
+
+def create_plot(results: list[dict], output_path: Path) -> None:
+    width = 980
+    height = 900
+    left = 95
+    right = 40
+    top = 80
+    bottom = 80
+    panel_gap = 80
+    plot_width = width - left - right
+    plot_height = int((height - top - bottom - panel_gap) / 2)
+    top_panel_top = top
+    bottom_panel_top = top + plot_height + panel_gap
+
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    grouped_attack: dict[bool, dict[int, float]] = {False: {}, True: {}}
+    grouped_gps: dict[bool, dict[int, float]] = {False: {}, True: {}}
+    for row in results:
+        reuse_tree = bool(row["reuse_tree"])
+        num_simulations = int(row["num_simulations"])
+        grouped_attack[reuse_tree][num_simulations] = float(row["avg_attack"])
+        grouped_gps[reuse_tree][num_simulations] = float(row["games_per_sec"])
+
+    sim_values = sorted({int(row["num_simulations"]) for row in results})
+
+    x_pos: dict[int, int] = {}
+    for i, sim in enumerate(sim_values):
+        x_pos[sim] = _coord(
+            i,
+            0,
+            max(1, len(sim_values) - 1),
+            left,
+            left + plot_width,
+        )
+
+    def draw_series(
+        panel_top: int,
+        y_min: float,
+        y_max: float,
+        grouped: dict[bool, dict[int, float]],
+        reuse_tree: bool,
+        color: str,
+    ) -> None:
+        points: list[tuple[int, int]] = []
+        for sim in sim_values:
+            if sim not in grouped[reuse_tree] or sim not in x_pos:
+                continue
+            x = x_pos[sim]
+            y = _coord(
+                grouped[reuse_tree][sim],
+                y_min,
+                y_max,
+                panel_top + plot_height,
+                panel_top,
             )
+            points.append((x, y))
+        if len(points) >= 2:
+            draw.line(points, fill=color, width=3)
+        for x, y in points:
+            draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=color, outline=color)
+
+    def draw_panel(
+        panel_top: int,
+        grouped: dict[bool, dict[int, float]],
+        metric_key: str,
+        panel_title: str,
+        y_label: str,
+        show_x_labels: bool,
+    ) -> None:
+        values = [float(row[metric_key]) for row in results]
+        value_min = min(values)
+        value_max = max(values)
+        padding = max(0.05, (value_max - value_min) * 0.1)
+        y_min = max(0.0, value_min - padding)
+        y_max = value_max + padding
+
+        draw.rectangle(
+            [left, panel_top, left + plot_width, panel_top + plot_height],
+            outline="#222",
+        )
+        for tick in range(6):
+            y_val = y_min + (y_max - y_min) * (tick / 5)
+            y = _coord(y_val, y_min, y_max, panel_top + plot_height, panel_top)
+            draw.line([(left, y), (left + plot_width, y)], fill="#e0e0e0", width=1)
+            draw.text((left - 75, y - 8), f"{y_val:.2f}", fill="#111", font=font)
+
+        for sim in sim_values:
+            x = x_pos[sim]
+            draw.line(
+                [(x, panel_top), (x, panel_top + plot_height)], fill="#f0f0f0", width=1
+            )
+            if show_x_labels:
+                label = str(sim)
+                label_w = draw.textlength(label, font=font)
+                draw.text(
+                    (x - label_w / 2, panel_top + plot_height + 10),
+                    label,
+                    fill="#111",
+                    font=font,
+                )
+
+        draw_series(panel_top, y_min, y_max, grouped, False, "#c62828")
+        draw_series(panel_top, y_min, y_max, grouped, True, "#2e7d32")
+
+        title_w = draw.textlength(panel_title, font=font)
+        draw.text(
+            (left + (plot_width - title_w) / 2, panel_top - 24),
+            panel_title,
+            fill="#111",
+            font=font,
+        )
+        draw.text((10, panel_top + plot_height / 2), y_label, fill="#111", font=font)
+
+    draw_panel(
+        panel_top=top_panel_top,
+        grouped=grouped_attack,
+        metric_key="avg_attack",
+        panel_title="Average Attack vs Simulations",
+        y_label="Avg Attack",
+        show_x_labels=False,
+    )
+    draw_panel(
+        panel_top=bottom_panel_top,
+        grouped=grouped_gps,
+        metric_key="games_per_sec",
+        panel_title="Games/Sec vs Simulations",
+        y_label="Games/Sec",
+        show_x_labels=True,
+    )
+
+    draw.rectangle((left, 24, left + 18, 34), fill="#c62828")
+    draw.text((left + 25, 22), "No tree reuse", fill="#111", font=font)
+    draw.rectangle((left + 150, 24, left + 168, 34), fill="#2e7d32")
+    draw.text((left + 175, 22), "With tree reuse", fill="#111", font=font)
+
+    main_title = "Tree Reuse Comparison Across Simulations"
+    main_title_w = draw.textlength(main_title, font=font)
+    draw.text(((width - main_title_w) / 2, 6), main_title, fill="#111", font=font)
+
+    x_label = "MCTS Simulations"
+    x_label_w = draw.textlength(x_label, font=font)
+    draw.text(((width - x_label_w) / 2, height - 30), x_label, fill="#111", font=font)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output_path)
+
+
+def print_results_table(results: list[dict]) -> None:
+    by_sim = {
+        int(sim): {} for sim in sorted({int(row["num_simulations"]) for row in results})
+    }
+    for row in results:
+        by_sim[int(row["num_simulations"])][bool(row["reuse_tree"])] = {
+            "avg_attack": float(row["avg_attack"]),
+            "games_per_sec": float(row["games_per_sec"]),
+        }
+
+    print(
+        f"{'Simulations':>12}  {'No Reuse Atk':>12}  {'With Reuse Atk':>14}  {'No Reuse G/s':>12}  {'With Reuse G/s':>14}"
+    )
+    print("-" * 74)
+    for sim, entries in by_sim.items():
+        no_reuse_attack = entries.get(False, {}).get("avg_attack", float("nan"))
+        with_reuse_attack = entries.get(True, {}).get("avg_attack", float("nan"))
+        no_reuse_gps = entries.get(False, {}).get("games_per_sec", float("nan"))
+        with_reuse_gps = entries.get(True, {}).get("games_per_sec", float("nan"))
+        print(
+            f"{sim:>12}  {no_reuse_attack:>12.2f}  {with_reuse_attack:>14.2f}  {no_reuse_gps:>12.2f}  {with_reuse_gps:>14.2f}"
+        )
+
+
+def main(args: ScriptArgs) -> None:
+    if not args.use_dummy_network and not args.model_path.exists():
+        raise FileNotFoundError(f"Model not found: {args.model_path}")
+
+    simulations = sorted(set(args.simulations))
+    if not simulations:
+        raise ValueError("simulations cannot be empty")
+
+    all_results: list[dict] = []
+    for num_simulations in simulations:
+        for reuse_tree in [False, True]:
+            logger.info(
+                "Running evaluation",
+                num_simulations=num_simulations,
+                reuse_tree=reuse_tree,
+                num_games=args.num_games,
+                num_workers=args.num_workers,
+            )
+            all_results.append(
+                run_config(
+                    args=args,
+                    num_simulations=num_simulations,
+                    reuse_tree=reuse_tree,
+                )
+            )
+
+    print_results_table(all_results)
+    create_plot(all_results, args.output_plot)
+    logger.info("Saved plot", path=str(args.output_plot))
 
 
 if __name__ == "__main__":
