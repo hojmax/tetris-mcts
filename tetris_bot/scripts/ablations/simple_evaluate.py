@@ -23,10 +23,10 @@ class ScriptArgs:
     max_placements: int = 50  # Maximum placements per game
     seed_start: int = 42  # Starting seed
     mcts_seed: int = 123  # Deterministic MCTS seed for reproducibility
-    death_penalties: list[int] = field(default_factory=lambda: [5])
+    death_penalties: list[int] = field(default_factory=lambda: [10])
     overhang_penalty_weights: list[float] = field(
         # Best so far: 75
-        default_factory=lambda: [35]
+        default_factory=lambda: [75]
     )
     num_workers: int = 7
     add_noise: bool = True
