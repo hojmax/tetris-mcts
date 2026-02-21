@@ -170,6 +170,13 @@ struct LastGameInfo {
     tree_reuse_hits: u32,
     tree_reuse_misses: u32,
     tree_reuse_carry_fraction: f32,
+    traversal_total: u64,
+    traversal_expansions: u64,
+    traversal_terminal_ends: u64,
+    traversal_horizon_ends: u64,
+    traversal_expansion_fraction: f32,
+    traversal_terminal_fraction: f32,
+    traversal_horizon_fraction: f32,
 }
 
 #[derive(Clone)]
@@ -847,6 +854,32 @@ impl GameGenerator {
             d.insert(
                 "tree_reuse_carry_fraction".to_string(),
                 info.tree_reuse_carry_fraction,
+            );
+            // Traversal outcome statistics
+            d.insert("traversal_total".to_string(), info.traversal_total as f32);
+            d.insert(
+                "traversal_expansions".to_string(),
+                info.traversal_expansions as f32,
+            );
+            d.insert(
+                "traversal_terminal_ends".to_string(),
+                info.traversal_terminal_ends as f32,
+            );
+            d.insert(
+                "traversal_horizon_ends".to_string(),
+                info.traversal_horizon_ends as f32,
+            );
+            d.insert(
+                "traversal_expansion_fraction".to_string(),
+                info.traversal_expansion_fraction,
+            );
+            d.insert(
+                "traversal_terminal_fraction".to_string(),
+                info.traversal_terminal_fraction,
+            );
+            d.insert(
+                "traversal_horizon_fraction".to_string(),
+                info.traversal_horizon_fraction,
             );
             drained.push((info.game_number, d));
         }
@@ -1842,6 +1875,13 @@ impl GameGenerator {
             tree_reuse_hits,
             tree_reuse_misses,
             tree_reuse_carry_fraction,
+            traversal_total,
+            traversal_expansions,
+            traversal_terminal_ends,
+            traversal_horizon_ends,
+            traversal_expansion_fraction,
+            traversal_terminal_fraction,
+            traversal_horizon_fraction,
             ..
         } = result;
 
@@ -1872,6 +1912,13 @@ impl GameGenerator {
             tree_reuse_hits,
             tree_reuse_misses,
             tree_reuse_carry_fraction,
+            traversal_total,
+            traversal_expansions,
+            traversal_terminal_ends,
+            traversal_horizon_ends,
+            traversal_expansion_fraction,
+            traversal_terminal_fraction,
+            traversal_horizon_fraction,
         });
     }
 

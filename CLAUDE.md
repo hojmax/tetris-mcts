@@ -190,6 +190,8 @@ python tetris_bot/scripts/inspection/row_fill_zero_rates.py \
 # and auto-parallel workers (all available CPU cores, capped by num_games).
 # tree_reuse_hits/misses exclude terminal and max-placement transitions
 # where no next search step exists.
+# Also reports traversal-outcome fractions across all simulations:
+# traversal_expansion_fraction, traversal_terminal_fraction, traversal_horizon_fraction.
 python tetris_bot/scripts/inspection/measure_bootstrap_tree_reuse.py
 
 # Optional: override run size/worker count/output path.

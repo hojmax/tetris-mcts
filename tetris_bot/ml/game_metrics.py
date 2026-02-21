@@ -40,6 +40,10 @@ def summarize_completed_games(
     line_sum = 0.0
     episode_length_sum = 0.0
     holds_sum = 0.0
+    traversal_total_sum = 0.0
+    traversal_expansion_sum = 0.0
+    traversal_terminal_sum = 0.0
+    traversal_horizon_sum = 0.0
     max_attack = float("-inf")
     max_lines = float("-inf")
 
@@ -57,13 +61,17 @@ def summarize_completed_games(
         line_sum += total_lines
         episode_length_sum += episode_length
         holds_sum += holds
+        traversal_total_sum += float(game_stats.get("traversal_total", 0.0))
+        traversal_expansion_sum += float(game_stats.get("traversal_expansions", 0.0))
+        traversal_terminal_sum += float(game_stats.get("traversal_terminal_ends", 0.0))
+        traversal_horizon_sum += float(game_stats.get("traversal_horizon_ends", 0.0))
         max_attack = max(max_attack, total_attack)
         max_lines = max(max_lines, total_lines)
 
     completed_count = float(len(completed_games))
     first_game_number = float(completed_games[0][0])
     last_game_number = float(completed_games[-1][0])
-    return {
+    metrics = {
         "replay/completed_games_logged": completed_count,
         "replay/completed_games_first_number": first_game_number,
         "replay/completed_games_last_number": last_game_number,
@@ -75,3 +83,14 @@ def summarize_completed_games(
         "replay/completed_games_avg_attack_per_move": attack_sum / episode_length_sum,
         "replay/completed_games_avg_hold_rate": holds_sum / episode_length_sum,
     }
+    if traversal_total_sum > 0.0:
+        metrics["replay/completed_games_traversal_expansion_fraction"] = (
+            traversal_expansion_sum / traversal_total_sum
+        )
+        metrics["replay/completed_games_traversal_terminal_fraction"] = (
+            traversal_terminal_sum / traversal_total_sum
+        )
+        metrics["replay/completed_games_traversal_horizon_fraction"] = (
+            traversal_horizon_sum / traversal_total_sum
+        )
+    return metrics

@@ -111,6 +111,20 @@ pub struct TreeStats {
     pub max_attack: u32,
 }
 
+/// Per-search outcomes for MCTS traversals (one outcome per simulation).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraversalStats {
+    pub expansions: u32,
+    pub terminal_ends: u32,
+    pub horizon_ends: u32,
+}
+
+impl TraversalStats {
+    pub fn total(&self) -> u32 {
+        self.expansions + self.terminal_ends + self.horizon_ends
+    }
+}
+
 /// Aggregated tree statistics across all moves in a game.
 #[derive(Clone, Debug, Default)]
 pub struct GameTreeStats {
@@ -259,6 +273,27 @@ pub struct GameResult {
     /// Average fraction of tree nodes carried over on successful reuse attempts
     #[pyo3(get)]
     pub tree_reuse_carry_fraction: f32,
+    /// Total number of simulated traversals across all searches in this game
+    #[pyo3(get)]
+    pub traversal_total: u64,
+    /// Number of traversals that created a new expansion leaf
+    #[pyo3(get)]
+    pub traversal_expansions: u64,
+    /// Number of traversals that ended at a terminal node
+    #[pyo3(get)]
+    pub traversal_terminal_ends: u64,
+    /// Number of traversals that stopped at max placement horizon
+    #[pyo3(get)]
+    pub traversal_horizon_ends: u64,
+    /// Fraction of traversals that created a new expansion leaf
+    #[pyo3(get)]
+    pub traversal_expansion_fraction: f32,
+    /// Fraction of traversals that ended at a terminal node
+    #[pyo3(get)]
+    pub traversal_terminal_fraction: f32,
+    /// Fraction of traversals that stopped at max placement horizon
+    #[pyo3(get)]
+    pub traversal_horizon_fraction: f32,
 }
 
 // =============================================================================
@@ -640,6 +675,13 @@ mod tests {
             tree_reuse_hits: 0,
             tree_reuse_misses: 0,
             tree_reuse_carry_fraction: 0.0,
+            traversal_total: 0,
+            traversal_expansions: 0,
+            traversal_terminal_ends: 0,
+            traversal_horizon_ends: 0,
+            traversal_expansion_fraction: 0.0,
+            traversal_terminal_fraction: 0.0,
+            traversal_horizon_fraction: 0.0,
         };
 
         assert!(result.examples.is_empty());
@@ -716,6 +758,13 @@ mod tests {
             tree_reuse_hits: 0,
             tree_reuse_misses: 0,
             tree_reuse_carry_fraction: 0.0,
+            traversal_total: 0,
+            traversal_expansions: 0,
+            traversal_terminal_ends: 0,
+            traversal_horizon_ends: 0,
+            traversal_expansion_fraction: 0.0,
+            traversal_terminal_fraction: 0.0,
+            traversal_horizon_fraction: 0.0,
         };
 
         assert_eq!(result.examples.len(), 2);
@@ -745,6 +794,13 @@ mod tests {
             tree_reuse_hits: 0,
             tree_reuse_misses: 0,
             tree_reuse_carry_fraction: 0.0,
+            traversal_total: 0,
+            traversal_expansions: 0,
+            traversal_terminal_ends: 0,
+            traversal_horizon_ends: 0,
+            traversal_expansion_fraction: 0.0,
+            traversal_terminal_fraction: 0.0,
+            traversal_horizon_fraction: 0.0,
         };
 
         let cloned = result.clone();

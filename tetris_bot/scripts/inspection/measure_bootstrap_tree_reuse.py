@@ -5,7 +5,8 @@ Default settings match the requested quick check:
 - 10 games
 - 50 max placements
 
-The script reports per-game tree reuse stats and aggregate carry fraction.
+The script reports per-game tree reuse stats and traversal outcome fractions
+(expansion/terminal/horizon) across simulations.
 """
 
 from __future__ import annotations
@@ -47,6 +48,13 @@ class GameMetric:
     tree_reuse_misses: int
     tree_reuse_rate: float
     tree_reuse_carry_fraction: float
+    traversal_total: int
+    traversal_expansions: int
+    traversal_terminal_ends: int
+    traversal_horizon_ends: int
+    traversal_expansion_fraction: float
+    traversal_terminal_fraction: float
+    traversal_horizon_fraction: float
 
 
 def build_bootstrap_config(args: ScriptArgs) -> MCTSConfig:
@@ -113,6 +121,13 @@ def run_games_chunk(
                 tree_reuse_misses=misses,
                 tree_reuse_rate=(hits / total) if total > 0 else 0.0,
                 tree_reuse_carry_fraction=float(result.tree_reuse_carry_fraction),
+                traversal_total=int(result.traversal_total),
+                traversal_expansions=int(result.traversal_expansions),
+                traversal_terminal_ends=int(result.traversal_terminal_ends),
+                traversal_horizon_ends=int(result.traversal_horizon_ends),
+                traversal_expansion_fraction=float(result.traversal_expansion_fraction),
+                traversal_terminal_fraction=float(result.traversal_terminal_fraction),
+                traversal_horizon_fraction=float(result.traversal_horizon_fraction),
             )
         )
 
@@ -129,6 +144,13 @@ def summarize(metrics: list[GameMetric]) -> dict[str, float | int]:
             "tree_reuse_carry_fraction_mean_per_game": 0.0,
             "tree_reuse_carry_fraction_min": 0.0,
             "tree_reuse_carry_fraction_max": 0.0,
+            "traversal_total": 0,
+            "traversal_expansions": 0,
+            "traversal_terminal_ends": 0,
+            "traversal_horizon_ends": 0,
+            "traversal_expansion_fraction": 0.0,
+            "traversal_terminal_fraction": 0.0,
+            "traversal_horizon_fraction": 0.0,
             "avg_attack": 0.0,
             "avg_moves": 0.0,
         }
@@ -136,6 +158,10 @@ def summarize(metrics: list[GameMetric]) -> dict[str, float | int]:
     total_hits = sum(row.tree_reuse_hits for row in metrics)
     total_misses = sum(row.tree_reuse_misses for row in metrics)
     total_reuse_events = total_hits + total_misses
+    traversal_total = sum(row.traversal_total for row in metrics)
+    traversal_expansions = sum(row.traversal_expansions for row in metrics)
+    traversal_terminal_ends = sum(row.traversal_terminal_ends for row in metrics)
+    traversal_horizon_ends = sum(row.traversal_horizon_ends for row in metrics)
 
     weighted_carry = (
         sum(row.tree_reuse_carry_fraction * row.tree_reuse_hits for row in metrics)
@@ -156,6 +182,19 @@ def summarize(metrics: list[GameMetric]) -> dict[str, float | int]:
         "tree_reuse_carry_fraction_mean_per_game": statistics.fmean(carries),
         "tree_reuse_carry_fraction_min": min(carries),
         "tree_reuse_carry_fraction_max": max(carries),
+        "traversal_total": traversal_total,
+        "traversal_expansions": traversal_expansions,
+        "traversal_terminal_ends": traversal_terminal_ends,
+        "traversal_horizon_ends": traversal_horizon_ends,
+        "traversal_expansion_fraction": (
+            traversal_expansions / traversal_total if traversal_total > 0 else 0.0
+        ),
+        "traversal_terminal_fraction": (
+            traversal_terminal_ends / traversal_total if traversal_total > 0 else 0.0
+        ),
+        "traversal_horizon_fraction": (
+            traversal_horizon_ends / traversal_total if traversal_total > 0 else 0.0
+        ),
         "avg_attack": statistics.fmean(row.total_attack for row in metrics),
         "avg_moves": statistics.fmean(row.num_moves for row in metrics),
     }
@@ -178,6 +217,12 @@ def print_summary(metrics: list[GameMetric], aggregate: dict[str, float | int]) 
         f"max={float(aggregate['tree_reuse_carry_fraction_max']):.4f}"
     )
     print(
+        "Traversal outcomes: "
+        f"expansion={float(aggregate['traversal_expansion_fraction']):.4f} "
+        f"terminal={float(aggregate['traversal_terminal_fraction']):.4f} "
+        f"horizon={float(aggregate['traversal_horizon_fraction']):.4f}"
+    )
+    print(
         "Game quality: "
         f"avg_attack={float(aggregate['avg_attack']):.2f} "
         f"avg_moves={float(aggregate['avg_moves']):.2f}"
@@ -186,13 +231,17 @@ def print_summary(metrics: list[GameMetric], aggregate: dict[str, float | int]) 
     if metrics:
         print("\nPer-game tree reuse carry fraction")
         print(
-            f"{'Game':>4}  {'Atk':>5}  {'Moves':>5}  {'Hits':>5}  {'Miss':>5}  {'Reuse':>6}  {'Carry':>6}"
+            f"{'Game':>4}  {'Atk':>5}  {'Moves':>5}  {'Hits':>5}  {'Miss':>5}  "
+            f"{'Reuse':>6}  {'Carry':>6}  {'Expand':>6}  {'Term':>6}  {'Horiz':>6}"
         )
         for row in metrics:
             print(
                 f"{row.game_idx:>4}  {row.total_attack:>5}  {row.num_moves:>5}  "
                 f"{row.tree_reuse_hits:>5}  {row.tree_reuse_misses:>5}  "
-                f"{row.tree_reuse_rate:>6.3f}  {row.tree_reuse_carry_fraction:>6.3f}"
+                f"{row.tree_reuse_rate:>6.3f}  {row.tree_reuse_carry_fraction:>6.3f}  "
+                f"{row.traversal_expansion_fraction:>6.3f}  "
+                f"{row.traversal_terminal_fraction:>6.3f}  "
+                f"{row.traversal_horizon_fraction:>6.3f}"
             )
 
 
