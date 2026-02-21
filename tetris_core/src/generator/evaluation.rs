@@ -51,6 +51,9 @@ pub struct EvalResult {
     /// Lines cleared per piece (efficiency)
     #[pyo3(get)]
     pub lines_per_piece: f32,
+    /// Average tree size in nodes (mean of per-game avg tree nodes across moves)
+    #[pyo3(get)]
+    pub avg_tree_nodes: f32,
     /// Individual game results: (attack, moves) for each seed
     #[pyo3(get)]
     pub game_results: Vec<(u32, u32)>,
@@ -71,6 +74,7 @@ impl EvalResult {
         d.insert("eval/avg_moves".to_string(), self.avg_moves);
         d.insert("eval/attack_per_piece".to_string(), self.attack_per_piece);
         d.insert("eval/lines_per_piece".to_string(), self.lines_per_piece);
+        d.insert("eval/avg_tree_nodes".to_string(), self.avg_tree_nodes);
         d
     }
 }
@@ -89,11 +93,12 @@ fn create_replay_writer(output_path: Option<&str>) -> PyResult<Option<BufWriter<
     }
 }
 
-/// Per-game result collected from evaluation (attack, lines, moves).
+/// Per-game result collected from evaluation.
 struct GameEval {
     attack: u32,
     lines: u32,
     moves: u32,
+    avg_tree_nodes: f32,
 }
 
 fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
@@ -103,6 +108,7 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
     let mut total_lines: u32 = 0;
     let mut max_lines: u32 = 0;
     let mut total_moves: u32 = 0;
+    let mut total_avg_tree_nodes: f32 = 0.0;
     let mut game_results: Vec<(u32, u32)> = Vec::with_capacity(evals.len());
 
     for eval in evals {
@@ -111,6 +117,7 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
         total_lines += eval.lines;
         max_lines = max_lines.max(eval.lines);
         total_moves += eval.moves;
+        total_avg_tree_nodes += eval.avg_tree_nodes;
         game_results.push((eval.attack, eval.moves));
     }
 
@@ -139,6 +146,11 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
     } else {
         0.0
     };
+    let avg_tree_nodes = if num_games > 0 {
+        total_avg_tree_nodes / num_games as f32
+    } else {
+        0.0
+    };
 
     EvalResult {
         num_games,
@@ -152,6 +164,7 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
         avg_moves,
         attack_per_piece,
         lines_per_piece,
+        avg_tree_nodes,
         game_results,
     }
 }
@@ -173,6 +186,7 @@ fn run_games_on_seeds(
             attack: result.total_attack,
             lines: result.stats.total_lines,
             moves: result.num_moves,
+            avg_tree_nodes: result.tree_stats.avg_total_nodes,
         });
     }
     evals
@@ -223,6 +237,7 @@ fn evaluate_agent(
                 attack: result.total_attack,
                 lines: result.stats.total_lines,
                 moves: result.num_moves,
+                avg_tree_nodes: result.tree_stats.avg_total_nodes,
             });
         }
 

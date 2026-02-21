@@ -429,6 +429,7 @@ Pieces spawn in random order, 7 at a time (no repeats within a bag). The queue s
 - `Piece` - Tetromino (piece_type, x, y, rotation)
 - `MCTSAgent` - MCTS search coordinator
 - `MCTSConfig` - Search hyperparameters (num_simulations, c_puct, temperature, etc.)
+- `EvalResult` - Aggregated fixed-seed evaluation metrics (`avg_attack`, `game_results`, and `avg_tree_nodes` for mean tree size in nodes)
 - `TrainingExample` - State + MCTS policy target + value target (`value`, raw cumulative attack) + saved board diagnostics (`column_heights`, `max_column_height`, `row_fill_counts` for bottom 4 rows, `total_blocks`, `bumpiness`, `holes`, `overhang_fields`, where `holes`/`overhang_fields` are normalized from the current state board)
 - `GameGenerator` - Background self-play worker
 

@@ -1,0 +1,570 @@
+{
+  "timestamp": "2026-02-21T21:49:34.284465+00:00",
+  "config": {
+    "num_games": 60,
+    "num_simulations": 200,
+    "max_placements": 50,
+    "num_workers_requested": 7,
+    "num_workers_used": 7,
+    "add_noise": true,
+    "reuse_tree": true,
+    "q_scale": null,
+    "dirichlet_alpha": 0.02,
+    "death_penalty": 5.0,
+    "overhang_penalty_weight": 5.0
+  },
+  "num_games_completed": 60,
+  "aggregate": {
+    "tree_reuse_hits": 3167,
+    "tree_reuse_misses": 1,
+    "tree_reuse_rate": 0.9996843434343434,
+    "tree_reuse_carry_fraction_weighted_by_hits": 0.1434296907631802,
+    "tree_reuse_carry_fraction_mean_per_game": 0.14293870888650417,
+    "tree_reuse_carry_fraction_min": 0.09943755716085434,
+    "tree_reuse_carry_fraction_max": 0.17213042080402374,
+    "avg_attack": 2.2,
+    "avg_moves": 42.333333333333336
+  },
+  "per_game": [
+    {
+      "game_idx": 0,
+      "total_attack": 2,
+      "num_moves": 32,
+      "tree_reuse_hits": 43,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.12724024057388306
+    },
+    {
+      "game_idx": 1,
+      "total_attack": 1,
+      "num_moves": 46,
+      "tree_reuse_hits": 55,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.12274008989334106
+    },
+    {
+      "game_idx": 2,
+      "total_attack": 2,
+      "num_moves": 39,
+      "tree_reuse_hits": 53,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15028254687786102
+    },
+    {
+      "game_idx": 3,
+      "total_attack": 2,
+      "num_moves": 42,
+      "tree_reuse_hits": 53,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13906486332416534
+    },
+    {
+      "game_idx": 4,
+      "total_attack": 2,
+      "num_moves": 50,
+      "tree_reuse_hits": 63,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15511924028396606
+    },
+    {
+      "game_idx": 5,
+      "total_attack": 2,
+      "num_moves": 49,
+      "tree_reuse_hits": 64,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1378413438796997
+    },
+    {
+      "game_idx": 6,
+      "total_attack": 3,
+      "num_moves": 40,
+      "tree_reuse_hits": 53,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13431459665298462
+    },
+    {
+      "game_idx": 7,
+      "total_attack": 3,
+      "num_moves": 47,
+      "tree_reuse_hits": 58,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15152320265769958
+    },
+    {
+      "game_idx": 8,
+      "total_attack": 2,
+      "num_moves": 38,
+      "tree_reuse_hits": 49,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1286257803440094
+    },
+    {
+      "game_idx": 9,
+      "total_attack": 2,
+      "num_moves": 39,
+      "tree_reuse_hits": 51,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13716921210289001
+    },
+    {
+      "game_idx": 10,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 69,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.12849509716033936
+    },
+    {
+      "game_idx": 11,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 63,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15215180814266205
+    },
+    {
+      "game_idx": 12,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 64,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1380476951599121
+    },
+    {
+      "game_idx": 13,
+      "total_attack": 2,
+      "num_moves": 34,
+      "tree_reuse_hits": 39,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.17213042080402374
+    },
+    {
+      "game_idx": 14,
+      "total_attack": 2,
+      "num_moves": 49,
+      "tree_reuse_hits": 64,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13169263303279877
+    },
+    {
+      "game_idx": 15,
+      "total_attack": 3,
+      "num_moves": 46,
+      "tree_reuse_hits": 56,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13928134739398956
+    },
+    {
+      "game_idx": 16,
+      "total_attack": 2,
+      "num_moves": 44,
+      "tree_reuse_hits": 61,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1420832872390747
+    },
+    {
+      "game_idx": 17,
+      "total_attack": 2,
+      "num_moves": 50,
+      "tree_reuse_hits": 61,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15974295139312744
+    },
+    {
+      "game_idx": 18,
+      "total_attack": 1,
+      "num_moves": 39,
+      "tree_reuse_hits": 48,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.14684830605983734
+    },
+    {
+      "game_idx": 19,
+      "total_attack": 1,
+      "num_moves": 38,
+      "tree_reuse_hits": 48,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1271999627351761
+    },
+    {
+      "game_idx": 20,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 63,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1638392060995102
+    },
+    {
+      "game_idx": 21,
+      "total_attack": 3,
+      "num_moves": 34,
+      "tree_reuse_hits": 41,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.16608531773090363
+    },
+    {
+      "game_idx": 22,
+      "total_attack": 3,
+      "num_moves": 48,
+      "tree_reuse_hits": 56,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1625121831893921
+    },
+    {
+      "game_idx": 23,
+      "total_attack": 2,
+      "num_moves": 41,
+      "tree_reuse_hits": 51,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1623763144016266
+    },
+    {
+      "game_idx": 24,
+      "total_attack": 2,
+      "num_moves": 34,
+      "tree_reuse_hits": 41,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1242620050907135
+    },
+    {
+      "game_idx": 25,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 57,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.14530612528324127
+    },
+    {
+      "game_idx": 26,
+      "total_attack": 1,
+      "num_moves": 41,
+      "tree_reuse_hits": 51,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1393280029296875
+    },
+    {
+      "game_idx": 27,
+      "total_attack": 2,
+      "num_moves": 37,
+      "tree_reuse_hits": 47,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.16614839434623718
+    },
+    {
+      "game_idx": 28,
+      "total_attack": 2,
+      "num_moves": 46,
+      "tree_reuse_hits": 58,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15288317203521729
+    },
+    {
+      "game_idx": 29,
+      "total_attack": 2,
+      "num_moves": 37,
+      "tree_reuse_hits": 48,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1294528692960739
+    },
+    {
+      "game_idx": 30,
+      "total_attack": 3,
+      "num_moves": 29,
+      "tree_reuse_hits": 33,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.14539846777915955
+    },
+    {
+      "game_idx": 31,
+      "total_attack": 2,
+      "num_moves": 39,
+      "tree_reuse_hits": 49,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1226164922118187
+    },
+    {
+      "game_idx": 32,
+      "total_attack": 2,
+      "num_moves": 50,
+      "tree_reuse_hits": 61,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15763163566589355
+    },
+    {
+      "game_idx": 33,
+      "total_attack": 2,
+      "num_moves": 50,
+      "tree_reuse_hits": 59,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.16243451833724976
+    },
+    {
+      "game_idx": 34,
+      "total_attack": 2,
+      "num_moves": 49,
+      "tree_reuse_hits": 60,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.147809237241745
+    },
+    {
+      "game_idx": 35,
+      "total_attack": 1,
+      "num_moves": 41,
+      "tree_reuse_hits": 53,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.14859525859355927
+    },
+    {
+      "game_idx": 36,
+      "total_attack": 2,
+      "num_moves": 34,
+      "tree_reuse_hits": 39,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13505809009075165
+    },
+    {
+      "game_idx": 37,
+      "total_attack": 2,
+      "num_moves": 48,
+      "tree_reuse_hits": 61,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15504388511180878
+    },
+    {
+      "game_idx": 38,
+      "total_attack": 2,
+      "num_moves": 38,
+      "tree_reuse_hits": 45,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.11887834221124649
+    },
+    {
+      "game_idx": 39,
+      "total_attack": 2,
+      "num_moves": 32,
+      "tree_reuse_hits": 36,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13469256460666656
+    },
+    {
+      "game_idx": 40,
+      "total_attack": 2,
+      "num_moves": 36,
+      "tree_reuse_hits": 39,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1409599334001541
+    },
+    {
+      "game_idx": 41,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 64,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.14871761202812195
+    },
+    {
+      "game_idx": 42,
+      "total_attack": 1,
+      "num_moves": 36,
+      "tree_reuse_hits": 44,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13312861323356628
+    },
+    {
+      "game_idx": 43,
+      "total_attack": 5,
+      "num_moves": 50,
+      "tree_reuse_hits": 59,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1362668126821518
+    },
+    {
+      "game_idx": 44,
+      "total_attack": 1,
+      "num_moves": 50,
+      "tree_reuse_hits": 65,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1582125872373581
+    },
+    {
+      "game_idx": 45,
+      "total_attack": 1,
+      "num_moves": 36,
+      "tree_reuse_hits": 46,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13260944187641144
+    },
+    {
+      "game_idx": 46,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 67,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15691646933555603
+    },
+    {
+      "game_idx": 47,
+      "total_attack": 2,
+      "num_moves": 40,
+      "tree_reuse_hits": 52,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.09943755716085434
+    },
+    {
+      "game_idx": 48,
+      "total_attack": 5,
+      "num_moves": 46,
+      "tree_reuse_hits": 55,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.14247140288352966
+    },
+    {
+      "game_idx": 49,
+      "total_attack": 2,
+      "num_moves": 36,
+      "tree_reuse_hits": 43,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.13641329109668732
+    },
+    {
+      "game_idx": 50,
+      "total_attack": 3,
+      "num_moves": 50,
+      "tree_reuse_hits": 62,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1439400464296341
+    },
+    {
+      "game_idx": 51,
+      "total_attack": 2,
+      "num_moves": 34,
+      "tree_reuse_hits": 41,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.159497931599617
+    },
+    {
+      "game_idx": 52,
+      "total_attack": 3,
+      "num_moves": 32,
+      "tree_reuse_hits": 41,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.15412719547748566
+    },
+    {
+      "game_idx": 53,
+      "total_attack": 1,
+      "num_moves": 45,
+      "tree_reuse_hits": 57,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.12517952919006348
+    },
+    {
+      "game_idx": 54,
+      "total_attack": 1,
+      "num_moves": 33,
+      "tree_reuse_hits": 39,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.12527714669704437
+    },
+    {
+      "game_idx": 55,
+      "total_attack": 2,
+      "num_moves": 41,
+      "tree_reuse_hits": 52,
+      "tree_reuse_misses": 1,
+      "tree_reuse_rate": 0.9811320754716981,
+      "tree_reuse_carry_fraction": 0.12673579156398773
+    },
+    {
+      "game_idx": 56,
+      "total_attack": 2,
+      "num_moves": 41,
+      "tree_reuse_hits": 49,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.12110607326030731
+    },
+    {
+      "game_idx": 57,
+      "total_attack": 2,
+      "num_moves": 50,
+      "tree_reuse_hits": 65,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.1592407375574112
+    },
+    {
+      "game_idx": 58,
+      "total_attack": 3,
+      "num_moves": 44,
+      "tree_reuse_hits": 51,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.16477172076702118
+    },
+    {
+      "game_idx": 59,
+      "total_attack": 2,
+      "num_moves": 40,
+      "tree_reuse_hits": 52,
+      "tree_reuse_misses": 0,
+      "tree_reuse_rate": 1.0,
+      "tree_reuse_carry_fraction": 0.14936593174934387
+    }
+  ]
+}

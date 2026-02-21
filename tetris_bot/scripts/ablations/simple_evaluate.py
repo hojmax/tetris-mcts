@@ -81,6 +81,8 @@ def run_config(
     elapsed = time.perf_counter() - start
 
     games_per_sec = args.num_games / elapsed if elapsed > 0 else 0
+    avg_tree_nodes = getattr(result, "avg_tree_nodes", None)
+    avg_tree_nodes = float(avg_tree_nodes) if avg_tree_nodes is not None else None
 
     return {
         "num_simulations": num_simulations,
@@ -88,6 +90,7 @@ def run_config(
         "elapsed_sec": elapsed,
         "games_per_sec": games_per_sec,
         "avg_attack": result.avg_attack,
+        "avg_tree_nodes": avg_tree_nodes,
         "num_games": result.num_games,
         "avg_moves": result.avg_moves,
         "max_attack": result.max_attack,
@@ -109,16 +112,16 @@ def _coord(
 
 def create_plot(results: list[dict], output_path: Path) -> None:
     width = 980
-    height = 900
+    height = 1220
     left = 95
     right = 40
     top = 80
     bottom = 80
-    panel_gap = 80
+    panel_gap = 70
+    num_panels = 3
     plot_width = width - left - right
-    plot_height = int((height - top - bottom - panel_gap) / 2)
-    top_panel_top = top
-    bottom_panel_top = top + plot_height + panel_gap
+    plot_height = int((height - top - bottom - panel_gap * (num_panels - 1)) / num_panels)
+    panel_tops = [top + i * (plot_height + panel_gap) for i in range(num_panels)]
 
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)
@@ -126,11 +129,13 @@ def create_plot(results: list[dict], output_path: Path) -> None:
 
     grouped_attack: dict[bool, dict[int, float]] = {False: {}, True: {}}
     grouped_gps: dict[bool, dict[int, float]] = {False: {}, True: {}}
+    grouped_tree_nodes: dict[bool, dict[int, float]] = {False: {}, True: {}}
     for row in results:
         reuse_tree = bool(row["reuse_tree"])
         num_simulations = int(row["num_simulations"])
         grouped_attack[reuse_tree][num_simulations] = float(row["avg_attack"])
         grouped_gps[reuse_tree][num_simulations] = float(row["games_per_sec"])
+        grouped_tree_nodes[reuse_tree][num_simulations] = float(row["avg_tree_nodes"])
 
     sim_values = sorted({int(row["num_simulations"]) for row in results})
 
@@ -177,6 +182,7 @@ def create_plot(results: list[dict], output_path: Path) -> None:
         panel_title: str,
         y_label: str,
         show_x_labels: bool,
+        tick_decimals: int = 2,
     ) -> None:
         values = [float(row[metric_key]) for row in results]
         value_min = min(values)
@@ -193,7 +199,12 @@ def create_plot(results: list[dict], output_path: Path) -> None:
             y_val = y_min + (y_max - y_min) * (tick / 5)
             y = _coord(y_val, y_min, y_max, panel_top + plot_height, panel_top)
             draw.line([(left, y), (left + plot_width, y)], fill="#e0e0e0", width=1)
-            draw.text((left - 75, y - 8), f"{y_val:.2f}", fill="#111", font=font)
+            draw.text(
+                (left - 75, y - 8),
+                f"{y_val:.{tick_decimals}f}",
+                fill="#111",
+                font=font,
+            )
 
         for sim in sim_values:
             x = x_pos[sim]
@@ -223,20 +234,31 @@ def create_plot(results: list[dict], output_path: Path) -> None:
         draw.text((10, panel_top + plot_height / 2), y_label, fill="#111", font=font)
 
     draw_panel(
-        panel_top=top_panel_top,
+        panel_top=panel_tops[0],
         grouped=grouped_attack,
         metric_key="avg_attack",
         panel_title="Average Attack vs Simulations",
         y_label="Avg Attack",
         show_x_labels=False,
+        tick_decimals=2,
     )
     draw_panel(
-        panel_top=bottom_panel_top,
+        panel_top=panel_tops[1],
         grouped=grouped_gps,
         metric_key="games_per_sec",
         panel_title="Games/Sec vs Simulations",
         y_label="Games/Sec",
+        show_x_labels=False,
+        tick_decimals=2,
+    )
+    draw_panel(
+        panel_top=panel_tops[2],
+        grouped=grouped_tree_nodes,
+        metric_key="avg_tree_nodes",
+        panel_title="Average Tree Nodes vs Simulations",
+        y_label="Avg Tree Nodes",
         show_x_labels=True,
+        tick_decimals=1,
     )
 
     draw.rectangle((left, 24, left + 18, 34), fill="#c62828")
@@ -264,27 +286,40 @@ def print_results_table(results: list[dict]) -> None:
         by_sim[int(row["num_simulations"])][bool(row["reuse_tree"])] = {
             "avg_attack": float(row["avg_attack"]),
             "games_per_sec": float(row["games_per_sec"]),
+            "avg_tree_nodes": float(row["avg_tree_nodes"]),
         }
 
     print(
-        f"{'Simulations':>12}  {'No Reuse Atk':>12}  {'With Reuse Atk':>14}  {'No Reuse G/s':>12}  {'With Reuse G/s':>14}"
+        f"{'Simulations':>12}  {'No Reuse Atk':>12}  {'With Reuse Atk':>14}  {'No Reuse G/s':>12}  {'With Reuse G/s':>14}  {'No Reuse Nodes':>14}  {'With Reuse Nodes':>16}"
     )
-    print("-" * 74)
+    print("-" * 116)
     for sim, entries in by_sim.items():
         no_reuse_attack = entries.get(False, {}).get("avg_attack", float("nan"))
         with_reuse_attack = entries.get(True, {}).get("avg_attack", float("nan"))
         no_reuse_gps = entries.get(False, {}).get("games_per_sec", float("nan"))
         with_reuse_gps = entries.get(True, {}).get("games_per_sec", float("nan"))
+        no_reuse_nodes = entries.get(False, {}).get("avg_tree_nodes", float("nan"))
+        with_reuse_nodes = entries.get(True, {}).get("avg_tree_nodes", float("nan"))
         print(
-            f"{sim:>12}  {no_reuse_attack:>12.2f}  {with_reuse_attack:>14.2f}  {no_reuse_gps:>12.2f}  {with_reuse_gps:>14.2f}"
+            f"{sim:>12}  {no_reuse_attack:>12.2f}  {with_reuse_attack:>14.2f}  {no_reuse_gps:>12.2f}  {with_reuse_gps:>14.2f}  {no_reuse_nodes:>14.1f}  {with_reuse_nodes:>16.1f}"
         )
 
 
 def normalize_results(results: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    for row in results:
+        normalized_row = dict(row)
+        if normalized_row.get("avg_tree_nodes") is not None:
+            normalized_row["avg_tree_nodes"] = float(normalized_row["avg_tree_nodes"])
+        normalized.append(normalized_row)
     return sorted(
-        results,
+        normalized,
         key=lambda r: (int(r["num_simulations"]), bool(r["reuse_tree"])),
     )
+
+
+def has_tree_node_metrics(results: list[dict]) -> bool:
+    return all(row.get("avg_tree_nodes") is not None for row in results)
 
 
 def build_eval_config(args: ScriptArgs, simulations: list[int]) -> dict:
@@ -351,6 +386,11 @@ def main(args: ScriptArgs) -> None:
                 f"plot_only=true but cache file not found or invalid: {args.cache_path}"
             )
         all_results = normalize_results(cached_payload["results"])
+        if not has_tree_node_metrics(all_results):
+            raise ValueError(
+                "Cached results do not contain avg_tree_nodes. "
+                "Run once with --force_recompute true after rebuilding tetris_core."
+            )
         logger.info("Loaded cached results (plot_only)", path=str(args.cache_path))
     elif (
         args.reuse_cached_results
@@ -359,7 +399,14 @@ def main(args: ScriptArgs) -> None:
         and cached_payload.get("eval_config") == eval_config
     ):
         all_results = normalize_results(cached_payload["results"])
-        logger.info("Loaded cached results", path=str(args.cache_path))
+        if has_tree_node_metrics(all_results):
+            logger.info("Loaded cached results", path=str(args.cache_path))
+        else:
+            logger.info(
+                "Cache missing avg_tree_nodes; recomputing evaluations",
+                path=str(args.cache_path),
+            )
+            all_results = None
 
     if all_results is None:
         if not args.use_dummy_network and not args.model_path.exists():
@@ -383,6 +430,11 @@ def main(args: ScriptArgs) -> None:
                     )
                 )
         all_results = normalize_results(all_results)
+        if not has_tree_node_metrics(all_results):
+            raise RuntimeError(
+                "avg_tree_nodes not available from tetris_core.EvalResult. "
+                "Rebuild the extension (for example: make build-dev) and rerun."
+            )
         save_cache(args.cache_path, eval_config, all_results)
         logger.info("Saved cache", path=str(args.cache_path))
 
