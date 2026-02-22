@@ -596,10 +596,10 @@ pub(crate) fn search_internal_without_nn(
 /// the hidden queue slot (the 6th piece beyond the visible 5).
 ///
 /// Returns the extracted DecisionNode, or None if the subtree path wasn't explored.
-/// Value sums are NOT adjusted: old visits used the previous root's cumulative attack
-/// as offset while new simulations will use the reused root's (higher) cumulative attack.
-/// The offset difference is the single step reward from the chosen action, constant across
-/// all siblings, so relative Q-value ordering is preserved and dilutes as new visits accumulate.
+/// Value sums require no adjustment: each backed-up value equals
+/// `root.state.attack + path_attack_sum + leaf_value`, and because
+/// `old_root.state.attack + step_attack == new_root.state.attack`, old and new
+/// simulations contribute identical magnitudes for the same leaf path.
 pub(super) fn extract_subtree(
     mut root: DecisionNode,
     action_idx: usize,

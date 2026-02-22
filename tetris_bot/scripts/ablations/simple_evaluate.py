@@ -76,6 +76,7 @@ def run_config(
             config=config,
             max_placements=args.max_placements,
             num_workers=args.num_workers,
+            add_noise=args.add_noise,
         )
 
     elapsed = time.perf_counter() - start

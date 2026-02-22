@@ -266,6 +266,7 @@ fn evaluate_parallel(
     seeds: &[u64],
     config: &MCTSConfig,
     max_placements: u32,
+    add_noise: bool,
     num_workers: u32,
 ) -> PyResult<EvalResult> {
     let num_workers = (num_workers as usize).min(seeds.len());
@@ -293,7 +294,7 @@ fn evaluate_parallel(
                     &agent,
                     &chunk_seeds,
                     max_placements,
-                    false,
+                    add_noise,
                 ))
             })
         })
@@ -316,22 +317,24 @@ fn evaluate_parallel(
 
 /// Evaluate a model on fixed seeds for consistent benchmarking.
 ///
-/// Plays games using MCTS with the specified model on deterministic seeds,
-/// allowing for reproducible comparison between model versions.
+/// Plays games using MCTS with the specified model on fixed seeds,
+/// allowing reproducible comparison between model versions.
 /// Uses the same game loop as self-play (including tree reuse) with
-/// argmax action selection (temperature=0) for deterministic evaluation.
+/// argmax action selection (temperature=0). Deterministic behavior
+/// requires add_noise=false and a fixed MCTS seed.
 ///
 /// Args:
 ///     model_path: Path to ONNX model file
 ///     seeds: List of random seeds to use (determines piece sequence)
 ///     config: MCTS configuration (temperature is forced to 0 for argmax)
 ///     max_placements: Maximum placements per game (hold actions do not count)
+///     add_noise: Whether to add Dirichlet root noise
 ///     output_path: Optional path to save replays as JSONL
 ///
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (model_path, seeds, config=None, max_placements=100, output_path=None, num_workers=1))]
+#[pyo3(signature = (model_path, seeds, config=None, max_placements=100, output_path=None, num_workers=1, add_noise=false))]
 pub fn evaluate_model(
     model_path: &str,
     seeds: Vec<u64>,
@@ -339,6 +342,7 @@ pub fn evaluate_model(
     max_placements: u32,
     output_path: Option<String>,
     num_workers: u32,
+    add_noise: bool,
 ) -> PyResult<EvalResult> {
     if max_placements == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -362,6 +366,7 @@ pub fn evaluate_model(
             &seeds,
             &config,
             max_placements,
+            add_noise,
             num_workers,
         );
     }
@@ -374,13 +379,14 @@ pub fn evaluate_model(
         )));
     }
 
-    evaluate_agent(&agent, &seeds, max_placements, false, output_path)
+    evaluate_agent(&agent, &seeds, max_placements, add_noise, output_path)
 }
 
 /// Evaluate MCTS without a network on fixed seeds (uniform priors + zero value).
 ///
 /// Uses the same game loop as self-play (including tree reuse) with
-/// argmax action selection (temperature=0) for deterministic evaluation.
+/// argmax action selection (temperature=0). Deterministic behavior
+/// requires add_noise=false and a fixed MCTS seed.
 ///
 /// Args:
 ///     seeds: List of random seeds to use (determines piece sequence)
@@ -418,9 +424,60 @@ pub fn evaluate_model_without_nn(
     }
 
     if num_workers > 1 {
-        return evaluate_parallel(None, &seeds, &config, max_placements, num_workers);
+        return evaluate_parallel(
+            None,
+            &seeds,
+            &config,
+            max_placements,
+            add_noise,
+            num_workers,
+        );
     }
 
     let agent = MCTSAgent::new(config);
     evaluate_agent(&agent, &seeds, max_placements, add_noise, output_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parallel_eval_without_nn_respects_add_noise() {
+        let seeds: Vec<u64> = (0..12).collect();
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 50;
+        config.seed = Some(123);
+        config.max_placements = 30;
+        config.dirichlet_alpha = 0.02;
+        config.dirichlet_epsilon = 0.25;
+        config.reuse_tree = true;
+
+        let single_without_noise =
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, false, None, 1)
+                .expect("single-thread eval without noise should succeed");
+        let single_with_noise =
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, true, None, 1)
+                .expect("single-thread eval with noise should succeed");
+        assert_ne!(
+            single_with_noise.game_results, single_without_noise.game_results,
+            "test setup should produce different trajectories when noise is enabled"
+        );
+
+        let parallel_with_noise =
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, true, None, 4)
+                .expect("parallel eval with noise should succeed");
+        assert_eq!(
+            parallel_with_noise.game_results, single_with_noise.game_results,
+            "parallel evaluation should preserve add_noise behavior"
+        );
+
+        let parallel_without_noise =
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, false, None, 4)
+                .expect("parallel eval without noise should succeed");
+        assert_eq!(
+            parallel_without_noise.game_results, single_without_noise.game_results,
+            "parallel and single-thread runs should match when noise is disabled"
+        );
+    }
 }
