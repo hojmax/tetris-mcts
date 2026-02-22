@@ -1,4 +1,5 @@
 import json
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,7 +21,7 @@ class ScriptArgs:
     use_dummy_network: bool = True  # Run bootstrap MCTS without loading an ONNX model
     num_games: int = 60  # Number of games per configuration
     simulations: list[int] = field(  # MCTS simulations per move
-        default_factory=lambda: [50, 100, 200, 500, 1000, 2000, 4000]
+        default_factory=lambda: [50, 100, 200, 500, 1000, 2000, 4000, 8000]
     )
     max_placements: int = 50  # Maximum placements per game
     seed_start: int = 42  # Starting seed
@@ -157,14 +158,17 @@ def create_plot(results: list[dict], output_path: Path) -> None:
         grouped: dict[bool, dict[int, float]],
         reuse_tree: bool,
         color: str,
+        log_scale: bool = False,
     ) -> None:
         points: list[tuple[int, int]] = []
         for sim in sim_values:
             if sim not in grouped[reuse_tree] or sim not in x_pos:
                 continue
             x = x_pos[sim]
+            val = grouped[reuse_tree][sim]
+            mapped_val = math.log10(max(val, 1e-10)) if log_scale else val
             y = _coord(
-                grouped[reuse_tree][sim],
+                mapped_val,
                 y_min,
                 y_max,
                 panel_top + plot_height,
@@ -184,21 +188,35 @@ def create_plot(results: list[dict], output_path: Path) -> None:
         y_label: str,
         show_x_labels: bool,
         tick_decimals: int = 2,
+        log_scale: bool = False,
     ) -> None:
         values = [float(row[metric_key]) for row in results]
         value_min = min(values)
         value_max = max(values)
-        padding = max(0.05, (value_max - value_min) * 0.1)
-        y_min = max(0.0, value_min - padding)
-        y_max = value_max + padding
+
+        if log_scale:
+            log_min = math.log10(max(value_min, 1e-10))
+            log_max = math.log10(max(value_max, 1e-10))
+            padding = max(0.05, (log_max - log_min) * 0.1)
+            y_min = log_min - padding
+            y_max = log_max + padding
+        else:
+            padding = max(0.05, (value_max - value_min) * 0.1)
+            y_min = max(0.0, value_min - padding)
+            y_max = value_max + padding
 
         draw.rectangle(
             [left, panel_top, left + plot_width, panel_top + plot_height],
             outline="#222",
         )
         for tick in range(6):
-            y_val = y_min + (y_max - y_min) * (tick / 5)
-            y = _coord(y_val, y_min, y_max, panel_top + plot_height, panel_top)
+            if log_scale:
+                log_val = y_min + (y_max - y_min) * (tick / 5)
+                y_val = 10**log_val
+                y = _coord(log_val, y_min, y_max, panel_top + plot_height, panel_top)
+            else:
+                y_val = y_min + (y_max - y_min) * (tick / 5)
+                y = _coord(y_val, y_min, y_max, panel_top + plot_height, panel_top)
             draw.line([(left, y), (left + plot_width, y)], fill="#e0e0e0", width=1)
             draw.text(
                 (left - 75, y - 8),
@@ -222,8 +240,8 @@ def create_plot(results: list[dict], output_path: Path) -> None:
                     font=font,
                 )
 
-        draw_series(panel_top, y_min, y_max, grouped, False, "#c62828")
-        draw_series(panel_top, y_min, y_max, grouped, True, "#2e7d32")
+        draw_series(panel_top, y_min, y_max, grouped, False, "#c62828", log_scale)
+        draw_series(panel_top, y_min, y_max, grouped, True, "#2e7d32", log_scale)
 
         title_w = draw.textlength(panel_title, font=font)
         draw.text(
@@ -247,10 +265,11 @@ def create_plot(results: list[dict], output_path: Path) -> None:
         panel_top=panel_tops[1],
         grouped=grouped_gps,
         metric_key="games_per_sec",
-        panel_title="Games/Sec vs Simulations",
+        panel_title="Games/Sec vs Simulations (log scale)",
         y_label="Games/Sec",
         show_x_labels=False,
         tick_decimals=2,
+        log_scale=True,
     )
     draw_panel(
         panel_top=panel_tops[2],

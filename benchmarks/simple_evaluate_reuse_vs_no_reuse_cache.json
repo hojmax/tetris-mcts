@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-21T21:05:30.788878+00:00",
+  "generated_at": "2026-02-22T15:42:49.113871+00:00",
   "eval_config": {
     "use_dummy_network": true,
     "model_path": null,
@@ -27,9 +27,10 @@
     {
       "num_simulations": 50,
       "reuse_tree": false,
-      "elapsed_sec": 0.6429902500003664,
-      "games_per_sec": 93.3140121486536,
+      "elapsed_sec": 0.5462665839986585,
+      "games_per_sec": 109.83648232846575,
       "avg_attack": 1.0833333730697632,
+      "avg_tree_nodes": 67.76480865478516,
       "num_games": 60,
       "avg_moves": 27.16666603088379,
       "max_attack": 7
@@ -37,9 +38,10 @@
     {
       "num_simulations": 50,
       "reuse_tree": true,
-      "elapsed_sec": 0.7423365410013503,
-      "games_per_sec": 80.82587436564148,
+      "elapsed_sec": 0.6620734579992131,
+      "games_per_sec": 90.62438506645483,
       "avg_attack": 1.2333333492279053,
+      "avg_tree_nodes": 71.5094223022461,
       "num_games": 60,
       "avg_moves": 30.28333282470703,
       "max_attack": 5
@@ -47,9 +49,10 @@
     {
       "num_simulations": 100,
       "reuse_tree": false,
-      "elapsed_sec": 1.500734666000426,
-      "games_per_sec": 39.980418497231526,
+      "elapsed_sec": 1.3811982919978618,
+      "games_per_sec": 43.44054025234263,
       "avg_attack": 2.4166667461395264,
+      "avg_tree_nodes": 134.40281677246094,
       "num_games": 60,
       "avg_moves": 38.016666412353516,
       "max_attack": 9
@@ -57,9 +60,10 @@
     {
       "num_simulations": 100,
       "reuse_tree": true,
-      "elapsed_sec": 1.6567564169999969,
-      "games_per_sec": 36.21534184768461,
+      "elapsed_sec": 1.6194564159995934,
+      "games_per_sec": 37.049468826220675,
       "avg_attack": 3.049999952316284,
+      "avg_tree_nodes": 145.09857177734375,
       "num_games": 60,
       "avg_moves": 41.08333206176758,
       "max_attack": 8
@@ -67,9 +71,10 @@
     {
       "num_simulations": 200,
       "reuse_tree": false,
-      "elapsed_sec": 3.0861784999997326,
-      "games_per_sec": 19.441519665827883,
+      "elapsed_sec": 3.133766167000431,
+      "games_per_sec": 19.146291332078114,
       "avg_attack": 4.066666603088379,
+      "avg_tree_nodes": 253.07481384277344,
       "num_games": 60,
       "avg_moves": 47.0,
       "max_attack": 13
@@ -77,9 +82,10 @@
     {
       "num_simulations": 200,
       "reuse_tree": true,
-      "elapsed_sec": 2.952717208001559,
-      "games_per_sec": 20.320266308404406,
+      "elapsed_sec": 3.5721865000014077,
+      "games_per_sec": 16.79643546045996,
       "avg_attack": 3.9166667461395264,
+      "avg_tree_nodes": 281.0450744628906,
       "num_games": 60,
       "avg_moves": 46.81666564941406,
       "max_attack": 8
@@ -87,9 +93,10 @@
     {
       "num_simulations": 500,
       "reuse_tree": false,
-      "elapsed_sec": 5.256644582999797,
-      "games_per_sec": 11.41412531371104,
+      "elapsed_sec": 5.197567582999909,
+      "games_per_sec": 11.543861439386896,
       "avg_attack": 4.75,
+      "avg_tree_nodes": 618.0889892578125,
       "num_games": 60,
       "avg_moves": 49.70000076293945,
       "max_attack": 8
@@ -97,9 +104,10 @@
     {
       "num_simulations": 500,
       "reuse_tree": true,
-      "elapsed_sec": 5.965268957999797,
-      "games_per_sec": 10.058222088969897,
+      "elapsed_sec": 5.63304341699768,
+      "games_per_sec": 10.651435744121962,
       "avg_attack": 5.0,
+      "avg_tree_nodes": 730.9793701171875,
       "num_games": 60,
       "avg_moves": 50.0,
       "max_attack": 14
@@ -107,9 +115,10 @@
     {
       "num_simulations": 1000,
       "reuse_tree": false,
-      "elapsed_sec": 9.564871832999415,
-      "games_per_sec": 6.272953892910116,
+      "elapsed_sec": 10.125402458997996,
+      "games_per_sec": 5.925690385440498,
       "avg_attack": 4.949999809265137,
+      "avg_tree_nodes": 1236.3135986328125,
       "num_games": 60,
       "avg_moves": 49.766666412353516,
       "max_attack": 14
@@ -117,9 +126,10 @@
     {
       "num_simulations": 1000,
       "reuse_tree": true,
-      "elapsed_sec": 10.759847207998973,
-      "games_per_sec": 5.57628736171973,
+      "elapsed_sec": 9.903811000000132,
+      "games_per_sec": 6.058273931115931,
       "avg_attack": 5.0333333015441895,
+      "avg_tree_nodes": 1511.4901123046875,
       "num_games": 60,
       "avg_moves": 50.0,
       "max_attack": 15
@@ -127,9 +137,10 @@
     {
       "num_simulations": 2000,
       "reuse_tree": false,
-      "elapsed_sec": 37.69974016600099,
-      "games_per_sec": 1.591522905351751,
+      "elapsed_sec": 17.488333666999097,
+      "games_per_sec": 3.4308586022247183,
       "avg_attack": 4.833333492279053,
+      "avg_tree_nodes": 2475.548583984375,
       "num_games": 60,
       "avg_moves": 49.95000076293945,
       "max_attack": 13
@@ -137,9 +148,10 @@
     {
       "num_simulations": 2000,
       "reuse_tree": true,
-      "elapsed_sec": 24.231864291999955,
-      "games_per_sec": 2.476078574763591,
+      "elapsed_sec": 18.620509958000184,
+      "games_per_sec": 3.2222533182675472,
       "avg_attack": 4.933333396911621,
+      "avg_tree_nodes": 3088.81689453125,
       "num_games": 60,
       "avg_moves": 49.599998474121094,
       "max_attack": 16
@@ -147,9 +159,10 @@
     {
       "num_simulations": 4000,
       "reuse_tree": false,
-      "elapsed_sec": 41.461062250000396,
-      "games_per_sec": 1.4471409255801069,
+      "elapsed_sec": 31.104585125001904,
+      "games_per_sec": 1.9289760579951258,
       "avg_attack": 5.949999809265137,
+      "avg_tree_nodes": 4975.83056640625,
       "num_games": 60,
       "avg_moves": 49.233333587646484,
       "max_attack": 16
@@ -157,9 +170,10 @@
     {
       "num_simulations": 4000,
       "reuse_tree": true,
-      "elapsed_sec": 43.47589620799954,
-      "games_per_sec": 1.3800750584403143,
+      "elapsed_sec": 33.179730833002395,
+      "games_per_sec": 1.8083329338018825,
       "avg_attack": 6.266666889190674,
+      "avg_tree_nodes": 6453.8115234375,
       "num_games": 60,
       "avg_moves": 49.95000076293945,
       "max_attack": 17
