@@ -1163,10 +1163,12 @@ class Trainer:
                         if train_step_count > 0
                         else 0.0
                     )
+                    # Always drain completed games so Rust-side queue doesn't
+                    # grow unbounded when WandB logging is disabled.
+                    completed_games = generator.drain_completed_game_stats()
                     if log_to_wandb:
                         metrics["trainer_step"] = self.step
                         wandb.log(metrics)
-                        completed_games = generator.drain_completed_game_stats()
                         if self.config.optimizer.log_individual_games_to_wandb:
                             for (
                                 game_number,

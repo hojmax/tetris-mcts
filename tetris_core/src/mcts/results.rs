@@ -170,9 +170,9 @@ impl TreeStatsAccumulator {
         }
         GameTreeStats {
             avg_branching_factor: self.branching_factors.iter().sum::<f32>() / n,
-            avg_leaves: self.leaves.iter().sum::<u32>() as f32 / n,
-            avg_total_nodes: self.total_nodes.iter().sum::<u32>() as f32 / n,
-            avg_max_depth: self.max_depths.iter().sum::<u32>() as f32 / n,
+            avg_leaves: self.leaves.iter().map(|&x| x as f32).sum::<f32>() / n,
+            avg_total_nodes: self.total_nodes.iter().map(|&x| x as f32).sum::<f32>() / n,
+            avg_max_depth: self.max_depths.iter().map(|&x| x as f32).sum::<f32>() / n,
             max_tree_attack: self.max_attack,
         }
     }
