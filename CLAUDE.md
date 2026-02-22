@@ -339,7 +339,12 @@ tetris_core/src/             # Rust game engine
 │   └── utils.rs             # PUCT scoring, Dirichlet noise
 ├── nn.rs                    # ONNX inference (tract default, optional ONNX Runtime backend)
 └── generator/               # Background game generation
-    ├── game_generator.rs
+    ├── game_generator/
+    │   ├── mod.rs
+    │   ├── py_api.rs
+    │   ├── runtime.rs
+    │   ├── shared.rs
+    │   └── tests.rs
     ├── evaluation.rs
     ├── npz.rs
     └── types.rs             # GameReplay, ReplayMove types
