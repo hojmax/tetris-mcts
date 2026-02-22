@@ -114,6 +114,9 @@ Ownership split:
   - 61 piece/game features for uncached heads path.
   - 19 board-derived stats folded into cached board embedding.
 - Outputs: policy over 735 actions + scalar value.
+- Architecture options:
+  - `gated_fusion` (default): conv trunk + cached board embedding + aux-conditioned fusion.
+  - `simple_aux_mlp`: aux-only MLP over all 80 aux features, then linear policy/value heads (board input ignored for predictions).
 
 ### Scoring Reminder
 
@@ -156,6 +159,7 @@ Memory note:
 ```bash
 python tetris_bot/scripts/train.py --total_steps 100000
 python tetris_bot/scripts/train.py --resume_dir training_runs/vN
+python tetris_bot/scripts/train.py --architecture simple_aux_mlp --fc_hidden 64
 ```
 
 Training runs live under `training_runs/vN/` with checkpoints and ONNX exports.

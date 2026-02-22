@@ -76,6 +76,7 @@ class Trainer:
         # Create model
         if model is None:
             model = TetrisNet(
+                architecture=config.network.architecture,
                 trunk_channels=config.network.trunk_channels,
                 num_conv_residual_blocks=config.network.num_conv_residual_blocks,
                 reduction_channels=config.network.reduction_channels,
