@@ -25,7 +25,7 @@ fn mean_value(visit_count: u32, value_sum: f32) -> f32 {
 
 fn normalize_q_value(q: f32, q_min: f32, q_max: f32) -> f32 {
     let range = q_max - q_min;
-    if range.abs() < Q_NORMALIZATION_EPSILON {
+    if !range.is_finite() || range.abs() < Q_NORMALIZATION_EPSILON {
         return 0.5;
     }
     (q - q_min) / range
@@ -150,13 +150,12 @@ impl DecisionNode {
 
     /// Select best action using PUCT formula.
     /// When `q_scale` is `Some(scale)`, uses tanh Q squashing (NN mode).
-    /// When `q_scale` is `None`, uses sibling min-max Q normalization (bootstrap mode).
-    pub fn select_action(&self, c_puct: f32, q_scale: Option<f32>) -> usize {
+    /// When `q_scale` is `None`, uses global min-max Q normalization (bootstrap mode).
+    /// `q_bounds` is the global (q_min, q_max) tracked across all simulations so far.
+    pub fn select_action(&self, c_puct: f32, q_scale: Option<f32>, q_bounds: (f32, f32)) -> usize {
         let sqrt_total = (self.visit_count as f32).sqrt();
-        let mut q_min = f32::INFINITY;
-        let mut q_max = f32::NEG_INFINITY;
-        let mut action_stats: Vec<(usize, f32, f32, u32)> =
-            Vec::with_capacity(self.valid_actions.len());
+        let mut best_action = self.valid_actions[0];
+        let mut best_value = f32::NEG_INFINITY;
 
         for (i, &action_idx) in self.valid_actions.iter().enumerate() {
             let prior = self.action_priors[i];
@@ -165,20 +164,9 @@ impl DecisionNode {
             } else {
                 (0.0, 0)
             };
-            if q_scale.is_none() {
-                q_min = q_min.min(q);
-                q_max = q_max.max(q);
-            }
-            action_stats.push((action_idx, prior, q, n));
-        }
-
-        let mut best_action = self.valid_actions[0];
-        let mut best_value = f32::NEG_INFINITY;
-
-        for (action_idx, prior, q, n) in action_stats {
             let transformed_q = match q_scale {
                 Some(scale) => squash_q_value(q, scale),
-                None => normalize_q_value(q, q_min, q_max),
+                None => normalize_q_value(q, q_bounds.0, q_bounds.1),
             };
             let u = c_puct * prior * sqrt_total / (1.0 + n as f32);
             let value = transformed_q + u;
@@ -422,10 +410,10 @@ mod tests {
         node.set_nn_output(&policy, 0.0);
 
         // With no visits, selection should return a valid action (tanh mode)
-        let action = node.select_action(1.0, Some(8.0));
+        let action = node.select_action(1.0, Some(8.0), (0.0, 0.0));
         assert!(node.valid_actions.contains(&action));
-        // Also with min-max mode
-        let action = node.select_action(1.0, None);
+        // Also with min-max mode (no bounds yet → all Q=0.5, prior+U wins)
+        let action = node.select_action(1.0, None, (f32::INFINITY, f32::NEG_INFINITY));
         assert!(node.valid_actions.contains(&action));
     }
 
@@ -446,7 +434,7 @@ mod tests {
         node.children.insert(action_idx, MCTSNode::Chance(child));
 
         // Selection should consider the child's value
-        let selected = node.select_action(1.0, Some(8.0));
+        let selected = node.select_action(1.0, Some(8.0), (0.0, 0.0));
         assert!(node.valid_actions.contains(&selected));
     }
 
@@ -592,7 +580,7 @@ mod tests {
         node.visit_count = 1;
 
         // With high c_puct, should explore high-prior actions
-        let action = node.select_action(10.0, Some(8.0));
+        let action = node.select_action(10.0, Some(8.0), (0.0, 0.0));
         assert!(node.valid_actions.contains(&action));
     }
 
@@ -629,9 +617,9 @@ mod tests {
         node.children
             .insert(high_prior_action, MCTSNode::Chance(high_prior_child));
 
-        // Raw-Q PUCT would choose high_q_action; min-max normalized-Q PUCT should
-        // let the strong prior/exploration term win here.
-        let selected = node.select_action(1.0, None);
+        // Raw-Q PUCT would choose high_q_action; global min-max normalized-Q PUCT
+        // should let the strong prior/exploration term win here.
+        let selected = node.select_action(1.0, None, (100.0, 200.0));
         assert_eq!(selected, high_prior_action);
     }
 
@@ -678,7 +666,7 @@ mod tests {
 
         // With tanh Q squashing both Q terms saturate near +1, so the strong
         // prior/exploration term should dominate this comparison.
-        let selected = node.select_action(1.0, Some(8.0));
+        let selected = node.select_action(1.0, Some(8.0), (0.0, 0.0));
         assert_eq!(selected, high_prior_action);
     }
 

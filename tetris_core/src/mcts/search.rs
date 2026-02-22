@@ -116,6 +116,11 @@ impl LeafEvaluator for BootstrapLeafEvaluator {
     }
 }
 
+fn update_q_bounds(q_bounds: &mut (f32, f32), value: f32) {
+    q_bounds.0 = q_bounds.0.min(value);
+    q_bounds.1 = q_bounds.1.max(value);
+}
+
 /// Run a single MCTS simulation using the provided leaf evaluator.
 ///
 /// Uses raw pointers for tree traversal to track the path from root to leaf.
@@ -126,6 +131,7 @@ fn simulate<E: LeafEvaluator>(
     evaluator: &E,
     root: &mut DecisionNode,
     rng: &mut StdRng,
+    q_bounds: &mut (f32, f32),
 ) -> SimulationOutcome {
     let root_cumulative_attack = root.state.attack as f32;
     let mut path: Vec<(*mut DecisionNode, usize)> = Vec::new();
@@ -138,11 +144,9 @@ fn simulate<E: LeafEvaluator>(
 
         // No value tail beyond horizon.
         if node.move_number >= config.max_placements {
-            backup_with_value(
-                &path,
-                root_cumulative_attack + path_attack_sum,
-                config.track_value_history,
-            );
+            let total_value = root_cumulative_attack + path_attack_sum;
+            update_q_bounds(q_bounds, total_value);
+            backup_with_value(&path, total_value, config.track_value_history);
             return SimulationOutcome::HorizonEnd;
         }
 
@@ -152,11 +156,9 @@ fn simulate<E: LeafEvaluator>(
                 config.max_placements,
                 config.death_penalty,
             );
-            backup_with_value(
-                &path,
-                root_cumulative_attack + path_attack_sum - penalty,
-                config.track_value_history,
-            );
+            let total_value = root_cumulative_attack + path_attack_sum - penalty;
+            update_q_bounds(q_bounds, total_value);
+            backup_with_value(&path, total_value, config.track_value_history);
             return SimulationOutcome::TerminalEnd;
         }
 
@@ -164,7 +166,7 @@ fn simulate<E: LeafEvaluator>(
             panic!("BUG: non-terminal DecisionNode has no valid actions");
         }
 
-        let action_idx = node.select_action(config.c_puct, config.q_scale);
+        let action_idx = node.select_action(config.c_puct, config.q_scale, *q_bounds);
         let next_move_number = node.move_number
             + if action_idx == HOLD_ACTION_INDEX {
                 0
@@ -222,11 +224,9 @@ fn simulate<E: LeafEvaluator>(
             } else {
                 chance_node.nn_value - leaf_overhang
             };
-            backup_with_value(
-                &path,
-                root_cumulative_attack + path_attack_sum + leaf_value,
-                config.track_value_history,
-            );
+            let total_value = root_cumulative_attack + path_attack_sum + leaf_value;
+            update_q_bounds(q_bounds, total_value);
+            backup_with_value(&path, total_value, config.track_value_history);
             return SimulationOutcome::Expansion;
         }
 
@@ -248,19 +248,15 @@ fn simulate<E: LeafEvaluator>(
                 config.max_placements,
                 config.death_penalty,
             );
-            backup_with_value(
-                &path,
-                root_cumulative_attack + path_attack_sum - penalty,
-                config.track_value_history,
-            );
+            let total_value = root_cumulative_attack + path_attack_sum - penalty;
+            update_q_bounds(q_bounds, total_value);
+            backup_with_value(&path, total_value, config.track_value_history);
             return SimulationOutcome::TerminalEnd;
         }
         if chance_node.move_number >= config.max_placements {
-            backup_with_value(
-                &path,
-                root_cumulative_attack + path_attack_sum,
-                config.track_value_history,
-            );
+            let total_value = root_cumulative_attack + path_attack_sum;
+            update_q_bounds(q_bounds, total_value);
+            backup_with_value(&path, total_value, config.track_value_history);
             return SimulationOutcome::HorizonEnd;
         }
 
@@ -543,8 +539,9 @@ pub(super) fn run_search<E: LeafEvaluator>(
     }
 
     let mut traversal_stats = TraversalStats::default();
+    let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
     for _ in 0..config.num_simulations {
-        match simulate(config, evaluator, &mut root, &mut rng) {
+        match simulate(config, evaluator, &mut root, &mut rng, &mut q_bounds) {
             SimulationOutcome::Expansion => traversal_stats.expansions += 1,
             SimulationOutcome::TerminalEnd => traversal_stats.terminal_ends += 1,
             SimulationOutcome::HorizonEnd => traversal_stats.horizon_ends += 1,
@@ -673,7 +670,7 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 123.0 };
         let mut rng = StdRng::seed_from_u64(1234);
-        let outcome = simulate(&config, &evaluator, &mut root, &mut rng);
+        let outcome = simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
         assert_eq!(outcome, SimulationOutcome::Expansion);
 
         let expected_value = -super::super::utils::compute_death_penalty(
@@ -704,7 +701,7 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 42.0 };
         let mut rng = StdRng::seed_from_u64(7);
-        let outcome = simulate(&config, &evaluator, &mut root, &mut rng);
+        let outcome = simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
         assert_eq!(outcome, SimulationOutcome::HorizonEnd);
 
         assert_eq!(root.value_sum, 0.0);
@@ -726,7 +723,7 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 0.0 };
         let mut rng = StdRng::seed_from_u64(123);
-        simulate(&config, &evaluator, &mut root, &mut rng);
+        simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
     }
 
     #[test]
@@ -750,7 +747,7 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 123.0 };
         let mut rng = StdRng::seed_from_u64(99);
-        let outcome = simulate(&config, &evaluator, &mut root, &mut rng);
+        let outcome = simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
         assert_eq!(outcome, SimulationOutcome::Expansion);
 
         let chance_node = match root.children.get(&placement_action) {
@@ -814,8 +811,9 @@ mod tests {
         let mut root = DecisionNode::new(env.clone(), 0);
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
         let mut rng = StdRng::seed_from_u64(42);
+        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
         for _ in 0..config.num_simulations {
-            simulate(&config, &evaluator, &mut root, &mut rng);
+            simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
         }
 
         // Find the best action (most visits)
@@ -874,8 +872,9 @@ mod tests {
         let mut root = DecisionNode::new(env.clone(), 0);
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
         let mut rng = StdRng::seed_from_u64(42);
+        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
         for _ in 0..config.num_simulations {
-            simulate(&config, &evaluator, &mut root, &mut rng);
+            simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
         }
 
         // Find an action that was explored
@@ -915,8 +914,9 @@ mod tests {
 
         // Run initial search
         let mut rng = StdRng::seed_from_u64(42);
+        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
         for _ in 0..config.num_simulations {
-            simulate(&config, &evaluator, &mut root, &mut rng);
+            simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
         }
         let visits_after_first = root.visit_count;
 
@@ -957,8 +957,9 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 0.0 };
         let mut rng = StdRng::seed_from_u64(1234);
-        let first = simulate(&config, &evaluator, &mut root, &mut rng);
-        let second = simulate(&config, &evaluator, &mut root, &mut rng);
+        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
+        let first = simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
+        let second = simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
 
         assert_eq!(first, SimulationOutcome::Expansion);
         assert_eq!(second, SimulationOutcome::TerminalEnd);
