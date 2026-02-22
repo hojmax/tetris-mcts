@@ -101,6 +101,15 @@ struct GameEval {
     avg_tree_nodes: f32,
 }
 
+#[inline]
+fn div_or_zero(numerator: f32, denominator: u32) -> f32 {
+    if denominator > 0 {
+        numerator / denominator as f32
+    } else {
+        0.0
+    }
+}
+
 fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
     let num_games = evals.len() as u32;
     let mut total_attack: u32 = 0;
@@ -121,36 +130,12 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
         game_results.push((eval.attack, eval.moves));
     }
 
-    let avg_attack = if num_games > 0 {
-        total_attack as f32 / num_games as f32
-    } else {
-        0.0
-    };
-    let avg_lines = if num_games > 0 {
-        total_lines as f32 / num_games as f32
-    } else {
-        0.0
-    };
-    let avg_moves = if num_games > 0 {
-        total_moves as f32 / num_games as f32
-    } else {
-        0.0
-    };
-    let attack_per_piece = if total_moves > 0 {
-        total_attack as f32 / total_moves as f32
-    } else {
-        0.0
-    };
-    let lines_per_piece = if total_moves > 0 {
-        total_lines as f32 / total_moves as f32
-    } else {
-        0.0
-    };
-    let avg_tree_nodes = if num_games > 0 {
-        total_avg_tree_nodes / num_games as f32
-    } else {
-        0.0
-    };
+    let avg_attack = div_or_zero(total_attack as f32, num_games);
+    let avg_lines = div_or_zero(total_lines as f32, num_games);
+    let avg_moves = div_or_zero(total_moves as f32, num_games);
+    let attack_per_piece = div_or_zero(total_attack as f32, total_moves);
+    let lines_per_piece = div_or_zero(total_lines as f32, total_moves);
+    let avg_tree_nodes = div_or_zero(total_avg_tree_nodes, num_games);
 
     EvalResult {
         num_games,
