@@ -48,6 +48,8 @@ from tetris_bot.constants import (
 # Global cache for TetrisEnv states (keyed by node ID)
 # This allows us to clone states and execute actions for visualization
 _env_cache: dict[int, TetrisEnv] = {}
+NO_CHANCE_OUTCOME = NUM_PIECE_TYPES
+NO_CHANCE_OUTCOME_LABEL = "NOOP"
 
 
 def _render_board_image(
@@ -175,6 +177,23 @@ def transform_q(
     if q_scale is not None:
         return squash_q_value(raw_q, q_scale)
     return normalize_q_value(raw_q, q_min, q_max)
+
+
+def format_chance_outcome(outcome_idx: int) -> str:
+    if outcome_idx == NO_CHANCE_OUTCOME:
+        return NO_CHANCE_OUTCOME_LABEL
+    if 0 <= outcome_idx < NUM_PIECE_TYPES:
+        return PIECE_NAMES[outcome_idx]
+    return f"P{outcome_idx}"
+
+
+def get_possible_chance_outcomes(chance_node) -> list[int]:
+    queue_len = chance_node.state.get_queue_len()
+    if queue_len >= QUEUE_SIZE:
+        return [NO_CHANCE_OUTCOME]
+    outcomes = list(chance_node.state.get_possible_next_pieces())
+    outcomes.sort()
+    return outcomes
 
 
 def build_decision_action_stats(
@@ -499,9 +518,7 @@ def display_virtual_piece_node(node_data, tree_dict):
         return "Parent not found", "", ""
 
     parent = tree_dict["nodes"][parent_id]  # This is the chance node
-    piece_name = (
-        PIECE_NAMES[piece_type] if piece_type < len(PIECE_NAMES) else f"P{piece_type}"
-    )
+    piece_name = format_chance_outcome(piece_type)
 
     # Format details
     details = [
@@ -513,9 +530,10 @@ def display_virtual_piece_node(node_data, tree_dict):
         html.P(f"Parent Chance Node: C{parent_id}"),
         html.Hr(),
         html.P(
-            "This piece outcome has not been explored yet. "
-            "The board shown is the state after the parent's action was executed, "
-            "before this piece would be added to the queue.",
+            (
+                "This outcome has not been explored yet. "
+                "The board shown is the state after the parent's action was executed."
+            ),
             style={"fontSize": "11px", "color": "#666", "fontStyle": "italic"},
         ),
     ]
@@ -625,11 +643,7 @@ def build_cytoscape_elements(
                     if is_decision:
                         edge_label = f"a{child.edge_from_parent}"
                     else:
-                        edge_label = (
-                            PIECE_NAMES[child.edge_from_parent]
-                            if child.edge_from_parent < NUM_PIECE_TYPES
-                            else str(child.edge_from_parent)
-                        )
+                        edge_label = format_chance_outcome(child.edge_from_parent)
 
                 elements.append(
                     {
@@ -690,21 +704,20 @@ def build_cytoscape_elements(
 
         # Add virtual (unvisited) decision nodes for chance nodes
         if show_unvisited and not is_decision:
-            # For chance nodes, show unvisited piece outcomes
-            # All 7 pieces are potentially possible (simplification - ignores bag constraints)
-            for piece_type in range(NUM_PIECE_TYPES):
-                # Skip if this piece already has a child
-                if piece_type in visited_pieces.get(node.id, set()):
+            possible_outcomes = get_possible_chance_outcomes(node)
+            for outcome_idx in possible_outcomes:
+                # Skip if this outcome already has a child
+                if outcome_idx in visited_pieces.get(node.id, set()):
                     continue
 
-                virtual_id = f"vp_{node.id}_{piece_type}"
-                piece_name = PIECE_NAMES[piece_type]
+                virtual_id = f"vp_{node.id}_{outcome_idx}"
+                outcome_name = format_chance_outcome(outcome_idx)
 
                 elements.append(
                     {
                         "data": {
                             "id": virtual_id,
-                            "label": f"{piece_name}\n(unvisited)",
+                            "label": f"{outcome_name}\n(unvisited)",
                             "node_type": "virtual_decision",
                             "visit_count": 0,
                             "mean_value": 0.0,
@@ -712,7 +725,7 @@ def build_cytoscape_elements(
                             "attack": 0,
                             "is_terminal": False,
                             "move_number": node.move_number,
-                            "edge_from_parent": piece_type,
+                            "edge_from_parent": outcome_idx,
                             "parent_id": node.id,
                         },
                         "classes": "decision unvisited",
@@ -724,7 +737,7 @@ def build_cytoscape_elements(
                         "data": {
                             "source": str(node.id),
                             "target": virtual_id,
-                            "label": piece_name,
+                            "label": outcome_name,
                         },
                         "classes": "unvisited-edge",
                     }
@@ -1426,7 +1439,8 @@ def run_mcts(
                 parent_env.truncate_queue(QUEUE_SIZE)
             else:
                 # Decision node child: chance outcome added this piece to queue
-                parent_env.push_queue_piece(n.edge_from_parent)
+                if n.edge_from_parent < NUM_PIECE_TYPES:
+                    parent_env.push_queue_piece(n.edge_from_parent)
             _env_cache[n.id] = parent_env
         else:
             # Fallback: use tree node state directly (no board_piece_types)

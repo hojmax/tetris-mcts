@@ -412,6 +412,8 @@ Unlike standard AlphaZero, Tetris has stochastic piece spawning:
 
 - **DecisionNode**: Player chooses action (move/rotate/drop)
 - **ChanceNode**: Random piece spawns from 7-bag
+- Chance outcomes are keyed by the next **revealed visible-tail** queue piece (not a hidden 6th queue slot).
+- Hold-swap (hold with occupied hold slot) is deterministic for queue state and uses a sentinel no-op chance outcome (`NO_CHANCE_OUTCOME`) for subtree reuse alignment.
 
 ### Neural Network (TetrisNet)
 
@@ -536,7 +538,7 @@ Tests are in:
 2. Update input encoding in `tetris_core/src/nn.rs` if features change
 3. Re-export ONNX after training
 
-Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board) ++ board_stats)` where `board_stats` is the 19-dim board-derived statistics (column heights, bumpiness, holes, etc.). On cache hits, both conv and board_stats computation are skipped; only the 61-dim piece/game features are encoded for the heads model. Runtime backend defaults to `tract` and can be switched at runtime with `TETRIS_NN_BACKEND=tract|ort` when the extension is built with Cargo feature `nn-ort`. `fc.bin` stores `board_proj` weights/bias (now shape `(hidden, conv_out + 19)`), and Rust validates that `fc.bin` columns equal conv output width + `BOARD_STATS_FEATURES`. Row-fill diagnostics always use the last `ROW_FILL_FEATURE_ROWS` rows from the provided row-fill slice (tail-based, not absolute-board-index based), and normalization expects at least that many rows. MCTS leaf expansion keeps NN priors sparse (aligned to valid actions) instead of materializing dense 735-action vectors for chance-node caching. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
+Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board) ++ board_stats)` where `board_stats` is the 19-dim board-derived statistics (column heights, bumpiness, holes, etc.). On cache hits, both conv and board_stats computation are skipped; only the 61-dim piece/game features are encoded for the heads model. Runtime backend defaults to `tract` and can be switched at runtime with `TETRIS_NN_BACKEND=tract|ort` when the extension is built with Cargo feature `nn-ort`. `fc.bin` stores `board_proj` weights/bias (now shape `(hidden, conv_out + 19)`), and Rust validates that `fc.bin` columns equal conv output width + `BOARD_STATS_FEATURES`. Row-fill diagnostics always use the last `ROW_FILL_FEATURE_ROWS` rows from the provided row-fill slice (tail-based, not absolute-board-index based), and normalization expects at least that many rows. MCTS leaf expansion keeps NN priors sparse (aligned to valid actions) and evaluates leaves after the chance outcome is realized, so tree values do not depend on unobserved 6th-queue identity. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.
 
 ### Training a model
 

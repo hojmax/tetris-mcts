@@ -15,7 +15,9 @@ use super::results::{
     GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TraversalStats,
     TreeNodeExport, TreeStats, TreeStatsAccumulator,
 };
-use super::search::{extract_subtree, run_search, search_internal, search_internal_without_nn};
+use super::search::{
+    extract_subtree, run_search, search_internal, search_internal_without_nn, NO_CHANCE_OUTCOME,
+};
 use crate::constants::QUEUE_SIZE;
 use crate::mcts::action_space::HOLD_ACTION_INDEX;
 
@@ -339,8 +341,13 @@ impl MCTSAgent {
                 hole_count,
             });
 
-            // Execute the selected action
+            // Decide which chance outcome key will be realized after executing this action.
+            // Queue-advancing actions reveal a new visible tail piece; hold-swap does not.
             let selected_action = result.action;
+            let action_reveals_new_visible_piece =
+                selected_action != HOLD_ACTION_INDEX || env.get_hold_piece().is_none();
+
+            // Execute the selected action
             let attack = env
                 .execute_action_index(selected_action)
                 .expect("MCTS selected action is not executable");
@@ -355,20 +362,25 @@ impl MCTSAgent {
             frame_index += 1;
 
             // Try to extract subtree for reuse on the next move.
-            // The hidden piece is at queue position QUEUE_SIZE (index 5) in the real env.
-            // For placement actions: after spawn_piece_internal, fill_queue(7) + pop_front
-            //   → at least 6 items remain, position QUEUE_SIZE is the hidden piece.
-            // For hold actions: queue doesn't change, but the tree still models a chance
-            //   node for the hidden piece, so the same extraction logic applies.
+            // For queue-advancing actions, the chance key is the realized visible tail piece
+            // (queue index QUEUE_SIZE - 1 after transition). For hold-swap, queue is unchanged
+            // and the chance key is deterministic NO_CHANCE_OUTCOME.
             //
             // Do not count terminal or max-placement transitions as reuse misses:
             // there is no next search step, so reuse is not applicable.
             let should_attempt_tree_reuse = !env.game_over && placement_count < max_placements;
             if self.config.reuse_tree && should_attempt_tree_reuse {
                 if let Some(root) = root {
-                    let hidden_piece = env.piece_queue.get(QUEUE_SIZE).copied();
-                    if let Some(piece) = hidden_piece {
-                        if let Some(subtree) = extract_subtree(root, selected_action, piece) {
+                    let chance_outcome = if action_reveals_new_visible_piece {
+                        env.piece_queue.get(QUEUE_SIZE - 1).copied()
+                    } else {
+                        Some(NO_CHANCE_OUTCOME)
+                    };
+
+                    if let Some(chance_outcome) = chance_outcome {
+                        if let Some(subtree) =
+                            extract_subtree(root, selected_action, chance_outcome)
+                        {
                             let subtree_nodes =
                                 super::search::compute_tree_stats(&subtree).total_nodes;
                             if tree_total_nodes > 0 {

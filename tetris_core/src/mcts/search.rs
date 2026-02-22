@@ -5,7 +5,7 @@
 use rand::rngs::StdRng;
 use rand::{thread_rng, Rng, SeedableRng};
 
-use crate::constants::QUEUE_SIZE;
+use crate::constants::{NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::env::TetrisEnv;
 use crate::nn::TetrisNN;
 
@@ -38,8 +38,10 @@ fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> 
         .map(|(idx, _)| idx)
 }
 
+#[derive(Debug)]
 enum ExpandActionError {
     InvariantViolation { action_idx: usize },
+    ChanceOutcomeInvariantViolation { outcome_idx: usize },
     EvaluatorFailed(String),
 }
 
@@ -60,6 +62,20 @@ fn uniform_action_priors_for_valid_actions(valid_action_count: usize) -> Vec<f32
 
 fn scale_nn_value(value: f32, nn_value_weight: f32) -> f32 {
     value * nn_value_weight
+}
+
+/// Sentinel chance outcome for transitions where no new visible queue piece is revealed.
+/// This occurs on hold-swap actions (holding with an already occupied hold slot).
+pub(super) const NO_CHANCE_OUTCOME: usize = NUM_PIECE_TYPES;
+
+fn action_reveals_new_visible_piece(state: &TetrisEnv, action_idx: usize) -> bool {
+    if action_idx != HOLD_ACTION_INDEX {
+        return true;
+    }
+
+    // Holding with an empty hold slot consumes queue front and reveals a new visible tail piece.
+    // Holding with an occupied hold slot swaps current<->hold and leaves queue unchanged.
+    state.hold_piece.is_none()
 }
 
 pub(super) trait LeafEvaluator {
@@ -173,14 +189,9 @@ fn simulate<E: LeafEvaluator>(
             } else {
                 1
             };
+        let mut expanded_action = false;
         if !node.children.contains_key(&action_idx) {
-            let child = match expand_action(
-                evaluator,
-                node,
-                action_idx,
-                next_move_number,
-                config.max_placements,
-            ) {
+            let child = match expand_action(node, action_idx, next_move_number) {
                 Ok(child) => child,
                 Err(ExpandActionError::InvariantViolation { action_idx }) => {
                     panic!(
@@ -188,46 +199,18 @@ fn simulate<E: LeafEvaluator>(
                         action_idx
                     );
                 }
+                Err(ExpandActionError::ChanceOutcomeInvariantViolation { outcome_idx }) => {
+                    panic!(
+                        "BUG: invalid chance outcome {} produced during action expansion",
+                        outcome_idx
+                    );
+                }
                 Err(ExpandActionError::EvaluatorFailed(error)) => {
                     panic!("MCTS leaf evaluation failed during expansion: {}", error);
                 }
             };
             node.children.insert(action_idx, child);
-            if let Some(MCTSNode::Chance(chance_node)) = node.children.get_mut(&action_idx) {
-                chance_node.visit_count += 1;
-            }
-
-            let chance_node = match node.children.get(&action_idx) {
-                Some(MCTSNode::Chance(chance_node)) => chance_node,
-                Some(MCTSNode::Decision(_)) => {
-                    unreachable!("BUG: expand_action should create ChanceNode");
-                }
-                None => {
-                    unreachable!("BUG: just inserted child but it's missing");
-                }
-            };
-            let leaf_overhang = super::utils::compute_overhang_penalty(
-                chance_node.overhang_fields,
-                config.overhang_penalty_weight,
-            );
-            path.push((current, action_idx));
-            path_attack_sum += chance_node.attack as f32;
-            let leaf_value = if chance_node.state.game_over {
-                -super::utils::compute_death_penalty(
-                    chance_node.move_number,
-                    config.max_placements,
-                    config.death_penalty,
-                )
-            } else if chance_node.move_number >= config.max_placements {
-                // No value tail beyond the placement horizon.
-                0.0
-            } else {
-                chance_node.nn_value - leaf_overhang
-            };
-            let total_value = root_cumulative_attack + path_attack_sum + leaf_value;
-            update_q_bounds(q_bounds, total_value);
-            backup_with_value(&path, total_value, config.track_value_history);
-            return SimulationOutcome::Expansion;
+            expanded_action = true;
         }
 
         let chance_node = match node.children.get_mut(&action_idx) {
@@ -251,22 +234,86 @@ fn simulate<E: LeafEvaluator>(
             let total_value = root_cumulative_attack + path_attack_sum - penalty;
             update_q_bounds(q_bounds, total_value);
             backup_with_value(&path, total_value, config.track_value_history);
-            return SimulationOutcome::TerminalEnd;
+            return if expanded_action {
+                SimulationOutcome::Expansion
+            } else {
+                SimulationOutcome::TerminalEnd
+            };
         }
         if chance_node.move_number >= config.max_placements {
             let total_value = root_cumulative_attack + path_attack_sum;
             update_q_bounds(q_bounds, total_value);
             backup_with_value(&path, total_value, config.track_value_history);
-            return SimulationOutcome::HorizonEnd;
+            return if expanded_action {
+                SimulationOutcome::Expansion
+            } else {
+                SimulationOutcome::HorizonEnd
+            };
         }
 
-        let piece = chance_node.select_piece_random(rng);
-        if !chance_node.children.contains_key(&piece) {
-            let decision_child = expand_chance(chance_node, piece, chance_node.move_number);
-            chance_node.children.insert(piece, decision_child);
+        let chance_outcome = chance_node.select_piece_random(rng);
+        if !chance_node.children.contains_key(&chance_outcome) {
+            let decision_child = match expand_chance(
+                evaluator,
+                chance_node,
+                chance_outcome,
+                chance_node.move_number,
+                config.max_placements,
+            ) {
+                Ok(child) => child,
+                Err(ExpandActionError::InvariantViolation { action_idx }) => {
+                    panic!(
+                        "BUG: chance expansion used invalid action {} while evaluating leaf",
+                        action_idx
+                    );
+                }
+                Err(ExpandActionError::ChanceOutcomeInvariantViolation { outcome_idx }) => {
+                    panic!(
+                        "BUG: chance expansion received invalid outcome key {}",
+                        outcome_idx
+                    );
+                }
+                Err(ExpandActionError::EvaluatorFailed(error)) => {
+                    panic!(
+                        "MCTS leaf evaluation failed during chance expansion: {}",
+                        error
+                    );
+                }
+            };
+            chance_node.children.insert(chance_outcome, decision_child);
+
+            let decision_node = match chance_node.children.get(&chance_outcome) {
+                Some(MCTSNode::Decision(decision_node)) => decision_node,
+                Some(MCTSNode::Chance(_)) => {
+                    unreachable!("BUG: chance expansion should create DecisionNode");
+                }
+                None => {
+                    unreachable!("BUG: just inserted chance child but it's missing");
+                }
+            };
+
+            let leaf_overhang = super::utils::compute_overhang_penalty(
+                chance_node.overhang_fields,
+                config.overhang_penalty_weight,
+            );
+            let leaf_value = if decision_node.is_terminal {
+                -super::utils::compute_death_penalty(
+                    decision_node.move_number,
+                    config.max_placements,
+                    config.death_penalty,
+                )
+            } else if decision_node.move_number >= config.max_placements {
+                0.0
+            } else {
+                decision_node.nn_value - leaf_overhang
+            };
+            let total_value = root_cumulative_attack + path_attack_sum + leaf_value;
+            update_q_bounds(q_bounds, total_value);
+            backup_with_value(&path, total_value, config.track_value_history);
+            return SimulationOutcome::Expansion;
         }
 
-        match chance_node.children.get_mut(&piece) {
+        match chance_node.children.get_mut(&chance_outcome) {
             Some(MCTSNode::Decision(decision_node)) => current = decision_node as *mut DecisionNode,
             Some(MCTSNode::Chance(_)) => {
                 unreachable!("BUG: ChanceNode child should be DecisionNode");
@@ -280,13 +327,11 @@ fn simulate<E: LeafEvaluator>(
 
 /// Expand an action from a decision node (creates chance node)
 ///
-/// Returns an error if action execution or leaf evaluation fails.
-fn expand_action<E: LeafEvaluator>(
-    evaluator: &E,
+/// Returns an error if action execution fails.
+fn expand_action(
     parent: &DecisionNode,
     action_idx: usize,
     move_number: u32,
-    max_placements: u32,
 ) -> Result<MCTSNode, ExpandActionError> {
     let mut new_state = parent.state.mcts_clone();
     let attack = match new_state.execute_action_index(action_idx) {
@@ -297,11 +342,22 @@ fn expand_action<E: LeafEvaluator>(
     };
 
     let overhang_fields = super::utils::count_overhang_fields(&new_state);
-    new_state.truncate_queue(QUEUE_SIZE);
-    let bag_remaining = new_state.get_possible_next_pieces();
-    let (action_priors, value) = evaluator
-        .evaluate(&new_state, move_number, max_placements)
-        .map_err(ExpandActionError::EvaluatorFailed)?;
+    let reveals_new_visible_piece = action_reveals_new_visible_piece(&parent.state, action_idx);
+    let visible_queue_len = if reveals_new_visible_piece {
+        QUEUE_SIZE.saturating_sub(1)
+    } else {
+        QUEUE_SIZE
+    };
+    new_state.truncate_queue(visible_queue_len);
+    let bag_remaining = if reveals_new_visible_piece {
+        let possible_pieces = new_state.get_possible_next_pieces();
+        if possible_pieces.is_empty() {
+            return Err(ExpandActionError::InvariantViolation { action_idx });
+        }
+        possible_pieces
+    } else {
+        vec![NO_CHANCE_OUTCOME]
+    };
 
     Ok(MCTSNode::Chance(ChanceNode::new(
         new_state,
@@ -309,33 +365,40 @@ fn expand_action<E: LeafEvaluator>(
         overhang_fields,
         move_number,
         bag_remaining,
-        value,
-        action_priors,
+        0.0,
+        Vec::new(),
     )))
 }
 
 /// Expand a chance node for a specific piece (creates decision node)
 ///
-/// The "piece" parameter represents the piece that appears at the END of the visible
-/// queue (the next unseen piece). This is the actual "chance" in Tetris - we know
-/// the current piece and visible queue, but not what comes after.
-///
-/// Uses cached policy/value from parent ChanceNode since the NN only sees the visible
-/// queue (5 pieces) - the hidden 6th piece doesn't affect the NN output.
-fn expand_chance(parent: &ChanceNode, piece: usize, move_number: u32) -> MCTSNode {
+/// The chance outcome either appends a newly revealed visible-tail piece (0..6) or is
+/// a deterministic no-op (`NO_CHANCE_OUTCOME`) for hold-swap transitions where the
+/// queue does not advance.
+fn expand_chance<E: LeafEvaluator>(
+    evaluator: &E,
+    parent: &ChanceNode,
+    chance_outcome: usize,
+    move_number: u32,
+    max_placements: u32,
+) -> Result<MCTSNode, ExpandActionError> {
     let mut new_state = parent.state.mcts_clone();
 
-    // Add the selected piece to the end of the queue
-    // This represents the "chance" outcome - which piece appears next in the queue
-    new_state.push_queue_piece(piece);
+    if chance_outcome < NUM_PIECE_TYPES {
+        new_state.push_queue_piece(chance_outcome);
+    } else if chance_outcome != NO_CHANCE_OUTCOME {
+        return Err(ExpandActionError::ChanceOutcomeInvariantViolation {
+            outcome_idx: chance_outcome,
+        });
+    }
 
     let mut node = DecisionNode::new(new_state, move_number);
+    let (action_priors, value) = evaluator
+        .evaluate(&node.state, move_number, max_placements)
+        .map_err(ExpandActionError::EvaluatorFailed)?;
+    node.set_nn_output_for_valid_actions(&action_priors, value);
 
-    // Use cached action priors and value from parent ChanceNode
-    // (All children see the same visible state - only the hidden 6th queue piece differs)
-    node.set_nn_output_for_valid_actions(&parent.cached_action_priors, parent.nn_value);
-
-    MCTSNode::Decision(node)
+    Ok(MCTSNode::Decision(node))
 }
 
 /// Backpropagate total episode value through the path.
@@ -586,11 +649,11 @@ pub(crate) fn search_internal_without_nn(
     run_search(config, &BootstrapLeafEvaluator, root, add_noise)
 }
 
-/// Extract the subtree corresponding to a chosen action and actual piece spawn.
+/// Extract the subtree corresponding to a chosen action and realized chance outcome.
 ///
-/// After MCTS selects `action_idx`, the real environment executes it and a piece spawns.
-/// `actual_hidden_piece` is the piece type (0-6) that was drawn from the bag to fill
-/// the hidden queue slot (the 6th piece beyond the visible 5).
+/// `chance_outcome` is either:
+/// - piece type 0..6 for transitions that revealed a new visible-tail queue piece, or
+/// - `NO_CHANCE_OUTCOME` for deterministic hold-swap transitions.
 ///
 /// Returns the extracted DecisionNode, or None if the subtree path wasn't explored.
 /// Value sums require no adjustment: each backed-up value equals
@@ -600,7 +663,7 @@ pub(crate) fn search_internal_without_nn(
 pub(super) fn extract_subtree(
     mut root: DecisionNode,
     action_idx: usize,
-    actual_hidden_piece: usize,
+    chance_outcome: usize,
 ) -> Option<DecisionNode> {
     // Take the ChanceNode child for the chosen action
     let mut chance_node = match root.children.remove(&action_idx)? {
@@ -608,8 +671,8 @@ pub(super) fn extract_subtree(
         MCTSNode::Decision(_) => return None,
     };
 
-    // Take the DecisionNode child for the actual piece that spawned
-    match chance_node.children.remove(&actual_hidden_piece)? {
+    // Take the DecisionNode child for the realized chance outcome.
+    match chance_node.children.remove(&chance_outcome)? {
         MCTSNode::Decision(dn) => Some(dn),
         MCTSNode::Chance(_) => None,
     }
@@ -651,6 +714,98 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_action_ignores_hidden_sixth_piece_for_queue_advancing_actions() {
+        let base_env = TetrisEnv::with_seed(10, 20, 123);
+        assert!(
+            base_env.piece_queue.len() > QUEUE_SIZE,
+            "test requires at least 6 queued pieces"
+        );
+
+        let env_a = base_env.clone();
+        let mut env_b = base_env;
+        let hidden_idx = QUEUE_SIZE;
+        let hidden_piece = env_a.piece_queue[hidden_idx];
+        let alt_hidden_piece = (hidden_piece + 1) % NUM_PIECE_TYPES;
+        env_b.piece_queue[hidden_idx] = alt_hidden_piece;
+
+        let root_a = DecisionNode::new(env_a, 0);
+        let root_b = DecisionNode::new(env_b, 0);
+        let placement_action = root_a
+            .valid_actions
+            .iter()
+            .copied()
+            .find(|&action_idx| action_idx != HOLD_ACTION_INDEX)
+            .expect("Expected at least one placement action");
+        assert!(
+            root_b.valid_actions.contains(&placement_action),
+            "Placement action should remain valid after hidden-piece mutation"
+        );
+
+        let chance_a = match expand_action(&root_a, placement_action, 1)
+            .expect("expand_action should succeed for placement")
+        {
+            MCTSNode::Chance(node) => node,
+            MCTSNode::Decision(_) => unreachable!("expand_action should return ChanceNode"),
+        };
+        let chance_b = match expand_action(&root_b, placement_action, 1)
+            .expect("expand_action should succeed for placement")
+        {
+            MCTSNode::Chance(node) => node,
+            MCTSNode::Decision(_) => unreachable!("expand_action should return ChanceNode"),
+        };
+
+        assert_eq!(chance_a.state.get_queue_len(), QUEUE_SIZE - 1);
+        assert_eq!(chance_b.state.get_queue_len(), QUEUE_SIZE - 1);
+        assert_eq!(
+            chance_a.state.get_queue(QUEUE_SIZE - 1),
+            chance_b.state.get_queue(QUEUE_SIZE - 1),
+            "Post-action observable queue should not depend on hidden piece #6"
+        );
+        assert_eq!(
+            chance_a.bag_remaining, chance_b.bag_remaining,
+            "Chance outcomes should not depend on hidden piece #6"
+        );
+    }
+
+    #[test]
+    fn test_expand_action_hold_swap_uses_deterministic_no_chance_outcome() {
+        let mut env = TetrisEnv::with_seed(10, 20, 1234);
+        let current_piece = env
+            .get_current_piece()
+            .expect("current piece should exist")
+            .piece_type;
+        let hold_piece = (current_piece + 1) % NUM_PIECE_TYPES;
+        env.hold_piece = Some(hold_piece);
+        env.hold_used = false;
+        env.hold_piece_bag_position = Some(env.current_piece_bag_position);
+
+        let root = DecisionNode::new(env.clone(), 0);
+        assert!(
+            root.valid_actions.contains(&HOLD_ACTION_INDEX),
+            "Hold should be valid when hold slot is occupied and hold is unused"
+        );
+
+        let chance = match expand_action(&root, HOLD_ACTION_INDEX, 0)
+            .expect("expand_action should succeed for hold-swap")
+        {
+            MCTSNode::Chance(node) => node,
+            MCTSNode::Decision(_) => unreachable!("expand_action should return ChanceNode"),
+        };
+
+        assert_eq!(
+            chance.state.get_queue_len(),
+            QUEUE_SIZE,
+            "Hold-swap chance state should keep full visible queue"
+        );
+        assert_eq!(
+            chance.state.get_queue(QUEUE_SIZE),
+            env.get_queue(QUEUE_SIZE),
+            "Hold-swap should not advance the queue"
+        );
+        assert_eq!(chance.bag_remaining, vec![NO_CHANCE_OUTCOME]);
+    }
+
+    #[test]
     fn test_simulate_terminal_after_expansion_uses_death_penalty() {
         let mut env = TetrisEnv::new(10, 20);
         for x in 0..env.width {
@@ -670,7 +825,13 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 123.0 };
         let mut rng = StdRng::seed_from_u64(1234);
-        let outcome = simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
+        let outcome = simulate(
+            &config,
+            &evaluator,
+            &mut root,
+            &mut rng,
+            &mut (f32::INFINITY, f32::NEG_INFINITY),
+        );
         assert_eq!(outcome, SimulationOutcome::Expansion);
 
         let expected_value = -super::super::utils::compute_death_penalty(
@@ -701,7 +862,13 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 42.0 };
         let mut rng = StdRng::seed_from_u64(7);
-        let outcome = simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
+        let outcome = simulate(
+            &config,
+            &evaluator,
+            &mut root,
+            &mut rng,
+            &mut (f32::INFINITY, f32::NEG_INFINITY),
+        );
         assert_eq!(outcome, SimulationOutcome::HorizonEnd);
 
         assert_eq!(root.value_sum, 0.0);
@@ -723,7 +890,13 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 0.0 };
         let mut rng = StdRng::seed_from_u64(123);
-        simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
+        simulate(
+            &config,
+            &evaluator,
+            &mut root,
+            &mut rng,
+            &mut (f32::INFINITY, f32::NEG_INFINITY),
+        );
     }
 
     #[test]
@@ -747,7 +920,13 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 123.0 };
         let mut rng = StdRng::seed_from_u64(99);
-        let outcome = simulate(&config, &evaluator, &mut root, &mut rng, &mut (f32::INFINITY, f32::NEG_INFINITY));
+        let outcome = simulate(
+            &config,
+            &evaluator,
+            &mut root,
+            &mut rng,
+            &mut (f32::INFINITY, f32::NEG_INFINITY),
+        );
         assert_eq!(outcome, SimulationOutcome::Expansion);
 
         let chance_node = match root.children.get(&placement_action) {
