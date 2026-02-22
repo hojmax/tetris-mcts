@@ -57,7 +57,7 @@ class OptimizerConfig:
 class SelfPlayConfig:
     """MCTS and self-play generation hyperparameters."""
 
-    num_simulations: int = 2000  # MCTS simulations per move
+    num_simulations: int = 1000  # MCTS simulations per move
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = (  # Sharpening / Smoothening of MCTS visit-count policy target
         0.8
