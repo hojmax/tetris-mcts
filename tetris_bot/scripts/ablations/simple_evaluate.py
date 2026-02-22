@@ -416,19 +416,19 @@ def main(args: ScriptArgs) -> None:
         all_results = []
         for num_simulations in simulations:
             for reuse_tree in [False, True]:
+                result = run_config(
+                    args=args,
+                    num_simulations=num_simulations,
+                    reuse_tree=reuse_tree,
+                )
+                all_results.append(result)
                 logger.info(
-                    "Running evaluation",
+                    "Ran evaluation",
                     num_simulations=num_simulations,
                     reuse_tree=reuse_tree,
                     num_games=args.num_games,
                     num_workers=args.num_workers,
-                )
-                all_results.append(
-                    run_config(
-                        args=args,
-                        num_simulations=num_simulations,
-                        reuse_tree=reuse_tree,
-                    )
+                    avg_attack=result["avg_attack"],
                 )
         all_results = normalize_results(all_results)
         if not has_tree_node_metrics(all_results):
