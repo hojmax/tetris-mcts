@@ -99,6 +99,21 @@ SUPPORTED_NETWORK_ARCHITECTURES = (
     NETWORK_ARCH_GATED_FUSION,
     NETWORK_ARCH_SIMPLE_AUX_MLP,
 )
+GROUP_NORM_CANDIDATE_GROUPS = (32, 16, 8, 4, 2, 1)
+
+
+def _make_group_norm(channels: int) -> nn.GroupNorm:
+    if channels <= 0:
+        raise ValueError(f"channels must be > 0, got {channels}")
+    num_groups = next(
+        (
+            groups
+            for groups in GROUP_NORM_CANDIDATE_GROUPS
+            if groups <= channels and channels % groups == 0
+        ),
+        1,
+    )
+    return nn.GroupNorm(num_groups=num_groups, num_channels=channels)
 
 
 def build_aux_features(
@@ -155,15 +170,15 @@ def build_aux_features(
 
 
 class ResidualConvBlock(nn.Module):
-    """Pre-activation residual block: BN -> SiLU -> Conv -> BN -> SiLU -> Conv + skip."""
+    """Pre-activation residual block: GN -> SiLU -> Conv -> GN -> SiLU -> Conv + skip."""
 
     def __init__(self, channels: int, kernel_size: int = 3, padding: int = 1):
         super().__init__()
-        self.bn1 = nn.BatchNorm2d(channels)
+        self.bn1 = _make_group_norm(channels)
         self.conv1 = nn.Conv2d(
             channels, channels, kernel_size=kernel_size, padding=padding
         )
-        self.bn2 = nn.BatchNorm2d(channels)
+        self.bn2 = _make_group_norm(channels)
         self.conv2 = nn.Conv2d(
             channels, channels, kernel_size=kernel_size, padding=padding
         )
@@ -230,7 +245,7 @@ class TetrisNet(nn.Module):
         self.conv_initial = nn.Conv2d(
             1, trunk_channels, kernel_size=conv_kernel_size, padding=conv_padding
         )
-        self.bn_initial = nn.BatchNorm2d(trunk_channels)
+        self.bn_initial = _make_group_norm(trunk_channels)
         self.res_blocks = nn.ModuleList(
             [
                 ResidualConvBlock(
@@ -246,7 +261,7 @@ class TetrisNet(nn.Module):
             padding=conv_padding,
             stride=2,
         )
-        self.bn_reduce = nn.BatchNorm2d(reduction_channels)
+        self.bn_reduce = _make_group_norm(reduction_channels)
 
         if num_fusion_blocks < 0:
             raise ValueError("num_fusion_blocks must be >= 0")

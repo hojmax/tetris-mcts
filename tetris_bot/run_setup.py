@@ -88,6 +88,7 @@ def initialize_or_update_wandb(config: TrainingConfig, device: str) -> None:
 def configure_wandb(config: TrainingConfig, device: str) -> None:
     initialize_or_update_wandb(config, device)
     wandb.define_metric("trainer_step")
+    wandb.define_metric("wall_time_hours")
     for ns in [
         "train/*",
         "batch/*",
@@ -99,5 +100,6 @@ def configure_wandb(config: TrainingConfig, device: str) -> None:
         "model_gate/*",
     ]:
         wandb.define_metric(ns, step_metric="trainer_step")
+    wandb.define_metric("model_gate_time/*", step_metric="wall_time_hours")
     wandb.define_metric("game_number")
     wandb.define_metric("game/*", step_metric="game_number")

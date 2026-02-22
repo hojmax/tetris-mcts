@@ -1025,11 +1025,18 @@ class Trainer:
                             evaluation_seconds=event["evaluation_seconds"],
                         )
                         if log_to_wandb:
+                            wall_time_hours = (
+                                post_step_time - interval_anchor_s
+                            ) / 3600.0
                             wandb_data: dict[str, object] = {
                                 "trainer_step": self.step,
+                                "wall_time_hours": wall_time_hours,
                                 "model_gate/candidate_step": event["candidate_step"],
                                 "model_gate/candidate_games": event["candidate_games"],
                                 "model_gate/candidate_avg_attack": event[
+                                    "candidate_avg_attack"
+                                ],
+                                "model_gate_time/candidate_avg_attack": event[
                                     "candidate_avg_attack"
                                 ],
                                 "model_gate/candidate_attack_variance": event[
