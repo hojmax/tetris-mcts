@@ -84,6 +84,9 @@ class SelfPlayConfig:
     q_scale: float = (  # Scale for tanh Q squashing in PUCT (only used when use_tanh_q_normalization=True)
         8.0
     )
+    bootstrap_use_min_max_q_normalization: bool = (  # If True, force no-network bootstrap rollouts to use sibling min-max Q normalization
+        True
+    )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
         0
     )

@@ -336,6 +336,8 @@ pub struct GameGenerator {
     candidate_eval_seeds: Vec<u64>,
     /// Number of simulations per move before the first promoted NN model.
     non_network_num_simulations: u32,
+    /// Whether no-network bootstrap rollouts force min-max Q normalization.
+    bootstrap_use_min_max_q_normalization: bool,
     /// Shared replay buffer (accessed by both worker threads and Python)
     buffer: Arc<SharedBuffer>,
     /// Whether the generator is running
@@ -379,7 +381,7 @@ pub struct GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=3000, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=3000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -393,6 +395,7 @@ impl GameGenerator {
         candidate_eval_seeds: Option<Vec<u64>>,
         start_with_network: bool,
         non_network_num_simulations: u32,
+        bootstrap_use_min_max_q_normalization: bool,
         initial_incumbent_eval_avg_attack: f32,
         nn_value_weight_cap: f32,
     ) -> PyResult<Self> {
@@ -451,6 +454,7 @@ impl GameGenerator {
             num_workers,
             candidate_eval_seeds,
             non_network_num_simulations,
+            bootstrap_use_min_max_q_normalization,
             buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
@@ -557,6 +561,7 @@ impl GameGenerator {
             let save_interval_seconds = self.save_interval_seconds;
             let candidate_eval_seeds = self.candidate_eval_seeds.clone();
             let non_network_num_simulations = self.non_network_num_simulations;
+            let bootstrap_use_min_max_q_normalization = self.bootstrap_use_min_max_q_normalization;
             let num_workers = self.num_workers;
             let is_evaluator_worker = worker_id == evaluator_worker_id;
             let buffer = Arc::clone(&self.buffer);
@@ -592,6 +597,7 @@ impl GameGenerator {
                     save_interval_seconds,
                     candidate_eval_seeds,
                     non_network_num_simulations,
+                    bootstrap_use_min_max_q_normalization,
                     buffer,
                     running,
                     games_generated,
@@ -1266,6 +1272,7 @@ impl GameGenerator {
         save_interval_seconds: f64,
         candidate_eval_seeds: Vec<u64>,
         non_network_num_simulations: u32,
+        bootstrap_use_min_max_q_normalization: bool,
         buffer: Arc<SharedBuffer>,
         running: Arc<AtomicBool>,
         games_generated: Arc<AtomicU64>,
@@ -1294,6 +1301,7 @@ impl GameGenerator {
             && !Self::sync_incumbent_agent_if_needed(
                 &config,
                 non_network_num_simulations,
+                bootstrap_use_min_max_q_normalization,
                 &mut agent,
                 &incumbent_model_path,
                 &incumbent_uses_network,
@@ -1325,6 +1333,7 @@ impl GameGenerator {
             if !Self::sync_incumbent_agent_if_needed(
                 &config,
                 non_network_num_simulations,
+                bootstrap_use_min_max_q_normalization,
                 &mut agent,
                 &incumbent_model_path,
                 &incumbent_uses_network,
@@ -1375,6 +1384,7 @@ impl GameGenerator {
                         &candidate_eval_seeds,
                         add_noise,
                         non_network_num_simulations,
+                        bootstrap_use_min_max_q_normalization,
                         &buffer,
                         &games_generated,
                         &examples_generated,
@@ -1449,6 +1459,7 @@ impl GameGenerator {
     fn sync_incumbent_agent_if_needed(
         config: &MCTSConfig,
         non_network_num_simulations: u32,
+        bootstrap_use_min_max_q_normalization: bool,
         agent: &mut MCTSAgent,
         incumbent_model_path: &Arc<RwLock<PathBuf>>,
         incumbent_uses_network: &Arc<AtomicBool>,
@@ -1482,6 +1493,7 @@ impl GameGenerator {
             config,
             target_uses_network,
             non_network_num_simulations,
+            bootstrap_use_min_max_q_normalization,
             target_nn_value_weight,
             target_death_penalty,
             target_overhang_penalty_weight,
@@ -1522,6 +1534,7 @@ impl GameGenerator {
         candidate_eval_seeds: &[u64],
         add_noise: bool,
         non_network_num_simulations: u32,
+        bootstrap_use_min_max_q_normalization: bool,
         buffer: &Arc<SharedBuffer>,
         games_generated: &Arc<AtomicU64>,
         examples_generated: &Arc<AtomicU64>,
@@ -1547,6 +1560,7 @@ impl GameGenerator {
             config,
             true,
             non_network_num_simulations,
+            bootstrap_use_min_max_q_normalization,
             candidate.nn_value_weight,
             candidate_death_penalty,
             candidate_overhang_penalty_weight,
@@ -1793,6 +1807,7 @@ impl GameGenerator {
         base_config: &MCTSConfig,
         uses_network: bool,
         non_network_num_simulations: u32,
+        bootstrap_use_min_max_q_normalization: bool,
         nn_value_weight: f32,
         death_penalty: f32,
         overhang_penalty_weight: f32,
@@ -1806,7 +1821,7 @@ impl GameGenerator {
         rollout_config.nn_value_weight = nn_value_weight;
         rollout_config.death_penalty = death_penalty;
         rollout_config.overhang_penalty_weight = overhang_penalty_weight;
-        if !uses_network {
+        if !uses_network && bootstrap_use_min_max_q_normalization {
             rollout_config.q_scale = None;
         }
         rollout_config
@@ -1816,6 +1831,7 @@ impl GameGenerator {
         base_config: &MCTSConfig,
         uses_network: bool,
         non_network_num_simulations: u32,
+        bootstrap_use_min_max_q_normalization: bool,
         nn_value_weight: f32,
         death_penalty: f32,
         overhang_penalty_weight: f32,
@@ -1829,6 +1845,7 @@ impl GameGenerator {
             base_config,
             uses_network,
             non_network_num_simulations,
+            bootstrap_use_min_max_q_normalization,
             nn_value_weight,
             death_penalty,
             overhang_penalty_weight,
@@ -2175,7 +2192,7 @@ mod tests {
         config.q_scale = Some(7.5);
 
         let network_config =
-            GameGenerator::build_rollout_config(&config, true, 999, 0.123, 5.0, 3.0);
+            GameGenerator::build_rollout_config(&config, true, 999, true, 0.123, 5.0, 3.0);
         assert_eq!(network_config.num_simulations, 123);
         assert_eq!(network_config.visit_sampling_epsilon, 0.42);
         assert_eq!(network_config.temperature, 1.5);
@@ -2187,7 +2204,7 @@ mod tests {
         assert_eq!(network_config.q_scale, Some(7.5));
 
         let bootstrap_config =
-            GameGenerator::build_rollout_config(&config, false, 999, 0.456, 5.0, 3.0);
+            GameGenerator::build_rollout_config(&config, false, 999, true, 0.456, 5.0, 3.0);
         assert_eq!(bootstrap_config.num_simulations, 999);
         assert_eq!(bootstrap_config.visit_sampling_epsilon, 0.42);
         assert_eq!(bootstrap_config.temperature, 1.5);
@@ -2199,9 +2216,15 @@ mod tests {
         assert_eq!(bootstrap_config.q_scale, None);
 
         // Verify penalties are overridden when passed as 0
-        let zeroed_config = GameGenerator::build_rollout_config(&config, true, 999, 1.0, 0.0, 0.0);
+        let zeroed_config =
+            GameGenerator::build_rollout_config(&config, true, 999, true, 1.0, 0.0, 0.0);
         assert_eq!(zeroed_config.death_penalty, 0.0);
         assert_eq!(zeroed_config.overhang_penalty_weight, 0.0);
+
+        // When disabled, bootstrap keeps the configured q_scale.
+        let bootstrap_no_force =
+            GameGenerator::build_rollout_config(&config, false, 999, false, 0.456, 5.0, 3.0);
+        assert_eq!(bootstrap_no_force.q_scale, Some(7.5));
     }
 
     #[test]
@@ -2279,6 +2302,7 @@ mod tests {
             Some(vec![0]),
             true,
             10,
+            true,
             0.0,
             1.0,
         )
