@@ -9,7 +9,7 @@ import structlog
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
-from tetris_bot.constants import PROJECT_ROOT
+from tetris_bot.constants import BENCHMARKS_DIR, PARALLEL_ONNX_FILENAME, PROJECT_ROOT
 
 logger = structlog.get_logger()
 
@@ -18,9 +18,7 @@ logger = structlog.get_logger()
 class ScriptArgs:
     """Benchmark batch chance node expansion vs lazy expansion."""
 
-    model_path: Path = Path(
-        "/Users/axelhojmark/Desktop/v37/checkpoints/parallel.onnx"
-    )  # ONNX model
+    model_path: Path = BENCHMARKS_DIR / "models" / PARALLEL_ONNX_FILENAME
     use_dummy_network: bool = False  # Run bootstrap MCTS without loading an ONNX model
     num_games: int = 5  # Number of games per configuration
     simulations: int = 1000  # MCTS simulations per move

@@ -9,16 +9,14 @@ from PIL import Image, ImageDraw, ImageFont
 from simple_parsing import parse
 
 from tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
-from tetris_bot.constants import BENCHMARKS_DIR
+from tetris_bot.constants import BENCHMARKS_DIR, PARALLEL_ONNX_FILENAME
 
 logger = structlog.get_logger()
 
 
 @dataclass
 class ScriptArgs:
-    model_path: Path = Path(  # ONNX model
-        "/Users/axelhojmark/Desktop/v37/checkpoints/parallel.onnx"
-    )
+    model_path: Path = BENCHMARKS_DIR / "models" / PARALLEL_ONNX_FILENAME
     use_dummy_network: bool = True  # Run bootstrap MCTS without loading an ONNX model
     num_games: int = 60  # Number of games per configuration
     simulations: list[int] = field(  # MCTS simulations per move
