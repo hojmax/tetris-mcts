@@ -119,7 +119,9 @@ def create_plot(results: list[dict], output_path: Path) -> None:
     panel_gap = 70
     num_panels = 3
     plot_width = width - left - right
-    plot_height = int((height - top - bottom - panel_gap * (num_panels - 1)) / num_panels)
+    plot_height = int(
+        (height - top - bottom - panel_gap * (num_panels - 1)) / num_panels
+    )
     panel_tops = [top + i * (plot_height + panel_gap) for i in range(num_panels)]
 
     image = Image.new("RGB", (width, height), "white")
