@@ -319,14 +319,14 @@ fn evaluate_parallel(
 ///
 /// Plays games using MCTS with the specified model on fixed seeds,
 /// allowing reproducible comparison between model versions.
-/// Uses the same game loop as self-play (including tree reuse) with
-/// argmax action selection (temperature=0). Deterministic behavior
-/// requires add_noise=false and a fixed MCTS seed.
+/// Uses the same game loop as self-play (including tree reuse).
+/// Deterministic behavior requires add_noise=false, config.visit_sampling_epsilon=0,
+/// and a fixed MCTS seed.
 ///
 /// Args:
 ///     model_path: Path to ONNX model file
 ///     seeds: List of random seeds to use (determines piece sequence)
-///     config: MCTS configuration (temperature is forced to 0 for argmax)
+///     config: MCTS configuration
 ///     max_placements: Maximum placements per game (hold actions do not count)
 ///     add_noise: Whether to add Dirichlet root noise
 ///     output_path: Optional path to save replays as JSONL
@@ -351,7 +351,6 @@ pub fn evaluate_model(
     }
 
     let mut config = config.unwrap_or_default();
-    config.temperature = 0.0;
     config.max_placements = max_placements;
 
     if num_workers > 1 && output_path.is_some() {
@@ -384,13 +383,13 @@ pub fn evaluate_model(
 
 /// Evaluate MCTS without a network on fixed seeds (uniform priors + zero value).
 ///
-/// Uses the same game loop as self-play (including tree reuse) with
-/// argmax action selection (temperature=0). Deterministic behavior
-/// requires add_noise=false and a fixed MCTS seed.
+/// Uses the same game loop as self-play (including tree reuse).
+/// Deterministic behavior requires add_noise=false, config.visit_sampling_epsilon=0,
+/// and a fixed MCTS seed.
 ///
 /// Args:
 ///     seeds: List of random seeds to use (determines piece sequence)
-///     config: MCTS configuration (temperature is forced to 0 for argmax)
+///     config: MCTS configuration
 ///     max_placements: Maximum placements per game (hold actions do not count)
 ///     add_noise: Whether to add Dirichlet root noise (matches self-play exploration)
 ///     output_path: Optional path to save replays as JSONL
@@ -414,7 +413,6 @@ pub fn evaluate_model_without_nn(
     }
 
     let mut config = config.unwrap_or_default();
-    config.temperature = 0.0;
     config.max_placements = max_placements;
 
     if num_workers > 1 && output_path.is_some() {
