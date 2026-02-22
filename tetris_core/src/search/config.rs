@@ -44,7 +44,7 @@ pub struct MCTSConfig {
     #[pyo3(get, set)]
     pub nn_value_weight: f32,
     /// Scale for tanh Q squashing in PUCT selection. Some(scale) uses tanh(Q/scale),
-    /// None uses sibling min-max normalization. Set to None for bootstrap (no-NN) mode.
+    /// None uses global min-max normalization. Set to None for bootstrap (no-NN) mode.
     #[pyo3(get, set)]
     pub q_scale: Option<f32>,
     /// Reuse the MCTS subtree from the previous move instead of building a fresh tree.

@@ -10,9 +10,7 @@ from pathlib import Path
 class NetworkConfig:
     """Neural network architecture hyperparameters."""
 
-    architecture: str = (
-        "gated_fusion"  # 'gated_fusion' (default) or 'simple_aux_mlp'
-    )
+    architecture: str = "simple_aux_mlp"  # 'gated_fusion' (default) or 'simple_aux_mlp'
     trunk_channels: int = 16
     num_conv_residual_blocks: int = 1
     reduction_channels: int = 32
@@ -81,13 +79,13 @@ class SelfPlayConfig:
     nn_value_weight_cap: float = (  # Maximum allowed nn_value_weight during promotion ramp
         1.0
     )
-    use_tanh_q_normalization: bool = (  # If True, use tanh(Q/q_scale) squashing; if False, use sibling min-max Q normalization
+    use_tanh_q_normalization: bool = (  # If True, use tanh(Q/q_scale) squashing; if False, use global min-max Q normalization
         True
     )
     q_scale: float = (  # Scale for tanh Q squashing in PUCT (only used when use_tanh_q_normalization=True)
         8.0
     )
-    bootstrap_use_min_max_q_normalization: bool = (  # If True, force no-network bootstrap rollouts to use sibling min-max Q normalization
+    bootstrap_use_min_max_q_normalization: bool = (  # If True, force no-network bootstrap rollouts to use global min-max Q normalization
         True
     )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax

@@ -155,7 +155,7 @@ def build_aux_features(
 
 
 class ResidualConvBlock(nn.Module):
-    """Pre-activation residual block: BN -> ReLU -> Conv -> BN -> ReLU -> Conv + skip."""
+    """Pre-activation residual block: BN -> SiLU -> Conv -> BN -> SiLU -> Conv + skip."""
 
     def __init__(self, channels: int, kernel_size: int = 3, padding: int = 1):
         super().__init__()
@@ -169,9 +169,9 @@ class ResidualConvBlock(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = F.relu(self.bn1(x))
+        h = F.silu(self.bn1(x))
         h = self.conv1(h)
-        h = F.relu(self.bn2(h))
+        h = F.silu(self.bn2(h))
         h = self.conv2(h)
         return x + h
 
@@ -306,23 +306,23 @@ class TetrisNet(nn.Module):
     def _forward_gated_fusion_from_board_embedding(
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        aux_h = F.relu(self.aux_ln(self.aux_fc(piece_aux)))
+        aux_h = F.silu(self.aux_ln(self.aux_fc(piece_aux)))
         gate = torch.sigmoid(self.gate_fc(aux_h))
 
         fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
-        fused = F.relu(self.fusion_ln(fused))
+        fused = F.silu(self.fusion_ln(fused))
         for block in self.fusion_blocks:
             fused = block(fused)
 
-        policy_logits = self.policy_head(F.relu(self.policy_fc(fused)))
-        value = self.value_head(F.relu(self.value_fc(fused)))
+        policy_logits = self.policy_head(F.silu(self.policy_fc(fused)))
+        value = self.value_head(F.silu(self.value_fc(fused)))
         return policy_logits, value
 
     def _forward_simple_from_board_embedding(
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         full_aux = torch.cat([piece_aux, board_h], dim=1)
-        hidden = F.relu(self.simple_aux_ln(self.simple_aux_fc(full_aux)))
+        hidden = F.silu(self.simple_aux_ln(self.simple_aux_fc(full_aux)))
         policy_logits = self.simple_policy_head(hidden)
         value = self.simple_value_head(hidden)
         return policy_logits, value
@@ -355,10 +355,10 @@ class TetrisNet(nn.Module):
         board_stats = aux_features[:, PIECE_AUX_FEATURES:]
 
         if self.architecture == NETWORK_ARCH_GATED_FUSION:
-            x = F.relu(self.bn_initial(self.conv_initial(board)))
+            x = F.silu(self.bn_initial(self.conv_initial(board)))
             for block in self.res_blocks:
                 x = block(x)
-            x = F.relu(self.bn_reduce(self.conv_reduce(x)))
+            x = F.silu(self.bn_reduce(self.conv_reduce(x)))
             board_h = self.board_proj(
                 torch.cat([x.view(x.size(0), -1), board_stats], dim=1)
             )
@@ -382,9 +382,9 @@ class ResidualFusionBlock(nn.Module):
         self.fc2 = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = F.relu(self.ln1(x))
+        h = F.silu(self.ln1(x))
         h = self.fc1(h)
-        h = F.relu(self.ln2(h))
+        h = F.silu(self.ln2(h))
         h = self.fc2(h)
         return x + h
 
@@ -404,10 +404,10 @@ class ConvBackbone(nn.Module):
 
     def forward(self, board: torch.Tensor) -> torch.Tensor:
         if self.architecture == NETWORK_ARCH_GATED_FUSION:
-            x = F.relu(self.bn_initial(self.conv_initial(board)))
+            x = F.silu(self.bn_initial(self.conv_initial(board)))
             for block in self.res_blocks:
                 x = block(x)
-            x = F.relu(self.bn_reduce(self.conv_reduce(x)))
+            x = F.silu(self.bn_reduce(self.conv_reduce(x)))
             return x.view(x.size(0), -1)
 
         # Simple aux-MLP path: emit one deterministic scalar to satisfy split-model
@@ -442,18 +442,18 @@ class HeadsModel(nn.Module):
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.architecture == NETWORK_ARCH_GATED_FUSION:
-            aux_h = F.relu(self.aux_ln(self.aux_fc(piece_aux)))
+            aux_h = F.silu(self.aux_ln(self.aux_fc(piece_aux)))
             gate = torch.sigmoid(self.gate_fc(aux_h))
             fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
-            fused = F.relu(self.fusion_ln(fused))
+            fused = F.silu(self.fusion_ln(fused))
             for block in self.fusion_blocks:
                 fused = block(fused)
-            policy_logits = self.policy_head(F.relu(self.policy_fc(fused)))
-            value = self.value_head(F.relu(self.value_fc(fused)))
+            policy_logits = self.policy_head(F.silu(self.policy_fc(fused)))
+            value = self.value_head(F.silu(self.value_fc(fused)))
             return policy_logits, value
 
         full_aux = torch.cat([piece_aux, board_h], dim=1)
-        hidden = F.relu(self.simple_aux_ln(self.simple_aux_fc(full_aux)))
+        hidden = F.silu(self.simple_aux_ln(self.simple_aux_fc(full_aux)))
         policy_logits = self.simple_policy_head(hidden)
         value = self.simple_value_head(hidden)
         return policy_logits, value
