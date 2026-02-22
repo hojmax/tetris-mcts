@@ -3,7 +3,7 @@ use super::*;
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=3000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -41,7 +41,11 @@ impl GameGenerator {
                 "num_workers must be > 0",
             ));
         }
-        let candidate_eval_seeds = candidate_eval_seeds.unwrap_or_else(|| (0..50).collect());
+        let candidate_eval_seeds = candidate_eval_seeds.ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "candidate_eval_seeds must be provided explicitly",
+            )
+        })?;
         if candidate_eval_seeds.is_empty() {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "candidate_eval_seeds must not be empty",
