@@ -281,7 +281,7 @@ samply record python tetris_bot/scripts/inspection/profile_games.py \
   --mcts_seed 123
 ```
 
-Use the flamegraph search to inspect specific functions/namespaces (for example `tetris_core::moves::find_all_placements`, `tetris_core::nn::TetrisNN`, `tract_onnx::`, `tract_linalg::`, `ort::`).
+Use the flamegraph search to inspect specific functions/namespaces (for example `tetris_core::game::moves::find_all_placements`, `tetris_core::inference::TetrisNN`, `tract_onnx::`, `tract_linalg::`, `ort::`).
 If your summary only groups `tetris_core::*`, NN compute can appear missing because much of ONNX runtime time is attributed to backend symbols (`tract_*` or `ort::*`) rather than `tetris_core::*`.
 
 **macOS native profiling** (Instruments):
@@ -313,40 +313,47 @@ ONNX Export                  ← Model exported for Rust inference
 ```
 tetris_core/src/             # Rust game engine
 ├── lib.rs                   # PyO3 module exports
-├── constants.rs             # Board size (10x20), piece indices
-├── piece.rs                 # Tetromino shapes and rotations
-├── kicks.rs                 # SRS wall kick data
-├── scoring.rs               # Attack calculation (lines, T-spins, combos)
-├── moves.rs                 # Move generation/pathfinding
-├── env/                     # TetrisEnv game state
-│   ├── state.rs             # Main TetrisEnv struct
-│   ├── board.rs             # Board collision detection
-│   ├── movement.rs          # Piece movement (left/right/down)
-│   ├── placement.rs         # Piece locking
-│   ├── piece_management.rs  # Queue, hold, 7-bag spawning
-│   ├── clearing.rs          # Line clear mechanics
-│   ├── lock_delay.rs        # Lock delay timer
-│   ├── global_cache.rs      # Thread-local placement & board analysis caches
-│   └── pymethods.rs         # Python API exports
-├── mcts/                    # Monte Carlo Tree Search
+├── game/                    # Deterministic game rules and state transitions
+│   ├── mod.rs
+│   ├── constants.rs         # Board size (10x20), piece indices, feature constants
+│   ├── action_space.rs      # 735-action mapping (734 placements + hold)
+│   ├── piece.rs             # Tetromino shapes and rotations
+│   ├── kicks.rs             # SRS wall kick data
+│   ├── scoring.rs           # Attack calculation (lines, T-spins, combos)
+│   ├── moves.rs             # Move generation/pathfinding
+│   └── env/                 # TetrisEnv game state
+│       ├── state.rs         # Main TetrisEnv struct
+│       ├── board.rs         # Board collision detection
+│       ├── movement.rs      # Piece movement (left/right/down)
+│       ├── placement.rs     # Piece locking
+│       ├── piece_management.rs  # Queue, hold, 7-bag spawning
+│       ├── clearing.rs      # Line clear mechanics
+│       ├── lock_delay.rs    # Lock delay timer
+│       ├── global_cache.rs  # Thread-local placement & board analysis caches
+│       └── pymethods.rs     # Python API exports
+├── search/                  # Monte Carlo Tree Search
+│   ├── mod.rs
 │   ├── agent.rs             # MCTSAgent PyO3 interface
 │   ├── search.rs            # Core MCTS algorithm (simulate, expand, backup)
 │   ├── export.rs            # Tree visualization export
 │   ├── nodes.rs             # DecisionNode & ChanceNode
 │   ├── config.rs            # MCTSConfig hyperparameters
-│   ├── action_space.rs      # 735-action mapping (734 placements + hold)
 │   ├── results.rs           # TrainingExample, GameResult, GameStats
-│   └── utils.rs             # PUCT scoring, Dirichlet noise
-├── nn.rs                    # ONNX inference (tract default, optional ONNX Runtime backend)
-└── generator/               # Background game generation
-    ├── game_generator/
-    │   ├── mod.rs
-    │   ├── py_api.rs
-    │   ├── runtime.rs
-    │   ├── shared.rs
-    │   └── tests.rs
-    ├── evaluation.rs
-    ├── npz.rs
+│   └── utils.rs             # PUCT scoring, Dirichlet noise, board diagnostics
+├── inference/
+│   └── mod.rs               # ONNX inference (tract default, optional ONNX Runtime backend)
+├── runtime/                 # Background game generation and evaluation orchestration
+│   ├── mod.rs
+│   ├── evaluation.rs
+│   └── game_generator/
+│       ├── mod.rs
+│       ├── py_api.rs
+│       ├── runtime.rs
+│       ├── shared.rs
+│       └── tests.rs
+└── replay/
+    ├── mod.rs
+    ├── npz.rs               # NPZ replay persistence
     └── types.rs             # GameReplay, ReplayMove types
 
 tetris_bot/                 # Python package
@@ -460,7 +467,7 @@ From `config.py` TrainingConfig defaults:
 - **Architecture**: Conv(1→16) + 1 ResBlock(16) + stride-2 Conv(16→32), gated-fusion hidden size 48, 735 policy outputs, 1 value output
 - **Buffer**: 2M examples (ring buffer), 7 parallel workers, staged sampling with `prefetch_batches=1` (one Rust sample call stages `batch_size * prefetch_batches` examples), and staged queue target `staged_batch_cache_batches=1` (train-sized batches kept resident on host/device queue before being consumed); `pin_memory_batches=true` enables pinned-host transfer on CUDA. Full replay mirroring is enabled by default on accelerator training (`mirror_replay_on_accelerator=true`): snapshot replay to device once, then incrementally append replay deltas every `replay_mirror_refresh_seconds` in chunks of `replay_mirror_delta_chunk_examples`.
 - **Memory gotcha (Linux OOM killer)**: host RAM can OOM before GPU VRAM is full (for example `nvtop` looks fine) because self-play state lives in CPU memory. The biggest CPU-RAM levers are `buffer_size`, `num_workers`, `bootstrap_num_simulations`, and replay staging/mirror chunk sizes. `pin_memory_batches` usually contributes less than those, but can still add transfer-buffer overhead.
-- **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
+- **Cache-cap gotcha**: Rust per-worker global caches can dominate RAM. `PLACEMENT_CACHE_MAX_ENTRIES` and `BOARD_ANALYSIS_CACHE_MAX_ENTRIES` are applied per thread-local worker cache (`tetris_core/src/game/env/global_cache.rs`), so raising them dramatically scales memory with `num_workers`.
 - **Exploration**: Dirichlet alpha=0.02, epsilon=0.25, visit-sampling epsilon=0.0
 - **NN Value Scaling**: `nn_value_weight=0.01` by default. Promotion ramp is event-driven on accepted candidates with multiplicative targets and additive updates: `delta = min(current * (nn_value_weight_promotion_multiplier - 1.0), nn_value_weight_promotion_max_delta)` then `next = min(nn_value_weight_cap, current + delta)`. Defaults: multiplier `1.4` (adds 40%), max delta `0.10`, cap `1.0`.
 - **Q Normalization**: `use_tanh_q_normalization=true` by default; when true, NN-guided MCTS uses `tanh(Q / q_scale)` (default `q_scale=8.0`) for the Q term. When false, uses sibling min-max Q normalization even in NN mode. Bootstrap (no-NN) rollout behavior is controlled separately by `bootstrap_use_min_max_q_normalization` (default `true`).
@@ -520,22 +527,22 @@ cd tetris_core && PYO3_PYTHON="$(cd .. && pwd)/.venv/bin/python" cargo test  # R
 
 Tests are in:
 
-- `tetris_core/src/piece.rs` - Piece creation and rotation states
-- `tetris_core/src/env/tests.rs` - Game logic, line clearing, scoring
+- `tetris_core/src/game/piece.rs` - Piece creation and rotation states
+- `tetris_core/src/game/env/tests.rs` - Game logic, line clearing, scoring
 
 ## Common Workflows
 
 ### Adding new game logic
 
-1. Modify Rust code in `tetris_core/src/env/`
-2. Export state/logic to Python in `pymethods.rs` (without presentation concerns)
+1. Modify Rust code in `tetris_core/src/game/env/`
+2. Export state/logic to Python in `tetris_core/src/game/env/pymethods.rs` (without presentation concerns)
 3. Run `make build` to recompile
 4. Test with `make test` and `make play`
 
 ### Modifying the neural network
 
 1. Edit `tetris_bot/ml/network.py`
-2. Update input encoding in `tetris_core/src/nn.rs` if features change
+2. Update input encoding in `tetris_core/src/inference/mod.rs` if features change
 3. Re-export ONNX after training
 
 Current behavior: split-model Rust inference caches board embeddings as `board_proj(conv(board) ++ board_stats)` where `board_stats` is the 19-dim board-derived statistics (column heights, bumpiness, holes, etc.). On cache hits, both conv and board_stats computation are skipped; only the 61-dim piece/game features are encoded for the heads model. Runtime backend defaults to `tract` and can be switched at runtime with `TETRIS_NN_BACKEND=tract|ort` when the extension is built with Cargo feature `nn-ort`. `fc.bin` stores `board_proj` weights/bias (now shape `(hidden, conv_out + 19)`), and Rust validates that `fc.bin` columns equal conv output width + `BOARD_STATS_FEATURES`. Row-fill diagnostics always use the last `ROW_FILL_FEATURE_ROWS` rows from the provided row-fill slice (tail-based, not absolute-board-index based), and normalization expects at least that many rows. MCTS leaf expansion keeps NN priors sparse (aligned to valid actions) and evaluates leaves after the chance outcome is realized, so tree values do not depend on unobserved 6th-queue identity. Self-play workers also maintain thread-local global caches for move generation and board diagnostics: placements are cached by packed board + current piece state, and `(overhang_fields, holes)` are cached by packed board.

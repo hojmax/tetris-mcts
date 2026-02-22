@@ -4,44 +4,36 @@
 //!
 //! # Modules
 //!
-//! - `piece`: Tetromino pieces and geometry
-//! - `kicks`: SRS (Super Rotation System) wall kick data
-//! - `env`: The main Tetris game environment
-//! - `scoring`: Attack scoring system (T-spins, combos, back-to-back, perfect clears)
-//! - `moves`: Move generation for finding all possible piece placements
-//! - `mcts`: Monte Carlo Tree Search for AlphaZero-style play
-//! - `nn`: Neural network inference (tract default, optional ONNX Runtime backend)
-//! - `generator`: Background game generation and evaluation
+//! - `game`: Deterministic Tetris rules, move generation, and environment state
+//! - `search`: Monte Carlo Tree Search (MCTS)
+//! - `inference`: ONNX inference and feature encoding
+//! - `runtime`: Background game generation and evaluation orchestration
+//! - `replay`: Replay types and NPZ persistence
 #![allow(non_local_definitions)] // PyO3 #[pymethods] triggers this warning with current toolchain.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-pub mod constants;
-pub mod env;
-pub mod generator;
-pub mod kicks;
-pub mod mcts;
-pub mod moves;
-pub mod nn;
-pub mod piece;
-pub mod scoring;
+pub mod game;
+pub mod inference;
+pub mod replay;
+pub mod runtime;
+pub mod search;
 
 // Re-export main types for convenience
-pub use constants::NUM_PIECE_TYPES;
-pub use env::TetrisEnv;
-pub use generator::{
-    evaluate_model, evaluate_model_without_nn, EvalResult, GameGenerator, GameReplay, ReplayMove,
-};
-pub use kicks::{get_i_kicks, get_jlstz_kicks, get_kicks_for_piece};
-pub use mcts::{
-    GameResult, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
-};
-pub use moves::{find_all_placements, Action, Board, Placement};
-pub use piece::{get_cells, Piece, TETROMINOS, TETROMINO_CELLS};
-pub use scoring::{
+pub use game::constants::NUM_PIECE_TYPES;
+pub use game::env::TetrisEnv;
+pub use game::kicks::{get_i_kicks, get_jlstz_kicks, get_kicks_for_piece};
+pub use game::moves::{find_all_placements, Action, Board, Placement};
+pub use game::piece::{get_cells, Piece, TETROMINOS, TETROMINO_CELLS};
+pub use game::scoring::{
     calculate_attack, combo_attack, determine_clear_type, AttackResult, ClearType,
     BACK_TO_BACK_BONUS, PERFECT_CLEAR_ATTACK,
+};
+pub use replay::{GameReplay, ReplayMove};
+pub use runtime::{evaluate_model, evaluate_model_without_nn, EvalResult, GameGenerator};
+pub use search::{
+    GameResult, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
 };
 
 #[pyfunction]
@@ -50,13 +42,13 @@ fn debug_encode_state(
     move_number: usize,
     max_placements: usize,
 ) -> PyResult<(Vec<f32>, Vec<f32>)> {
-    nn::encode_state_features(env, move_number, max_placements)
+    inference::encode_state_features(env, move_number, max_placements)
         .map_err(|e| PyValueError::new_err(format!("Failed to encode state: {e}")))
 }
 
 #[pyfunction]
 fn debug_get_action_mask(env: &TetrisEnv) -> Vec<bool> {
-    nn::get_action_mask(env)
+    inference::get_action_mask(env)
 }
 
 #[pyfunction]
@@ -73,7 +65,7 @@ fn debug_masked_softmax(logits: Vec<f32>, mask: Vec<bool>) -> PyResult<Vec<f32>>
             "mask must contain at least one valid action",
         ));
     }
-    Ok(nn::masked_softmax(&logits, &mask))
+    Ok(inference::masked_softmax(&logits, &mask))
 }
 
 #[pyfunction]
@@ -83,7 +75,7 @@ fn debug_predict_masked_from_tensors(
     aux_tensor: Vec<f32>,
     action_mask: Vec<bool>,
 ) -> PyResult<(Vec<f32>, f32)> {
-    let expected_board = constants::BOARD_HEIGHT * constants::BOARD_WIDTH;
+    let expected_board = game::constants::BOARD_HEIGHT * game::constants::BOARD_WIDTH;
     if board_tensor.len() != expected_board {
         return Err(PyValueError::new_err(format!(
             "board tensor length mismatch: got {}, expected {}",
@@ -91,18 +83,18 @@ fn debug_predict_masked_from_tensors(
             expected_board
         )));
     }
-    if aux_tensor.len() != constants::AUX_FEATURES {
+    if aux_tensor.len() != game::constants::AUX_FEATURES {
         return Err(PyValueError::new_err(format!(
             "aux tensor length mismatch: got {}, expected {}",
             aux_tensor.len(),
-            constants::AUX_FEATURES
+            game::constants::AUX_FEATURES
         )));
     }
-    if action_mask.len() != mcts::NUM_ACTIONS {
+    if action_mask.len() != game::action_space::NUM_ACTIONS {
         return Err(PyValueError::new_err(format!(
             "action mask length mismatch: got {}, expected {}",
             action_mask.len(),
-            mcts::NUM_ACTIONS
+            game::action_space::NUM_ACTIONS
         )));
     }
     if !action_mask.iter().any(|&valid| valid) {
@@ -111,7 +103,7 @@ fn debug_predict_masked_from_tensors(
         ));
     }
 
-    let nn = nn::TetrisNN::load(model_path)
+    let nn = inference::TetrisNN::load(model_path)
         .map_err(|e| PyValueError::new_err(format!("Failed to load model: {e}")))?;
     nn.predict_masked_from_tensors(&board_tensor, &aux_tensor, &action_mask)
         .map_err(|e| PyValueError::new_err(format!("Failed to run inference: {e}")))
