@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Go back to hyper params like v37 and then scale up and run on vast.ai
 - [ ] What if you subtracted the root node value from all the child values before tanh? Then you immediately see if it is worse or better than expected.
 - [ ] look at mcts tree across multiple moves, not just root
 
