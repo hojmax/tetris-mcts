@@ -10,11 +10,11 @@ from pathlib import Path
 class NetworkConfig:
     """Neural network architecture hyperparameters."""
 
-    architecture: str = "simple_aux_mlp"  # 'gated_fusion' (default) or 'simple_aux_mlp'
-    trunk_channels: int = 16
+    architecture: str = "gated_fusion"  # 'gated_fusion' (default) or 'simple_aux_mlp'
+    trunk_channels: int = 4
     num_conv_residual_blocks: int = 1
-    reduction_channels: int = 32
-    fc_hidden: int = 48
+    reduction_channels: int = 8
+    fc_hidden: int = 128
     conv_kernel_size: int = 3
     conv_padding: int = 1
 
@@ -37,7 +37,7 @@ class OptimizerConfig:
         2000
     )
     use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
-        False
+        True
     )
     use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
         True
@@ -98,9 +98,9 @@ class SelfPlayConfig:
     max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
         50
     )
-    death_penalty: float = 10.0  # Search-time terminal penalty when game ends in death
+    death_penalty: float = 5.0  # Search-time terminal penalty when game ends in death
     overhang_penalty_weight: float = (  # Search-time weight for normalized overhang penalty
-        35
+        5
     )
     model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
         50
