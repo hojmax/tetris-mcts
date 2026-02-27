@@ -1,5 +1,56 @@
 # Next Steps
 
+```
+eyboardInterrupt
+(main) root@C.32137294:/workspace/tetris-mcts$ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
+2026-02-27 22:14:09 [info     ] Starting worker sweep          model_path=None num_games=40 num_repeats=1 simulations=2000 use_dummy_network=True worker_candidates=[24, 40, 48, 56, 64, 160]
+2026-02-27 22:14:09 [info     ] Evaluating worker setting      num_workers=24 repeats=1
+2026-02-27 22:14:46 [info     ] Completed benchmark run        elapsed_sec=36.896 games_per_sec=1.084 num_workers=24 repeat_idx=0
+2026-02-27 22:14:46 [info     ] Evaluating worker setting      num_workers=40 repeats=1
+2026-02-27 22:15:12 [info     ] Completed benchmark run        elapsed_sec=25.914 games_per_sec=1.544 num_workers=40 repeat_idx=0
+2026-02-27 22:15:12 [info     ] Evaluating worker setting      num_workers=48 repeats=1
+2026-02-27 22:15:37 [info     ] Completed benchmark run        elapsed_sec=24.286 games_per_sec=1.647 num_workers=48 repeat_idx=0
+2026-02-27 22:15:37 [info     ] Evaluating worker setting      num_workers=56 repeats=1
+2026-02-27 22:16:02 [info     ] Completed benchmark run        elapsed_sec=25.047 games_per_sec=1.597 num_workers=56 repeat_idx=0
+2026-02-27 22:16:02 [info     ] Evaluating worker setting      num_workers=64 repeats=1
+2026-02-27 22:16:27 [info     ] Completed benchmark run        elapsed_sec=24.988 games_per_sec=1.601 num_workers=64 repeat_idx=0
+2026-02-27 22:16:27 [info     ] Evaluating worker setting      num_workers=160 repeats=1
+2026-02-27 22:16:52 [info     ] Completed benchmark run        elapsed_sec=25.201 games_per_sec=1.587 num_workers=160 repeat_idx=0
+
+=== Worker Sweep Summary ===
+ Workers   Median G/s   Mean G/s    Min G/s    Max G/s   Median M/s   Median sec
+--------------------------------------------------------------------------------------
+      24        1.084      1.084      1.084      1.084         50.6       36.896
+      40        1.544      1.544      1.544      1.544         72.1       25.914
+      48        1.647      1.647      1.647      1.647         76.9       24.286
+      56        1.597      1.597      1.597      1.597         74.6       25.047
+      64        1.601      1.601      1.601      1.601         74.8       24.988
+     160        1.587      1.587      1.587      1.587         74.1       25.201
+
+Best setting: workers=48 median_games_per_sec=1.647 mean_games_per_sec=1.647
+2026-02-27 22:16:52 [info     ] Saved worker sweep results     output=/workspace/tetris-mcts/benchmarks/worker_sweep.json
+(main) root@C.32137294:/workspace/tetris-mcts$ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
+2026-02-27 22:19:37 [info     ] Starting worker sweep          model_path=None num_games=64 num_repeats=1 simulations=2000 use_dummy_network=True worker_candidates=[64, 160]
+2026-02-27 22:19:37 [info     ] Evaluating worker setting      num_workers=64 repeats=1
+2026-02-27 22:20:19 [info     ] Completed benchmark run        elapsed_sec=41.713 games_per_sec=1.534 num_workers=64 repeat_idx=0
+2026-02-27 22:20:19 [info     ] Evaluating worker setting      num_workers=160 repeats=1
+2026-02-27 22:20:57 [info     ] Completed benchmark run        elapsed_sec=37.714 games_per_sec=1.697 num_workers=160 repeat_idx=0
+
+=== Worker Sweep Summary ===
+ Workers   Median G/s   Mean G/s    Min G/s    Max G/s   Median M/s   Median sec
+--------------------------------------------------------------------------------------
+      64        1.534      1.534      1.534      1.534         72.2       41.713
+     160        1.697      1.697      1.697      1.697         79.8       37.714
+
+Best setting: workers=160 median_games_per_sec=1.697 mean_games_per_sec=1.697
+2026-02-27 22:20:57 [info     ] Saved worker sweep results     output=/workspace/tetris-mcts/benchmarks/worker_sweep.json
+(main) root@C.32137294:/workspace/tetris-mcts$ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
+2026-02-27 22:24:17 [info     ] Starting worker sweep          model_path=None num_games=128 num_repeats=1 simulations=2000 use_dummy_network=True worker_candidates=[128, 160]
+2026-02-27 22:24:17 [info     ] Evaluating worker setting      num_workers=128 repeats=1
+2026-02-27 22:25:35 [info     ] Completed benchmark run        elapsed_sec=77.875 games_per_sec=1.644 num_workers=128 repeat_idx=0
+2026-02-27 22:25:35 [info     ] Evaluating worker setting      num_workers=160 repeats=1
+```
+
 - [ ] We are overfitting on the test evals.
 - [ ] Go back to hyper params like v37 and then scale up and run on vast.ai
 - [ ] What if you subtracted the root node value from all the child values before tanh? Then you immediately see if it is worse or better than expected.
