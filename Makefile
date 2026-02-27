@@ -5,7 +5,6 @@ SHELL := /bin/bash
 CARGO_ENV := source $$HOME/.cargo/env 2>/dev/null || true
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
-PYTHON_BIN ?= python3
 PYTHON_ABS := $(abspath $(PYTHON))
 INSTALL_MARKER := $(VENV_DIR)/.install_marker
 
@@ -14,14 +13,30 @@ RUST_SRC := $(shell find tetris_core/src -name '*.rs')
 RELEASE_MARKER := .build_marker_release
 DEV_MARKER := .build_marker_dev
 
-# Bootstrap project dependencies into local virtualenv.
-$(PYTHON):
-	$(PYTHON_BIN) -m venv $(VENV_DIR)
-
-$(INSTALL_MARKER): pyproject.toml | $(PYTHON)
-	$(PYTHON) -m ensurepip --upgrade
-	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -e .
+# Bootstrap project dependencies into local virtualenv with uv.
+$(INSTALL_MARKER): pyproject.toml uv.lock
+	@set -euo pipefail; \
+	if command -v uv >/dev/null 2>&1; then \
+		UV_BIN="$$(command -v uv)"; \
+	elif [ -x "$$HOME/.local/bin/uv" ]; then \
+		UV_BIN="$$HOME/.local/bin/uv"; \
+	else \
+		if ! command -v curl >/dev/null 2>&1; then \
+			echo "Error: uv is missing and curl is required to install it." >&2; \
+			exit 1; \
+		fi; \
+		echo "uv not found; installing to $$HOME/.local/bin..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		if [ -x "$$HOME/.local/bin/uv" ]; then \
+			UV_BIN="$$HOME/.local/bin/uv"; \
+		elif command -v uv >/dev/null 2>&1; then \
+			UV_BIN="$$(command -v uv)"; \
+		else \
+			echo "Error: uv installation failed." >&2; \
+			exit 1; \
+		fi; \
+	fi; \
+	"$$UV_BIN" sync --frozen
 	@touch $(INSTALL_MARKER)
 
 install: $(INSTALL_MARKER)

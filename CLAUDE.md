@@ -41,7 +41,7 @@ Treat this document as a living guide.
 ## Quick Commands
 
 ```bash
-make install    # create .venv and install Python deps
+make install    # uv sync bootstrap (installs uv if missing)
 make build      # release Rust extension (slow, optimized)
 make build-dev  # debug Rust extension (fast iteration)
 make play       # interactive game
