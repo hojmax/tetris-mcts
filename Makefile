@@ -1,4 +1,4 @@
-.PHONY: run install build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
+.PHONY: run install ensure-rust build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -39,10 +39,31 @@ $(INSTALL_MARKER): pyproject.toml uv.lock
 	"$$UV_BIN" sync --frozen
 	@touch $(INSTALL_MARKER)
 
-install: $(INSTALL_MARKER)
+ensure-rust:
+	@set -euo pipefail; \
+	if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then \
+		exit 0; \
+	fi; \
+	if [ -f "$$HOME/.cargo/env" ]; then \
+		source "$$HOME/.cargo/env"; \
+	fi; \
+	if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then \
+		exit 0; \
+	fi; \
+	if ! command -v curl >/dev/null 2>&1; then \
+		echo "Error: rustc/cargo are missing and curl is required to install rustup." >&2; \
+		exit 1; \
+	fi; \
+	echo "Rust toolchain not found; installing via rustup..."; \
+	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable; \
+	source "$$HOME/.cargo/env"; \
+	rustc --version >/dev/null; \
+	cargo --version >/dev/null
+
+install: ensure-rust $(INSTALL_MARKER)
 
 # Build marker file to track if build is up to date (release mode)
-$(RELEASE_MARKER): $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
+$(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
@@ -51,7 +72,7 @@ $(RELEASE_MARKER): $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_c
 build: $(RELEASE_MARKER)
 
 # Fast debug build (much faster, for development only)
-build-dev: $(INSTALL_MARKER)
+build-dev: ensure-rust $(INSTALL_MARKER)
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --manifest-path tetris_core/Cargo.toml
 	@rm -f $(RELEASE_MARKER)
 	@touch $(DEV_MARKER)
@@ -69,7 +90,7 @@ viz: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/inspection/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,)
 
 # Force rebuild (clean first to avoid caching issues)
-rebuild: $(INSTALL_MARKER)
+rebuild: ensure-rust $(INSTALL_MARKER)
 	cd tetris_core && $(CARGO_ENV) && cargo clean
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
