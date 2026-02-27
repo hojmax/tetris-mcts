@@ -41,7 +41,7 @@ Treat this document as a living guide.
 ## Quick Commands
 
 ```bash
-make install    # uv sync + Rust bootstrap + debug extension build
+make install    # uv sync + Rust bootstrap + PATH persist + debug extension build
 make build      # release Rust extension (slow, optimized)
 make build-dev  # debug Rust extension (fast iteration)
 make play       # interactive game

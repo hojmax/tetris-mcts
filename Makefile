@@ -42,23 +42,40 @@ $(INSTALL_MARKER): pyproject.toml uv.lock
 ensure-rust:
 	@set -euo pipefail; \
 	if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then \
-		exit 0; \
-	fi; \
-	if [ -f "$$HOME/.cargo/env" ]; then \
+		:; \
+	elif [ -f "$$HOME/.cargo/env" ]; then \
 		source "$$HOME/.cargo/env"; \
+		if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then \
+			:; \
+		else \
+			if ! command -v curl >/dev/null 2>&1; then \
+				echo "Error: rustc/cargo are missing and curl is required to install rustup." >&2; \
+				exit 1; \
+			fi; \
+			echo "Rust toolchain not found; installing via rustup..."; \
+			curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable; \
+			source "$$HOME/.cargo/env"; \
+			rustc --version >/dev/null; \
+			cargo --version >/dev/null; \
+		fi; \
+	else \
+		if ! command -v curl >/dev/null 2>&1; then \
+			echo "Error: rustc/cargo are missing and curl is required to install rustup." >&2; \
+			exit 1; \
+		fi; \
+		echo "Rust toolchain not found; installing via rustup..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable; \
+		source "$$HOME/.cargo/env"; \
+		rustc --version >/dev/null; \
+		cargo --version >/dev/null; \
 	fi; \
-	if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then \
-		exit 0; \
-	fi; \
-	if ! command -v curl >/dev/null 2>&1; then \
-		echo "Error: rustc/cargo are missing and curl is required to install rustup." >&2; \
-		exit 1; \
-	fi; \
-	echo "Rust toolchain not found; installing via rustup..."; \
-	curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable; \
-	source "$$HOME/.cargo/env"; \
-	rustc --version >/dev/null; \
-	cargo --version >/dev/null
+	PATH_LINE='export PATH="$$HOME/.cargo/bin:$$PATH"'; \
+	for rc in "$$HOME/.bashrc" "$$HOME/.zshrc"; do \
+		touch "$$rc"; \
+		if ! grep -Fq "$$PATH_LINE" "$$rc"; then \
+			echo "$$PATH_LINE" >> "$$rc"; \
+		fi; \
+	done
 
 install: ensure-rust $(INSTALL_MARKER) $(DEV_MARKER)
 
