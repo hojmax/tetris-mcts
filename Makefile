@@ -60,7 +60,7 @@ ensure-rust:
 	rustc --version >/dev/null; \
 	cargo --version >/dev/null
 
-install: ensure-rust $(INSTALL_MARKER)
+install: ensure-rust $(INSTALL_MARKER) $(DEV_MARKER)
 
 # Build marker file to track if build is up to date (release mode)
 $(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
@@ -68,14 +68,17 @@ $(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.t
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
+# Build marker file to track if debug build is up to date
+$(DEV_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
+	$(CARGO_ENV) && $(PYTHON) -m maturin develop --manifest-path tetris_core/Cargo.toml
+	@rm -f $(RELEASE_MARKER)
+	@touch $(DEV_MARKER)
+
 # Explicit build target
 build: $(RELEASE_MARKER)
 
 # Fast debug build (much faster, for development only)
-build-dev: ensure-rust $(INSTALL_MARKER)
-	$(CARGO_ENV) && $(PYTHON) -m maturin develop --manifest-path tetris_core/Cargo.toml
-	@rm -f $(RELEASE_MARKER)
-	@touch $(DEV_MARKER)
+build-dev: $(DEV_MARKER)
 
 # Run the game (builds first if needed)
 play: $(RELEASE_MARKER)
