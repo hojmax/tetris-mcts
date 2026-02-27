@@ -1,5 +1,7 @@
 use super::*;
 
+const CANDIDATE_EVAL_MCTS_SEED: u64 = 0;
+
 impl GameGenerator {
     pub(super) fn load_atomic_f32(value: &AtomicU32) -> f32 {
         f32::from_bits(value.load(Ordering::SeqCst))
@@ -253,7 +255,6 @@ impl GameGenerator {
                         &running,
                         max_placements,
                         &candidate_eval_seeds,
-                        add_noise,
                         non_network_num_simulations,
                         bootstrap_use_min_max_q_normalization,
                         &buffer,
@@ -403,7 +404,6 @@ impl GameGenerator {
         running: &Arc<AtomicBool>,
         max_placements: u32,
         candidate_eval_seeds: &[u64],
-        add_noise: bool,
         non_network_num_simulations: u32,
         bootstrap_use_min_max_q_normalization: bool,
         buffer: &Arc<SharedBuffer>,
@@ -423,12 +423,19 @@ impl GameGenerator {
         nn_value_weight_cap: f32,
         incumbent_eval_avg_attack: &Arc<AtomicU32>,
     ) -> usize {
+        let eval_config = Self::build_candidate_eval_config(config);
+        let incumbent_uses_network_before = incumbent_uses_network.load(Ordering::SeqCst);
+        let incumbent_step_before = incumbent_model_step.load(Ordering::SeqCst);
+        let incumbent_nn_value_weight_before = Self::load_atomic_f32(incumbent_nn_value_weight);
+        let previous_incumbent_avg_attack = Self::load_atomic_f32(incumbent_eval_avg_attack);
+        let incumbent_path_before = incumbent_model_path.read().unwrap().clone();
+
         // Read current penalty values for candidate evaluation
         let candidate_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
         let candidate_overhang_penalty_weight =
             Self::load_atomic_f32(incumbent_overhang_penalty_weight);
         let Some(candidate_agent) = Self::create_rollout_agent(
-            config,
+            &eval_config,
             true,
             non_network_num_simulations,
             bootstrap_use_min_max_q_normalization,
@@ -445,11 +452,10 @@ impl GameGenerator {
                 candidate.model_step,
                 candidate.model_path.display()
             );
-            let incumbent_path = incumbent_model_path.read().unwrap().clone();
             Self::remove_model_artifacts_if_safe(
                 &candidate.model_path,
                 bootstrap_model_path,
-                &incumbent_path,
+                &incumbent_path_before,
                 None,
             );
             return 0;
@@ -468,33 +474,50 @@ impl GameGenerator {
             Vec::with_capacity(candidate_eval_seeds.len());
         for &seed in candidate_eval_seeds {
             if !running.load(Ordering::SeqCst) {
-                let incumbent_path = incumbent_model_path.read().unwrap().clone();
                 Self::remove_model_artifacts_if_safe(
                     &candidate.model_path,
                     bootstrap_model_path,
-                    &incumbent_path,
+                    &incumbent_path_before,
                     None,
                 );
                 return 0;
             }
-            let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
-            if let Some((result, replay)) =
-                candidate_agent.play_game_on_env(env, max_placements, add_noise)
-            {
+
+            // Deterministic fixed-seed evaluation:
+            // same seed, no root noise, deterministic MCTS seed in eval_config.
+            let candidate_outcome = candidate_agent.play_game_on_env(
+                TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed),
+                max_placements,
+                false,
+            );
+            if let Some((candidate_result, replay)) = candidate_outcome {
                 candidate_results.push(CandidateGameResult {
                     seed,
-                    game_result: result,
+                    game_result: candidate_result,
                     replay_moves: replay,
                 });
+            } else {
+                // Keep incumbent baseline and candidate sample size comparable:
+                // a failed rollout invalidates this gate decision.
+                eprintln!(
+                    "[GameGenerator] Candidate eval failed on seed {}; rejecting candidate step {}",
+                    seed, candidate.model_step
+                );
+                Self::remove_model_artifacts_if_safe(
+                    &candidate.model_path,
+                    bootstrap_model_path,
+                    &incumbent_path_before,
+                    None,
+                );
+                return 0;
             }
         }
 
         if candidate_results.is_empty() {
-            let incumbent_path = incumbent_model_path.read().unwrap().clone();
             Self::remove_model_artifacts_if_safe(
                 &candidate.model_path,
                 bootstrap_model_path,
-                &incumbent_path,
+                &incumbent_path_before,
                 None,
             );
             return 0;
@@ -558,12 +581,9 @@ impl GameGenerator {
             })
             .sum::<f32>()
             / candidate_games as f32;
+        let incumbent_avg_attack = previous_incumbent_avg_attack;
 
-        let incumbent_avg_attack = Self::load_atomic_f32(incumbent_eval_avg_attack);
-        let incumbent_nn_value_weight_before = Self::load_atomic_f32(incumbent_nn_value_weight);
-        let incumbent_uses_network_before = incumbent_uses_network.load(Ordering::SeqCst);
-        let incumbent_step_before = incumbent_model_step.load(Ordering::SeqCst);
-        let auto_promoted = incumbent_avg_attack == 0.0 && !incumbent_uses_network_before;
+        let auto_promoted = previous_incumbent_avg_attack == 0.0 && !incumbent_uses_network_before;
         let promoted = auto_promoted || candidate_avg_attack > incumbent_avg_attack;
         let promoted_nn_value_weight = if promoted {
             candidate.nn_value_weight
@@ -622,11 +642,10 @@ impl GameGenerator {
             );
             committed
         } else {
-            let incumbent_path = incumbent_model_path.read().unwrap().clone();
             Self::remove_model_artifacts_if_safe(
                 &candidate.model_path,
                 bootstrap_model_path,
-                &incumbent_path,
+                &incumbent_path_before,
                 None,
             );
 
@@ -672,6 +691,13 @@ impl GameGenerator {
             });
 
         committed_games
+    }
+
+    pub(super) fn build_candidate_eval_config(base_config: &MCTSConfig) -> MCTSConfig {
+        let mut eval_config = base_config.clone();
+        eval_config.seed = Some(CANDIDATE_EVAL_MCTS_SEED);
+        eval_config.visit_sampling_epsilon = 0.0;
+        eval_config
     }
 
     pub(super) fn build_rollout_config(

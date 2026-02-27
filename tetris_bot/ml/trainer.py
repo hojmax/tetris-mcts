@@ -785,6 +785,7 @@ class Trainer:
         mcts_config.visit_sampling_epsilon = (
             self.config.self_play.visit_sampling_epsilon
         )
+        mcts_config.seed = self.config.self_play.mcts_seed
         mcts_config.max_placements = self.config.self_play.max_placements
         mcts_config.death_penalty = self.config.self_play.death_penalty
         mcts_config.overhang_penalty_weight = (

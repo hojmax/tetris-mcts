@@ -1,18 +1,33 @@
-.PHONY: run build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
+.PHONY: run install build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
 
 # Source cargo environment if available
 SHELL := /bin/bash
 CARGO_ENV := source $$HOME/.cargo/env 2>/dev/null || true
-PYTHON := .venv/bin/python
+VENV_DIR := .venv
+PYTHON := $(VENV_DIR)/bin/python
+PYTHON_BIN ?= python3
 PYTHON_ABS := $(abspath $(PYTHON))
+INSTALL_MARKER := $(VENV_DIR)/.install_marker
 
 # Find all Rust source files (including subdirectories)
 RUST_SRC := $(shell find tetris_core/src -name '*.rs')
 RELEASE_MARKER := .build_marker_release
 DEV_MARKER := .build_marker_dev
 
+# Bootstrap project dependencies into local virtualenv.
+$(PYTHON):
+	$(PYTHON_BIN) -m venv $(VENV_DIR)
+
+$(INSTALL_MARKER): pyproject.toml | $(PYTHON)
+	$(PYTHON) -m ensurepip --upgrade
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -e .
+	@touch $(INSTALL_MARKER)
+
+install: $(INSTALL_MARKER)
+
 # Build marker file to track if build is up to date (release mode)
-$(RELEASE_MARKER): $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
+$(RELEASE_MARKER): $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
@@ -21,7 +36,7 @@ $(RELEASE_MARKER): $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
 build: $(RELEASE_MARKER)
 
 # Fast debug build (much faster, for development only)
-build-dev:
+build-dev: $(INSTALL_MARKER)
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --manifest-path tetris_core/Cargo.toml
 	@rm -f $(RELEASE_MARKER)
 	@touch $(DEV_MARKER)
@@ -39,7 +54,7 @@ viz: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/inspection/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,)
 
 # Force rebuild (clean first to avoid caching issues)
-rebuild:
+rebuild: $(INSTALL_MARKER)
 	cd tetris_core && $(CARGO_ENV) && cargo clean
 	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)

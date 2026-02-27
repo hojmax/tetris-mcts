@@ -147,6 +147,25 @@ fn test_shared_stats_accumulates_and_tracks_max_combo() {
 }
 
 #[test]
+fn test_build_candidate_eval_config_forces_deterministic_gate_settings() {
+    let mut config = MCTSConfig::default();
+    config.seed = None;
+    config.visit_sampling_epsilon = 0.37;
+    config.num_simulations = 321;
+    config.temperature = 0.9;
+    config.dirichlet_alpha = 0.02;
+    config.dirichlet_epsilon = 0.4;
+
+    let eval_config = GameGenerator::build_candidate_eval_config(&config);
+    assert_eq!(eval_config.seed, Some(0));
+    assert_eq!(eval_config.visit_sampling_epsilon, 0.0);
+    assert_eq!(eval_config.num_simulations, 321);
+    assert_eq!(eval_config.temperature, 0.9);
+    assert_eq!(eval_config.dirichlet_alpha, 0.02);
+    assert_eq!(eval_config.dirichlet_epsilon, 0.4);
+}
+
+#[test]
 fn test_build_rollout_config_keeps_sampling_settings() {
     let mut config = MCTSConfig::default();
     config.num_simulations = 123;

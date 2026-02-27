@@ -41,6 +41,7 @@ Treat this document as a living guide.
 ## Quick Commands
 
 ```bash
+make install    # create .venv and install Python deps
 make build      # release Rust extension (slow, optimized)
 make build-dev  # debug Rust extension (fast iteration)
 make play       # interactive game
@@ -129,7 +130,7 @@ Ownership split:
 - Training: `batch_size=1024`, `learning_rate=5e-4` with decay to `1e-4`, `weight_decay=1e-4`.
 - Workers/buffer: `num_workers=7`, replay ring buffer size `2_000_000`.
 - Bootstrap: starts no-network, typically `bootstrap_num_simulations=4000` until first promotion.
-- Candidate gate: fixed-seed eval window (default 50 games), promote only if candidate beats incumbent.
+- Candidate gate: deterministic fixed-seed eval window (default 50 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average.
 - NN value scaling: `nn_value_weight=0.01` default with promotion-based ramp and cap.
 - Q normalization: tanh mode on by default (`q_scale=8.0`).
 
