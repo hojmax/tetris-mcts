@@ -369,6 +369,135 @@ impl TetrisNN {
         }
     }
 
+    fn run_heads_softmax_over_valid_actions(
+        &self,
+        board_embed: Vec<f32>,
+        piece_aux: Vec<f32>,
+        valid_actions: &[usize],
+    ) -> TractResult<(Vec<f32>, f32)> {
+        match &self.backend {
+            InferenceBackend::Tract { heads_model, .. } => {
+                let board_h_tensor =
+                    tract_ndarray::Array2::from_shape_vec((1, self.board_hidden), board_embed)?
+                        .into_tensor();
+                let aux_tensor =
+                    tract_ndarray::Array2::from_shape_vec((1, PIECE_AUX_FEATURES), piece_aux)?
+                        .into_tensor();
+                let heads_output =
+                    heads_model.run(tvec!(board_h_tensor.into(), aux_tensor.into()))?;
+
+                let policy_view = heads_output[0].to_array_view::<f32>()?;
+                let policy_slice = policy_view.as_slice_memory_order().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Heads policy output tensor is not contiguous",
+                    )
+                })?;
+
+                if let Some(&invalid_action) = valid_actions
+                    .iter()
+                    .find(|&&action_idx| action_idx >= policy_slice.len())
+                {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Valid action index {} out of range for policy logits len {}",
+                            invalid_action,
+                            policy_slice.len()
+                        ),
+                    )
+                    .into());
+                }
+
+                let action_priors = softmax_over_valid_actions(policy_slice, valid_actions);
+                let value = heads_output[1]
+                    .to_array_view::<f32>()?
+                    .iter()
+                    .next()
+                    .copied()
+                    .expect("NN value output tensor is empty - model is malformed");
+                Ok((action_priors, value))
+            }
+            #[cfg(feature = "nn-ort")]
+            InferenceBackend::Ort { heads_session, .. } => {
+                let board_h_tensor = TensorRef::from_array_view((
+                    [1usize, self.board_hidden],
+                    board_embed.as_slice(),
+                ))
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to build ORT board embedding tensor: {e}"),
+                    )
+                })?;
+                let aux_tensor = TensorRef::from_array_view((
+                    [1usize, PIECE_AUX_FEATURES],
+                    piece_aux.as_slice(),
+                ))
+                .map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to build ORT aux tensor: {e}"),
+                    )
+                })?;
+
+                let mut session = heads_session.lock().map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("ONNX Runtime heads session lock poisoned: {e}"),
+                    )
+                })?;
+                let outputs = session
+                    .run(inputs![board_h_tensor, aux_tensor])
+                    .map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("ONNX Runtime heads inference failed: {e}"),
+                        )
+                    })?;
+
+                let (_policy_shape, policy_slice) =
+                    outputs[0].try_extract_tensor::<f32>().map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Failed to extract ORT policy logits tensor: {e}"),
+                        )
+                    })?;
+
+                if let Some(&invalid_action) = valid_actions
+                    .iter()
+                    .find(|&&action_idx| action_idx >= policy_slice.len())
+                {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Valid action index {} out of range for policy logits len {}",
+                            invalid_action,
+                            policy_slice.len()
+                        ),
+                    )
+                    .into());
+                }
+
+                let action_priors = softmax_over_valid_actions(policy_slice, valid_actions);
+                let (_value_shape, value_slice) =
+                    outputs[1].try_extract_tensor::<f32>().map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Failed to extract ORT value tensor: {e}"),
+                        )
+                    })?;
+                let value = value_slice.first().copied().ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "NN value output tensor is empty - model is malformed",
+                    )
+                })?;
+                Ok((action_priors, value))
+            }
+        }
+    }
+
     fn compute_board_embedding_owned(
         &self,
         board_f32: Vec<f32>,
@@ -427,12 +556,7 @@ impl TetrisNN {
         self.cache_order.borrow_mut().clear();
     }
 
-    fn predict_policy_logits_and_value(
-        &self,
-        env: &TetrisEnv,
-        placement_count: usize,
-        max_placements: usize,
-    ) -> TractResult<(Vec<f32>, f32)> {
+    fn get_or_compute_board_embedding(&self, env: &TetrisEnv) -> TractResult<Array1<f32>> {
         let board_embed = if self.cache_enabled.get() {
             let board_key = pack_board(env);
             let board_embed = {
@@ -459,6 +583,16 @@ impl TetrisNN {
             let board_stats = encode_board_stats(env);
             self.compute_board_embedding_owned(board_f32, &board_stats)?
         };
+        Ok(board_embed)
+    }
+
+    fn predict_policy_logits_and_value(
+        &self,
+        env: &TetrisEnv,
+        placement_count: usize,
+        max_placements: usize,
+    ) -> TractResult<(Vec<f32>, f32)> {
+        let board_embed = self.get_or_compute_board_embedding(env)?;
 
         // Encode only piece/game aux features (61-dim) for the heads model.
         let piece_aux_vec = encode_piece_aux_features(env, placement_count, max_placements)?;
@@ -500,26 +634,13 @@ impl TetrisNN {
         valid_actions: &[usize],
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits, value) =
-            self.predict_policy_logits_and_value(env, placement_count, max_placements)?;
-
-        if let Some(&invalid_action) = valid_actions
-            .iter()
-            .find(|&&action_idx| action_idx >= policy_logits.len())
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "Valid action index {} out of range for policy logits len {}",
-                    invalid_action,
-                    policy_logits.len()
-                ),
-            )
-            .into());
-        }
-
-        let action_priors = softmax_over_valid_actions(&policy_logits, valid_actions);
-        Ok((action_priors, value))
+        let board_embed = self.get_or_compute_board_embedding(env)?;
+        let piece_aux_vec = encode_piece_aux_features(env, placement_count, max_placements)?;
+        self.run_heads_softmax_over_valid_actions(
+            board_embed.into_raw_vec(),
+            piece_aux_vec,
+            valid_actions,
+        )
     }
 
     pub fn predict_masked_from_tensors(

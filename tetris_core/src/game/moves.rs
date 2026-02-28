@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use std::collections::{HashSet, VecDeque};
 
 use crate::game::action_space::get_action_space;
+use crate::game::constants::{I_PIECE, O_PIECE, S_PIECE, Z_PIECE};
 use crate::game::kicks::{get_i_kicks, get_jlstz_kicks};
 use crate::game::piece::{get_cells, Piece, TETROMINO_CELLS};
 
@@ -171,6 +172,46 @@ impl<'a> Board<'a> {
     fn is_valid_position_at(&self, piece_type: usize, rotation: usize, x: i32, y: i32) -> bool {
         let [(dx0, dy0), (dx1, dy1), (dx2, dy2), (dx3, dy3)] =
             TETROMINO_CELLS[piece_type][rotation];
+        if let Some(column_masks) = &self.column_masks {
+            let cx0 = x + dx0 as i32;
+            let cy0 = y + dy0 as i32;
+            if (cx0 as u32) >= self.width_u32 || (cy0 as u32) >= self.height_u32 {
+                return false;
+            }
+            if ((column_masks[cx0 as usize] >> cy0 as u32) & 1) != 0 {
+                return false;
+            }
+
+            let cx1 = x + dx1 as i32;
+            let cy1 = y + dy1 as i32;
+            if (cx1 as u32) >= self.width_u32 || (cy1 as u32) >= self.height_u32 {
+                return false;
+            }
+            if ((column_masks[cx1 as usize] >> cy1 as u32) & 1) != 0 {
+                return false;
+            }
+
+            let cx2 = x + dx2 as i32;
+            let cy2 = y + dy2 as i32;
+            if (cx2 as u32) >= self.width_u32 || (cy2 as u32) >= self.height_u32 {
+                return false;
+            }
+            if ((column_masks[cx2 as usize] >> cy2 as u32) & 1) != 0 {
+                return false;
+            }
+
+            let cx3 = x + dx3 as i32;
+            let cy3 = y + dy3 as i32;
+            if (cx3 as u32) >= self.width_u32 || (cy3 as u32) >= self.height_u32 {
+                return false;
+            }
+            if ((column_masks[cx3 as usize] >> cy3 as u32) & 1) != 0 {
+                return false;
+            }
+
+            return true;
+        }
+
         let cells_ptr = self.cells.as_ptr();
 
         let cx0 = x + dx0 as i32;
@@ -641,6 +682,7 @@ pub fn find_all_placement_params(
 
     final_candidate_indices.sort_unstable();
 
+    let dedup_by_cells = matches!(piece_type, I_PIECE | O_PIECE | S_PIECE | Z_PIECE);
     let mut seen_cells = [0u64; crate::search::NUM_PLACEMENT_ACTIONS];
     let mut seen_cells_len = 0usize;
     let mut placements_by_action: [Option<PlacementParams>;
@@ -657,35 +699,37 @@ pub fn find_all_placement_params(
         let y = final_state.y;
         let rotation = final_state.rotation;
 
-        let cells = get_cells(piece_type, rotation, x, y);
-        debug_assert_eq!(cells.len(), 4, "Tetromino should have exactly 4 cells");
-        let mut packed_cells = [0u16; 4];
-        for (cell_idx, (cx, cy)) in cells.into_iter().enumerate() {
-            let packed = cy as usize * board.width + cx as usize;
-            debug_assert!(packed <= u16::MAX as usize);
-            packed_cells[cell_idx] = packed as u16;
-        }
-        packed_cells.sort_unstable();
-        let cell_key = ((packed_cells[0] as u64) << 48)
-            | ((packed_cells[1] as u64) << 32)
-            | ((packed_cells[2] as u64) << 16)
-            | packed_cells[3] as u64;
+        if dedup_by_cells {
+            let cells = get_cells(piece_type, rotation, x, y);
+            debug_assert_eq!(cells.len(), 4, "Tetromino should have exactly 4 cells");
+            let mut packed_cells = [0u16; 4];
+            for (cell_idx, (cx, cy)) in cells.into_iter().enumerate() {
+                let packed = cy as usize * board.width + cx as usize;
+                debug_assert!(packed <= u16::MAX as usize);
+                packed_cells[cell_idx] = packed as u16;
+            }
+            packed_cells.sort_unstable();
+            let cell_key = ((packed_cells[0] as u64) << 48)
+                | ((packed_cells[1] as u64) << 32)
+                | ((packed_cells[2] as u64) << 16)
+                | packed_cells[3] as u64;
 
-        if seen_cells[..seen_cells_len]
-            .iter()
-            .any(|&existing_key| existing_key == cell_key)
-        {
-            continue;
+            if seen_cells[..seen_cells_len]
+                .iter()
+                .any(|&existing_key| existing_key == cell_key)
+            {
+                continue;
+            }
+            debug_assert!(
+                seen_cells_len < seen_cells.len(),
+                "Seen-cell cache overflow while deduplicating placements"
+            );
+            if seen_cells_len >= seen_cells.len() {
+                continue;
+            }
+            seen_cells[seen_cells_len] = cell_key;
+            seen_cells_len += 1;
         }
-        debug_assert!(
-            seen_cells_len < seen_cells.len(),
-            "Seen-cell cache overflow while deduplicating placements"
-        );
-        if seen_cells_len >= seen_cells.len() {
-            continue;
-        }
-        seen_cells[seen_cells_len] = cell_key;
-        seen_cells_len += 1;
 
         let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
             debug_assert!(
