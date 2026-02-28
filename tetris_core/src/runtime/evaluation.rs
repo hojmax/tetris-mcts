@@ -6,6 +6,8 @@ use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 use crate::game::constants::{BOARD_HEIGHT, BOARD_WIDTH};
@@ -94,6 +96,7 @@ fn create_replay_writer(output_path: Option<&str>) -> PyResult<Option<BufWriter<
 }
 
 /// Per-game result collected from evaluation.
+#[derive(Clone)]
 struct GameEval {
     attack: u32,
     lines: u32,
@@ -154,27 +157,20 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
     }
 }
 
-fn run_games_on_seeds(
+fn evaluate_seed(
     agent: &MCTSAgent,
-    seeds: &[u64],
+    seed: u64,
     max_placements: u32,
     add_noise: bool,
-) -> Vec<GameEval> {
-    let mut evals = Vec::with_capacity(seeds.len());
-    for &seed in seeds {
-        let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
-        let Some((result, _replay_moves)) = agent.play_game_on_env(env, max_placements, add_noise)
-        else {
-            continue;
-        };
-        evals.push(GameEval {
-            attack: result.total_attack,
-            lines: result.stats.total_lines,
-            moves: result.num_moves,
-            avg_tree_nodes: result.tree_stats.avg_total_nodes,
-        });
-    }
-    evals
+) -> Option<GameEval> {
+    let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
+    let (result, _replay_moves) = agent.play_game_on_env(env, max_placements, add_noise)?;
+    Some(GameEval {
+        attack: result.total_attack,
+        lines: result.stats.total_lines,
+        moves: result.num_moves,
+        avg_tree_nodes: result.tree_stats.avg_total_nodes,
+    })
 }
 
 fn evaluate_agent(
@@ -239,7 +235,11 @@ fn evaluate_agent(
     }
 
     // No replay — simple path
-    let evals = run_games_on_seeds(agent, seeds, max_placements, add_noise);
+    let evals: Vec<GameEval> = seeds
+        .iter()
+        .copied()
+        .filter_map(|seed| evaluate_seed(agent, seed, max_placements, add_noise))
+        .collect();
     Ok(aggregate_game_evals(&evals))
 }
 
@@ -254,49 +254,60 @@ fn evaluate_parallel(
     add_noise: bool,
     num_workers: u32,
 ) -> PyResult<EvalResult> {
-    let num_workers = (num_workers as usize).min(seeds.len());
-    let chunk_size = (seeds.len() + num_workers - 1) / num_workers;
+    if seeds.is_empty() {
+        return Ok(aggregate_game_evals(&[]));
+    }
 
-    let seed_chunks: Vec<Vec<u64>> = seeds.chunks(chunk_size).map(|c| c.to_vec()).collect();
-
-    let model_path_owned = model_path.map(|s| s.to_string());
+    let worker_count = (num_workers as usize).min(seeds.len());
+    let shared_seeds = Arc::new(seeds.to_vec());
+    let next_seed_index = Arc::new(AtomicUsize::new(0));
+    let model_path_owned = model_path.map(str::to_string);
     let config = config.clone();
 
-    // Spawn worker threads
-    let handles: Vec<_> = seed_chunks
-        .into_iter()
-        .map(|chunk_seeds| {
+    let handles: Vec<_> = (0..worker_count)
+        .map(|_| {
+            let seeds = Arc::clone(&shared_seeds);
+            let next_seed_index = Arc::clone(&next_seed_index);
             let model_path = model_path_owned.clone();
             let config = config.clone();
-            thread::spawn(move || -> Result<Vec<GameEval>, String> {
+            thread::spawn(move || -> Result<Vec<(usize, Option<GameEval>)>, String> {
                 let mut agent = MCTSAgent::new(config);
                 if let Some(path) = model_path.as_deref() {
                     if !agent.load_model(path) {
                         return Err(format!("Failed to load model from {}", path));
                     }
                 }
-                Ok(run_games_on_seeds(
-                    &agent,
-                    &chunk_seeds,
-                    max_placements,
-                    add_noise,
-                ))
+
+                let mut worker_results: Vec<(usize, Option<GameEval>)> = Vec::new();
+                loop {
+                    let seed_index = next_seed_index.fetch_add(1, Ordering::Relaxed);
+                    if seed_index >= seeds.len() {
+                        break;
+                    }
+
+                    let seed = seeds[seed_index];
+                    let eval = evaluate_seed(&agent, seed, max_placements, add_noise);
+                    worker_results.push((seed_index, eval));
+                }
+                Ok(worker_results)
             })
         })
         .collect();
 
-    // Join all threads and flatten results in seed order
-    let mut all_evals: Vec<GameEval> = Vec::with_capacity(seeds.len());
+    let mut results_by_seed: Vec<Option<GameEval>> = vec![None; seeds.len()];
     for handle in handles {
-        let thread_evals = handle
+        let worker_results = handle
             .join()
             .map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Evaluation thread panicked")
             })?
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
-        all_evals.extend(thread_evals);
+            .map_err(|error| PyErr::new::<pyo3::exceptions::PyIOError, _>(error))?;
+        for (seed_index, eval) in worker_results {
+            results_by_seed[seed_index] = eval;
+        }
     }
 
+    let all_evals: Vec<GameEval> = results_by_seed.into_iter().flatten().collect();
     Ok(aggregate_game_evals(&all_evals))
 }
 
@@ -461,6 +472,27 @@ mod tests {
         assert_eq!(
             parallel_without_noise.game_results, single_without_noise.game_results,
             "parallel and single-thread runs should match when noise is disabled"
+        );
+    }
+
+    #[test]
+    fn repeated_parallel_eval_without_nn_is_deterministic() {
+        let seeds: Vec<u64> = (100..132).collect();
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 60;
+        config.seed = Some(777);
+        config.max_placements = 35;
+        config.reuse_tree = true;
+
+        let first =
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 35, false, None, 8)
+                .expect("first parallel run should succeed");
+        let second = evaluate_model_without_nn(seeds, Some(config), 35, false, None, 8)
+            .expect("second parallel run should succeed");
+
+        assert_eq!(
+            first.game_results, second.game_results,
+            "repeated parallel runs should preserve deterministic evaluation outputs"
         );
     }
 }
