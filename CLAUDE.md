@@ -26,6 +26,7 @@ Treat this document as a living guide.
 - Always parallelize game generation/evaluation in normal runs.
 - Do not use single-worker loops when a parallel path exists.
 - Rust evaluation entry points (`evaluate_model`, `evaluate_model_without_nn`) must use `num_workers > 1`.
+- Rust parallel evaluation uses dynamic seed claiming to reduce stragglers in fixed-seed sweeps; benchmark sweeps should prefer larger `num_games` than `num_workers` to reduce seed-length variance noise.
 - Python scripts that generate games should expose and use worker-count args, defaulting to multi-process execution.
 
 ## Project Overview
