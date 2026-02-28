@@ -1,0 +1,192 @@
+{
+  "created_at": "2026-02-28T10:14:47.159971+00:00",
+  "optimizer_version": 1,
+  "machine_profile": {
+    "optimizer_version": 1,
+    "platform_system": "Darwin",
+    "platform_release": "24.6.0",
+    "platform_machine": "arm64",
+    "python_version": "3.12.9",
+    "cpu_physical": 8,
+    "cpu_logical": 8,
+    "hostname": "Axels-MacBook-Air.local",
+    "memsize_bytes": 25769803776
+  },
+  "machine_fingerprint": "dc0f26f708bc45c8",
+  "request_hash": "19e703c42729d28301bf1fa66d03a2541737492161f1fdc0f193fb211d1b11fe",
+  "model_path": "training_runs/v45/checkpoints/latest.onnx",
+  "request": {
+    "optimizer_version": 1,
+    "model_path": "training_runs/v45/checkpoints/latest.onnx",
+    "model_signature": {
+      "latest.onnx:size": 43195,
+      "latest.onnx:mtime_ns": 1771457871688630980,
+      "latest.conv.onnx:size": 17221,
+      "latest.conv.onnx:mtime_ns": 1771457872038858665,
+      "latest.heads.onnx:size": 22348,
+      "latest.heads.onnx:mtime_ns": 1771457872415717193,
+      "latest.fc.bin:size": 829448,
+      "latest.fc.bin:mtime_ns": 1771457872416617773
+    },
+    "worker_candidates": [
+      2,
+      4,
+      6,
+      8
+    ],
+    "backend_strategy": "staged",
+    "primary_backend": "ort",
+    "worker_search": "adaptive",
+    "max_worker_evals_per_combo": 6,
+    "compile_profiles": [
+      "tuned",
+      "baseline"
+    ],
+    "backends": [
+      "tract",
+      "ort"
+    ],
+    "num_games": 20,
+    "num_repeats": 1,
+    "simulations": 300,
+    "max_placements": 50,
+    "seed_start": 42,
+    "mcts_seed": 12345,
+    "c_puct": 1.5
+  },
+  "runs": [
+    {
+      "compile_profile": "tuned",
+      "backend": "ort",
+      "num_workers": 6,
+      "repeat_idx": 0,
+      "total_time_sec": 3.8413333329954185,
+      "games_per_sec": 5.206525512433017,
+      "moves_per_sec": 187.69524472321027,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_tuned_ort_w6.jsonl"
+    },
+    {
+      "compile_profile": "tuned",
+      "backend": "ort",
+      "num_workers": 2,
+      "repeat_idx": 0,
+      "total_time_sec": 7.172806292001042,
+      "games_per_sec": 2.788308952704267,
+      "moves_per_sec": 100.51853774498882,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_tuned_ort_w2.jsonl"
+    },
+    {
+      "compile_profile": "tuned",
+      "backend": "ort",
+      "num_workers": 8,
+      "repeat_idx": 0,
+      "total_time_sec": 4.015795958002855,
+      "games_per_sec": 4.9803327183850366,
+      "moves_per_sec": 179.5409944977806,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_tuned_ort_w8.jsonl"
+    },
+    {
+      "compile_profile": "tuned",
+      "backend": "ort",
+      "num_workers": 4,
+      "repeat_idx": 0,
+      "total_time_sec": 4.783347583994328,
+      "games_per_sec": 4.181172212306392,
+      "moves_per_sec": 150.73125825364545,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_tuned_ort_w4.jsonl"
+    },
+    {
+      "compile_profile": "baseline",
+      "backend": "ort",
+      "num_workers": 6,
+      "repeat_idx": 0,
+      "total_time_sec": 4.298402666994662,
+      "games_per_sec": 4.652891213187226,
+      "moves_per_sec": 167.7367282353995,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_baseline_ort_w6.jsonl"
+    },
+    {
+      "compile_profile": "baseline",
+      "backend": "ort",
+      "num_workers": 2,
+      "repeat_idx": 0,
+      "total_time_sec": 7.7440397500031395,
+      "games_per_sec": 2.582631371435289,
+      "moves_per_sec": 93.10386094024217,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_baseline_ort_w2.jsonl"
+    },
+    {
+      "compile_profile": "baseline",
+      "backend": "ort",
+      "num_workers": 8,
+      "repeat_idx": 0,
+      "total_time_sec": 3.93807850000303,
+      "games_per_sec": 5.078618925444125,
+      "moves_per_sec": 183.0842122622607,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_baseline_ort_w8.jsonl"
+    },
+    {
+      "compile_profile": "baseline",
+      "backend": "ort",
+      "num_workers": 4,
+      "repeat_idx": 0,
+      "total_time_sec": 5.106491375001497,
+      "games_per_sec": 3.9165835269807223,
+      "moves_per_sec": 141.19283614765504,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.44999998807907104,
+      "max_attack": 3,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_baseline_ort_w4.jsonl"
+    },
+    {
+      "compile_profile": "tuned",
+      "backend": "tract",
+      "num_workers": 6,
+      "repeat_idx": 0,
+      "total_time_sec": 4.959747083004913,
+      "games_per_sec": 4.032463685201221,
+      "moves_per_sec": 145.37031585150402,
+      "avg_moves": 36.099998474121094,
+      "avg_attack": 0.3499999940395355,
+      "max_attack": 2,
+      "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_tuned_tract_w6.jsonl"
+    }
+  ],
+  "best": {
+    "compile_profile": "tuned",
+    "backend": "ort",
+    "num_workers": 6,
+    "moves_per_sec": 187.69524472321027,
+    "games_per_sec": 5.206525512433017,
+    "avg_moves": 36.099998474121094,
+    "avg_attack": 0.44999998807907104,
+    "result_path": "/Users/axelhojmark/Desktop/tetris-mcts/benchmarks/profiles/optimize_runs_dc0f26f708bc45c8_tuned_ort_w6.jsonl",
+    "build_profile": {
+      "name": "tuned",
+      "rustflags": "-C target-cpu=native",
+      "lto": "thin",
+      "codegen_units": "1"
+    }
+  }
+}
