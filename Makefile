@@ -1,4 +1,4 @@
-.PHONY: run install ensure-rust build build-dev clean rebuild test check play viz train replay profile profile-samply sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
+.PHONY: run install ensure-rust build build-ort build-dev clean rebuild test check play viz train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -12,6 +12,9 @@ INSTALL_MARKER := $(VENV_DIR)/.install_marker
 RUST_SRC := $(shell find tetris_core/src -name '*.rs')
 RELEASE_MARKER := .build_marker_release
 DEV_MARKER := .build_marker_dev
+RELEASE_RUSTFLAGS ?= -C target-cpu=native
+RELEASE_LTO ?= thin
+RELEASE_CODEGEN_UNITS ?= 1
 
 # Bootstrap project dependencies into local virtualenv with uv.
 $(INSTALL_MARKER): pyproject.toml uv.lock
@@ -81,7 +84,7 @@ install: ensure-rust $(INSTALL_MARKER) $(DEV_MARKER)
 
 # Build marker file to track if build is up to date (release mode)
 $(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
@@ -93,6 +96,12 @@ $(DEV_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml 
 
 # Explicit build target
 build: $(RELEASE_MARKER)
+
+# Release build with ONNX Runtime backend support (includes nn-ort feature)
+build-ort: ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
+	$(CARGO_ENV) && CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release --features extension-module,nn-ort --manifest-path tetris_core/Cargo.toml
+	@rm -f $(DEV_MARKER)
+	@touch $(RELEASE_MARKER)
 
 # Fast debug build (much faster, for development only)
 build-dev: $(DEV_MARKER)
@@ -112,7 +121,7 @@ viz: $(RELEASE_MARKER)
 # Force rebuild (clean first to avoid caching issues)
 rebuild: ensure-rust $(INSTALL_MARKER)
 	cd tetris_core && $(CARGO_ENV) && cargo clean
-	$(CARGO_ENV) && $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
@@ -132,15 +141,6 @@ check:
 	$(CARGO_ENV) && cargo fix --manifest-path tetris_core/Cargo.toml --lib -p tetris_core --allow-dirty
 	$(CARGO_ENV) && cargo fmt --manifest-path tetris_core/Cargo.toml
 	$(PYTHON) -m pyright
-
-# Train a model (builds first if needed)
-# Usage: make train ARGS="--iterations 10 --games-per-iter 50"
-train: $(RELEASE_MARKER)
-	@if [ -z "$$TMUX" ]; then \
-		echo "Error: tmux is not active. Training may stop if this terminal closes. Run inside tmux." >&2; \
-		exit 1; \
-	fi
-	$(PYTHON) tetris_bot/scripts/train.py $(ARGS)
 
 # Run W&B sweep over learning rate and model size (builds first if needed)
 # Usage: make sweep-lr-model ARGS="--count 20"
@@ -174,12 +174,61 @@ replay: $(RELEASE_MARKER)
 MODEL_PROFILE ?= training_runs/v6/checkpoints/latest.onnx
 SIMS ?= 1000
 OUTPUT_PROFILE ?= benchmarks/profile_results.jsonl
+WORKERS_PROFILE ?= 7
 PROFILE_ARGS ?=
 profile: $(RELEASE_MARKER)
-	$(PYTHON) tetris_bot/scripts/inspection/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --output $(OUTPUT_PROFILE) $(PROFILE_ARGS)
+	$(PYTHON) tetris_bot/scripts/inspection/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --num_workers $(WORKERS_PROFILE) --output $(OUTPUT_PROFILE) $(PROFILE_ARGS)
 
 # Profile with samply (interactive flamegraph viewer)
 # Usage: make profile-samply SIMS=50
 # Requires: cargo install samply
 profile-samply: $(RELEASE_MARKER)
-	samply record $(PYTHON) tetris_bot/scripts/inspection/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --num_games 3
+	samply record $(PYTHON) tetris_bot/scripts/inspection/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --num_workers $(WORKERS_PROFILE) --num_games 3
+
+# Auto-tune machine-specific build/backend/worker settings (cached by machine fingerprint)
+# Fast defaults:
+#   - adaptive worker search (not full grid)
+#   - 20 games/config
+#   - 300 sims/move
+MODEL_OPTIMIZE ?=
+OPT_GAMES ?= 20
+OPT_SIMS ?= 300
+OPT_REPEATS ?= 1
+OPT_WORKER_SEARCH ?= adaptive
+OPT_MAX_WORKER_EVALS ?= 6
+OPT_BACKEND_STRATEGY ?= staged
+OPT_PRIMARY_BACKEND ?= ort
+OPTIMIZE_ARGS ?=
+OPT_ENV_FILE ?= benchmarks/profiles/optimize_latest.env
+optimize: ensure-rust $(INSTALL_MARKER)
+	$(PYTHON) tetris_bot/scripts/inspection/optimize_machine.py $(if $(MODEL_OPTIMIZE),--model_path $(MODEL_OPTIMIZE),) --num_games $(OPT_GAMES) --simulations $(OPT_SIMS) --num_repeats $(OPT_REPEATS) --worker_search $(OPT_WORKER_SEARCH) --max_worker_evals_per_combo $(OPT_MAX_WORKER_EVALS) --backend_strategy $(OPT_BACKEND_STRATEGY) --primary_backend $(OPT_PRIMARY_BACKEND) $(OPTIMIZE_ARGS)
+
+# Build and train using machine-optimized settings when available.
+# If no cached optimize result exists, this will attempt `make optimize` first.
+# If optimization fails (e.g., missing model bundle on a fresh machine), training
+# continues with default build/runtime settings.
+train: ensure-rust $(INSTALL_MARKER)
+	@if [ -z "$$TMUX" ]; then \
+		echo "Error: tmux is not active. Training may stop if this terminal closes. Run inside tmux." >&2; \
+		exit 1; \
+	fi
+	@set -euo pipefail; \
+	OPT_ENV="$(OPT_ENV_FILE)"; \
+	if [ ! -f "$$OPT_ENV" ]; then \
+		echo "[train] No optimization cache at $$OPT_ENV; running make optimize..."; \
+		if ! $(MAKE) optimize MODEL_OPTIMIZE="$(MODEL_OPTIMIZE)" OPT_GAMES="$(OPT_GAMES)" OPT_SIMS="$(OPT_SIMS)" OPT_REPEATS="$(OPT_REPEATS)" OPT_WORKER_SEARCH="$(OPT_WORKER_SEARCH)" OPT_MAX_WORKER_EVALS="$(OPT_MAX_WORKER_EVALS)" OPTIMIZE_ARGS="$(OPTIMIZE_ARGS)"; then \
+			echo "[train] Optimization failed; falling back to default build/runtime settings."; \
+		fi; \
+	fi; \
+	if [ -f "$$OPT_ENV" ]; then \
+		echo "[train] Loading optimized settings from $$OPT_ENV"; \
+		set -a; . "$$OPT_ENV"; set +a; \
+		if [ "$${TETRIS_NN_BACKEND:-tract}" = "ort" ]; then \
+			$(MAKE) build-ort RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+		else \
+			$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+		fi; \
+	else \
+		$(MAKE) build; \
+	fi; \
+	$(PYTHON) tetris_bot/scripts/train.py $(ARGS)

@@ -1,5 +1,6 @@
 """Training script for Tetris AlphaZero."""
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -218,6 +219,32 @@ def restore_trainer_from_checkpoint(
     )
 
 
+def apply_optimized_runtime_overrides(config: TrainingConfig) -> None:
+    workers_env = os.getenv("TETRIS_OPT_NUM_WORKERS")
+    if workers_env is None or workers_env.strip() == "":
+        return
+
+    try:
+        optimized_workers = int(workers_env)
+    except ValueError as error:
+        raise ValueError(
+            f"TETRIS_OPT_NUM_WORKERS must be an integer (got {workers_env!r})"
+        ) from error
+
+    if optimized_workers <= 0:
+        raise ValueError(
+            f"TETRIS_OPT_NUM_WORKERS must be > 0 (got {optimized_workers})"
+        )
+
+    previous_workers = config.self_play.num_workers
+    config.self_play.num_workers = optimized_workers
+    logger.info(
+        "Applied optimized self-play worker override from environment",
+        previous_num_workers=previous_workers,
+        optimized_num_workers=optimized_workers,
+    )
+
+
 def main(args: ScriptArgs) -> None:
     if args.resume_dir and args.init_checkpoint:
         raise ValueError("Cannot use resume_dir and init_checkpoint together")
@@ -225,6 +252,7 @@ def main(args: ScriptArgs) -> None:
     config, resume_checkpoint, resume_incumbent_model_path = setup_run(
         args, args.training
     )
+    apply_optimized_runtime_overrides(config)
 
     device = get_best_device() if args.device == "auto" else args.device
     logger.info("Using device", device=device)
