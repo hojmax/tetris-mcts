@@ -29,6 +29,7 @@ class ProfileArgs:
     use_dummy_network: bool = False  # Run bootstrap MCTS without loading an ONNX model
     num_games: int = 10  # Number of games to profile
     simulations: int = 100  # MCTS simulations per move
+    num_workers: int = _DEFAULT_SELF_PLAY.num_workers  # Parallel eval workers
     seed_start: int = 42  # Starting seed for deterministic games
     c_puct: float = _DEFAULT_SELF_PLAY.c_puct  # PUCT exploration constant
     mcts_seed: int | None = None  # Optional deterministic MCTS RNG seed
@@ -43,6 +44,9 @@ def main(args: ProfileArgs) -> None:
         logger.error("Model not found", path=str(args.model_path))
         return
 
+    if args.num_workers <= 0:
+        raise ValueError(f"num_workers must be > 0 (got {args.num_workers})")
+
     runtime_backend = os.getenv("TETRIS_NN_BACKEND", "tract(default)")
     evaluation_mode = (
         "dummy_no_network_uniform" if args.use_dummy_network else "onnx_network"
@@ -53,6 +57,7 @@ def main(args: ProfileArgs) -> None:
         model=str(args.model_path) if not args.use_dummy_network else None,
         num_games=args.num_games,
         simulations=args.simulations,
+        num_workers=args.num_workers,
         seed_start=args.seed_start,
         runtime_backend=runtime_backend,
     )
@@ -73,6 +78,7 @@ def main(args: ProfileArgs) -> None:
             seeds=seeds,
             config=config,
             max_placements=args.max_placements,
+            num_workers=args.num_workers,
         )
     else:
         result = evaluate_model(
@@ -80,6 +86,7 @@ def main(args: ProfileArgs) -> None:
             seeds=seeds,
             config=config,
             max_placements=args.max_placements,
+            num_workers=args.num_workers,
         )
 
     end_time = time.perf_counter()
@@ -136,6 +143,7 @@ def main(args: ProfileArgs) -> None:
             "num_games": args.num_games,
             "simulations": args.simulations,
             "seed_start": args.seed_start,
+            "num_workers": args.num_workers,
             "c_puct": args.c_puct,
             "max_placements": args.max_placements,
             "evaluation_mode": "deterministic_argmax_no_dirichlet_noise",

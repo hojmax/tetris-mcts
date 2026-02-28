@@ -43,14 +43,16 @@ Treat this document as a living guide.
 
 ```bash
 make install    # uv sync + Rust bootstrap + PATH persist + debug extension build
-make build      # release Rust extension (slow, optimized)
+make build      # release Rust extension (slow, optimized; native CPU + thin LTO by default)
+make build-ort  # release build with ONNX Runtime support (`nn-ort` feature)
 make build-dev  # debug Rust extension (fast iteration)
 make play       # interactive game
 make viz        # MCTS tree visualizer
 make test       # Rust + Python tests
 make check      # ruff + pyright + rust fixes/formatting
-make train      # training entry point (requires tmux)
+make train      # training entry point (requires tmux; auto-loads machine optimize cache)
 make profile    # performance profile runner
+make optimize   # auto-tune build/backend/workers for this machine (with cache)
 ```
 
 Useful extras:
@@ -170,11 +172,22 @@ Training runs live under `training_runs/vN/` with checkpoints and ONNX exports.
 
 ```bash
 make profile SIMS=200
+make profile SIMS=1000 WORKERS_PROFILE=6
 make profile SIMS=4000 PROFILE_ARGS="--use_dummy_network"
 make profile-samply SIMS=50
+make optimize
 ```
 
 Set `MODEL_PROFILE=<existing-onnx-path>` when the Makefile default model path is missing.
+Set `TETRIS_NN_BACKEND=ort` to profile ONNX Runtime instead of default `tract`.
+`make optimize` is intentionally fast by default (`OPT_WORKER_SEARCH=adaptive`, `OPT_BACKEND_STRATEGY=staged`, low game/sim counts).
+The staged strategy searches workers/build on `OPT_PRIMARY_BACKEND` (default `ort`), then compares final backends at the chosen worker count.
+For an exhaustive sweep, use: `make optimize OPT_BACKEND_STRATEGY=exhaustive OPT_WORKER_SEARCH=grid OPT_GAMES=40 OPT_SIMS=500`.
+`make optimize` writes persistent results to:
+- `benchmarks/profiles/optimize_cache/<machine_fingerprint>.json` (machine-type cache)
+- `benchmarks/profiles/optimize_latest.json` (latest resolved recommendation)
+- `benchmarks/profiles/optimize_latest.env` (shell-friendly vars: backend, workers, build flags)
+`make train` will try to use `optimize_latest.env`; if missing, it attempts `make optimize` first.
 
 ## Testing
 
