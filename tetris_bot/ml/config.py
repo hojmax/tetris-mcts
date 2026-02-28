@@ -80,7 +80,7 @@ class SelfPlayConfig:
         1.0
     )
     use_tanh_q_normalization: bool = (  # If True, use tanh(Q/q_scale) squashing; if False, use global min-max Q normalization
-        True
+        False
     )
     q_scale: float = (  # Scale for tanh Q squashing in PUCT (only used when use_tanh_q_normalization=True)
         8.0

@@ -132,7 +132,7 @@ Ownership split:
 - Bootstrap: starts no-network, typically `bootstrap_num_simulations=4000` until first promotion.
 - Candidate gate: deterministic fixed-seed eval window (default 50 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average.
 - NN value scaling: `nn_value_weight=0.01` default with promotion-based ramp and cap.
-- Q normalization: tanh mode on by default (`q_scale=8.0`).
+- Q normalization: min-max mode on by default (`use_tanh_q_normalization=false`, so `q_scale=None` in rollout config).
 
 Memory note:
 
