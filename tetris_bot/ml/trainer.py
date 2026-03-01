@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -742,6 +743,15 @@ class Trainer:
             files=[path.name for path in files_to_upload],
         )
 
+    @staticmethod
+    def _force_exit_after_second_interrupt(stage: str) -> None:
+        logger.warning(
+            "Received second interrupt during shutdown; forcing immediate exit",
+            stage=stage,
+            exit_code=130,
+        )
+        os._exit(130)
+
     def train(self, log_to_wandb: bool = True):
         """
         Run parallel training with Rust game generation in background.
@@ -1355,6 +1365,8 @@ class Trainer:
                     games_generated=generator.games_generated(),
                     examples_generated=generator.examples_generated(),
                 )
+            except KeyboardInterrupt:
+                self._force_exit_after_second_interrupt(stage="stop_game_generator")
             except BaseException as error:
                 stop_error = error
                 logger.exception("Failed to stop game generator cleanly")
@@ -1363,28 +1375,30 @@ class Trainer:
             self.model = export_model
 
             # Always save latest model state on shutdown/interruption.
-            (
-                incumbent_model_artifact,
-                incumbent_model_source_path,
-            ) = self._persist_incumbent_model_artifacts(generator)
-            final_saved_paths = self.save(
-                extra_checkpoint_state={
-                    "incumbent_uses_network": generator.incumbent_uses_network(),
-                    "incumbent_model_step": generator.incumbent_model_step(),
-                    "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
-                    "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
-                    "incumbent_model_source_path": incumbent_model_source_path,
-                    "incumbent_model_artifact": (
-                        incumbent_model_artifact.name
-                        if incumbent_model_artifact is not None
-                        else None
-                    ),
-                }
-            )
             try:
+                (
+                    incumbent_model_artifact,
+                    incumbent_model_source_path,
+                ) = self._persist_incumbent_model_artifacts(generator)
+                final_saved_paths = self.save(
+                    extra_checkpoint_state={
+                        "incumbent_uses_network": generator.incumbent_uses_network(),
+                        "incumbent_model_step": generator.incumbent_model_step(),
+                        "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
+                        "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
+                        "incumbent_model_source_path": incumbent_model_source_path,
+                        "incumbent_model_artifact": (
+                            incumbent_model_artifact.name
+                            if incumbent_model_artifact is not None
+                            else None
+                        ),
+                    }
+                )
                 if log_to_wandb:
                     self._log_final_wandb_model_artifact(final_saved_paths)
                     wandb.finish()
+            except KeyboardInterrupt:
+                self._force_exit_after_second_interrupt(stage="save_final_checkpoint")
             finally:
                 self._cleanup_wandb_gif_files()
 

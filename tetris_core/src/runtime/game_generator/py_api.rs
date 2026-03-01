@@ -254,7 +254,10 @@ impl GameGenerator {
     /// Stop background game generation.
     ///
     /// Signals the worker threads to stop and waits for them to finish.
-    pub fn stop(&mut self) -> PyResult<()> {
+    ///
+    /// The wait loop checks for pending Python signals so repeated Ctrl+C can
+    /// abort shutdown promptly instead of blocking on a long join.
+    pub fn stop(&mut self, py: Python<'_>) -> PyResult<()> {
         if !self.running.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -262,11 +265,19 @@ impl GameGenerator {
         // Signal stop
         self.running.store(false, Ordering::SeqCst);
 
-        // Wait for all threads to finish
-        for handle in self.thread_handles.drain(..) {
-            handle.join().map_err(|_| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Worker thread panicked")
-            })?;
+        let mut handles = std::mem::take(&mut self.thread_handles);
+
+        // Join finished workers, but keep checking Python signals while waiting.
+        while !handles.is_empty() {
+            if let Some(finished_index) = handles.iter().position(|handle| handle.is_finished()) {
+                let handle = handles.swap_remove(finished_index);
+                handle.join().map_err(|_| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Worker thread panicked")
+                })?;
+                continue;
+            }
+            py.check_signals()?;
+            thread::sleep(Duration::from_millis(10));
         }
 
         self.cleanup_queued_candidate_artifacts();
