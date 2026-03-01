@@ -19,6 +19,7 @@ from tetris_bot.ml.config import TrainingConfig
 from tetris_bot.run_setup import configure_wandb, get_best_device, setup_run_directory
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.artifacts import copy_model_artifact_bundle
+from tetris_bot.ml.wandb_resume import WandbResumeSource, prepare_wandb_resume_source
 from tetris_bot.ml.weights import load_checkpoint
 
 logger = structlog.get_logger()
@@ -37,20 +38,21 @@ class ScriptArgs:
         Path | None
     ) = None  # Path(__file__).parent.parent.parent / "training_runs" / "v46"
     resume_restore_optimizer_scheduler: bool = True  # If True, restore optimizer and scheduler from checkpoint when using resume_dir; if False, restore optimizer only and rebuild scheduler from current config
+    resume_wandb: str | None = None  # Resume from WandB run/artifact reference (entity/project/run_id or entity/project/artifact:alias)
     init_checkpoint: Path | None = None  # Initialize model weights from checkpoint
     no_wandb: bool = False  # Disable WandB logging
 
 
 def setup_run(
-    args: ScriptArgs, config: TrainingConfig
+    args: ScriptArgs, config: TrainingConfig, resume_dir: Path | None = None
 ) -> tuple[TrainingConfig, Path | None, Path | None]:
     """Set up training run directory. Returns (config, resume_checkpoint, resume_incumbent_model_path)."""
-    if not args.resume_dir:
+    source_run_dir = resume_dir if resume_dir is not None else args.resume_dir
+    if source_run_dir is None:
         config = setup_run_directory(config)
         logger.info("Created new training run", run_dir=str(config.run.run_dir))
         return config, None, None
 
-    source_run_dir = args.resume_dir
     if not source_run_dir.exists():
         raise FileNotFoundError(f"Resume directory does not exist: {source_run_dir}")
     if not source_run_dir.is_dir():
@@ -246,12 +248,34 @@ def apply_optimized_runtime_overrides(config: TrainingConfig) -> None:
 
 
 def main(args: ScriptArgs) -> None:
-    if args.resume_dir and args.init_checkpoint:
-        raise ValueError("Cannot use resume_dir and init_checkpoint together")
-
-    config, resume_checkpoint, resume_incumbent_model_path = setup_run(
-        args, args.training
+    resume_source_count = int(args.resume_dir is not None) + int(
+        args.resume_wandb is not None
     )
+    if resume_source_count > 1:
+        raise ValueError("Cannot use resume_dir and resume_wandb together")
+    if resume_source_count > 0 and args.init_checkpoint:
+        raise ValueError(
+            "Cannot use a resume source (resume_dir or resume_wandb) "
+            "together with init_checkpoint"
+        )
+
+    effective_resume_dir = args.resume_dir
+    wandb_resume_source: WandbResumeSource | None = None
+    if args.resume_wandb is not None:
+        wandb_resume_source = prepare_wandb_resume_source(args.resume_wandb)
+        effective_resume_dir = wandb_resume_source.resume_dir
+
+    if effective_resume_dir is not None:
+        logger.info("Using resume source", source_dir=str(effective_resume_dir))
+
+    try:
+        config, resume_checkpoint, resume_incumbent_model_path = setup_run(
+            args, args.training, resume_dir=effective_resume_dir
+        )
+    finally:
+        if wandb_resume_source is not None:
+            shutil.rmtree(wandb_resume_source.temp_dir, ignore_errors=True)
+
     apply_optimized_runtime_overrides(config)
 
     device = get_best_device() if args.device == "auto" else args.device

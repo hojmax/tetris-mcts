@@ -164,10 +164,12 @@ Memory note:
 ```bash
 python tetris_bot/scripts/train.py --total_steps 100000
 python tetris_bot/scripts/train.py --resume_dir training_runs/vN
+python tetris_bot/scripts/train.py --resume_wandb entity/project/run_id
 python tetris_bot/scripts/train.py --architecture simple_aux_mlp --fc_hidden 64
 ```
 
 Training runs live under `training_runs/vN/` with checkpoints and ONNX exports.
+`--resume_wandb` accepts either a run reference (`entity/project/run_id`, defaults to the run's `tetris-model-<run_id>:latest` artifact) or a direct artifact reference (`entity/project/tetris-model-<run_id>:alias`).
 
 ### Profile
 

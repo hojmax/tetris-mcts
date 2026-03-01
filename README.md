@@ -27,6 +27,16 @@ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
 `make optimize` behavior:
 - If no `training_runs/v*/checkpoints/latest.onnx` split bundle exists yet, it auto-generates a baseline bundle at `benchmarks/models/optimize_bootstrap.onnx` and proceeds.
 
+## Resume Training
+
+```bash
+uv run python tetris_bot/scripts/train.py --resume_dir training_runs/v46
+uv run python tetris_bot/scripts/train.py --resume_wandb entity/project/run_id
+```
+
+`--resume_wandb` also accepts a direct artifact ref, for example:
+`entity/project/tetris-model-<run_id>:final`.
+
 ## Troubleshooting
 
 ### `rustc` not found during `uv run python -m maturin ...`
