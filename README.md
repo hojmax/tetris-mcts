@@ -17,6 +17,7 @@ make install
 - Rust toolchain via `rustup` (if missing)
 - Python dependencies via `uv sync --frozen`
 - Debug PyO3 extension via `maturin develop`
+- On Linux, best-effort install of ORT build deps (`pkg-config` + OpenSSL headers) when missing
 
 Then run scripts with:
 
@@ -122,6 +123,7 @@ make optimize OPT_PRIMARY_BACKEND=tract OPTIMIZE_ARGS="--backends tract --skip_b
 ```
 
 `make train` also auto-falls back to `tract` if an optimized ORT build fails.
+To skip system package auto-install during bootstrap: `make install AUTO_INSTALL_SYSTEM_DEPS=0`.
 
 ### `WARNING: Running pip as the 'root' user ...`
 

@@ -1,4 +1,4 @@
-.PHONY: run install ensure-rust build build-ort build-dev clean rebuild test check play viz train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
+.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -15,6 +15,7 @@ DEV_MARKER := .build_marker_dev
 RELEASE_RUSTFLAGS ?= -C target-cpu=native
 RELEASE_LTO ?= thin
 RELEASE_CODEGEN_UNITS ?= 1
+AUTO_INSTALL_SYSTEM_DEPS ?= 1
 
 # Bootstrap project dependencies into local virtualenv with uv.
 $(INSTALL_MARKER): pyproject.toml uv.lock
@@ -73,14 +74,72 @@ ensure-rust:
 		cargo --version >/dev/null; \
 	fi; \
 	PATH_LINE='export PATH="$$HOME/.cargo/bin:$$PATH"'; \
-	for rc in "$$HOME/.bashrc" "$$HOME/.zshrc"; do \
-		touch "$$rc"; \
-		if ! grep -Fq "$$PATH_LINE" "$$rc"; then \
-			echo "$$PATH_LINE" >> "$$rc"; \
-		fi; \
-	done
+		for rc in "$$HOME/.bashrc" "$$HOME/.zshrc"; do \
+			touch "$$rc"; \
+			if ! grep -Fq "$$PATH_LINE" "$$rc"; then \
+				echo "$$PATH_LINE" >> "$$rc"; \
+			fi; \
+		done
 
-install: ensure-rust $(INSTALL_MARKER) $(DEV_MARKER)
+# Ensure Linux build prerequisites for ORT builds.
+# Set AUTO_INSTALL_SYSTEM_DEPS=0 to skip automatic apt/dnf/yum/apk installation.
+ensure-system-deps:
+	@set -euo pipefail; \
+	if [ "$$(uname -s)" != "Linux" ]; then \
+		exit 0; \
+	fi; \
+	has_pkg_config=1; \
+	has_openssl_pkg=1; \
+	if ! command -v pkg-config >/dev/null 2>&1; then \
+		has_pkg_config=0; \
+		has_openssl_pkg=0; \
+	else \
+		if ! pkg-config --exists openssl >/dev/null 2>&1; then \
+			has_openssl_pkg=0; \
+		fi; \
+	fi; \
+	if [ "$$has_pkg_config" -eq 1 ] && [ "$$has_openssl_pkg" -eq 1 ]; then \
+		exit 0; \
+	fi; \
+	echo "[install] Missing Linux build prerequisites for ORT (pkg-config + OpenSSL dev headers)."; \
+	if [ "$(AUTO_INSTALL_SYSTEM_DEPS)" != "1" ]; then \
+		echo "[install] Skipping auto-install (AUTO_INSTALL_SYSTEM_DEPS=$(AUTO_INSTALL_SYSTEM_DEPS))."; \
+		echo "[install] Install manually on Ubuntu/Debian: apt-get update && apt-get install -y pkg-config libssl-dev"; \
+		exit 0; \
+	fi; \
+	if command -v apt-get >/dev/null 2>&1; then \
+		install_cmd='apt-get update && apt-get install -y pkg-config libssl-dev'; \
+	elif command -v dnf >/dev/null 2>&1; then \
+		install_cmd='dnf install -y pkgconf-pkg-config openssl-devel'; \
+	elif command -v yum >/dev/null 2>&1; then \
+		install_cmd='yum install -y pkgconfig openssl-devel'; \
+	elif command -v apk >/dev/null 2>&1; then \
+		install_cmd='apk add --no-cache pkgconf openssl-dev'; \
+	else \
+		echo "[install] Unsupported package manager; install pkg-config and OpenSSL dev headers manually."; \
+		exit 0; \
+	fi; \
+	echo "[install] Attempting to install system dependencies..."; \
+	if [ "$$(id -u)" -eq 0 ]; then \
+		if ! bash -lc "$$install_cmd"; then \
+			echo "[install] Auto-install failed; continuing. Install deps manually if ORT build is needed."; \
+			exit 0; \
+		fi; \
+	elif command -v sudo >/dev/null 2>&1; then \
+		if ! sudo bash -lc "$$install_cmd"; then \
+			echo "[install] Auto-install failed; continuing. Install deps manually if ORT build is needed."; \
+			exit 0; \
+		fi; \
+	else \
+		echo "[install] No root/sudo available for auto-install; continuing."; \
+		echo "[install] Install manually on Ubuntu/Debian: apt-get update && apt-get install -y pkg-config libssl-dev"; \
+		exit 0; \
+	fi; \
+	if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists openssl >/dev/null 2>&1; then \
+		echo "[install] Dependencies still not detected after auto-install; ORT builds may fail."; \
+	fi
+
+install: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(DEV_MARKER)
 
 # Build marker file to track if build is up to date (release mode)
 $(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
@@ -98,7 +157,7 @@ $(DEV_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml 
 build: $(RELEASE_MARKER)
 
 # Release build with ONNX Runtime backend support (includes nn-ort feature)
-build-ort: ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
+build-ort: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
 	$(CARGO_ENV) && CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release --features extension-module,nn-ort --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)

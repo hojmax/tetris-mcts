@@ -56,6 +56,8 @@ make profile    # performance profile runner
 make optimize   # auto-tune build/backend/workers for this machine (with cache)
 ```
 
+`make install` performs a best-effort Linux system dependency bootstrap for ORT builds (`pkg-config` + OpenSSL headers); disable with `AUTO_INSTALL_SYSTEM_DEPS=0`.
+
 Useful extras:
 
 ```bash
