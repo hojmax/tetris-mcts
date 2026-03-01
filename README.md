@@ -62,6 +62,25 @@ uv run python -c "from tetris_core import MCTSConfig; print(MCTSConfig)"
 uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
 ```
 
+If this happens specifically during `make optimize` in a root/container shell, use an env-sanitized rebuild and keep Cargo on `PATH`:
+
+```bash
+source "$HOME/.cargo/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
+which rustc cargo
+rustc --version
+cargo --version
+
+env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
+  .venv/bin/python -m maturin develop --release --features extension-module --manifest-path tetris_core/Cargo.toml
+
+env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
+  .venv/bin/python tetris_bot/scripts/inspection/optimize_machine.py \
+  --num_games 20 --simulations 300 --num_repeats 1 \
+  --worker_search adaptive --max_worker_evals_per_combo 6 \
+  --backend_strategy staged --primary_backend tract --backends tract \
+  --worker_candidates 2 32 64 128 256 512 --skip_build true
+```
+
 ### `Both VIRTUAL_ENV and CONDA_PREFIX are set`
 
 Symptom:

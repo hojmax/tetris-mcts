@@ -1,5 +1,16 @@
 # Next Steps
 
+Command:
+
+```
+env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
+    .venv/bin/python tetris_bot/scripts/inspection/optimize_machine.py \
+    --num_games 600 --simulations 300 --num_repeats 1 \
+    --worker_search adaptive --max_worker_evals_per_combo 6 \
+    --backend_strategy staged --primary_backend tract --backends tract \
+    --worker_candidates 64 128 256 512 --skip_build true
+```
+
 ```
 eyboardInterrupt
 (main) root@C.32137294:/workspace/tetris-mcts$ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
