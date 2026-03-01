@@ -1,6 +1,7 @@
 use super::*;
 
 const CANDIDATE_EVAL_MCTS_SEED: u64 = 0;
+const GAME_COMMIT_BATCH_SIZE: usize = 4;
 
 impl GameGenerator {
     pub(super) fn load_atomic_f32(value: &AtomicU32) -> f32 {
@@ -169,6 +170,7 @@ impl GameGenerator {
         let mut loaded_model_version = u64::MAX;
         let mut loaded_model_step = 0u64;
         let mut loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
+        let mut pending_results: Vec<GameResult> = Vec::with_capacity(GAME_COMMIT_BATCH_SIZE);
 
         while running.load(Ordering::SeqCst)
             && !Self::sync_incumbent_agent_if_needed(
@@ -231,6 +233,18 @@ impl GameGenerator {
                     pending.take()
                 };
                 if let Some(candidate) = maybe_candidate {
+                    if !pending_results.is_empty() {
+                        let to_commit = std::mem::take(&mut pending_results);
+                        Self::commit_game_results_batch(
+                            to_commit,
+                            &buffer,
+                            &games_generated,
+                            &examples_generated,
+                            &game_stats,
+                            &completed_games,
+                        );
+                    }
+
                     let current_incumbent_step = incumbent_model_step.load(Ordering::SeqCst);
                     if candidate.model_step <= current_incumbent_step {
                         let incumbent_path = incumbent_model_path.read().unwrap().clone();
@@ -296,18 +310,33 @@ impl GameGenerator {
 
             // Play one game
             if let Some(result) = agent.play_game(max_placements, add_noise) {
-                Self::commit_game_result(
-                    result,
-                    &buffer,
-                    &games_generated,
-                    &examples_generated,
-                    &game_stats,
-                    &completed_games,
-                );
+                pending_results.push(result);
+                if pending_results.len() >= GAME_COMMIT_BATCH_SIZE {
+                    let to_commit = std::mem::take(&mut pending_results);
+                    Self::commit_game_results_batch(
+                        to_commit,
+                        &buffer,
+                        &games_generated,
+                        &examples_generated,
+                        &game_stats,
+                        &completed_games,
+                    );
+                }
 
                 // Periodically save to disk for resume capability based on
                 // wall-clock time.
                 if is_save_worker {
+                    if !pending_results.is_empty() {
+                        let to_commit = std::mem::take(&mut pending_results);
+                        Self::commit_game_results_batch(
+                            to_commit,
+                            &buffer,
+                            &games_generated,
+                            &examples_generated,
+                            &game_stats,
+                            &completed_games,
+                        );
+                    }
                     Self::persist_snapshot_if_due(
                         &training_data_path,
                         &buffer,
@@ -316,6 +345,18 @@ impl GameGenerator {
                     );
                 }
             }
+        }
+
+        if !pending_results.is_empty() {
+            let to_commit = std::mem::take(&mut pending_results);
+            Self::commit_game_results_batch(
+                to_commit,
+                &buffer,
+                &games_generated,
+                &examples_generated,
+                &game_stats,
+                &completed_games,
+            );
         }
 
         // Final save on shutdown (only worker 0)
@@ -611,18 +652,17 @@ impl GameGenerator {
             incumbent_model_version.fetch_add(1, Ordering::SeqCst);
             Self::store_atomic_f32(incumbent_eval_avg_attack, candidate_avg_attack);
 
-            let mut committed = 0usize;
-            for r in candidate_results {
-                Self::commit_game_result(
-                    r.game_result,
-                    buffer,
-                    games_generated,
-                    examples_generated,
-                    game_stats,
-                    completed_games,
-                );
-                committed += 1;
-            }
+            let committed = Self::commit_game_results_batch(
+                candidate_results
+                    .into_iter()
+                    .map(|r| r.game_result)
+                    .collect(),
+                buffer,
+                games_generated,
+                examples_generated,
+                game_stats,
+                completed_games,
+            );
 
             Self::remove_model_artifacts_if_safe(
                 &previous_incumbent_path,
@@ -766,74 +806,95 @@ impl GameGenerator {
         Some(agent)
     }
 
-    pub(super) fn commit_game_result(
-        result: GameResult,
+    pub(super) fn commit_game_results_batch(
+        results: Vec<GameResult>,
         buffer: &Arc<SharedBuffer>,
         games_generated: &Arc<AtomicU64>,
         examples_generated: &Arc<AtomicU64>,
         game_stats: &Arc<SharedStats>,
         completed_games: &Arc<RwLock<VecDeque<LastGameInfo>>>,
-    ) {
-        let GameResult {
-            mut examples,
-            total_attack,
-            num_moves,
-            avg_valid_actions,
-            max_valid_actions,
-            stats,
-            tree_stats,
-            avg_overhang_fields,
-            cache_hits,
-            cache_misses,
-            cache_size,
-            tree_reuse_hits,
-            tree_reuse_misses,
-            tree_reuse_carry_fraction,
-            traversal_total,
-            traversal_expansions,
-            traversal_terminal_ends,
-            traversal_horizon_ends,
-            traversal_expansion_fraction,
-            traversal_terminal_fraction,
-            traversal_horizon_fraction,
-            ..
-        } = result;
-
-        let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
-        for example in &mut examples {
-            example.game_number = game_number;
-            example.game_total_attack = total_attack;
+    ) -> usize {
+        if results.is_empty() {
+            return 0;
         }
 
-        let num_examples = examples.len() as u64;
-        buffer.add_examples(examples);
+        let mut all_examples: Vec<TrainingExample> = Vec::new();
+        let mut total_examples = 0u64;
+        let mut completed_infos: Vec<LastGameInfo> = Vec::with_capacity(results.len());
 
-        examples_generated.fetch_add(num_examples, Ordering::SeqCst);
-        game_stats.add(&stats, total_attack);
+        for result in results {
+            let GameResult {
+                mut examples,
+                total_attack,
+                num_moves,
+                avg_valid_actions,
+                max_valid_actions,
+                stats,
+                tree_stats,
+                avg_overhang_fields,
+                cache_hits,
+                cache_misses,
+                cache_size,
+                tree_reuse_hits,
+                tree_reuse_misses,
+                tree_reuse_carry_fraction,
+                traversal_total,
+                traversal_expansions,
+                traversal_terminal_ends,
+                traversal_horizon_ends,
+                traversal_expansion_fraction,
+                traversal_terminal_fraction,
+                traversal_horizon_fraction,
+                ..
+            } = result;
 
-        completed_games.write().unwrap().push_back(LastGameInfo {
-            game_number,
-            stats,
-            total_attack,
-            avg_overhang_fields,
-            num_moves,
-            avg_valid_actions,
-            max_valid_actions,
-            tree_stats,
-            cache_hits,
-            cache_misses,
-            cache_size,
-            tree_reuse_hits,
-            tree_reuse_misses,
-            tree_reuse_carry_fraction,
-            traversal_total,
-            traversal_expansions,
-            traversal_terminal_ends,
-            traversal_horizon_ends,
-            traversal_expansion_fraction,
-            traversal_terminal_fraction,
-            traversal_horizon_fraction,
-        });
+            let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
+            for example in &mut examples {
+                example.game_number = game_number;
+                example.game_total_attack = total_attack;
+            }
+
+            total_examples += examples.len() as u64;
+            all_examples.extend(examples);
+
+            game_stats.add(&stats, total_attack);
+            completed_infos.push(LastGameInfo {
+                game_number,
+                stats,
+                total_attack,
+                avg_overhang_fields,
+                num_moves,
+                avg_valid_actions,
+                max_valid_actions,
+                tree_stats,
+                cache_hits,
+                cache_misses,
+                cache_size,
+                tree_reuse_hits,
+                tree_reuse_misses,
+                tree_reuse_carry_fraction,
+                traversal_total,
+                traversal_expansions,
+                traversal_terminal_ends,
+                traversal_horizon_ends,
+                traversal_expansion_fraction,
+                traversal_terminal_fraction,
+                traversal_horizon_fraction,
+            });
+        }
+
+        if !all_examples.is_empty() {
+            buffer.add_examples(all_examples);
+        }
+        if total_examples > 0 {
+            examples_generated.fetch_add(total_examples, Ordering::SeqCst);
+        }
+        let committed_games = completed_infos.len();
+        if committed_games > 0 {
+            completed_games.write().unwrap().extend(completed_infos);
+        }
+
+        committed_games
     }
 
     pub(super) fn persist_buffer_snapshot(training_data_path: &Path, buffer: &Arc<SharedBuffer>) {
