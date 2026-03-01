@@ -104,3 +104,30 @@ def test_stage_resume_directory_copies_incumbent_bundle(
     assert copied_paths["incumbent"][0] == source_incumbent
     assert copied_paths["incumbent"][1] == destination_incumbent
     assert destination_incumbent.read_text() == "source-incumbent"
+
+
+def test_stage_resume_directory_skips_broken_incumbent_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_dir = tmp_path / "artifact"
+    artifact_dir.mkdir()
+    (artifact_dir / "checkpoint_1.pt").write_text("step1")
+    (artifact_dir / INCUMBENT_ONNX_FILENAME).write_text("source-incumbent")
+
+    def failing_copy_model_artifact_bundle(source: Path, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(source.read_text())
+        raise FileNotFoundError("missing incumbent.conv.onnx.data")
+
+    monkeypatch.setattr(
+        "tetris_bot.ml.wandb_resume.copy_model_artifact_bundle",
+        failing_copy_model_artifact_bundle,
+    )
+
+    staged_dir = stage_resume_directory_from_wandb_artifact(
+        artifact_dir, tmp_path / "staged"
+    )
+    destination_checkpoint_dir = staged_dir / CHECKPOINT_DIRNAME
+
+    assert (destination_checkpoint_dir / "latest.pt").exists()
+    assert not any(destination_checkpoint_dir.glob("incumbent*"))

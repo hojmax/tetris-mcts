@@ -161,7 +161,18 @@ def stage_resume_directory_from_wandb_artifact(
     source_incumbent = artifact_dir / INCUMBENT_ONNX_FILENAME
     if source_incumbent.exists():
         destination_incumbent = destination_checkpoint_dir / INCUMBENT_ONNX_FILENAME
-        copy_model_artifact_bundle(source_incumbent, destination_incumbent)
+        try:
+            copy_model_artifact_bundle(source_incumbent, destination_incumbent)
+        except (FileNotFoundError, RuntimeError, OSError) as error:
+            for stale_incumbent_path in destination_checkpoint_dir.glob("incumbent*"):
+                stale_incumbent_path.unlink(missing_ok=True)
+            logger.warning(
+                "Failed to stage incumbent model artifact bundle from WandB; "
+                "continuing without incumbent bundle",
+                source=str(source_incumbent),
+                destination=str(destination_incumbent),
+                error=str(error),
+            )
     else:
         logger.warning(
             "WandB artifact has no incumbent model artifact bundle",

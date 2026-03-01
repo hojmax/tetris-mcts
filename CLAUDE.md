@@ -209,6 +209,7 @@ In feature worktrees, use the primary checkout virtualenv path for `PYO3_PYTHON`
 - `training_data.npz` is for resume/inspection and includes policy/value targets plus per-state diagnostics.
 - Resumed runs create a new `vN` directory and initialize from the source run checkpoint.
 - Promotion state (incumbent model + `nn_value_weight`) is treated as an atomic runtime state.
+- Older WandB model artifacts may miss ONNX external-data sidecars (`*.onnx.data`) for incumbent split models; resume now logs a warning and falls back to checkpoint-initialized model startup if incumbent bundle staging is incomplete.
 
 ## Coding Rules (Condensed)
 

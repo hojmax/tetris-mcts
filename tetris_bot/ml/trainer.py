@@ -33,6 +33,7 @@ from tetris_bot.visualization import create_trajectory_gif, render_replay
 from tetris_bot.ml.artifacts import (
     assert_rust_inference_artifacts,
     copy_model_artifact_bundle,
+    optional_model_artifact_paths,
 )
 from tetris_bot.ml.replay_buffer import TrainingBatch, CircularReplayMirror
 from tetris_bot.ml.game_metrics import (
@@ -680,6 +681,13 @@ class Trainer:
             files_to_upload.append(onnx_path)
             conv_path, heads_path, fc_path = split_model_paths(onnx_path)
             files_to_upload.extend([conv_path, heads_path, fc_path])
+            files_to_upload.extend(
+                [
+                    optional_path
+                    for optional_path in optional_model_artifact_paths(onnx_path)
+                    if optional_path.exists()
+                ]
+            )
         else:
             # WeightManager.save currently always exports ONNX for Rust; fail fast if this changes.
             checkpoint_dir = self.config.run.checkpoint_dir
@@ -703,6 +711,13 @@ class Trainer:
             )
             files_to_upload.extend(
                 [incumbent_conv_path, incumbent_heads_path, incumbent_fc_path]
+            )
+            files_to_upload.extend(
+                [
+                    optional_path
+                    for optional_path in optional_model_artifact_paths(incumbent_onnx_path)
+                    if optional_path.exists()
+                ]
             )
 
         data_dir = self.config.run.data_dir
