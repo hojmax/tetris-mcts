@@ -124,6 +124,7 @@ make optimize OPT_PRIMARY_BACKEND=tract OPTIMIZE_ARGS="--backends tract --skip_b
 
 `make train` also auto-falls back to `tract` if an optimized ORT build fails.
 To skip system package auto-install during bootstrap: `make install AUTO_INSTALL_SYSTEM_DEPS=0`.
+`make train` validates optimize cache machine fingerprint and refreshes cache if it was generated on a different machine.
 
 ### `WARNING: Running pip as the 'root' user ...`
 
