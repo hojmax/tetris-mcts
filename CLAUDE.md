@@ -191,6 +191,7 @@ For an exhaustive sweep, use: `make optimize OPT_BACKEND_STRATEGY=exhaustive OPT
 - `benchmarks/profiles/optimize_latest.json` (latest resolved recommendation)
 - `benchmarks/profiles/optimize_latest.env` (shell-friendly vars: backend, workers, build flags)
 `make train` will try to use `optimize_latest.env`; if missing, it attempts `make optimize` first.
+If optimized settings request `TETRIS_NN_BACKEND=ort` but `make build-ort` fails (e.g. missing `pkg-config`/OpenSSL dev libs), `make train` now falls back to `tract` for both build and runtime.
 
 ## Testing
 

@@ -220,15 +220,19 @@ train: ensure-rust $(INSTALL_MARKER)
 			echo "[train] Optimization failed; falling back to default build/runtime settings."; \
 		fi; \
 	fi; \
-	if [ -f "$$OPT_ENV" ]; then \
-		echo "[train] Loading optimized settings from $$OPT_ENV"; \
-		set -a; . "$$OPT_ENV"; set +a; \
-		if [ "$${TETRIS_NN_BACKEND:-tract}" = "ort" ]; then \
-			$(MAKE) build-ort RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+		if [ -f "$$OPT_ENV" ]; then \
+			echo "[train] Loading optimized settings from $$OPT_ENV"; \
+			set -a; . "$$OPT_ENV"; set +a; \
+			if [ "$${TETRIS_NN_BACKEND:-tract}" = "ort" ]; then \
+				if ! $(MAKE) build-ort RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; then \
+					echo "[train] ORT build failed; falling back to tract build/runtime settings."; \
+					export TETRIS_NN_BACKEND=tract; \
+					$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+				fi; \
+			else \
+				$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+			fi; \
 		else \
-			$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
-		fi; \
-	else \
 		$(MAKE) build; \
 	fi; \
 	$(PYTHON) tetris_bot/scripts/train.py $(ARGS)

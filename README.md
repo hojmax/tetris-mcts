@@ -121,6 +121,8 @@ If ORT build prerequisites are unavailable, run optimize in tract-only mode:
 make optimize OPT_PRIMARY_BACKEND=tract OPTIMIZE_ARGS="--backends tract --skip_build true"
 ```
 
+`make train` also auto-falls back to `tract` if an optimized ORT build fails.
+
 ### `WARNING: Running pip as the 'root' user ...`
 
 This warning comes from `maturin` invoking `pip` internally and is expected in root containers. If installation completed, it is not a blocker.
