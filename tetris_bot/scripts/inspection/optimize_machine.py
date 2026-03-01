@@ -282,11 +282,12 @@ def _cargo_env(base_env: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def build_extension(profile: BuildProfile) -> None:
+def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
     env = _cargo_env(os.environ.copy())
     env["CARGO_PROFILE_RELEASE_LTO"] = profile.lto
     env["CARGO_PROFILE_RELEASE_CODEGEN_UNITS"] = profile.codegen_units
     env["RUSTFLAGS"] = profile.rustflags
+    features = "extension-module,nn-ort" if enable_ort else "extension-module"
     cmd = [
         str(_venv_python()),
         "-m",
@@ -294,13 +295,14 @@ def build_extension(profile: BuildProfile) -> None:
         "develop",
         "--release",
         "--features",
-        "extension-module,nn-ort",
+        features,
         "--manifest-path",
         "tetris_core/Cargo.toml",
     ]
     logger.info(
         "Building extension for profile",
         compile_profile=profile.name,
+        ort_enabled=enable_ort,
         rustflags=profile.rustflags,
         lto=profile.lto,
         codegen_units=profile.codegen_units,
@@ -837,11 +839,12 @@ def main(args: ScriptArgs) -> None:
     results: list[BenchmarkResult] = []
     run_output_dir = BENCHMARKS_DIR / "profiles"
     run_output_dir.mkdir(parents=True, exist_ok=True)
+    needs_ort_build = "ort" in backends
     if backend_strategy == "exhaustive":
         for compile_profile_name in compile_profiles:
             build_profile = _BUILD_PROFILES[compile_profile_name]
             if not args.skip_build:
-                build_extension(build_profile)
+                build_extension(build_profile, enable_ort=needs_ort_build)
             for backend in backends:
                 _benchmark_combo_workers(
                     args=args,
@@ -857,7 +860,7 @@ def main(args: ScriptArgs) -> None:
         for compile_profile_name in compile_profiles:
             build_profile = _BUILD_PROFILES[compile_profile_name]
             if not args.skip_build:
-                build_extension(build_profile)
+                build_extension(build_profile, enable_ort=needs_ort_build)
             _benchmark_combo_workers(
                 args=args,
                 results=results,
@@ -887,7 +890,7 @@ def main(args: ScriptArgs) -> None:
             compare_backends=backends,
         )
         if not args.skip_build:
-            build_extension(best_build_profile)
+            build_extension(best_build_profile, enable_ort=needs_ort_build)
 
         for backend in backends:
             if backend == primary_backend:

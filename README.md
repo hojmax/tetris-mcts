@@ -84,6 +84,14 @@ This warning is usually non-fatal (build/install can still succeed), but you can
 uv run python -m pip install patchelf
 ```
 
+### `pkg-config` / OpenSSL missing while building `nn-ort`
+
+If ORT build prerequisites are unavailable, run optimize in tract-only mode:
+
+```bash
+make optimize OPT_PRIMARY_BACKEND=tract OPTIMIZE_ARGS="--backends tract --skip_build true"
+```
+
 ### `WARNING: Running pip as the 'root' user ...`
 
 This warning comes from `maturin` invoking `pip` internally and is expected in root containers. If installation completed, it is not a blocker.
