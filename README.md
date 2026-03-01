@@ -33,6 +33,7 @@ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
 ```bash
 uv run python tetris_bot/scripts/train.py --resume_dir training_runs/v46
 uv run python tetris_bot/scripts/train.py --resume_wandb entity/project/run_id
+uv run python tetris_bot/scripts/inspection/download_wandb_training_data.py --reference entity/project/run_id --run_dir training_runs/v2 --overwrite true
 ```
 
 `--resume_wandb` also accepts a direct artifact ref, for example:

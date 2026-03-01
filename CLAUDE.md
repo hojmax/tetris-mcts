@@ -167,6 +167,7 @@ Memory note:
 python tetris_bot/scripts/train.py --total_steps 100000
 python tetris_bot/scripts/train.py --resume_dir training_runs/vN
 python tetris_bot/scripts/train.py --resume_wandb entity/project/run_id
+python tetris_bot/scripts/inspection/download_wandb_training_data.py --reference entity/project/run_id --run_dir training_runs/vN --overwrite true
 python tetris_bot/scripts/train.py --architecture simple_aux_mlp --fc_hidden 64
 ```
 

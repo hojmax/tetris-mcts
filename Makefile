@@ -1,4 +1,4 @@
-.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config
+.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config download-wandb-training-data
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -226,6 +226,12 @@ compare-offline-network-scaling: $(RELEASE_MARKER)
 FILE ?= replays.jsonl
 replay: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/inspection/replay_viewer.py $(FILE)
+
+# Download training_data.npz directly from a WandB run/artifact.
+# Usage:
+#   make download-wandb-training-data ARGS="--reference entity/project/run_id --run_dir training_runs/v2 --overwrite true"
+download-wandb-training-data: $(INSTALL_MARKER)
+	$(PYTHON) tetris_bot/scripts/inspection/download_wandb_training_data.py $(ARGS)
 
 # Profile game generation performance (builds first if needed)
 # Usage: make profile MODEL=benchmarks/models/parallel.onnx SIMS=100 OUTPUT=benchmarks/profile.jsonl
