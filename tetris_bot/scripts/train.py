@@ -272,47 +272,46 @@ def main(args: ScriptArgs) -> None:
         config, resume_checkpoint, resume_incumbent_model_path = setup_run(
             args, args.training, resume_dir=effective_resume_dir
         )
+        apply_optimized_runtime_overrides(config)
+
+        device = get_best_device() if args.device == "auto" else args.device
+        logger.info("Using device", device=device)
+
+        trainer = Trainer(config, device=device)
+        logger.info(
+            "Model created",
+            parameters=sum(p.numel() for p in trainer.model.parameters()),
+        )
+
+        if resume_checkpoint is not None:
+            restore_trainer_from_checkpoint(
+                trainer, args, config, resume_checkpoint, resume_incumbent_model_path
+            )
+        elif args.init_checkpoint:
+            if not args.init_checkpoint.exists():
+                raise FileNotFoundError(
+                    f"Init checkpoint does not exist: {args.init_checkpoint}"
+                )
+            state = load_checkpoint(
+                args.init_checkpoint, model=trainer.model, optimizer=None
+            )
+            logger.info(
+                "Initialized model from checkpoint",
+                path=str(args.init_checkpoint),
+                checkpoint_step=state.get("step"),
+            )
+
+        if not args.no_wandb:
+            configure_wandb(config, device)
+
+        torch.set_float32_matmul_precision("high")
+        logger.info("Starting training with Rust game generation")
+        trainer.train(log_to_wandb=not args.no_wandb)
+
+        logger.info("Training complete")
     finally:
         if wandb_resume_source is not None:
             shutil.rmtree(wandb_resume_source.temp_dir, ignore_errors=True)
-
-    apply_optimized_runtime_overrides(config)
-
-    device = get_best_device() if args.device == "auto" else args.device
-    logger.info("Using device", device=device)
-
-    trainer = Trainer(config, device=device)
-    logger.info(
-        "Model created",
-        parameters=sum(p.numel() for p in trainer.model.parameters()),
-    )
-
-    if resume_checkpoint is not None:
-        restore_trainer_from_checkpoint(
-            trainer, args, config, resume_checkpoint, resume_incumbent_model_path
-        )
-    elif args.init_checkpoint:
-        if not args.init_checkpoint.exists():
-            raise FileNotFoundError(
-                f"Init checkpoint does not exist: {args.init_checkpoint}"
-            )
-        state = load_checkpoint(
-            args.init_checkpoint, model=trainer.model, optimizer=None
-        )
-        logger.info(
-            "Initialized model from checkpoint",
-            path=str(args.init_checkpoint),
-            checkpoint_step=state.get("step"),
-        )
-
-    if not args.no_wandb:
-        configure_wandb(config, device)
-
-    torch.set_float32_matmul_precision("high")
-    logger.info("Starting training with Rust game generation")
-    trainer.train(log_to_wandb=not args.no_wandb)
-
-    logger.info("Training complete")
 
 
 if __name__ == "__main__":
