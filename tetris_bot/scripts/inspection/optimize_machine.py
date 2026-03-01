@@ -23,6 +23,7 @@ _OPTIMIZER_VERSION = 1
 _SUPPORTED_BACKENDS = {"tract", "ort"}
 _WORKER_SEARCH_MODES = {"adaptive", "grid"}
 _BACKEND_STRATEGIES = {"staged", "exhaustive"}
+_AUTO_MODEL_PATH = BENCHMARKS_DIR / "models" / "optimize_bootstrap.onnx"
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,42 @@ def default_model_path() -> Path | None:
         if has_split_model_bundle(model_path):
             return model_path
     return None
+
+
+def ensure_auto_model_path() -> Path:
+    if has_split_model_bundle(_AUTO_MODEL_PATH):
+        return _AUTO_MODEL_PATH
+
+    from tetris_bot.ml.config import NetworkConfig
+    from tetris_bot.ml.network import TetrisNet
+    from tetris_bot.ml.weights import export_onnx, export_split_models
+
+    logger.info(
+        "No split ONNX bundle found under training_runs; generating baseline bundle",
+        model_path=str(_AUTO_MODEL_PATH),
+    )
+    _AUTO_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    model = TetrisNet(**asdict(NetworkConfig()))
+    model.eval()
+    onnx_export_ok = export_onnx(model, _AUTO_MODEL_PATH)
+    split_export_ok = export_split_models(model, _AUTO_MODEL_PATH)
+    if not onnx_export_ok or not split_export_ok or not has_split_model_bundle(
+        _AUTO_MODEL_PATH
+    ):
+        raise RuntimeError(
+            "Failed to auto-generate optimize model bundle at "
+            f"{_AUTO_MODEL_PATH}. Pass --model_path to a valid split bundle."
+        )
+    return _AUTO_MODEL_PATH
+
+
+def resolve_model_path(model_path_arg: Path | None) -> Path:
+    if model_path_arg is not None:
+        return model_path_arg
+    model_path = default_model_path()
+    if model_path is not None:
+        return model_path
+    return ensure_auto_model_path()
 
 
 def has_split_model_bundle(model_path: Path) -> bool:
@@ -332,11 +369,7 @@ def run_profile_once(
 def ensure_valid_args(
     args: ScriptArgs,
 ) -> tuple[Path, list[int], list[str], list[str], str, str]:
-    model_path = args.model_path or default_model_path()
-    if model_path is None:
-        raise FileNotFoundError(
-            "No model_path provided and no valid split ONNX bundle found under training_runs/v*/checkpoints/latest.onnx"
-        )
+    model_path = resolve_model_path(args.model_path)
     if not has_split_model_bundle(model_path):
         raise FileNotFoundError(
             f"Model bundle incomplete for {model_path} (expected .conv.onnx, .heads.onnx, .fc.bin)"

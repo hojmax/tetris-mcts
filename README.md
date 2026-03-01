@@ -24,6 +24,9 @@ Then run scripts with:
 uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
 ```
 
+`make optimize` behavior:
+- If no `training_runs/v*/checkpoints/latest.onnx` split bundle exists yet, it auto-generates a baseline bundle at `benchmarks/models/optimize_bootstrap.onnx` and proceeds.
+
 ## Troubleshooting
 
 ### `rustc` not found during `uv run python -m maturin ...`
