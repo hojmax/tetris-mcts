@@ -89,11 +89,11 @@ class SelfPlayConfig:
         True
     )
     visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
-        0
+        0.1
     )
-    mcts_seed: int | None = (  # Base MCTS seed (combined with env seed + placement); set None for non-deterministic search RNG
-        0
-    )
+    mcts_seed: (  # Base MCTS seed (combined with env seed + placement); set None for non-deterministic search RNG
+        int | None
+    ) = 0
     reuse_tree: bool = (  # Reuse MCTS subtree from previous move instead of building fresh tree
         True
     )

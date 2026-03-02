@@ -1,6 +1,7 @@
 # Next Steps
 
-Command:
+- [ ] Higher exploration
+      Command:
 
 ```
 env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
