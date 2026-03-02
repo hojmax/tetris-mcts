@@ -206,6 +206,7 @@ cd tetris_core && PYO3_PYTHON="$(cd .. && pwd)/.venv/bin/python" cargo test
 ```
 
 In feature worktrees, use the primary checkout virtualenv path for `PYO3_PYTHON`.
+If you see `ImportError: cannot import name 'MCTSConfig' from 'tetris_core' (unknown location)`, the native extension is missing for the active interpreter; rebuild with `make build-dev` (or `make build`) in that same `.venv`.
 
 ## Data/Artifacts Notes
 
