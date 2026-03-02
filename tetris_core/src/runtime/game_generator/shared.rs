@@ -238,7 +238,57 @@ impl SharedBuffer {
     pub(super) fn persist_to_npz(&self, filepath: &Path) -> Result<(), String> {
         let state = self.state.read().unwrap();
         let (slice_a, slice_b) = state.examples.as_slices();
-        write_examples_slices_to_npz(filepath, slice_a, slice_b)
+        let tmp_extension = filepath
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| format!("{ext}.tmp"))
+            .unwrap_or_else(|| "tmp".to_string());
+        let tmp_path = filepath.with_extension(tmp_extension);
+        if let Err(error) = fs::remove_file(&tmp_path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!(
+                    "Failed to remove stale temp snapshot {}: {}",
+                    tmp_path.display(),
+                    error
+                ));
+            }
+        }
+
+        if let Err(error) = write_examples_slices_to_npz(&tmp_path, slice_a, slice_b) {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(error);
+        }
+
+        if let Err(rename_error) = fs::rename(&tmp_path, filepath) {
+            if filepath.exists() {
+                if let Err(remove_error) = fs::remove_file(filepath) {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(format!(
+                        "Failed to replace snapshot {} (rename error: {}; remove old file error: {})",
+                        filepath.display(),
+                        rename_error,
+                        remove_error
+                    ));
+                }
+                if let Err(second_rename_error) = fs::rename(&tmp_path, filepath) {
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(format!(
+                        "Failed to move temp snapshot {} into place: {}",
+                        tmp_path.display(),
+                        second_rename_error
+                    ));
+                }
+            } else {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(format!(
+                    "Failed to move temp snapshot {} into place: {}",
+                    tmp_path.display(),
+                    rename_error
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Return the logical one-past-end index in replay index space.
