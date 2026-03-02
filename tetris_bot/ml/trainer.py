@@ -41,6 +41,7 @@ from tetris_bot.ml.game_metrics import (
     compute_batch_feature_metrics,
     summarize_completed_games,
 )
+from tetris_bot.ml.npz_validation import validate_training_data_npz
 
 from tetris_core import MCTSConfig, GameGenerator
 
@@ -726,7 +727,16 @@ class Trainer:
             raise RuntimeError("data_dir is not set on training config")
         training_data_path = data_dir / TRAINING_DATA_FILENAME
         if training_data_path.exists():
-            files_to_upload.append(training_data_path)
+            try:
+                validate_training_data_npz(training_data_path)
+            except (OSError, ValueError) as error:
+                logger.warning(
+                    "Skipping replay snapshot upload: invalid training_data.npz",
+                    path=str(training_data_path),
+                    error=str(error),
+                )
+            else:
+                files_to_upload.append(training_data_path)
 
         for file_path in files_to_upload:
             if not file_path.exists():

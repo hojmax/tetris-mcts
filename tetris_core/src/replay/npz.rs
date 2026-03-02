@@ -66,7 +66,11 @@ pub(crate) fn write_examples_slices_to_npz(
 
     let file = File::create(filepath).map_err(|e| e.to_string())?;
     let mut zip = ZipWriter::new(file);
-    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    // Replay snapshots can exceed 4 GiB for large buffers (notably policy_targets),
+    // so ZIP64 must be enabled to emit valid archives.
+    let options = FileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .large_file(true);
 
     stream_npy_to_zip(
         &mut zip,
