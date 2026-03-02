@@ -57,7 +57,7 @@ class OptimizerConfig:
 class SelfPlayConfig:
     """MCTS and self-play generation hyperparameters."""
 
-    num_simulations: int = 1000  # MCTS simulations per move
+    num_simulations: int = 2000  # MCTS simulations per move
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = (  # Sharpening / Smoothening of MCTS visit-count policy target
         0.8
@@ -149,7 +149,7 @@ class RunConfig:
     run_name: str | None = None
 
     # Intervals (seconds)
-    model_sync_interval_seconds: float = 300  # Seconds between ONNX exports
+    model_sync_interval_seconds: float = 120  # Seconds between ONNX exports
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
     log_interval_seconds: float = 10  # Seconds between logging
     save_interval_seconds: float = (  # Seconds between replay snapshot saves (0 to disable)
