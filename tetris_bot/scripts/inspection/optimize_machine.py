@@ -274,6 +274,10 @@ def _venv_python() -> Path:
     return PROJECT_ROOT / ".venv" / "bin" / "python"
 
 
+def _venv_pip() -> Path:
+    return PROJECT_ROOT / ".venv" / "bin" / "pip"
+
+
 def _cargo_env(base_env: dict[str, str]) -> dict[str, str]:
     env = base_env.copy()
     cargo_bin = Path.home() / ".cargo" / "bin"
@@ -294,6 +298,8 @@ def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
         "maturin",
         "develop",
         "--release",
+        "--pip-path",
+        str(_venv_pip()),
         "--features",
         features,
         "--manifest-path",
