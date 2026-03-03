@@ -110,7 +110,7 @@ fn debug_predict_masked_from_tensors(
 }
 
 #[pymodule]
-fn _tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
+fn tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<TetrisEnv>()?;
     m.add_class::<Piece>()?;
     m.add_class::<AttackResult>()?;

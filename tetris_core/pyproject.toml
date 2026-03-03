@@ -9,4 +9,4 @@ requires-python = ">=3.8"
 
 [tool.maturin]
 features = ["extension-module"]
-module-name = "_tetris_core"
+module-name = "tetris_core.tetris_core"

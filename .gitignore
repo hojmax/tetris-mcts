@@ -1,4 +1,6 @@
 tetris_core/target/
+tetris_core/tetris_core.cpython-*.so
+tetris_core/tetris_core.cpython-*.pyd
 .venv/
 .env
 *.egg-info/
