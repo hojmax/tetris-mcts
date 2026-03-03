@@ -57,6 +57,7 @@ make optimize   # auto-tune build/backend/workers for this machine (with cache)
 ```
 
 `make install` performs a best-effort Linux system dependency bootstrap for ORT builds (`pkg-config` + OpenSSL headers); disable with `AUTO_INSTALL_SYSTEM_DEPS=0`.
+`make viz` accepts pass-through args via `VIZ_ARGS`, e.g. `make viz VIZ_ARGS="--state_preset tetris_bot/scripts/inspection/viz_state_presets/training_data1_game721_move32.json"`; generate presets from NPZ with `python tetris_bot/scripts/inspection/extract_viz_state_preset.py`.
 
 Useful extras:
 
@@ -194,6 +195,8 @@ For an exhaustive sweep, use: `make optimize OPT_BACKEND_STRATEGY=exhaustive OPT
 - `benchmarks/profiles/optimize_cache/<machine_fingerprint>.json` (machine-type cache)
 - `benchmarks/profiles/optimize_latest.json` (latest resolved recommendation)
 - `benchmarks/profiles/optimize_latest.env` (shell-friendly vars: backend, workers, build flags)
+Build targets now pin `PYO3_PYTHON` to `./.venv/bin/python` so container-level envs (for example `/venv/main`) do not leak into maturin/PyO3 builds.
+When `./.venv/bin/pip` is missing (common in uv-managed envs), maturin build/install steps automatically fall back to `maturin develop --uv`.
 `make train` will try to use `optimize_latest.env`; if missing, it attempts `make optimize` first.
 If optimized settings request `TETRIS_NN_BACKEND=ort` but `make build-ort` fails (e.g. missing `pkg-config`/OpenSSL dev libs), `make train` now falls back to `tract` for both build and runtime.
 `make train` also validates `optimize_latest.env` against the current machine fingerprint and will refresh optimization cache on mismatch.

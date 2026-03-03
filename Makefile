@@ -6,6 +6,7 @@ CARGO_ENV := source $$HOME/.cargo/env 2>/dev/null || true
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PYTHON_ABS := $(abspath $(PYTHON))
+PYO3_PYTHON := $(PYTHON_ABS)
 INSTALL_MARKER := $(VENV_DIR)/.install_marker
 
 # Find all Rust source files (including subdirectories)
@@ -17,6 +18,7 @@ RELEASE_LTO ?= thin
 RELEASE_CODEGEN_UNITS ?= 1
 AUTO_INSTALL_SYSTEM_DEPS ?= 1
 PIP := $(VENV_DIR)/bin/pip
+MATURIN_DEVELOP_INSTALL_ARGS := $(if $(wildcard $(PIP)),--pip-path $(PIP),--uv)
 
 # Bootstrap project dependencies into local virtualenv with uv.
 $(INSTALL_MARKER): pyproject.toml uv.lock
@@ -144,13 +146,13 @@ install: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(DEV_MARKER)
 
 # Build marker file to track if build is up to date (release mode)
 $(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release --pip-path $(PIP) --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release $(MATURIN_DEVELOP_INSTALL_ARGS) --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
 # Build marker file to track if debug build is up to date
 $(DEV_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && $(PYTHON) -m maturin develop --pip-path $(PIP) --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) $(PYTHON) -m maturin develop $(MATURIN_DEVELOP_INSTALL_ARGS) --manifest-path tetris_core/Cargo.toml
 	@rm -f $(RELEASE_MARKER)
 	@touch $(DEV_MARKER)
 
@@ -159,7 +161,7 @@ build: $(RELEASE_MARKER)
 
 # Release build with ONNX Runtime backend support (includes nn-ort feature)
 build-ort: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release --pip-path $(PIP) --features extension-module,nn-ort --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release $(MATURIN_DEVELOP_INSTALL_ARGS) --features extension-module,nn-ort --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
@@ -173,15 +175,17 @@ play: $(RELEASE_MARKER)
 # Run the MCTS visualizer (builds first if needed)
 # Usage: make viz RUN_DIR=training_runs/v15
 # Usage (dummy/no-network): make viz RUN_DIR=training_runs/v15 DUMMY_NETWORK=1
+# Usage (state preset): make viz VIZ_ARGS="--state_preset tetris_bot/scripts/inspection/viz_state_presets/training_data1_game721_move32.json"
 RUN_DIR ?= training_runs/v41
 DUMMY_NETWORK ?= 0
+VIZ_ARGS ?=
 viz: $(RELEASE_MARKER)
-	$(PYTHON) tetris_bot/scripts/inspection/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,)
+	$(PYTHON) tetris_bot/scripts/inspection/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,) $(VIZ_ARGS)
 
 # Force rebuild (clean first to avoid caching issues)
 rebuild: ensure-rust $(INSTALL_MARKER)
 	cd tetris_core && $(CARGO_ENV) && cargo clean
-	$(CARGO_ENV) && CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release --pip-path $(PIP) --manifest-path tetris_core/Cargo.toml
+	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release $(MATURIN_DEVELOP_INSTALL_ARGS) --manifest-path tetris_core/Cargo.toml
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 

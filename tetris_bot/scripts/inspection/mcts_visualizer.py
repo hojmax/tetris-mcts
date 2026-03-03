@@ -11,6 +11,7 @@ Uses Dash + Cytoscape for interactive graph exploration with:
 
 import base64
 import io
+import importlib.util
 import json
 import math
 from dataclasses import dataclass
@@ -98,6 +99,20 @@ class ScriptArgs:
         PROJECT_ROOT / "training_runs" / "v41"
     )
     use_dummy_network: bool = False  # Use uniform-prior/zero-value bootstrap search
+    state_preset: Path | None = (
+        None  # Optional Python file exposing VIZ_STATE_PRESET dict
+    )
+
+
+PIECE_TOKEN_TO_INDEX = {
+    "I": 0,
+    "O": 1,
+    "T": 2,
+    "S": 3,
+    "Z": 4,
+    "J": 5,
+    "L": 6,
+}
 
 
 def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float | bool | None]:
@@ -143,19 +158,164 @@ def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float | bool | 
     }
 
 
+def _format_piece_for_input(value: object | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, int):
+        if value < 0 or value >= NUM_PIECE_TYPES:
+            raise ValueError(f"Piece index out of range: {value}")
+        return PIECE_NAMES[value]
+    if isinstance(value, str):
+        token = value.strip().upper()
+        if token == "":
+            return ""
+        if token.isdigit():
+            piece_idx = int(token)
+            if piece_idx < 0 or piece_idx >= NUM_PIECE_TYPES:
+                raise ValueError(f"Piece index out of range: {piece_idx}")
+            return PIECE_NAMES[piece_idx]
+        if token not in PIECE_TOKEN_TO_INDEX:
+            raise ValueError(
+                f"Invalid piece token '{value}' (expected I,O,T,S,Z,J,L or 0-6)"
+            )
+        piece_idx = PIECE_TOKEN_TO_INDEX[token]
+        return PIECE_NAMES[piece_idx]
+    raise ValueError(f"Unsupported piece value type: {type(value).__name__}")
+
+
+def _format_hold_used_for_input(value: object | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token == "":
+            return ""
+        if token in {"1", "true", "t", "yes", "y"}:
+            return "true"
+        if token in {"0", "false", "f", "no", "n"}:
+            return "false"
+        raise ValueError(
+            f"Invalid hold_used token '{value}' (expected true/false)"
+        )
+    raise ValueError(f"Unsupported hold_used value type: {type(value).__name__}")
+
+
+def _format_queue_for_input(value: object | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        token = value.strip()
+        if token == "":
+            return ""
+        raw_tokens = [item.strip() for item in token.replace("|", ",").split(",")]
+        pieces = [_format_piece_for_input(item) for item in raw_tokens if item != ""]
+        return ",".join(pieces)
+    if isinstance(value, list):
+        pieces: list[str] = []
+        for item in value:
+            pieces.append(_format_piece_for_input(item))
+        return ",".join(pieces)
+    raise ValueError(f"Unsupported queue value type: {type(value).__name__}")
+
+
+def _format_board_for_input(value: object | None) -> str:
+    if value is None:
+        return ""
+    allowed = set("._0IO TSZJL1234567")
+    if isinstance(value, str):
+        token = value.strip("\n")
+        if token == "":
+            return ""
+        lines = [line.strip() for line in token.splitlines() if line.strip() != ""]
+        if len(lines) != BOARD_HEIGHT:
+            raise ValueError(
+                f"Board must have exactly {BOARD_HEIGHT} non-empty rows, got {len(lines)}"
+            )
+        for row_idx, line in enumerate(lines):
+            compact = line.replace(" ", "")
+            if len(compact) != BOARD_WIDTH:
+                raise ValueError(
+                    f"Board row {row_idx + 1} must have {BOARD_WIDTH} cells, got {len(compact)}"
+                )
+            if any(char.upper() not in allowed for char in compact):
+                raise ValueError(f"Invalid board row {row_idx + 1}: {line}")
+        return token
+    if isinstance(value, list):
+        rows: list[str] = []
+        for row in value:
+            if not isinstance(row, str):
+                raise ValueError(
+                    "Board list values must be strings with one row per entry"
+                )
+            rows.append(row)
+        board_text = "\n".join(rows)
+        return _format_board_for_input(board_text)
+    raise ValueError(f"Unsupported board value type: {type(value).__name__}")
+
+
+def load_state_preset_defaults(
+    args: ScriptArgs,
+) -> dict[str, int | str | None]:
+    defaults: dict[str, int | str | None] = {
+        "seed": 42,
+        "move_number": 0,
+        "current_piece": "",
+        "hold_piece": "",
+        "hold_used": "",
+        "queue": "",
+        "board": "",
+    }
+
+    if args.state_preset is None:
+        return defaults
+
+    preset_path = args.state_preset.resolve()
+    if not preset_path.exists():
+        raise ValueError(f"State preset file does not exist: {preset_path}")
+
+    suffix = preset_path.suffix.lower()
+    if suffix == ".json":
+        preset = json.loads(preset_path.read_text())
+    else:
+        module_name = f"_viz_state_preset_{preset_path.stem}"
+        spec = importlib.util.spec_from_file_location(module_name, preset_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Failed to load state preset module: {preset_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        preset = getattr(module, "VIZ_STATE_PRESET", None)
+
+    if not isinstance(preset, dict):
+        raise ValueError(
+            (
+                f"Invalid state preset payload in {preset_path}: "
+                "expected a JSON object or a Python module defining VIZ_STATE_PRESET"
+            )
+        )
+
+    if "seed" in preset:
+        defaults["seed"] = int(preset["seed"])
+    if "move_number" in preset:
+        defaults["move_number"] = int(preset["move_number"])
+    if "current_piece" in preset:
+        defaults["current_piece"] = _format_piece_for_input(preset["current_piece"])
+    if "hold_piece" in preset:
+        defaults["hold_piece"] = _format_piece_for_input(preset["hold_piece"])
+    if "hold_used" in preset:
+        defaults["hold_used"] = _format_hold_used_for_input(preset["hold_used"])
+    if "queue" in preset:
+        defaults["queue"] = _format_queue_for_input(preset["queue"])
+    if "board" in preset:
+        defaults["board"] = _format_board_for_input(preset["board"])
+
+    return defaults
+
+
 SCRIPT_ARGS = parse(ScriptArgs)
 VIZ_DEFAULTS = load_viz_defaults(SCRIPT_ARGS)
-
-PIECE_TOKEN_TO_INDEX = {
-    "I": 0,
-    "O": 1,
-    "T": 2,
-    "S": 3,
-    "Z": 4,
-    "J": 5,
-    "L": 6,
-}
-
+STATE_PRESET_DEFAULTS = load_state_preset_defaults(SCRIPT_ARGS)
 
 Q_NORMALIZATION_EPSILON = 1e-6
 
@@ -901,14 +1061,14 @@ app.layout = html.Div(
                 dcc.Input(
                     id="seed",
                     type="number",
-                    value=42,
+                    value=STATE_PRESET_DEFAULTS["seed"],
                     style={"width": "60px", "marginRight": "15px"},
                 ),
                 html.Label("Move #:", style={"marginRight": "5px"}),
                 dcc.Input(
                     id="move-number",
                     type="number",
-                    value=0,
+                    value=STATE_PRESET_DEFAULTS["move_number"],
                     min=0,
                     step=1,
                     style={"width": "70px", "marginRight": "15px"},
@@ -957,6 +1117,7 @@ app.layout = html.Div(
                     id="current-piece",
                     type="text",
                     placeholder="I/O/T/S/Z/J/L or 0-6",
+                    value=STATE_PRESET_DEFAULTS["current_piece"],
                     style={"width": "150px", "marginRight": "10px"},
                 ),
                 html.Label("Hold:", style={"marginRight": "5px"}),
@@ -964,6 +1125,7 @@ app.layout = html.Div(
                     id="hold-piece",
                     type="text",
                     placeholder="optional piece",
+                    value=STATE_PRESET_DEFAULTS["hold_piece"],
                     style={"width": "110px", "marginRight": "10px"},
                 ),
                 html.Label("Hold Used:", style={"marginRight": "5px"}),
@@ -971,6 +1133,7 @@ app.layout = html.Div(
                     id="hold-used",
                     type="text",
                     placeholder="true/false",
+                    value=STATE_PRESET_DEFAULTS["hold_used"],
                     style={"width": "90px", "marginRight": "10px"},
                 ),
                 html.Label("Queue:", style={"marginRight": "5px"}),
@@ -978,6 +1141,7 @@ app.layout = html.Div(
                     id="queue-input",
                     type="text",
                     placeholder="comma-separated, e.g. I,T,L,S,O",
+                    value=STATE_PRESET_DEFAULTS["queue"],
                     style={"width": "230px", "marginRight": "10px"},
                 ),
                 html.Label("Max Nodes:", style={"marginRight": "5px"}),
@@ -1020,6 +1184,7 @@ app.layout = html.Div(
                 ),
                 dcc.Textarea(
                     id="board-input",
+                    value=STATE_PRESET_DEFAULTS["board"],
                     placeholder=(
                         "Optional board override: 20 rows x 10 cols.\n"
                         "Use '.' or '0' for empty, I/O/T/S/Z/J/L or 1-7 for filled."

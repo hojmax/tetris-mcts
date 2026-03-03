@@ -278,11 +278,22 @@ def _venv_pip() -> Path:
     return PROJECT_ROOT / ".venv" / "bin" / "pip"
 
 
+def _maturin_install_args() -> list[str]:
+    pip_path = _venv_pip()
+    if pip_path.exists():
+        return ["--pip-path", str(pip_path)]
+    # uv-managed virtualenvs may not expose a pip shim at .venv/bin/pip.
+    return ["--uv"]
+
+
 def _cargo_env(base_env: dict[str, str]) -> dict[str, str]:
     env = base_env.copy()
     cargo_bin = Path.home() / ".cargo" / "bin"
     if cargo_bin.exists():
         env["PATH"] = f"{cargo_bin}:{env.get('PATH', '')}"
+    # Ensure PyO3 always binds against this repo's venv interpreter, even if the
+    # parent shell exported PYO3_PYTHON for a different environment.
+    env["PYO3_PYTHON"] = str(_venv_python())
     return env
 
 
@@ -292,14 +303,14 @@ def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
     env["CARGO_PROFILE_RELEASE_CODEGEN_UNITS"] = profile.codegen_units
     env["RUSTFLAGS"] = profile.rustflags
     features = "extension-module,nn-ort" if enable_ort else "extension-module"
+    install_args = _maturin_install_args()
     cmd = [
         str(_venv_python()),
         "-m",
         "maturin",
         "develop",
         "--release",
-        "--pip-path",
-        str(_venv_pip()),
+        *install_args,
         "--features",
         features,
         "--manifest-path",
@@ -309,6 +320,7 @@ def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
         "Building extension for profile",
         compile_profile=profile.name,
         ort_enabled=enable_ort,
+        install_mode="pip-path" if install_args[0] == "--pip-path" else "uv",
         rustflags=profile.rustflags,
         lto=profile.lto,
         codegen_units=profile.codegen_units,
