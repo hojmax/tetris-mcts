@@ -196,9 +196,7 @@ def _format_hold_used_for_input(value: object | None) -> str:
             return "true"
         if token in {"0", "false", "f", "no", "n"}:
             return "false"
-        raise ValueError(
-            f"Invalid hold_used token '{value}' (expected true/false)"
-        )
+        raise ValueError(f"Invalid hold_used token '{value}' (expected true/false)")
     raise ValueError(f"Unsupported hold_used value type: {type(value).__name__}")
 
 
