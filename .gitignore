@@ -12,3 +12,4 @@ outputs/
 .build_marker_dev
 .build_marker
 .DS_store
+tetris_bot/scripts/training_data_scripting.npz
