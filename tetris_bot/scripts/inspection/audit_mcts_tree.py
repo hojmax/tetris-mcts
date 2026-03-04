@@ -12,7 +12,7 @@ from pydantic.dataclasses import dataclass
 from simple_parsing import field as sp_field
 from simple_parsing import parse
 
-from tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
+from tetris_core.tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,

@@ -16,7 +16,7 @@ from tetris_bot.constants import (
     PIECE_SPAWN_CELLS,
     QUEUE_SIZE,
 )
-from tetris_core import GameReplay, TetrisEnv
+from tetris_core.tetris_core import GameReplay, TetrisEnv
 
 # Board cell size
 CELL_SIZE = 20

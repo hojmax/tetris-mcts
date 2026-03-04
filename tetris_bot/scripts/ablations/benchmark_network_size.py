@@ -15,7 +15,7 @@ import structlog
 import torch
 from simple_parsing import parse
 
-from tetris_core import MCTSConfig, evaluate_model
+from tetris_core.tetris_core import MCTSConfig, evaluate_model
 from tetris_bot.constants import BENCHMARKS_DIR
 from tetris_bot.ml.config import NetworkConfig, SelfPlayConfig
 from tetris_bot.ml.network import TetrisNet

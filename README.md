@@ -59,7 +59,7 @@ If those paths do not exist, rerun:
 make install
 ```
 
-### `ImportError: cannot import name 'MCTSConfig' from 'tetris_core'`
+### `ModuleNotFoundError: No module named 'tetris_core.tetris_core'`
 
 This usually means the extension module is not installed in the same environment running the script.
 
@@ -69,8 +69,8 @@ Fix (same shell, repo root):
 source "$HOME/.cargo/env"
 unset CONDA_PREFIX
 unset VIRTUAL_ENV
-uv run python -m maturin develop --manifest-path tetris_core/Cargo.toml
-uv run python -c "from tetris_core import MCTSConfig; print(MCTSConfig)"
+PYO3_PYTHON="$PWD/.venv/bin/python" uv run python -m maturin develop --uv --manifest-path tetris_core/Cargo.toml
+uv run python -c "from tetris_core.tetris_core import MCTSConfig; print(MCTSConfig)"
 uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
 ```
 
@@ -83,7 +83,7 @@ rustc --version
 cargo --version
 
 env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
-  .venv/bin/python -m maturin develop --release --features extension-module --manifest-path tetris_core/Cargo.toml
+  PYO3_PYTHON="$PWD/.venv/bin/python" .venv/bin/python -m maturin develop --release --uv --features extension-module --manifest-path tetris_core/Cargo.toml
 
 env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
   .venv/bin/python tetris_bot/scripts/inspection/optimize_machine.py \
@@ -105,7 +105,7 @@ unset CONDA_PREFIX
 unset VIRTUAL_ENV
 ```
 
-Then rerun the `uv run python -m maturin develop ...` command.
+Then rerun the `uv run python -m maturin develop --uv ...` command.
 
 ### `Failed to set rpath ... did you install patchelf?`
 

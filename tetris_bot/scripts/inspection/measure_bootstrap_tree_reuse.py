@@ -22,7 +22,7 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_core import MCTSAgent, MCTSConfig
+from tetris_core.tetris_core import MCTSAgent, MCTSConfig
 
 logger = structlog.get_logger()
 

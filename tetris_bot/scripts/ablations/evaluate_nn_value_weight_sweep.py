@@ -11,7 +11,7 @@ import structlog
 from PIL import Image, ImageDraw, ImageFont
 from simple_parsing import parse
 
-from tetris_core import MCTSConfig, evaluate_model
+from tetris_core.tetris_core import MCTSConfig, evaluate_model
 from tetris_bot.constants import (
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,

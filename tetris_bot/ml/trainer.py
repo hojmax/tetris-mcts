@@ -42,7 +42,7 @@ from tetris_bot.ml.game_metrics import (
     summarize_completed_games,
 )
 
-from tetris_core import MCTSConfig, GameGenerator
+from tetris_core.tetris_core import MCTSConfig, GameGenerator
 
 logger = structlog.get_logger()
 
