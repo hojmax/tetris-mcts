@@ -7,6 +7,9 @@ VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PYTHON_ABS := $(abspath $(PYTHON))
 PYO3_PYTHON := $(PYTHON_ABS)
+MATURIN_DEVELOP := $(PYTHON) -m maturin develop --uv --manifest-path tetris_core/Cargo.toml
+MATURIN_ENV := $(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON)
+MATURIN_RELEASE_ENV = CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)"
 INSTALL_MARKER := $(VENV_DIR)/.install_marker
 
 # Find all Rust source files (including subdirectories)
@@ -17,8 +20,6 @@ RELEASE_RUSTFLAGS ?= -C target-cpu=native
 RELEASE_LTO ?= thin
 RELEASE_CODEGEN_UNITS ?= 1
 AUTO_INSTALL_SYSTEM_DEPS ?= 1
-PIP := $(VENV_DIR)/bin/pip
-MATURIN_DEVELOP_INSTALL_ARGS := $(if $(wildcard $(PIP)),--pip-path $(PIP),--uv)
 
 # Bootstrap project dependencies into local virtualenv with uv.
 $(INSTALL_MARKER): pyproject.toml uv.lock
@@ -48,24 +49,18 @@ $(INSTALL_MARKER): pyproject.toml uv.lock
 
 ensure-rust:
 	@set -euo pipefail; \
+	need_install=0; \
 	if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then \
 		:; \
-	elif [ -f "$$HOME/.cargo/env" ]; then \
-		source "$$HOME/.cargo/env"; \
-		if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then \
-			:; \
-		else \
-			if ! command -v curl >/dev/null 2>&1; then \
-				echo "Error: rustc/cargo are missing and curl is required to install rustup." >&2; \
-				exit 1; \
-			fi; \
-			echo "Rust toolchain not found; installing via rustup..."; \
-			curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable; \
-			source "$$HOME/.cargo/env"; \
-			rustc --version >/dev/null; \
-			cargo --version >/dev/null; \
-		fi; \
 	else \
+		if [ -f "$$HOME/.cargo/env" ]; then \
+			source "$$HOME/.cargo/env"; \
+		fi; \
+		if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then \
+			need_install=1; \
+		fi; \
+	fi; \
+	if [ "$$need_install" -eq 1 ]; then \
 		if ! command -v curl >/dev/null 2>&1; then \
 			echo "Error: rustc/cargo are missing and curl is required to install rustup." >&2; \
 			exit 1; \
@@ -146,13 +141,13 @@ install: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(DEV_MARKER)
 
 # Build marker file to track if build is up to date (release mode)
 $(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release $(MATURIN_DEVELOP_INSTALL_ARGS) --manifest-path tetris_core/Cargo.toml
+	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_DEVELOP) --release
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
 # Build marker file to track if debug build is up to date
 $(DEV_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) $(PYTHON) -m maturin develop $(MATURIN_DEVELOP_INSTALL_ARGS) --manifest-path tetris_core/Cargo.toml
+	$(MATURIN_ENV) && $(MATURIN_DEVELOP)
 	@rm -f $(RELEASE_MARKER)
 	@touch $(DEV_MARKER)
 
@@ -161,7 +156,7 @@ build: $(RELEASE_MARKER)
 
 # Release build with ONNX Runtime backend support (includes nn-ort feature)
 build-ort: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release $(MATURIN_DEVELOP_INSTALL_ARGS) --features extension-module,nn-ort --manifest-path tetris_core/Cargo.toml
+	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_DEVELOP) --release --features extension-module,nn-ort
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
@@ -185,14 +180,14 @@ viz: $(RELEASE_MARKER)
 # Force rebuild (clean first to avoid caching issues)
 rebuild: ensure-rust $(INSTALL_MARKER)
 	cd tetris_core && $(CARGO_ENV) && cargo clean
-	$(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)" $(PYTHON) -m maturin develop --release $(MATURIN_DEVELOP_INSTALL_ARGS) --manifest-path tetris_core/Cargo.toml
+	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_DEVELOP) --release
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
 # Run tests
 test:
 	$(MAKE) build-dev
-	cd tetris_core && $(CARGO_ENV) && PYO3_PYTHON=$(PYTHON_ABS) cargo test
+	cd tetris_core && $(CARGO_ENV) && PYO3_PYTHON=$(PYO3_PYTHON) cargo test
 	$(PYTHON) -m pytest
 
 # Clean build artifacts

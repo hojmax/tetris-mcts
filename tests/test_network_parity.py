@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-import tetris_core
+import tetris_core.tetris_core as tetris_core
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,

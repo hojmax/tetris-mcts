@@ -5,7 +5,7 @@ Implements proper SRS rotation and DAS/ARR for responsive controls.
 
 import pygame
 
-from tetris_core import TetrisEnv
+from tetris_core.tetris_core import TetrisEnv
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,

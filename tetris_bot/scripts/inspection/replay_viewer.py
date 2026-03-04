@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tetris_core import TetrisEnv
+from tetris_core.tetris_core import TetrisEnv
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,

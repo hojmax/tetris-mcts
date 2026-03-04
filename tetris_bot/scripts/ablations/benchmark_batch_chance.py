@@ -8,7 +8,7 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
+from tetris_core.tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
 from tetris_bot.constants import BENCHMARKS_DIR, PARALLEL_ONNX_FILENAME, PROJECT_ROOT
 
 logger = structlog.get_logger()

@@ -32,7 +32,7 @@ import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
 from simple_parsing import parse
 
-from tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
+from tetris_core.tetris_core import TetrisEnv, MCTSAgent, MCTSConfig
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
