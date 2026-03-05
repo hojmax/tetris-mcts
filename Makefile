@@ -7,7 +7,9 @@ VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PYTHON_ABS := $(abspath $(PYTHON))
 PYO3_PYTHON := $(PYTHON_ABS)
-MATURIN_DEVELOP := $(PYTHON) -m maturin develop --manifest-path tetris_core/Cargo.toml
+MATURIN_DIST := tetris_core/dist
+MATURIN_BUILD := rm -rf $(MATURIN_DIST) && $(PYTHON) -m maturin build --manifest-path tetris_core/Cargo.toml --out $(MATURIN_DIST)
+MATURIN_INSTALL := $(PYTHON) -m pip install --no-deps --force-reinstall $(MATURIN_DIST)/tetris_core-*.whl
 MATURIN_ENV := $(CARGO_ENV) && export PYO3_PYTHON=$(PYO3_PYTHON)
 MATURIN_RELEASE_ENV = CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)"
 INSTALL_MARKER := $(VENV_DIR)/.install_marker
@@ -148,13 +150,13 @@ install: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(DEV_MARKER)
 
 # Build marker file to track if build is up to date (release mode)
 $(RELEASE_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_DEVELOP) --release
+	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_BUILD) --release && $(MATURIN_INSTALL)
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
 # Build marker file to track if debug build is up to date
 $(DEV_MARKER): ensure-rust $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(MATURIN_ENV) && $(MATURIN_DEVELOP)
+	$(MATURIN_ENV) && $(MATURIN_BUILD) && $(MATURIN_INSTALL)
 	@rm -f $(RELEASE_MARKER)
 	@touch $(DEV_MARKER)
 
@@ -163,7 +165,7 @@ build: $(RELEASE_MARKER)
 
 # Release build with ONNX Runtime backend support (includes nn-ort feature)
 build-ort: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(RUST_SRC) tetris_core/Cargo.toml tetris_core/pyproject.toml
-	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_DEVELOP) --release --features extension-module,nn-ort
+	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_BUILD) --release --features extension-module,nn-ort && $(MATURIN_INSTALL)
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 
@@ -187,7 +189,7 @@ viz: $(RELEASE_MARKER)
 # Force rebuild (clean first to avoid caching issues)
 rebuild: ensure-rust $(INSTALL_MARKER)
 	cd tetris_core && $(CARGO_ENV) && cargo clean
-	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_DEVELOP) --release
+	$(MATURIN_ENV) && $(MATURIN_RELEASE_ENV) $(MATURIN_BUILD) --release && $(MATURIN_INSTALL)
 	@rm -f $(DEV_MARKER)
 	@touch $(RELEASE_MARKER)
 

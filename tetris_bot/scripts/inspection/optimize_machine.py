@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import shlex
+import shutil
 import socket
 import subprocess
 from dataclasses import asdict, dataclass, field
@@ -291,16 +292,20 @@ def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
     env["CARGO_PROFILE_RELEASE_CODEGEN_UNITS"] = profile.codegen_units
     env["RUSTFLAGS"] = profile.rustflags
     features = "extension-module,nn-ort" if enable_ort else "extension-module"
-    cmd = [
+    dist_dir = PROJECT_ROOT / "tetris_core" / "dist"
+    shutil.rmtree(dist_dir, ignore_errors=True)
+    build_cmd = [
         str(_venv_python()),
         "-m",
         "maturin",
-        "develop",
+        "build",
         "--release",
         "--features",
         features,
         "--manifest-path",
         "tetris_core/Cargo.toml",
+        "--out",
+        str(dist_dir),
     ]
     logger.info(
         "Building extension for profile",
@@ -310,7 +315,12 @@ def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
         lto=profile.lto,
         codegen_units=profile.codegen_units,
     )
-    subprocess.run(cmd, cwd=PROJECT_ROOT, check=True, env=env)
+    subprocess.run(build_cmd, cwd=PROJECT_ROOT, check=True, env=env)
+    wheels = list(dist_dir.glob("tetris_core-*.whl"))
+    if not wheels:
+        raise RuntimeError(f"No wheel found in {dist_dir} after maturin build")
+    install_cmd = [str(_venv_python()), "-m", "pip", "install", "--no-deps", "--force-reinstall", str(wheels[0])]
+    subprocess.run(install_cmd, cwd=PROJECT_ROOT, check=True)
 
 
 def run_profile_once(

@@ -1166,15 +1166,6 @@ app.layout = html.Div(
                     value=STATE_PRESET_DEFAULTS["queue"],
                     style={"width": "230px", "marginRight": "10px"},
                 ),
-                html.Label("Max Nodes:", style={"marginRight": "5px"}),
-                dcc.Input(
-                    id="max-nodes-slider",
-                    type="number",
-                    value=0,
-                    min=0,
-                    step=100,
-                    style={"width": "80px", "marginRight": "15px"},
-                ),
                 html.Button(
                     "Step (+1)",
                     id="step-button",
@@ -1184,6 +1175,12 @@ app.layout = html.Div(
                 html.Button(
                     "Step (+100)",
                     id="step-100-button",
+                    n_clicks=0,
+                    style={"marginLeft": "8px"},
+                ),
+                html.Button(
+                    "Step (+1000)",
+                    id="step-1000-button",
                     n_clicks=0,
                     style={"marginLeft": "8px"},
                 ),
@@ -1361,6 +1358,7 @@ def set_1000_sims(_):
     Output("sim-counter", "children"),
     Input("step-button", "n_clicks"),
     Input("step-100-button", "n_clicks"),
+    Input("step-1000-button", "n_clicks"),
     Input("step-back-button", "n_clicks"),
     Input("show-unvisited", "value"),
     State("model-path", "value"),
@@ -1380,7 +1378,6 @@ def set_1000_sims(_):
     State("hold-used", "value"),
     State("queue-input", "value"),
     State("board-input", "value"),
-    State("max-nodes-slider", "value"),
     State("tree-store", "data"),
     State("env-store", "data"),
     State("sims-done-store", "data"),
@@ -1389,6 +1386,7 @@ def set_1000_sims(_):
 def run_mcts(
     step_clicks,
     step_100_clicks,
+    step_1000_clicks,
     step_back_clicks,
     show_unvisited_value,
     model_path,
@@ -1408,7 +1406,6 @@ def run_mcts(
     hold_used_text,
     queue_text,
     board_text,
-    max_nodes,
     tree_data,
     env_data,
     sims_done,
@@ -1448,6 +1445,8 @@ def run_mcts(
         sims_to_run = min(current_sims + 1, max_sims)
     elif triggered_id == "step-100-button":
         sims_to_run = min(current_sims + 100, max_sims)
+    elif triggered_id == "step-1000-button":
+        sims_to_run = min(current_sims + 1000, max_sims)
     elif triggered_id == "step-back-button":
         sims_to_run = max(current_sims - 1, 0)
     elif triggered_id == "show-unvisited":
@@ -1605,9 +1604,8 @@ def run_mcts(
 
     # Build elements
     show_unvisited = "show" in (show_unvisited_value or [])
-    max_nodes_limit = None if max_nodes is None or max_nodes <= 0 else int(max_nodes)
     elements = build_cytoscape_elements(
-        tree, max_nodes_limit, show_unvisited, config.c_puct
+        tree, None, show_unvisited, config.c_puct
     )
 
     # Cache TetrisEnv states by replaying actions from the root.
