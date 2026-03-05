@@ -32,8 +32,7 @@
 
 # Confusions
 
-- [ ] Also twice the number of simulations???
-- [ ] How come the model is not even better even when doing tree reuse
+- [ ] How come the model is not even that much better even when doing tree reuse
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
 
 # Deep Review
@@ -90,13 +89,11 @@ In progress: 🟨
 - [ ] Stress test next possible pieces with unit tests, like that it can do wild twists and stuff and that it correctly decides those possible locations
 - [ ] Benchmarking and improving speed of MCTS search
 - [ ] Testing speed on different hardware then the Macbook Air
-- [ ] Sweep over best value head weighting for ~final networks.
 - [ ] Maybe this is just a hella slow learning algorithm, and we need to scale up compute.
 - [ ] Visualizing MCTS search and verifying correctness
 - [ ] Adding hand crafted heuristics to offload work off the neural network
   - can t-spin filter?
 - [ ] Try to handcraft great Tetris bot.
-- [ ] Another round of benchmarking and optimizing?
 - [ ] Make a readme
 
 ## Test Environment State

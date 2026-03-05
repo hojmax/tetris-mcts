@@ -88,6 +88,7 @@ ensure-system-deps:
 	fi; \
 	has_pkg_config=1; \
 	has_openssl_pkg=1; \
+	has_patchelf=1; \
 	if ! command -v pkg-config >/dev/null 2>&1; then \
 		has_pkg_config=0; \
 		has_openssl_pkg=0; \
@@ -96,25 +97,28 @@ ensure-system-deps:
 			has_openssl_pkg=0; \
 		fi; \
 	fi; \
-	if [ "$$has_pkg_config" -eq 1 ] && [ "$$has_openssl_pkg" -eq 1 ]; then \
+	if ! command -v patchelf >/dev/null 2>&1; then \
+		has_patchelf=0; \
+	fi; \
+	if [ "$$has_pkg_config" -eq 1 ] && [ "$$has_openssl_pkg" -eq 1 ] && [ "$$has_patchelf" -eq 1 ]; then \
 		exit 0; \
 	fi; \
-	echo "[install] Missing Linux build prerequisites for ORT (pkg-config + OpenSSL dev headers)."; \
+	echo "[install] Missing Linux build prerequisites (pkg-config, OpenSSL dev headers, patchelf)."; \
 	if [ "$(AUTO_INSTALL_SYSTEM_DEPS)" != "1" ]; then \
 		echo "[install] Skipping auto-install (AUTO_INSTALL_SYSTEM_DEPS=$(AUTO_INSTALL_SYSTEM_DEPS))."; \
-		echo "[install] Install manually on Ubuntu/Debian: apt-get update && apt-get install -y pkg-config libssl-dev"; \
+		echo "[install] Install manually on Ubuntu/Debian: apt-get update && apt-get install -y pkg-config libssl-dev patchelf"; \
 		exit 0; \
 	fi; \
 	if command -v apt-get >/dev/null 2>&1; then \
-		install_cmd='apt-get update && apt-get install -y pkg-config libssl-dev'; \
+		install_cmd='apt-get update && apt-get install -y pkg-config libssl-dev patchelf'; \
 	elif command -v dnf >/dev/null 2>&1; then \
-		install_cmd='dnf install -y pkgconf-pkg-config openssl-devel'; \
+		install_cmd='dnf install -y pkgconf-pkg-config openssl-devel patchelf'; \
 	elif command -v yum >/dev/null 2>&1; then \
-		install_cmd='yum install -y pkgconfig openssl-devel'; \
+		install_cmd='yum install -y pkgconfig openssl-devel patchelf'; \
 	elif command -v apk >/dev/null 2>&1; then \
-		install_cmd='apk add --no-cache pkgconf openssl-dev'; \
+		install_cmd='apk add --no-cache pkgconf openssl-dev patchelf'; \
 	else \
-		echo "[install] Unsupported package manager; install pkg-config and OpenSSL dev headers manually."; \
+		echo "[install] Unsupported package manager; install pkg-config, OpenSSL dev headers, and patchelf manually."; \
 		exit 0; \
 	fi; \
 	echo "[install] Attempting to install system dependencies..."; \
@@ -130,11 +134,14 @@ ensure-system-deps:
 		fi; \
 	else \
 		echo "[install] No root/sudo available for auto-install; continuing."; \
-		echo "[install] Install manually on Ubuntu/Debian: apt-get update && apt-get install -y pkg-config libssl-dev"; \
+		echo "[install] Install manually on Ubuntu/Debian: apt-get update && apt-get install -y pkg-config libssl-dev patchelf"; \
 		exit 0; \
 	fi; \
 	if ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists openssl >/dev/null 2>&1; then \
 		echo "[install] Dependencies still not detected after auto-install; ORT builds may fail."; \
+	fi; \
+	if ! command -v patchelf >/dev/null 2>&1; then \
+		echo "[install] patchelf still not detected after auto-install; maturin Linux builds may warn about rpath."; \
 	fi
 
 install: ensure-rust ensure-system-deps $(INSTALL_MARKER) $(DEV_MARKER)
@@ -171,7 +178,7 @@ play: $(RELEASE_MARKER)
 # Usage: make viz RUN_DIR=training_runs/v15
 # Usage (dummy/no-network): make viz RUN_DIR=training_runs/v15 DUMMY_NETWORK=1
 # Usage (state preset): make viz VIZ_ARGS="--state_preset tetris_bot/scripts/inspection/viz_state_presets/training_data1_game721_move32.json"
-RUN_DIR ?= training_runs/v41
+RUN_DIR ?= training_runs/v0
 DUMMY_NETWORK ?= 0
 VIZ_ARGS ?=
 viz: $(RELEASE_MARKER)
