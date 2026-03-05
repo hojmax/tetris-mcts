@@ -69,7 +69,7 @@ pub(super) fn export_chance_node(
         value_sum: node.value_sum,
         mean_value: node.mean_value(),
         value_history: node.value_history.clone().unwrap_or_default(),
-        nn_value: node.nn_value,
+        nn_value: 0.0,
         is_terminal: false,
         move_number: node.move_number,
         attack: node.attack,
@@ -112,8 +112,8 @@ mod tests {
         root.visit_count = 4;
         root.value_sum = 10.0;
 
-        let chance_high = ChanceNode::new(env.clone(), 3, 0, 0, vec![1, 2], 0.0, vec![0.5, 0.5]);
-        let mut chance_low = ChanceNode::new(env.clone(), 1, 0, 0, vec![4, 5], 0.0, vec![0.5, 0.5]);
+        let chance_high = ChanceNode::new(env.clone(), 3, 0, 0, vec![1, 2]);
+        let mut chance_low = ChanceNode::new(env.clone(), 1, 0, 0, vec![4, 5]);
 
         // Insert out of order to verify deterministic sorting in export.
         let mut decision_piece_5 = DecisionNode::new(env.clone(), 1);

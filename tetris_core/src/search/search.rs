@@ -365,8 +365,6 @@ fn expand_action(
         overhang_fields,
         move_number,
         bag_remaining,
-        0.0,
-        Vec::new(),
     )))
 }
 
@@ -949,18 +947,9 @@ mod tests {
         let root_policy = vec![1.0 / NUM_ACTIONS as f32; NUM_ACTIONS];
         root.set_nn_output(&root_policy, 0.0);
 
-        let mut left_child = ChanceNode::new(
-            env.clone(),
-            0,
-            0,
-            1,
-            Vec::new(),
-            0.0,
-            vec![0.0; NUM_ACTIONS],
-        );
+        let mut left_child = ChanceNode::new(env.clone(), 0, 0, 1, Vec::new());
         left_child.visit_count = 5;
-        let mut right_child =
-            ChanceNode::new(env, 0, 0, 1, Vec::new(), 0.0, vec![0.0; NUM_ACTIONS]);
+        let mut right_child = ChanceNode::new(env, 0, 0, 1, Vec::new());
         right_child.visit_count = 5;
         root.children.insert(10, MCTSNode::Chance(left_child));
         root.children.insert(20, MCTSNode::Chance(right_child));

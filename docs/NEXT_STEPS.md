@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Less sharpening of temperature
 - [ ] Try lower cpuct
 - [ ] Higher exploration
 - [ ] We are overfitting on the test evals.
