@@ -1253,15 +1253,22 @@ app.layout = html.Div(
                 # Right panel: Board + State info (top) and Node details (bottom)
                 html.Div(
                     [
-                        html.Button(
-                            "Back",
-                            id="nav-back-button",
-                            n_clicks=0,
-                            style={
-                                "marginBottom": "6px",
-                                "padding": "4px 12px",
-                                "cursor": "pointer",
-                            },
+                        html.Div(
+                            [
+                                html.Button(
+                                    "Back",
+                                    id="nav-back-button",
+                                    n_clicks=0,
+                                    style={"padding": "4px 12px", "cursor": "pointer"},
+                                ),
+                                html.Button(
+                                    "Root",
+                                    id="nav-root-button",
+                                    n_clicks=0,
+                                    style={"padding": "4px 12px", "cursor": "pointer", "marginLeft": "6px"},
+                                ),
+                            ],
+                            style={"marginBottom": "6px"},
                         ),
                         # Top row: Board image + State info side by side
                         html.Div(
@@ -1438,15 +1445,14 @@ def run_mcts(
     if max_placements is None:
         raise ValueError("max_placements is required")
 
-    max_sims = num_sims
     current_sims = sims_done or 0
 
     if triggered_id == "step-button":
-        sims_to_run = min(current_sims + 1, max_sims)
+        sims_to_run = current_sims + 1
     elif triggered_id == "step-100-button":
-        sims_to_run = min(current_sims + 100, max_sims)
+        sims_to_run = current_sims + 100
     elif triggered_id == "step-1000-button":
-        sims_to_run = min(current_sims + 1000, max_sims)
+        sims_to_run = current_sims + 1000
     elif triggered_id == "step-back-button":
         sims_to_run = max(current_sims - 1, 0)
     elif triggered_id == "show-unvisited":
@@ -1465,7 +1471,7 @@ def run_mcts(
             None,
             [],
             [],
-            f"Sims: 0/{max_sims}",
+            "Sims: 0",
         )
 
     # Create config with current number of simulations
@@ -1689,7 +1695,7 @@ def run_mcts(
         None,
         [],
         elements,
-        f"Sims: {sims_to_run}/{max_sims}",
+        f"Sims: {sims_to_run}",
     )
 
 
@@ -1987,9 +1993,9 @@ clientside_callback(
         if (!window._keyboardListenerSet) {
             window._keyboardListenerSet = true;
             document.addEventListener('keydown', function(e) {
-                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                    e.preventDefault();
                     window._lastKeyEvent = {key: e.key, timestamp: Date.now()};
-                    // Trigger a dummy update by dispatching a custom event
                     document.getElementById('keyboard-target').click();
                 }
             });
@@ -2060,6 +2066,18 @@ clientside_callback(
 
 
 @callback(
+    Output("selected-node-store", "data", allow_duplicate=True),
+    Input("nav-root-button", "n_clicks"),
+    State("tree-store", "data"),
+    prevent_initial_call=True,
+)
+def navigate_to_root(_, tree_dict):
+    if not tree_dict:
+        return dash.no_update
+    return str(tree_dict["root_id"])
+
+
+@callback(
     Output("selected-node-store", "data"),
     Output("siblings-store", "data"),
     Input("cytoscape-tree", "tapNodeData"),
@@ -2122,7 +2140,7 @@ def update_selection_info(node_data, tree_dict, elements):
     prevent_initial_call=True,
 )
 def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_dict):
-    """Navigate to sibling node on left/right arrow key."""
+    """Navigate the tree with arrow keys: left/right = siblings, up = parent, down = best child."""
     if not keyboard_event or not keyboard_event.get("key"):
         return dash.no_update
 
@@ -2130,8 +2148,32 @@ def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_di
         return dash.no_update
 
     key = keyboard_event["key"]
-    if key not in ("ArrowLeft", "ArrowRight"):
+    if key not in ("ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"):
         return dash.no_update
+
+    # ArrowUp: go to parent
+    if key == "ArrowUp":
+        if selected_node.startswith("v_") or selected_node.startswith("vp_"):
+            parent_id = int(selected_node.split("_")[1])
+        elif tree_dict and selected_node.isdigit():
+            nid = int(selected_node)
+            parent_id = tree_dict["nodes"][nid].get("parent_id") if nid < len(tree_dict["nodes"]) else None
+        else:
+            parent_id = None
+        return str(parent_id) if parent_id is not None else dash.no_update
+
+    # ArrowDown: go to most-visited child
+    if key == "ArrowDown":
+        if not tree_dict or not selected_node.isdigit():
+            return dash.no_update
+        nid = int(selected_node)
+        if nid >= len(tree_dict["nodes"]):
+            return dash.no_update
+        children = tree_dict["nodes"][nid].get("children", [])
+        if not children:
+            return dash.no_update
+        best = max(children, key=lambda cid: tree_dict["nodes"][cid].get("visit_count", 0) if cid < len(tree_dict["nodes"]) else 0)
+        return str(best)
 
     # Build full siblings list including virtual nodes from elements
     all_siblings = list(siblings) if siblings else []

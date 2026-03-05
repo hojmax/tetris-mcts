@@ -7,9 +7,11 @@ VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PYTHON_ABS := $(abspath $(PYTHON))
 PYO3_PYTHON := $(PYTHON_ABS)
+UV_BIN := $(shell command -v uv 2>/dev/null || echo $(HOME)/.local/bin/uv)
+VENV_ABS := $(abspath $(VENV_DIR))
 MATURIN_DIST := tetris_core/dist
 MATURIN_BUILD := rm -rf $(MATURIN_DIST) && $(PYTHON) -m maturin build --manifest-path tetris_core/Cargo.toml --out $(MATURIN_DIST)
-MATURIN_INSTALL := $(PYTHON) -m pip install --no-deps --force-reinstall $(MATURIN_DIST)/tetris_core-*.whl
+MATURIN_INSTALL := VIRTUAL_ENV=$(VENV_ABS) $(UV_BIN) pip install --no-deps --reinstall $(MATURIN_DIST)/tetris_core-*.whl
 MATURIN_ENV := $(CARGO_ENV) && export PYO3_PYTHON=$(PYO3_PYTHON)
 MATURIN_RELEASE_ENV = CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)"
 INSTALL_MARKER := $(VENV_DIR)/.install_marker

@@ -319,8 +319,10 @@ def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
     wheels = list(dist_dir.glob("tetris_core-*.whl"))
     if not wheels:
         raise RuntimeError(f"No wheel found in {dist_dir} after maturin build")
-    install_cmd = [str(_venv_python()), "-m", "pip", "install", "--no-deps", "--force-reinstall", str(wheels[0])]
-    subprocess.run(install_cmd, cwd=PROJECT_ROOT, check=True)
+    venv_dir = PROJECT_ROOT / ".venv"
+    install_env = {**os.environ, "VIRTUAL_ENV": str(venv_dir)}
+    install_cmd = ["uv", "pip", "install", "--no-deps", "--reinstall", str(wheels[0])]
+    subprocess.run(install_cmd, cwd=PROJECT_ROOT, check=True, env=install_env)
 
 
 def run_profile_once(
