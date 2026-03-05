@@ -263,7 +263,7 @@ OPT_WORKER_SEARCH ?= adaptive
 OPT_MAX_WORKER_EVALS ?= 6
 OPT_BACKEND_STRATEGY ?= staged
 OPT_PRIMARY_BACKEND ?= ort
-OPTIMIZE_ARGS ?=
+OPTIMIZE_ARGS ?= --skip_build
 OPT_ENV_FILE ?= benchmarks/profiles/optimize_latest.env
 OPT_VALIDATE_MACHINE ?= 1
 optimize: ensure-rust $(INSTALL_MARKER)
