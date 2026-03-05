@@ -721,6 +721,21 @@ def display_virtual_piece_node(node_data, tree_dict):
     return details, f"data:image/png;base64,{img_b64}", state_info
 
 
+def _node_color(attack: int | str, node_type: str) -> str:
+    """Background color based on cumulative attack: cool base -> fire gradient."""
+    try:
+        atk = int(attack)
+    except (TypeError, ValueError):
+        atk = 0
+    if atk <= 0:
+        return "#203560" if node_type == "decision" else "#1a4040"
+    # Fire gradient capped at 8 attack: dark brick red -> pure red
+    t = min(atk / 8.0, 1.0)
+    r = int(139 + 116 * t)
+    g = int(24 * (1 - t))
+    return f"#{r:02x}{g:02x}00"
+
+
 def build_cytoscape_elements(
     tree, max_nodes: int | None = None, show_unvisited: bool = True, c_puct: float = 1.0
 ):
@@ -785,6 +800,7 @@ def build_cytoscape_elements(
                     "mean_value": node.mean_value,
                     "value_sum": node.value_sum,
                     "attack": node.attack,
+                    "attack_color": _node_color(node.attack, node.node_type),
                     "is_terminal": node.is_terminal,
                     "move_number": node.move_number,
                     "edge_from_parent": node.edge_from_parent,
@@ -840,6 +856,7 @@ def build_cytoscape_elements(
                             "mean_value": 0.0,
                             "value_sum": 0.0,
                             "attack": "?",
+                            "attack_color": _node_color(0, "chance"),
                             "is_terminal": False,
                             "move_number": node.move_number,
                             "edge_from_parent": action_idx,
@@ -883,6 +900,7 @@ def build_cytoscape_elements(
                             "mean_value": 0.0,
                             "value_sum": 0.0,
                             "attack": 0,
+                            "attack_color": _node_color(0, "decision"),
                             "is_terminal": False,
                             "move_number": node.move_number,
                             "edge_from_parent": outcome_idx,
@@ -933,11 +951,11 @@ app.index_string = """
 
 # Cytoscape stylesheet
 stylesheet = [
-    # Decision nodes (blue)
+    # Decision nodes — navy base, attack heatmap via data(attack_color)
     {
         "selector": ".decision",
         "style": {
-            "background-color": "#4488ff",
+            "background-color": "data(attack_color)",
             "label": "data(label)",
             "text-wrap": "wrap",
             "text-valign": "center",
@@ -949,11 +967,11 @@ stylesheet = [
             "shape": "round-rectangle",
         },
     },
-    # Chance nodes (orange)
+    # Chance nodes — teal base, attack heatmap via data(attack_color)
     {
         "selector": ".chance",
         "style": {
-            "background-color": "#ff8844",
+            "background-color": "data(attack_color)",
             "label": "data(label)",
             "text-wrap": "wrap",
             "text-valign": "center",
@@ -987,12 +1005,11 @@ stylesheet = [
             "border-color": "#ff0",
         },
     },
-    # Unvisited (virtual) chance nodes - semi-transparent
+    # Unvisited (virtual) nodes - semi-transparent, color from data(attack_color)
     {
         "selector": ".unvisited",
         "style": {
             "opacity": 0.4,
-            "background-color": "#ffaa44",
         },
     },
     # Edges to unvisited nodes - dashed and semi-transparent
