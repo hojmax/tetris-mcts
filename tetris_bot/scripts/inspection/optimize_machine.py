@@ -297,7 +297,6 @@ def build_extension(profile: BuildProfile, *, enable_ort: bool) -> None:
         "maturin",
         "develop",
         "--release",
-        "--uv",
         "--features",
         features,
         "--manifest-path",

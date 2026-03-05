@@ -7,7 +7,7 @@ VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PYTHON_ABS := $(abspath $(PYTHON))
 PYO3_PYTHON := $(PYTHON_ABS)
-MATURIN_DEVELOP := $(PYTHON) -m maturin develop --uv --manifest-path tetris_core/Cargo.toml
+MATURIN_DEVELOP := $(PYTHON) -m maturin develop --manifest-path tetris_core/Cargo.toml
 MATURIN_ENV := $(CARGO_ENV) && export PYO3_PYTHON=$(PYO3_PYTHON)
 MATURIN_RELEASE_ENV = CARGO_PROFILE_RELEASE_LTO=$(RELEASE_LTO) CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$(RELEASE_CODEGEN_UNITS) RUSTFLAGS="$(RELEASE_RUSTFLAGS)"
 INSTALL_MARKER := $(VENV_DIR)/.install_marker

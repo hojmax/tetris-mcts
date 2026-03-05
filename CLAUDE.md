@@ -195,7 +195,7 @@ For an exhaustive sweep, use: `make optimize OPT_BACKEND_STRATEGY=exhaustive OPT
 - `benchmarks/profiles/optimize_cache/<machine_fingerprint>.json` (machine-type cache)
 - `benchmarks/profiles/optimize_latest.json` (latest resolved recommendation)
 - `benchmarks/profiles/optimize_latest.env` (shell-friendly vars: backend, workers, build flags)
-Build targets now pin `PYO3_PYTHON` to `./.venv/bin/python` so container-level envs (for example `/venv/main`) do not leak into maturin/PyO3 builds, and maturin install always uses `maturin develop --uv` (no `pip-path` branch).
+Build targets pin `PYO3_PYTHON` to `./.venv/bin/python` and use plain `maturin develop` (no `--uv`). The `--uv` flag caused maturin to resolve the venv Python symlink and install into the base interpreter's site-packages (e.g. `/venv/main`) instead of `.venv`.
 `make train` will try to use `optimize_latest.env`; if missing, it attempts `make optimize` first.
 If optimized settings request `TETRIS_NN_BACKEND=ort` but `make build-ort` fails (e.g. missing `pkg-config`/OpenSSL dev libs), `make train` now falls back to `tract` for both build and runtime.
 `make train` also validates `optimize_latest.env` against the current machine fingerprint and will refresh optimization cache on mismatch.
