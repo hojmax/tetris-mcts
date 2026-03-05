@@ -602,7 +602,7 @@ pub(super) fn run_search<E: LeafEvaluator>(
     }
 
     let mut traversal_stats = TraversalStats::default();
-    let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
+    let mut q_bounds = (0.0_f32, 0.0_f32);
     for _ in 0..config.num_simulations {
         match simulate(config, evaluator, &mut root, &mut rng, &mut q_bounds) {
             SimulationOutcome::Expansion => traversal_stats.expansions += 1,
@@ -990,7 +990,7 @@ mod tests {
         let mut root = DecisionNode::new(env.clone(), 0);
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
         let mut rng = StdRng::seed_from_u64(42);
-        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
+        let mut q_bounds = (0.0_f32, 0.0_f32);
         for _ in 0..config.num_simulations {
             simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
         }
@@ -1051,7 +1051,7 @@ mod tests {
         let mut root = DecisionNode::new(env.clone(), 0);
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
         let mut rng = StdRng::seed_from_u64(42);
-        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
+        let mut q_bounds = (0.0_f32, 0.0_f32);
         for _ in 0..config.num_simulations {
             simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
         }
@@ -1093,7 +1093,7 @@ mod tests {
 
         // Run initial search
         let mut rng = StdRng::seed_from_u64(42);
-        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
+        let mut q_bounds = (0.0_f32, 0.0_f32);
         for _ in 0..config.num_simulations {
             simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
         }
@@ -1136,7 +1136,7 @@ mod tests {
 
         let evaluator = ConstantEvaluator { value: 0.0 };
         let mut rng = StdRng::seed_from_u64(1234);
-        let mut q_bounds = (f32::INFINITY, f32::NEG_INFINITY);
+        let mut q_bounds = (0.0_f32, 0.0_f32);
         let first = simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
         let second = simulate(&config, &evaluator, &mut root, &mut rng, &mut q_bounds);
 
