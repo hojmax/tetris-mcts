@@ -88,10 +88,6 @@ impl ActionSpace {
         true
     }
 
-    pub fn num_actions(&self) -> usize {
-        self.action_to_placement.len()
-    }
-
     #[inline]
     fn lookup_index(x: i32, y: i32, rotation: usize) -> Option<usize> {
         if !(X_MIN..X_MAX_EXCLUSIVE).contains(&x) {
@@ -114,9 +110,6 @@ impl ActionSpace {
         self.placement_to_action[lookup_idx]
     }
 
-    pub fn index_to_placement(&self, idx: usize) -> Option<(i32, i32, usize)> {
-        self.action_to_placement.get(idx).copied()
-    }
 }
 
 impl Default for ActionSpace {
@@ -137,7 +130,7 @@ mod tests {
     #[test]
     fn test_action_space() {
         let action_space = ActionSpace::new();
-        assert_eq!(action_space.num_actions(), NUM_PLACEMENT_ACTIONS);
+        assert_eq!(action_space.action_to_placement.len(), NUM_PLACEMENT_ACTIONS);
 
         // Test roundtrip
         for (idx, &(x, y, rot)) in action_space.action_to_placement.iter().enumerate() {

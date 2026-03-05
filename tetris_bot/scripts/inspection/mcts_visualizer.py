@@ -1038,8 +1038,13 @@ app.layout = html.Div(
                     type="number",
                     value=VIZ_DEFAULTS["num_simulations"],
                     min=1,
-                    max=1000,
-                    style={"width": "60px", "marginRight": "15px"},
+                    style={"width": "60px", "marginRight": "5px"},
+                ),
+                html.Button(
+                    "1000",
+                    id="set-1000-sims-button",
+                    n_clicks=0,
+                    style={"marginRight": "15px"},
                 ),
                 html.Label("c_puct:", style={"marginRight": "5px"}),
                 dcc.Input(
@@ -1318,6 +1323,15 @@ app.layout = html.Div(
         "height": "100vh",
     },
 )
+
+
+@callback(
+    Output("num-simulations", "value"),
+    Input("set-1000-sims-button", "n_clicks"),
+    prevent_initial_call=True,
+)
+def set_1000_sims(_):
+    return 1000
 
 
 @callback(
