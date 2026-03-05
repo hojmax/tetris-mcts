@@ -127,7 +127,9 @@ def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float | bool | 
     if not args.use_dummy_network and not model_path.exists():
         raise ValueError(f"Missing latest ONNX checkpoint: {model_path}")
 
-    config = json.loads(config_path.read_text())
+    raw = json.loads(config_path.read_text())
+    # Support both flat configs and the current nested format (keys under "self_play")
+    config = raw.get("self_play", raw)
     required_keys = [
         "num_simulations",
         "c_puct",
