@@ -36,9 +36,11 @@ class ScriptArgs:
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
     resume_dir: (  # Bootstrap a new run from existing run dir
         Path | None
-    ) = None  # Path(__file__).parent.parent.parent / "training_runs" / "v46"
+    ) = Path(__file__).parent.parent.parent / "training_runs" / "v0"
     resume_restore_optimizer_scheduler: bool = True  # If True, restore optimizer and scheduler from checkpoint when using resume_dir; if False, restore optimizer only and rebuild scheduler from current config
-    resume_wandb: str | None = None  # Resume from WandB run/artifact reference (entity/project/run_id or entity/project/artifact:alias)
+    resume_wandb: (  # Resume from WandB run/artifact reference (entity/project/run_id or entity/project/artifact:alias)
+        str | None
+    ) = None
     init_checkpoint: Path | None = None  # Initialize model weights from checkpoint
     no_wandb: bool = False  # Disable WandB logging
 
