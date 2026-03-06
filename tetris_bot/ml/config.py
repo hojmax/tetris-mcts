@@ -60,7 +60,7 @@ class SelfPlayConfig:
     num_simulations: int = 1000  # MCTS simulations per move
     c_puct: float = 1.5  # PUCT exploration constant
     temperature: float = (  # Sharpening / Smoothening of MCTS visit-count policy target
-        0.8
+        1.0
     )
     dirichlet_alpha: float = 0.02
     dirichlet_epsilon: float = 0.25
