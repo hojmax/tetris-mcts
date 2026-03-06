@@ -30,6 +30,41 @@ def compute_batch_feature_metrics(
     }
 
 
+def average_completed_games(
+    completed_games: list[tuple[int, dict[str, float | int]]],
+) -> dict[str, float]:
+    """Average all per-game stats using the same metric names as individual game logging."""
+    if not completed_games:
+        return {}
+
+    sums: dict[str, float] = {}
+    episode_length_sum = 0.0
+
+    for _, game_stats in completed_games:
+        episode_length = float(game_stats["episode_length"])
+        if episode_length <= 0.0:
+            raise ValueError(
+                "Invalid episode_length while averaging completed games: "
+                f"{episode_length}"
+            )
+        episode_length_sum += episode_length
+        for key, value in game_stats.items():
+            sums[key] = sums.get(key, 0.0) + float(value)
+
+    n = float(len(completed_games))
+    metrics = {f"game/{key}": total / n for key, total in sums.items()}
+
+    # Derived per-move rates (computed over pooled moves, not averaged per game)
+    attack_sum = sums.get("total_attack", 0.0)
+    lines_sum = sums.get("total_lines", 0.0)
+    holds_sum = sums.get("holds", 0.0)
+    metrics["game/attack_per_move"] = attack_sum / episode_length_sum
+    metrics["game/lines_per_move"] = lines_sum / episode_length_sum
+    metrics["game/hold_rate"] = holds_sum / episode_length_sum
+
+    return metrics
+
+
 def summarize_completed_games(
     completed_games: list[tuple[int, dict[str, float | int]]],
 ) -> dict[str, float]:

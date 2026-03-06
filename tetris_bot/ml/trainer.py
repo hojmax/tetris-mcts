@@ -38,8 +38,8 @@ from tetris_bot.ml.artifacts import (
 )
 from tetris_bot.ml.replay_buffer import TrainingBatch, CircularReplayMirror
 from tetris_bot.ml.game_metrics import (
+    average_completed_games,
     compute_batch_feature_metrics,
-    summarize_completed_games,
 )
 
 from tetris_core.tetris_core import MCTSConfig, GameGenerator
@@ -1236,12 +1236,12 @@ class Trainer:
                                 # a subset to appear in history.
                                 wandb.log(game_metrics)
                         else:
-                            game_summary_metrics = summarize_completed_games(
+                            game_avg_metrics = average_completed_games(
                                 completed_games
                             )
-                            if game_summary_metrics:
-                                game_summary_metrics["trainer_step"] = self.step
-                                wandb.log(game_summary_metrics)
+                            if game_avg_metrics:
+                                game_avg_metrics["trainer_step"] = self.step
+                                wandb.log(game_avg_metrics)
                     sample_batch_time_s = 0.0
                     sample_batch_count = 0
                     replay_sync_time_s = 0.0

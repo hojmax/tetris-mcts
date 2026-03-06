@@ -49,7 +49,7 @@ class OptimizerConfig:
         True
     )
     log_individual_games_to_wandb: bool = (  # If True, log one WandB row per completed game instead of aggregated replay summaries
-        True
+        False
     )
 
 
