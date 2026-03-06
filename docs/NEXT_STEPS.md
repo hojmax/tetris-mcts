@@ -2,6 +2,7 @@
 
 - [ ] Less sharpening of temperature
 - [ ] Try lower cpuct
+- [ ] Why don't we always have 50 piece episodes?
 - [ ] Higher exploration
 - [ ] We are overfitting on the test evals.
 - [ ] Go back to hyper params like v37 and then scale up and run on vast.ai
