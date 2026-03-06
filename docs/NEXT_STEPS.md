@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Why is the GPU going cold repeatedly like 50% of the time?
 - [ ] Why don't the final moves look full optimal? Like just clean out the board in the last 5 moves? Surely that is highest attack possible? Instead it does random nonsense.
 - [ ] Why don't we always have 50 piece episodes??????
 
