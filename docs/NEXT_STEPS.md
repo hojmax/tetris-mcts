@@ -1,8 +1,10 @@
 # Next Steps
 
+- [ ] Why don't the final moves look full optimal? Like just clean out the board in the last 5 moves? Surely that is highest attack possible? Instead it does random nonsense.
+- [ ] Why don't we always have 50 piece episodes??????
+
 - [ ] Less sharpening of temperature
 - [ ] Try lower cpuct
-- [ ] Why don't we always have 50 piece episodes?
 - [ ] Higher exploration
 - [ ] We are overfitting on the test evals.
 - [ ] Go back to hyper params like v37 and then scale up and run on vast.ai
