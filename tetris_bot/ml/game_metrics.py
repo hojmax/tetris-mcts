@@ -53,6 +53,13 @@ def average_completed_games(
 
     n = float(len(completed_games))
     metrics = {f"game/{key}": total / n for key, total in sums.items()}
+    first_game_number = float(completed_games[0][0])
+    last_game_number = float(completed_games[-1][0])
+    metrics["game_number"] = last_game_number
+    metrics["game/number"] = last_game_number
+    metrics["game/window_size"] = n
+    metrics["game/window_first_number"] = first_game_number
+    metrics["game/window_last_number"] = last_game_number
 
     # Derived per-move rates (computed over pooled moves, not averaged per game)
     attack_sum = sums.get("total_attack", 0.0)

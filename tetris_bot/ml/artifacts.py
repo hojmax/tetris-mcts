@@ -58,6 +58,17 @@ def _fix_onnx_external_data_references(onnx_path: Path) -> None:
         onnx.save_model(model, str(onnx_path))
 
 
+def _paths_refer_to_same_file(source_path: Path, destination_path: Path) -> bool:
+    if source_path == destination_path:
+        return True
+    if source_path.exists() and destination_path.exists():
+        try:
+            return source_path.samefile(destination_path)
+        except OSError:
+            return False
+    return False
+
+
 def copy_model_artifact_bundle(
     source_onnx_path: Path, destination_onnx_path: Path
 ) -> None:
@@ -67,11 +78,15 @@ def copy_model_artifact_bundle(
     source_required = required_model_artifact_paths(source_onnx_path)
     destination_required = required_model_artifact_paths(destination_onnx_path)
     for source_path, destination_path in zip(source_required, destination_required):
+        if _paths_refer_to_same_file(source_path, destination_path):
+            continue
         shutil.copy2(source_path, destination_path)
 
     source_optional = optional_model_artifact_paths(source_onnx_path)
     destination_optional = optional_model_artifact_paths(destination_onnx_path)
     for source_path, destination_path in zip(source_optional, destination_optional):
+        if _paths_refer_to_same_file(source_path, destination_path):
+            continue
         if source_path.exists():
             shutil.copy2(source_path, destination_path)
         else:

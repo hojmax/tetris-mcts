@@ -218,6 +218,8 @@ If you see `ModuleNotFoundError: No module named 'tetris_core.tetris_core'`, the
 - Resumed runs create a new `vN` directory and initialize from the source run checkpoint.
 - Promotion state (incumbent model + `nn_value_weight`) is treated as an atomic runtime state.
 - Older WandB model artifacts may miss ONNX external-data sidecars (`*.onnx.data`) for incumbent split models; resume now logs a warning and falls back to checkpoint-initialized model startup if incumbent bundle staging is incomplete.
+- Checkpoint-time incumbent artifact persistence can legitimately resolve to the same source/destination path (for example `incumbent.onnx` already in checkpoint dir); model bundle copy now treats in-place copies as a no-op to avoid `SameFileError`.
+- When `log_individual_games_to_wandb=False`, averaged game logs still emit `game_number` (last game in the window) plus window metadata so W&B plots using `game_number` as x-axis continue updating every log interval.
 
 ## Coding Rules (Condensed)
 
