@@ -304,7 +304,7 @@ def main(args: ScriptArgs) -> None:
             )
 
         if not args.no_wandb:
-            configure_wandb(config, device)
+            configure_wandb(config, device, resume_dir=effective_resume_dir)
 
         torch.set_float32_matmul_precision("high")
         logger.info("Starting training with Rust game generation")

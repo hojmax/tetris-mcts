@@ -70,9 +70,13 @@ def get_best_device() -> str:
     return "cpu"
 
 
-def initialize_or_update_wandb(config: TrainingConfig, device: str) -> None:
+def initialize_or_update_wandb(
+    config: TrainingConfig, device: str, resume_dir: Path | None = None
+) -> None:
     wandb_config = json.loads(config_to_json(config))
     wandb_config["device"] = device
+    if resume_dir is not None:
+        wandb_config["resume_dir"] = str(resume_dir)
 
     if wandb.run is None:
         wandb.init(
@@ -85,8 +89,10 @@ def initialize_or_update_wandb(config: TrainingConfig, device: str) -> None:
     wandb.config.update(wandb_config, allow_val_change=True)
 
 
-def configure_wandb(config: TrainingConfig, device: str) -> None:
-    initialize_or_update_wandb(config, device)
+def configure_wandb(
+    config: TrainingConfig, device: str, resume_dir: Path | None = None
+) -> None:
+    initialize_or_update_wandb(config, device, resume_dir=resume_dir)
     wandb.define_metric("trainer_step")
     wandb.define_metric("wall_time_hours")
     for ns in [
