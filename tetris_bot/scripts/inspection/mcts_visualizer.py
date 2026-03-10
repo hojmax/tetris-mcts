@@ -95,7 +95,7 @@ def _render_board_image(
 
 @dataclass
 class ScriptArgs:
-    run_dir: Path = (  # Training run dir (default: training_runs/v11)
+    run_dir: Path = (  # Training run dir (default: training_runs/v41)
         PROJECT_ROOT / "training_runs" / "v41"
     )
     use_dummy_network: bool = False  # Use uniform-prior/zero-value bootstrap search
@@ -1400,12 +1400,6 @@ app.layout = html.Div(
                     min=1,
                     style={"width": "60px", "marginRight": "5px"},
                 ),
-                html.Button(
-                    "1000",
-                    id="set-1000-sims-button",
-                    n_clicks=0,
-                    style={"marginRight": "15px"},
-                ),
                 html.Label("c_puct:", style={"marginRight": "5px"}),
                 dcc.Input(
                     id="c-puct",
@@ -1539,9 +1533,11 @@ app.layout = html.Div(
                     n_clicks=0,
                     style={"marginLeft": "8px"},
                 ),
-                html.Span(
-                    id="sim-counter",
-                    children="Sims: 0",
+                html.Div(
+                    dcc.Loading(
+                        html.Span(id="sim-counter", children="Sims: 0"),
+                        type="dot",
+                    ),
                     style={"marginLeft": "15px", "fontWeight": "bold"},
                 ),
                 dcc.Checklist(
@@ -1576,104 +1572,118 @@ app.layout = html.Div(
             },
         ),
         html.Div(
-            [
-                # Tree visualization (left)
+            dcc.Loading(
                 html.Div(
                     [
-                        cyto.Cytoscape(
-                            id="cytoscape-tree",
-                            elements=[],
-                            style={
-                                "width": "100%",
-                                "height": "100%",
-                            },
-                            layout={
-                                "name": "dagre",
-                                "rankDir": "TB",
-                                "spacingFactor": 1.5,
-                            },
-                            stylesheet=stylesheet,
-                            zoom=1,
-                            pan={"x": 0, "y": 0},
-                        ),
-                    ],
-                    style={"flex": "1", "minWidth": "0"},
-                ),
-                # Right panel: Board + State info (top) and Node details (bottom)
-                html.Div(
-                    [
+                        # Tree visualization (left)
                         html.Div(
                             [
-                                html.Button(
-                                    "Back",
-                                    id="nav-back-button",
-                                    n_clicks=0,
-                                    style={"padding": "4px 12px", "cursor": "pointer"},
-                                ),
-                                html.Button(
-                                    "Root",
-                                    id="nav-root-button",
-                                    n_clicks=0,
+                                cyto.Cytoscape(
+                                    id="cytoscape-tree",
+                                    elements=[],
                                     style={
-                                        "padding": "4px 12px",
-                                        "cursor": "pointer",
-                                        "marginLeft": "6px",
+                                        "width": "100%",
+                                        "height": "100%",
                                     },
+                                    layout={
+                                        "name": "dagre",
+                                        "rankDir": "TB",
+                                        "spacingFactor": 1.5,
+                                    },
+                                    stylesheet=stylesheet,
+                                    zoom=1,
+                                    pan={"x": 0, "y": 0},
                                 ),
                             ],
-                            style={"marginBottom": "6px"},
+                            style={"flex": "1", "minWidth": "0"},
                         ),
-                        # Top row: Board image + State info side by side
+                        # Right panel: Board + State info (top) and Node details (bottom)
                         html.Div(
                             [
                                 html.Div(
                                     [
-                                        html.Img(
-                                            id="board-image",
-                                            style={"border": "1px solid #ccc"},
+                                        html.Button(
+                                            "Back",
+                                            id="nav-back-button",
+                                            n_clicks=0,
+                                            style={
+                                                "padding": "4px 12px",
+                                                "cursor": "pointer",
+                                            },
+                                        ),
+                                        html.Button(
+                                            "Root",
+                                            id="nav-root-button",
+                                            n_clicks=0,
+                                            style={
+                                                "padding": "4px 12px",
+                                                "cursor": "pointer",
+                                                "marginLeft": "6px",
+                                            },
                                         ),
                                     ],
-                                    style={"marginRight": "15px"},
+                                    style={"marginBottom": "6px"},
                                 ),
+                                # Top row: Board image + State info side by side
                                 html.Div(
-                                    id="state-info",
-                                    style={"fontSize": "13px"},
+                                    [
+                                        html.Div(
+                                            [
+                                                html.Img(
+                                                    id="board-image",
+                                                    style={"border": "1px solid #ccc"},
+                                                ),
+                                            ],
+                                            style={"marginRight": "15px"},
+                                        ),
+                                        html.Div(
+                                            id="state-info",
+                                            style={"fontSize": "13px"},
+                                        ),
+                                    ],
+                                    style={
+                                        "display": "flex",
+                                        "flexDirection": "row",
+                                        "alignItems": "flex-start",
+                                        "marginBottom": "10px",
+                                        "paddingBottom": "10px",
+                                        "borderBottom": "1px solid #ddd",
+                                    },
+                                ),
+                                # Node details below
+                                html.Div(
+                                    id="node-details",
+                                    children="Click a node to see details",
+                                    style={
+                                        "overflowY": "auto",
+                                        "flex": "1",
+                                        "minHeight": "0",
+                                    },
                                 ),
                             ],
                             style={
+                                "width": "480px",
+                                "padding": "10px",
+                                "backgroundColor": "#f8f8f8",
+                                "marginLeft": "5px",
+                                "height": "100%",
                                 "display": "flex",
-                                "flexDirection": "row",
-                                "alignItems": "flex-start",
-                                "marginBottom": "10px",
-                                "paddingBottom": "10px",
-                                "borderBottom": "1px solid #ddd",
+                                "flexDirection": "column",
+                                "overflow": "hidden",
                             },
-                        ),
-                        # Node details below
-                        html.Div(
-                            id="node-details",
-                            children="Click a node to see details",
-                            style={"overflowY": "auto", "flex": "1", "minHeight": "0"},
                         ),
                     ],
                     style={
-                        "width": "480px",
-                        "padding": "10px",
-                        "backgroundColor": "#f8f8f8",
-                        "marginLeft": "5px",
-                        "height": "100%",
                         "display": "flex",
-                        "flexDirection": "column",
-                        "overflow": "hidden",
+                        "flexDirection": "row",
+                        "flex": "1",
+                        "minHeight": "0",
                     },
                 ),
-            ],
-            style={
-                "display": "flex",
-                "flexDirection": "row",
-                "flex": "1",
-                "minHeight": "0",
-            },
+                type="circle",
+                delay_show=250,
+            ),
+            style={"flex": "1", "minHeight": "0"},
         ),
         # Hidden storage for tree data
         dcc.Store(id="tree-store"),
@@ -1697,15 +1707,6 @@ app.layout = html.Div(
         "height": "100vh",
     },
 )
-
-
-@callback(
-    Output("num-simulations", "value"),
-    Input("set-1000-sims-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def set_1000_sims(_):
-    return 1000
 
 
 def build_error_elements(error_label: str) -> list[dict]:
@@ -1837,7 +1838,7 @@ def run_mcts(
     current_sims = sims_done or 0
 
     if triggered_id == "play-full-game-button":
-        sims_to_run = current_sims
+        sims_to_run = int(num_sims)
     elif triggered_id == "step-button":
         sims_to_run = current_sims + 1
     elif triggered_id == "step-100-button":
@@ -1912,7 +1913,7 @@ def run_mcts(
             if model_suffix == ".pt":
                 error_label = (
                     "Failed to load model: .pt checkpoint provided. "
-                    "Use an ONNX file (e.g., training_runs/.../checkpoints/parallel.onnx)."
+                    "Use an ONNX file (e.g., training_runs/.../checkpoints/incumbent.onnx)."
                 )
             else:
                 error_label = "Failed to load model: expected an ONNX file"
