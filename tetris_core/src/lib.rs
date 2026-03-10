@@ -33,7 +33,8 @@ pub use game::scoring::{
 pub use replay::{GameReplay, ReplayMove};
 pub use runtime::{evaluate_model, evaluate_model_without_nn, EvalResult, GameGenerator};
 pub use search::{
-    GameResult, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport, TrainingExample, TreeNodeExport,
+    GameResult, GameTreePlayback, GameTreeStep, MCTSAgent, MCTSConfig, MCTSResult, MCTSTreeExport,
+    TrainingExample, TreeNodeExport,
 };
 
 #[pyfunction]
@@ -120,6 +121,8 @@ fn tetris_core(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<MCTSResult>()?;
     m.add_class::<TrainingExample>()?;
     m.add_class::<GameResult>()?;
+    m.add_class::<GameTreeStep>()?;
+    m.add_class::<GameTreePlayback>()?;
     m.add_class::<TreeNodeExport>()?;
     m.add_class::<MCTSTreeExport>()?;
     m.add_class::<GameGenerator>()?;

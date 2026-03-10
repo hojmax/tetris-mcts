@@ -58,6 +58,7 @@ make optimize   # auto-tune build/backend/workers for this machine (with cache)
 
 `make install` performs a best-effort Linux system dependency bootstrap for ORT builds (`pkg-config` + OpenSSL headers) and maturin builds (`patchelf`); disable with `AUTO_INSTALL_SYSTEM_DEPS=0`.
 `make viz` accepts pass-through args via `VIZ_ARGS`, e.g. `make viz VIZ_ARGS="--state_preset tetris_bot/scripts/inspection/viz_state_presets/training_data1_game721_move32.json"`; generate presets from NPZ with `python tetris_bot/scripts/inspection/extract_viz_state_preset.py`.
+The visualizer UI includes a `Play Full Game` control that rolls out the rest of the game from the current state using tree reuse, stitches the per-move search trees together with `reuse` edges, and highlights the chosen action/chance path.
 
 Useful extras:
 

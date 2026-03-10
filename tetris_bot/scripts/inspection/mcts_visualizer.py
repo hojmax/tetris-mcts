@@ -347,11 +347,10 @@ def format_chance_outcome(outcome_idx: int) -> str:
     return f"P{outcome_idx}"
 
 
-def get_possible_chance_outcomes(chance_node) -> list[int]:
-    queue_len = chance_node.state.get_queue_len()
-    if queue_len >= QUEUE_SIZE:
+def get_possible_chance_outcomes_for_env(env: TetrisEnv) -> list[int]:
+    if env.get_queue_len() >= QUEUE_SIZE:
         return [NO_CHANCE_OUTCOME]
-    outcomes = list(chance_node.state.get_possible_next_pieces())
+    outcomes = list(env.get_possible_next_pieces())
     outcomes.sort()
     return outcomes
 
@@ -414,6 +413,250 @@ def build_decision_action_stats(
         )
 
     return action_stats
+
+
+def build_env_cache_for_tree(tree) -> dict[int, TetrisEnv]:
+    env_cache: dict[int, TetrisEnv] = {}
+    node_types = {n.id: n.node_type for n in tree.nodes}
+
+    for node in tree.nodes:
+        if node.parent_id is None:
+            env_cache[node.id] = node.state.clone_state()
+            continue
+
+        if node.parent_id in env_cache and node.edge_from_parent is not None:
+            parent_env = env_cache[node.parent_id].clone_state()
+            if node_types[node.parent_id] == "decision":
+                result = parent_env.execute_action_index(node.edge_from_parent)
+                if result is None:
+                    env_cache[node.id] = node.state.clone_state()
+                    continue
+                parent_env.truncate_queue(QUEUE_SIZE)
+            elif node.edge_from_parent < NUM_PIECE_TYPES:
+                parent_env.push_queue_piece(node.edge_from_parent)
+            env_cache[node.id] = parent_env
+            continue
+
+        env_cache[node.id] = node.state.clone_state()
+
+    return env_cache
+
+
+def tree_export_to_dict(
+    tree,
+    c_puct: float,
+    q_scale: float | None,
+    search_step: int = 0,
+    is_reuse_root: bool = False,
+) -> dict:
+    env_cache = build_env_cache_for_tree(tree)
+
+    return {
+        "nodes": [
+            {
+                "id": node.id,
+                "node_type": node.node_type,
+                "visit_count": node.visit_count,
+                "mean_value": node.mean_value,
+                "value_sum": node.value_sum,
+                "value_history": list(node.value_history),
+                "nn_value": node.nn_value,
+                "attack": node.attack,
+                "is_terminal": node.is_terminal,
+                "move_number": node.move_number,
+                "valid_actions": list(node.valid_actions),
+                "action_priors": list(node.action_priors),
+                "children": list(node.children),
+                "parent_id": node.parent_id,
+                "edge_from_parent": node.edge_from_parent,
+                "board": list(node.state.get_board()),
+                "board_piece_types": list(
+                    env_cache[node.id].get_board_piece_types()
+                    if node.id in env_cache
+                    else node.state.get_board_piece_types()
+                ),
+                "current_piece": node.state.get_current_piece().piece_type
+                if node.state.get_current_piece()
+                else None,
+                "hold_piece": node.state.get_hold_piece().piece_type
+                if node.state.get_hold_piece()
+                else None,
+                "queue": list(node.state.get_queue(5)),
+                "possible_chance_outcomes": (
+                    get_possible_chance_outcomes_for_env(node.state)
+                    if node.node_type == "chance"
+                    else []
+                ),
+                "search_step": search_step,
+                "is_reuse_root": is_reuse_root and node.id == tree.root_id,
+            }
+            for node in tree.nodes
+        ],
+        "root_id": tree.root_id,
+        "selected_action": tree.selected_action,
+        "num_simulations": tree.num_simulations,
+        "c_puct": c_puct,
+        "q_scale": q_scale,
+        "mode": "single_search",
+        "counter_label": f"Sims: {tree.num_simulations}",
+        "highlighted_node_ids": [],
+        "highlighted_edge_keys": [],
+        "reuse_edges": [],
+    }
+
+
+def offset_tree_dict(tree_dict: dict, node_offset: int) -> dict:
+    offset_nodes: list[dict] = []
+    for node in tree_dict["nodes"]:
+        offset_nodes.append(
+            {
+                **node,
+                "id": node["id"] + node_offset,
+                "children": [child_id + node_offset for child_id in node["children"]],
+                "parent_id": (
+                    node["parent_id"] + node_offset
+                    if node["parent_id"] is not None
+                    else None
+                ),
+            }
+        )
+
+    return {
+        **tree_dict,
+        "nodes": offset_nodes,
+        "root_id": tree_dict["root_id"] + node_offset,
+    }
+
+
+def find_selected_path_targets(
+    tree_dict: dict,
+    selected_action: int,
+    selected_chance_outcome: int,
+) -> tuple[str, str | None]:
+    root = tree_dict["nodes"][tree_dict["root_id"]]
+    action_target = f"v_{root['id']}_{selected_action}"
+    selected_chance_node: dict | None = None
+
+    for child_id in root["children"]:
+        child = tree_dict["nodes"][child_id]
+        if child.get("edge_from_parent") == selected_action:
+            action_target = str(child["id"])
+            selected_chance_node = child
+            break
+
+    if selected_chance_node is None:
+        return action_target, None
+
+    chance_target = f"vp_{selected_chance_node['id']}_{selected_chance_outcome}"
+    for child_id in selected_chance_node["children"]:
+        child = tree_dict["nodes"][child_id]
+        if child.get("edge_from_parent") == selected_chance_outcome:
+            chance_target = str(child["id"])
+            break
+
+    return action_target, chance_target
+
+
+def build_full_game_tree_dict(
+    playback,
+    c_puct: float,
+    q_scale: float | None,
+) -> dict:
+    combined_nodes: list[dict] = []
+    highlighted_node_ids: set[str] = set()
+    highlighted_edge_keys: list[dict[str, str]] = []
+    reuse_edges: list[dict[str, str]] = []
+    root_id = 0
+    previous_path_target: str | None = None
+
+    for step_index, step in enumerate(playback.steps):
+        step_tree = tree_export_to_dict(
+            step.tree,
+            c_puct=c_puct,
+            q_scale=q_scale,
+            search_step=step_index,
+            is_reuse_root=step_index > 0,
+        )
+        step_tree = offset_tree_dict(step_tree, len(combined_nodes))
+
+        if step_index == 0:
+            root_id = step_tree["root_id"]
+
+        combined_nodes.extend(step_tree["nodes"])
+        step_root_id = str(step_tree["root_id"])
+        highlighted_node_ids.add(step_root_id)
+
+        action_target, chance_target = find_selected_path_targets(
+            step_tree,
+            selected_action=step.selected_action,
+            selected_chance_outcome=step.selected_chance_outcome,
+        )
+        highlighted_node_ids.add(action_target)
+        highlighted_edge_keys.append({"source": step_root_id, "target": action_target})
+
+        if chance_target is not None:
+            highlighted_node_ids.add(chance_target)
+            highlighted_edge_keys.append(
+                {"source": action_target, "target": chance_target}
+            )
+
+        if previous_path_target is not None:
+            reuse_edge = {
+                "source": previous_path_target,
+                "target": step_root_id,
+                "label": "reuse",
+                "classes": "reuse-edge chosen-edge",
+            }
+            reuse_edges.append(reuse_edge)
+            highlighted_edge_keys.append(
+                {
+                    "source": previous_path_target,
+                    "target": step_root_id,
+                }
+            )
+
+        previous_path_target = chance_target
+
+    return {
+        "nodes": combined_nodes,
+        "root_id": root_id,
+        "selected_action": playback.steps[0].selected_action
+        if playback.steps
+        else None,
+        "num_simulations": playback.steps[0].tree.num_simulations
+        if playback.steps
+        else 0,
+        "c_puct": c_puct,
+        "q_scale": q_scale,
+        "mode": "full_game",
+        "counter_label": (
+            f"Full game: {playback.num_moves} placements, {playback.num_frames} frames, "
+            f"Atk {playback.total_attack}, reuse {playback.tree_reuse_hits}/"
+            f"{playback.tree_reuse_hits + playback.tree_reuse_misses}, "
+            f"nodes {len(combined_nodes)}"
+        ),
+        "highlighted_node_ids": sorted(highlighted_node_ids),
+        "highlighted_edge_keys": highlighted_edge_keys,
+        "reuse_edges": reuse_edges,
+        "total_attack": playback.total_attack,
+        "num_moves": playback.num_moves,
+        "num_frames": playback.num_frames,
+        "tree_reuse_hits": playback.tree_reuse_hits,
+        "tree_reuse_misses": playback.tree_reuse_misses,
+    }
+
+
+def build_full_game_env_cache(playback) -> dict[int, TetrisEnv]:
+    combined_env_cache: dict[int, TetrisEnv] = {}
+    node_offset = 0
+
+    for step in playback.steps:
+        step_env_cache = build_env_cache_for_tree(step.tree)
+        for node_id, env in step_env_cache.items():
+            combined_env_cache[node_id + node_offset] = env
+        node_offset += len(step.tree.nodes)
+
+    return combined_env_cache
 
 
 def parse_piece_token(token: str) -> int:
@@ -737,114 +980,157 @@ def _node_color(attack: int | str, node_type: str) -> str:
 
 
 def build_cytoscape_elements(
-    tree, max_nodes: int | None = None, show_unvisited: bool = True, c_puct: float = 1.0
+    tree_dict: dict,
+    max_nodes: int | None = None,
+    show_unvisited: bool = True,
 ):
-    """Convert MCTSTreeExport to Cytoscape elements."""
+    """Convert a serialized tree dict into Cytoscape elements."""
+    if tree_dict is None or not tree_dict.get("nodes"):
+        return []
+
     elements = []
+    nodes = tree_dict["nodes"]
+    c_puct = tree_dict.get("c_puct", 1.0)
+    highlighted_node_ids = set(tree_dict.get("highlighted_node_ids", []))
+    highlighted_edge_keys = {
+        (edge["source"], edge["target"])
+        for edge in tree_dict.get("highlighted_edge_keys", [])
+    }
 
     # Limit nodes only if explicitly requested
     nodes_to_show = (
-        len(tree.nodes)
+        len(nodes)
         if max_nodes is None or max_nodes <= 0
-        else min(len(tree.nodes), max_nodes)
+        else min(len(nodes), max_nodes)
     )
 
     # Sort nodes by visit count to show most important ones
-    indexed_nodes = [(i, node.visit_count) for i, node in enumerate(tree.nodes)]
+    indexed_nodes = [(node["id"], node["visit_count"]) for node in nodes]
     sorted_indices = [
         i for i, _ in sorted(indexed_nodes, key=lambda x: x[1], reverse=True)
     ][:nodes_to_show]
     shown_ids = set(sorted_indices)
 
     # Always include root
-    shown_ids.add(tree.root_id)
+    shown_ids.add(tree_dict["root_id"])
+    for highlighted_node_id in highlighted_node_ids:
+        if highlighted_node_id.isdigit():
+            shown_ids.add(int(highlighted_node_id))
 
     # Track which actions/pieces from nodes already have children
     visited_actions = {}  # decision node_id -> set of action indices with children
     visited_pieces = {}  # chance node_id -> set of piece types with children
-    for node in tree.nodes:
-        if node.node_type == "decision":
-            visited_actions[node.id] = set()
-            for child_id in node.children:
-                child = tree.nodes[child_id]
-                if child.edge_from_parent is not None:
-                    visited_actions[node.id].add(child.edge_from_parent)
-        elif node.node_type == "chance":
-            visited_pieces[node.id] = set()
-            for child_id in node.children:
-                child = tree.nodes[child_id]
-                if child.edge_from_parent is not None:
-                    visited_pieces[node.id].add(child.edge_from_parent)
+    for node in nodes:
+        if node["node_type"] == "decision":
+            visited_actions[node["id"]] = set()
+            for child_id in node["children"]:
+                child = nodes[child_id]
+                if child["edge_from_parent"] is not None:
+                    visited_actions[node["id"]].add(child["edge_from_parent"])
+        elif node["node_type"] == "chance":
+            visited_pieces[node["id"]] = set()
+            for child_id in node["children"]:
+                child = nodes[child_id]
+                if child["edge_from_parent"] is not None:
+                    visited_pieces[node["id"]].add(child["edge_from_parent"])
 
-    for node in tree.nodes:
-        if node.id not in shown_ids:
+    for node in nodes:
+        if node["id"] not in shown_ids:
             continue
 
         # Node data
-        is_decision = node.node_type == "decision"
-        node_class = "decision" if is_decision else "chance"
+        is_decision = node["node_type"] == "decision"
+        node_classes = ["decision" if is_decision else "chance"]
+        if node.get("is_reuse_root"):
+            node_classes.append("reused-root")
+        if str(node["id"]) in highlighted_node_ids:
+            node_classes.append("chosen-node")
 
         # Label based on type
         if is_decision:
-            label = f"D{node.id}\nV:{node.visit_count}\nQ:{node.mean_value:.1f}"
+            label = (
+                f"D{node['id']}\nV:{node['visit_count']}\nQ:{node['mean_value']:.1f}"
+            )
         else:
-            label = f"C{node.id}\nV:{node.visit_count}\nA:{node.attack}"
+            label = f"C{node['id']}\nV:{node['visit_count']}\nA:{node['attack']}"
 
         elements.append(
             {
                 "data": {
-                    "id": str(node.id),
+                    "id": str(node["id"]),
                     "label": label,
-                    "node_type": node.node_type,
-                    "visit_count": node.visit_count,
-                    "mean_value": node.mean_value,
-                    "value_sum": node.value_sum,
-                    "attack": node.attack,
-                    "attack_color": _node_color(node.attack, node.node_type),
-                    "is_terminal": node.is_terminal,
-                    "move_number": node.move_number,
-                    "edge_from_parent": node.edge_from_parent,
-                    "parent_id": node.parent_id,
+                    "node_type": node["node_type"],
+                    "visit_count": node["visit_count"],
+                    "mean_value": node["mean_value"],
+                    "value_sum": node["value_sum"],
+                    "attack": node["attack"],
+                    "attack_color": _node_color(node["attack"], node["node_type"]),
+                    "is_terminal": node["is_terminal"],
+                    "move_number": node["move_number"],
+                    "edge_from_parent": node["edge_from_parent"],
+                    "parent_id": node["parent_id"],
+                    "search_step": node.get("search_step", 0),
                 },
-                "classes": node_class,
+                "classes": " ".join(node_classes),
             }
         )
 
         # Edges to children
-        for child_id in node.children:
+        for child_id in node["children"]:
             if child_id in shown_ids:
-                child = tree.nodes[child_id]
+                child = nodes[child_id]
                 edge_label = ""
-                if child.edge_from_parent is not None:
+                if child["edge_from_parent"] is not None:
                     if is_decision:
-                        edge_label = f"a{child.edge_from_parent}"
+                        edge_label = f"a{child['edge_from_parent']}"
                     else:
-                        edge_label = format_chance_outcome(child.edge_from_parent)
+                        edge_label = format_chance_outcome(child["edge_from_parent"])
+
+                source_id = str(node["id"])
+                target_id = str(child_id)
+                edge_classes = []
+                if (source_id, target_id) in highlighted_edge_keys:
+                    edge_classes.append("chosen-edge")
 
                 elements.append(
                     {
                         "data": {
-                            "source": str(node.id),
-                            "target": str(child_id),
+                            "source": source_id,
+                            "target": target_id,
                             "label": edge_label,
-                        }
+                        },
+                        "classes": " ".join(edge_classes),
                     }
                 )
 
         # Add virtual (unvisited) chance nodes for decision nodes
-        if show_unvisited and is_decision and node.valid_actions:
-            sqrt_parent = (node.visit_count + 1) ** 0.5
-            action_to_prior = dict(zip(node.valid_actions, node.action_priors))
+        if is_decision and node["valid_actions"]:
+            sqrt_parent = (node["visit_count"] + 1) ** 0.5
+            action_to_prior = dict(zip(node["valid_actions"], node["action_priors"]))
 
-            for action_idx in node.valid_actions:
+            for action_idx in node["valid_actions"]:
                 # Skip if this action already has a child
-                if action_idx in visited_actions.get(node.id, set()):
+                if action_idx in visited_actions.get(node["id"], set()):
                     continue
 
                 prior = action_to_prior.get(action_idx, 0.0)
                 # U = c_puct * P * sqrt(N_parent) / (1 + 0) for unvisited
                 u_value = c_puct * prior * sqrt_parent
-                virtual_id = f"v_{node.id}_{action_idx}"
+                virtual_id = f"v_{node['id']}_{action_idx}"
+                edge_key = (str(node["id"]), virtual_id)
+                is_highlighted = (
+                    virtual_id in highlighted_node_ids
+                    or edge_key in highlighted_edge_keys
+                )
+                if not show_unvisited and not is_highlighted:
+                    continue
+
+                virtual_classes = ["chance", "unvisited"]
+                edge_classes = ["unvisited-edge"]
+                if virtual_id in highlighted_node_ids:
+                    virtual_classes.append("chosen-node")
+                if edge_key in highlighted_edge_keys:
+                    edge_classes.append("chosen-edge")
 
                 elements.append(
                     {
@@ -858,37 +1144,52 @@ def build_cytoscape_elements(
                             "attack": "?",
                             "attack_color": _node_color(0, "chance"),
                             "is_terminal": False,
-                            "move_number": node.move_number,
+                            "move_number": node["move_number"],
                             "edge_from_parent": action_idx,
-                            "parent_id": node.id,
+                            "parent_id": node["id"],
                             "prior": prior,
                             "u_value": u_value,
+                            "search_step": node.get("search_step", 0),
                         },
-                        "classes": "chance unvisited",
+                        "classes": " ".join(virtual_classes),
                     }
                 )
 
                 elements.append(
                     {
                         "data": {
-                            "source": str(node.id),
+                            "source": str(node["id"]),
                             "target": virtual_id,
                             "label": f"a{action_idx}",
                         },
-                        "classes": "unvisited-edge",
+                        "classes": " ".join(edge_classes),
                     }
                 )
 
         # Add virtual (unvisited) decision nodes for chance nodes
-        if show_unvisited and not is_decision:
-            possible_outcomes = get_possible_chance_outcomes(node)
+        if not is_decision:
+            possible_outcomes = node.get("possible_chance_outcomes", [])
             for outcome_idx in possible_outcomes:
                 # Skip if this outcome already has a child
-                if outcome_idx in visited_pieces.get(node.id, set()):
+                if outcome_idx in visited_pieces.get(node["id"], set()):
                     continue
 
-                virtual_id = f"vp_{node.id}_{outcome_idx}"
+                virtual_id = f"vp_{node['id']}_{outcome_idx}"
                 outcome_name = format_chance_outcome(outcome_idx)
+                edge_key = (str(node["id"]), virtual_id)
+                is_highlighted = (
+                    virtual_id in highlighted_node_ids
+                    or edge_key in highlighted_edge_keys
+                )
+                if not show_unvisited and not is_highlighted:
+                    continue
+
+                virtual_classes = ["decision", "unvisited"]
+                edge_classes = ["unvisited-edge"]
+                if virtual_id in highlighted_node_ids:
+                    virtual_classes.append("chosen-node")
+                if edge_key in highlighted_edge_keys:
+                    edge_classes.append("chosen-edge")
 
                 elements.append(
                     {
@@ -902,24 +1203,37 @@ def build_cytoscape_elements(
                             "attack": 0,
                             "attack_color": _node_color(0, "decision"),
                             "is_terminal": False,
-                            "move_number": node.move_number,
+                            "move_number": node["move_number"],
                             "edge_from_parent": outcome_idx,
-                            "parent_id": node.id,
+                            "parent_id": node["id"],
+                            "search_step": node.get("search_step", 0),
                         },
-                        "classes": "decision unvisited",
+                        "classes": " ".join(virtual_classes),
                     }
                 )
 
                 elements.append(
                     {
                         "data": {
-                            "source": str(node.id),
+                            "source": str(node["id"]),
                             "target": virtual_id,
                             "label": outcome_name,
                         },
-                        "classes": "unvisited-edge",
+                        "classes": " ".join(edge_classes),
                     }
                 )
+
+    for reuse_edge in tree_dict.get("reuse_edges", []):
+        elements.append(
+            {
+                "data": {
+                    "source": reuse_edge["source"],
+                    "target": reuse_edge["target"],
+                    "label": reuse_edge.get("label", "reuse"),
+                },
+                "classes": reuse_edge.get("classes", "reuse-edge"),
+            }
+        )
 
     return elements
 
@@ -1018,6 +1332,35 @@ stylesheet = [
         "style": {
             "opacity": 0.4,
             "line-style": "dashed",
+        },
+    },
+    {
+        "selector": ".chosen-node",
+        "style": {
+            "border-width": 4,
+            "border-color": "#f4d35e",
+        },
+    },
+    {
+        "selector": ".chosen-edge",
+        "style": {
+            "width": 4,
+            "line-color": "#f4d35e",
+            "target-arrow-color": "#f4d35e",
+        },
+    },
+    {
+        "selector": ".reuse-edge",
+        "style": {
+            "line-style": "dotted",
+            "curve-style": "unbundled-bezier",
+        },
+    },
+    {
+        "selector": ".reused-root",
+        "style": {
+            "border-width": 3,
+            "border-color": "#ff8844",
         },
     },
     # Highlighted node (keyboard navigation) - just adds border, keeps other styles
@@ -1190,6 +1533,12 @@ app.layout = html.Div(
                     n_clicks=0,
                     style={"marginLeft": "8px"},
                 ),
+                html.Button(
+                    "Play Full Game",
+                    id="play-full-game-button",
+                    n_clicks=0,
+                    style={"marginLeft": "8px"},
+                ),
                 html.Span(
                     id="sim-counter",
                     children="Sims: 0",
@@ -1265,7 +1614,11 @@ app.layout = html.Div(
                                     "Root",
                                     id="nav-root-button",
                                     n_clicks=0,
-                                    style={"padding": "4px 12px", "cursor": "pointer", "marginLeft": "6px"},
+                                    style={
+                                        "padding": "4px 12px",
+                                        "cursor": "pointer",
+                                        "marginLeft": "6px",
+                                    },
                                 ),
                             ],
                             style={"marginBottom": "6px"},
@@ -1355,6 +1708,15 @@ def set_1000_sims(_):
     return 1000
 
 
+def build_error_elements(error_label: str) -> list[dict]:
+    return [
+        {
+            "data": {"id": "error", "label": error_label},
+            "classes": "decision",
+        }
+    ]
+
+
 @callback(
     Output("tree-store", "data"),
     Output("env-store", "data"),
@@ -1367,6 +1729,7 @@ def set_1000_sims(_):
     Input("step-100-button", "n_clicks"),
     Input("step-1000-button", "n_clicks"),
     Input("step-back-button", "n_clicks"),
+    Input("play-full-game-button", "n_clicks"),
     Input("show-unvisited", "value"),
     State("model-path", "value"),
     State("use-dummy-network", "value"),
@@ -1395,6 +1758,7 @@ def run_mcts(
     step_100_clicks,
     step_1000_clicks,
     step_back_clicks,
+    _play_full_game_clicks,
     show_unvisited_value,
     model_path,
     use_dummy_network_value,
@@ -1418,6 +1782,8 @@ def run_mcts(
     sims_done,
 ):
     """Run MCTS search and update the tree."""
+    global _env_cache
+
     ctx = dash.callback_context
     if not ctx.triggered:
         return (
@@ -1431,6 +1797,29 @@ def run_mcts(
         )
 
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    show_unvisited = "show" in (show_unvisited_value or [])
+
+    if triggered_id == "show-unvisited":
+        if tree_data is None:
+            return (
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update,
+            )
+
+        return (
+            tree_data,
+            env_data,
+            sims_done,
+            dash.no_update,
+            dash.no_update,
+            build_cytoscape_elements(tree_data, None, show_unvisited),
+            tree_data.get("counter_label", f"Sims: {sims_done or 0}"),
+        )
 
     if num_sims is None:
         raise ValueError("num_simulations is required")
@@ -1447,7 +1836,9 @@ def run_mcts(
 
     current_sims = sims_done or 0
 
-    if triggered_id == "step-button":
+    if triggered_id == "play-full-game-button":
+        sims_to_run = current_sims
+    elif triggered_id == "step-button":
         sims_to_run = current_sims + 1
     elif triggered_id == "step-100-button":
         sims_to_run = current_sims + 100
@@ -1455,12 +1846,11 @@ def run_mcts(
         sims_to_run = current_sims + 1000
     elif triggered_id == "step-back-button":
         sims_to_run = max(current_sims - 1, 0)
-    elif triggered_id == "show-unvisited":
-        sims_to_run = current_sims
     else:
         sims_to_run = current_sims
 
-    if sims_to_run == 0:
+    if triggered_id != "play-full-game-button" and sims_to_run == 0:
+        _env_cache.clear()
         return (
             None,
             {
@@ -1486,6 +1876,7 @@ def run_mcts(
     config.max_placements = max_placements
     config.seed = int(seed) if seed is not None else None
     config.track_value_history = True
+    config.reuse_tree = True
     agent = MCTSAgent(config)
 
     use_dummy_network = "dummy" in (use_dummy_network_value or [])
@@ -1500,12 +1891,7 @@ def run_mcts(
                 0,
                 None,
                 [],
-                [
-                    {
-                        "data": {"id": "error", "label": error_label},
-                        "classes": "decision",
-                    }
-                ],
+                build_error_elements(error_label),
                 error_label,
             )
 
@@ -1517,15 +1903,7 @@ def run_mcts(
                 0,
                 None,
                 [],
-                [
-                    {
-                        "data": {
-                            "id": "error",
-                            "label": f"Model not found: {model_path_str}",
-                        },
-                        "classes": "decision",
-                    }
-                ],
+                build_error_elements(f"Model not found: {model_path_str}"),
                 "Error: Model not found",
             )
 
@@ -1544,12 +1922,7 @@ def run_mcts(
                 0,
                 None,
                 [],
-                [
-                    {
-                        "data": {"id": "error", "label": error_label},
-                        "classes": "decision",
-                    }
-                ],
+                build_error_elements(error_label),
                 error_label,
             )
 
@@ -1570,132 +1943,79 @@ def run_mcts(
             0,
             None,
             [],
-            [
-                {
-                    "data": {
-                        "id": "error",
-                        "label": f"Invalid custom state: {custom_state_error}",
-                    },
-                    "classes": "decision",
-                }
-            ],
+            build_error_elements(f"Invalid custom state: {custom_state_error}"),
             f"Error: {custom_state_error}",
         )
 
-    # Run MCTS with current number of simulations
     add_noise = "noise" in (add_noise_value or [])
     placement_count_int = int(move_number) if move_number is not None else 0
+
+    if triggered_id == "play-full-game-button":
+        playback = agent.play_game_with_trees(
+            env,
+            max_placements=max_placements,
+            add_noise=add_noise,
+            placement_count=placement_count_int,
+        )
+        if playback is None:
+            _env_cache.clear()
+            return (
+                None,
+                None,
+                0,
+                None,
+                [],
+                build_error_elements("Full-game playback failed"),
+                "Error: Full-game playback failed",
+            )
+
+        _env_cache.clear()
+        _env_cache.update(build_full_game_env_cache(playback))
+        tree_dict = build_full_game_tree_dict(playback, config.c_puct, config.q_scale)
+        elements = build_cytoscape_elements(tree_dict, None, show_unvisited)
+        root_selection = str(tree_dict["root_id"]) if tree_dict.get("nodes") else None
+        return (
+            tree_dict,
+            {"seed": seed, "move_number": placement_count_int, "mode": "full_game"},
+            0,
+            root_selection,
+            [],
+            elements,
+            tree_dict["counter_label"],
+        )
+
     result = agent.search_with_tree(
         env,
         add_noise=add_noise,
         placement_count=placement_count_int,
     )
     if result is None:
+        _env_cache.clear()
         return (
             None,
             None,
             0,
             None,
             [],
-            [
-                {
-                    "data": {"id": "error", "label": "MCTS failed (game over?)"},
-                    "classes": "decision",
-                }
-            ],
+            build_error_elements("MCTS failed (game over?)"),
             "Error: MCTS failed",
         )
 
-    mcts_result, tree = result
-
-    # Build elements
-    show_unvisited = "show" in (show_unvisited_value or [])
-    elements = build_cytoscape_elements(
-        tree, None, show_unvisited, config.c_puct
-    )
-
-    # Cache TetrisEnv states by replaying actions from the root.
-    # Tree nodes from mcts_clone() have empty board_piece_types (performance opt).
-    # Replaying from root preserves board_piece_types so child boards render with
-    # correct piece colors instead of uniform gray.
-    global _env_cache
+    _, tree = result
     _env_cache.clear()
-
-    # Build a node_type lookup from tree.nodes (needed before tree_dict is built)
-    _node_types = {n.id: n.node_type for n in tree.nodes}
-
-    for n in tree.nodes:
-        if n.parent_id is None:
-            # Root: full clone preserves board_piece_types from the original env
-            _env_cache[n.id] = n.state.clone_state()
-        elif n.parent_id in _env_cache and n.edge_from_parent is not None:
-            parent_env = _env_cache[n.parent_id].clone_state()
-            if _node_types[n.parent_id] == "decision":
-                # Chance node child: parent executed this action
-                result = parent_env.execute_action_index(n.edge_from_parent)
-                if result is None:
-                    _env_cache[n.id] = n.state.clone_state()
-                    continue
-                parent_env.truncate_queue(QUEUE_SIZE)
-            else:
-                # Decision node child: chance outcome added this piece to queue
-                if n.edge_from_parent < NUM_PIECE_TYPES:
-                    parent_env.push_queue_piece(n.edge_from_parent)
-            _env_cache[n.id] = parent_env
-        else:
-            # Fallback: use tree node state directly (no board_piece_types)
-            _env_cache[n.id] = n.state.clone_state()
-
-    # Store tree data for click handling (nn_value now comes from Rust)
-    tree_dict = {
-        "nodes": [
-            {
-                "id": n.id,
-                "node_type": n.node_type,
-                "visit_count": n.visit_count,
-                "mean_value": n.mean_value,
-                "value_sum": n.value_sum,
-                "value_history": list(n.value_history),
-                "nn_value": n.nn_value,  # Now stored in Rust tree export
-                "attack": n.attack,
-                "is_terminal": n.is_terminal,
-                "move_number": n.move_number,
-                "valid_actions": list(n.valid_actions),
-                "action_priors": list(n.action_priors),
-                "children": list(n.children),
-                "parent_id": n.parent_id,
-                "edge_from_parent": n.edge_from_parent,
-                "board": list(n.state.get_board()),
-                "board_piece_types": list(
-                    _env_cache[n.id].get_board_piece_types()
-                    if n.id in _env_cache
-                    else n.state.get_board_piece_types()
-                ),
-                "current_piece": n.state.get_current_piece().piece_type
-                if n.state.get_current_piece()
-                else None,
-                "hold_piece": n.state.get_hold_piece().piece_type
-                if n.state.get_hold_piece()
-                else None,
-                "queue": list(n.state.get_queue(5)),
-            }
-            for n in tree.nodes
-        ],
-        "root_id": tree.root_id,
-        "selected_action": tree.selected_action,
-        "num_simulations": tree.num_simulations,
-        "c_puct": config.c_puct,
-        "q_scale": config.q_scale,
-    }
+    _env_cache.update(build_env_cache_for_tree(tree))
+    tree_dict = tree_export_to_dict(tree, config.c_puct, config.q_scale)
+    tree_dict["counter_label"] = f"Sims: {sims_to_run}"
+    elements = build_cytoscape_elements(tree_dict, None, show_unvisited)
 
     return (
         tree_dict,
-        {"seed": seed, "move_number": placement_count_int},
+        {"seed": seed, "move_number": placement_count_int, "mode": "single_search"},
         sims_to_run,
         None,
         [],
         elements,
-        f"Sims: {sims_to_run}",
+        tree_dict["counter_label"],
     )
 
 
@@ -1754,6 +2074,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
     details = [
         html.H4("Node Info", style={"marginTop": 0, "marginBottom": "10px"}),
         html.P(f"Node ID: {node['id']}"),
+        html.P(f"Search Step: {node.get('search_step', 0)}"),
         html.P(f"Type: {node['node_type']}"),
         html.P(f"Visit Count (N): {node['visit_count']}"),
         html.P(
@@ -2157,7 +2478,11 @@ def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_di
             parent_id = int(selected_node.split("_")[1])
         elif tree_dict and selected_node.isdigit():
             nid = int(selected_node)
-            parent_id = tree_dict["nodes"][nid].get("parent_id") if nid < len(tree_dict["nodes"]) else None
+            parent_id = (
+                tree_dict["nodes"][nid].get("parent_id")
+                if nid < len(tree_dict["nodes"])
+                else None
+            )
         else:
             parent_id = None
         return str(parent_id) if parent_id is not None else dash.no_update
@@ -2172,7 +2497,12 @@ def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_di
         children = tree_dict["nodes"][nid].get("children", [])
         if not children:
             return dash.no_update
-        best = max(children, key=lambda cid: tree_dict["nodes"][cid].get("visit_count", 0) if cid < len(tree_dict["nodes"]) else 0)
+        best = max(
+            children,
+            key=lambda cid: tree_dict["nodes"][cid].get("visit_count", 0)
+            if cid < len(tree_dict["nodes"])
+            else 0,
+        )
         return str(best)
 
     # Build full siblings list including virtual nodes from elements

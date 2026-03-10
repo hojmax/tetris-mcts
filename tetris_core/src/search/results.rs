@@ -5,6 +5,7 @@
 use pyo3::prelude::*;
 
 use crate::game::env::TetrisEnv;
+use crate::replay::ReplayMove;
 
 /// MCTS search result
 #[pyclass]
@@ -294,6 +295,57 @@ pub struct GameResult {
     /// Fraction of traversals that stopped at max placement horizon
     #[pyo3(get)]
     pub traversal_horizon_fraction: f32,
+}
+
+/// One move of a full-game visualization playback with the exported tree snapshot.
+#[pyclass]
+#[derive(Clone)]
+pub struct GameTreeStep {
+    /// Zero-based action index within the playback (includes hold actions).
+    #[pyo3(get)]
+    pub frame_index: u32,
+    /// Placement count before running search for this step.
+    #[pyo3(get)]
+    pub placement_count: u32,
+    /// Chosen action from the root search.
+    #[pyo3(get)]
+    pub selected_action: usize,
+    /// Realized chance outcome after executing the chosen action.
+    #[pyo3(get)]
+    pub selected_chance_outcome: usize,
+    /// Immediate attack from the chosen action.
+    #[pyo3(get)]
+    pub attack: u32,
+    /// Exported MCTS tree for this step before the action was applied.
+    #[pyo3(get)]
+    pub tree: MCTSTreeExport,
+}
+
+/// Full-game visualization playback data with per-move tree snapshots.
+#[pyclass]
+#[derive(Clone)]
+pub struct GameTreePlayback {
+    /// Exported tree snapshot for each move in the playback.
+    #[pyo3(get)]
+    pub steps: Vec<GameTreeStep>,
+    /// Executed replay moves for the playback.
+    #[pyo3(get)]
+    pub replay_moves: Vec<ReplayMove>,
+    /// Total attack scored during the playback.
+    #[pyo3(get)]
+    pub total_attack: u32,
+    /// Number of placement actions executed during the playback.
+    #[pyo3(get)]
+    pub num_moves: u32,
+    /// Number of total actions executed during the playback (includes holds).
+    #[pyo3(get)]
+    pub num_frames: u32,
+    /// Number of successful tree-reuse carries between searches.
+    #[pyo3(get)]
+    pub tree_reuse_hits: u32,
+    /// Number of failed tree-reuse attempts between searches.
+    #[pyo3(get)]
+    pub tree_reuse_misses: u32,
 }
 
 // =============================================================================

@@ -12,8 +12,8 @@ use super::config::MCTSConfig;
 use super::export::export_decision_node;
 use super::nodes::DecisionNode;
 use super::results::{
-    GameResult, GameStats, MCTSResult, MCTSTreeExport, TrainingExample, TraversalStats,
-    TreeNodeExport, TreeStats, TreeStatsAccumulator,
+    GameResult, GameStats, GameTreePlayback, GameTreeStep, MCTSResult, MCTSTreeExport,
+    TrainingExample, TraversalStats, TreeNodeExport, TreeStats, TreeStatsAccumulator,
 };
 use super::search::{
     extract_subtree, run_search, search_internal, search_internal_without_nn, NO_CHANCE_OUTCOME,
@@ -37,6 +37,38 @@ struct StateSnapshot {
     mask: Vec<bool>,
     overhang_fields: u32,
     hole_count: u32,
+}
+
+fn export_tree(
+    root: &DecisionNode,
+    num_simulations: u32,
+    mcts_result: &MCTSResult,
+) -> MCTSTreeExport {
+    let mut nodes: Vec<TreeNodeExport> = Vec::new();
+    export_decision_node(root, None, None, &mut nodes);
+
+    MCTSTreeExport {
+        nodes,
+        root_id: 0,
+        num_simulations,
+        selected_action: mcts_result.action,
+        policy: mcts_result.policy.clone(),
+    }
+}
+
+fn action_reveals_new_visible_piece(env: &TetrisEnv, selected_action: usize) -> bool {
+    selected_action != HOLD_ACTION_INDEX || env.get_hold_piece().is_none()
+}
+
+fn realized_chance_outcome(
+    env: &TetrisEnv,
+    action_reveals_new_visible_piece: bool,
+) -> Option<usize> {
+    if action_reveals_new_visible_piece {
+        env.piece_queue.get(QUEUE_SIZE - 1).copied()
+    } else {
+        Some(NO_CHANCE_OUTCOME)
+    }
 }
 
 fn compute_value_targets(attacks: &[u32]) -> Vec<f32> {
@@ -194,19 +226,119 @@ impl MCTSAgent {
             search_internal_without_nn(&self.config, env, add_noise, placement_count)
         };
 
-        // Export tree structure
-        let mut nodes: Vec<TreeNodeExport> = Vec::new();
-        export_decision_node(&root, None, None, &mut nodes);
+        Some((
+            mcts_result.clone(),
+            export_tree(&root, self.config.num_simulations, &mcts_result),
+        ))
+    }
 
-        let tree_export = MCTSTreeExport {
-            nodes,
-            root_id: 0,
-            num_simulations: self.config.num_simulations,
-            selected_action: mcts_result.action,
-            policy: mcts_result.policy.clone(),
-        };
+    /// Play out a full game from an existing environment and export the tree at every step.
+    ///
+    /// This follows the same subtree-reuse path as normal self-play/evaluation, but keeps
+    /// each pre-action tree snapshot so the visualizer can render the full played trajectory.
+    ///
+    /// Args:
+    ///     env: Starting game state (left unchanged; the playback clones it)
+    ///     max_placements: Absolute placement horizon for the rollout
+    ///     add_noise: Whether to add Dirichlet noise at each root
+    ///     placement_count: Starting placement count for the provided env
+    ///
+    /// Returns:
+    ///     GameTreePlayback with per-move tree exports, or None if NN inference fails
+    #[pyo3(signature = (env, max_placements=100, add_noise=true, placement_count=0))]
+    pub fn play_game_with_trees(
+        &self,
+        env: &TetrisEnv,
+        max_placements: u32,
+        add_noise: bool,
+        placement_count: u32,
+    ) -> Option<GameTreePlayback> {
+        let mut env = env.clone();
+        let starting_placement_count = placement_count;
+        let mut placement_count = placement_count;
+        let mut frame_index: u32 = 0;
+        let mut total_attack: u32 = 0;
+        let mut replay_moves: Vec<ReplayMove> = Vec::new();
+        let mut steps: Vec<GameTreeStep> = Vec::new();
+        let mut reused_root: Option<DecisionNode> = None;
+        let mut tree_reuse_hits: u32 = 0;
+        let mut tree_reuse_misses: u32 = 0;
 
-        Some((mcts_result, tree_export))
+        while placement_count < max_placements {
+            if env.game_over {
+                break;
+            }
+
+            let mask = crate::inference::get_action_mask(&env);
+            if !mask.iter().any(|&x| x) {
+                debug_assert!(
+                    env.game_over,
+                    "No valid actions but game not over - this is a bug"
+                );
+                break;
+            }
+
+            let current_placement_count = placement_count;
+            let (result, root, _tree_stats, _traversal_stats) = self.search_maybe_reuse(
+                &env,
+                &mask,
+                add_noise,
+                current_placement_count,
+                max_placements,
+                reused_root.take(),
+            )?;
+            let root = root.expect("search_maybe_reuse should always return a root");
+            let tree_export = export_tree(&root, self.config.num_simulations, &result);
+
+            let selected_action = result.action;
+            let reveals_new_visible_piece = action_reveals_new_visible_piece(&env, selected_action);
+
+            let attack = env
+                .execute_action_index(selected_action)
+                .expect("MCTS selected action is not executable");
+            total_attack += attack;
+            replay_moves.push(ReplayMove {
+                action: selected_action,
+                attack,
+            });
+            if selected_action != HOLD_ACTION_INDEX {
+                placement_count += 1;
+            }
+
+            let selected_chance_outcome = realized_chance_outcome(&env, reveals_new_visible_piece)
+                .unwrap_or(NO_CHANCE_OUTCOME);
+            steps.push(GameTreeStep {
+                frame_index,
+                placement_count: current_placement_count,
+                selected_action,
+                selected_chance_outcome,
+                attack,
+                tree: tree_export,
+            });
+            frame_index += 1;
+
+            let should_attempt_tree_reuse = !env.game_over && placement_count < max_placements;
+            if self.config.reuse_tree && should_attempt_tree_reuse {
+                if let Some(subtree) =
+                    extract_subtree(root, selected_action, selected_chance_outcome)
+                {
+                    reused_root = Some(subtree);
+                    tree_reuse_hits += 1;
+                } else {
+                    tree_reuse_misses += 1;
+                }
+            }
+        }
+
+        Some(GameTreePlayback {
+            steps,
+            replay_moves,
+            total_attack,
+            num_moves: placement_count.saturating_sub(starting_placement_count),
+            num_frames: frame_index,
+            tree_reuse_hits,
+            tree_reuse_misses,
+        })
     }
 
     /// Run MCTS search and return the result (simpler than search_with_tree).
@@ -756,6 +888,35 @@ mod tests {
                 (example.holes - expected_holes).abs() < 1e-6,
                 "holes must match the saved board at move {}",
                 example.move_number
+            );
+        }
+    }
+
+    #[test]
+    fn test_play_game_with_trees_returns_step_snapshots() {
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 5;
+        let agent = MCTSAgent::new(config);
+        let env = TetrisEnv::with_seed(10, 20, 123);
+
+        let playback = agent
+            .play_game_with_trees(&env, 4, false, 0)
+            .expect("play_game_with_trees should return playback data");
+
+        assert!(
+            !playback.steps.is_empty(),
+            "play_game_with_trees should capture at least one step"
+        );
+        assert_eq!(playback.steps.len(), playback.replay_moves.len());
+        assert_eq!(playback.num_frames as usize, playback.steps.len());
+        assert!(playback.num_moves <= 4);
+
+        for step in playback.steps.iter() {
+            assert_eq!(step.tree.root_id, 0);
+            assert_eq!(step.tree.selected_action, step.selected_action);
+            assert!(
+                !step.tree.nodes.is_empty(),
+                "each playback step should include an exported tree"
             );
         }
     }

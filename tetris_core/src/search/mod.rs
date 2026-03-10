@@ -17,8 +17,8 @@ pub use agent::MCTSAgent;
 pub use config::MCTSConfig;
 pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode};
 pub use results::{
-    GameResult, GameStats, GameTreeStats, MCTSResult, MCTSTreeExport, TrainingExample,
-    TreeNodeExport,
+    GameResult, GameStats, GameTreePlayback, GameTreeStats, GameTreeStep, MCTSResult,
+    MCTSTreeExport, TrainingExample, TreeNodeExport,
 };
 pub use utils::{
     compute_bumpiness, count_overhang_fields_and_holes, normalize_bumpiness,
