@@ -15,7 +15,7 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_bot.constants import BENCHMARKS_DIR, PROJECT_ROOT, TRAINING_RUNS_DIR
+from tetris_bot.constants import BENCHMARKS_DIR, PROJECT_ROOT
 from tetris_bot.ml.config import SelfPlayConfig
 
 logger = structlog.get_logger()
@@ -24,7 +24,7 @@ _OPTIMIZER_VERSION = 1
 _SUPPORTED_BACKENDS = {"tract", "ort"}
 _WORKER_SEARCH_MODES = {"adaptive", "grid"}
 _BACKEND_STRATEGIES = {"staged", "exhaustive"}
-_AUTO_MODEL_PATH = BENCHMARKS_DIR / "models" / "optimize_bootstrap.onnx"
+_BENCHMARK_MODEL_PATH = BENCHMARKS_DIR / "models" / "v3_latest.onnx"
 
 
 @dataclass(frozen=True)
@@ -87,52 +87,10 @@ def default_worker_candidates() -> list[int]:
     return sorted(set(value for value in values if value > 1))
 
 
-def default_model_path() -> Path | None:
-    checkpoints = sorted(
-        TRAINING_RUNS_DIR.glob("v*/checkpoints/latest.onnx"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for model_path in checkpoints:
-        if has_split_model_bundle(model_path):
-            return model_path
-    return None
-
-
-def ensure_auto_model_path() -> Path:
-    if has_split_model_bundle(_AUTO_MODEL_PATH):
-        return _AUTO_MODEL_PATH
-
-    from tetris_bot.ml.config import NetworkConfig
-    from tetris_bot.ml.network import TetrisNet
-    from tetris_bot.ml.weights import export_onnx, export_split_models
-
-    logger.info(
-        "No split ONNX bundle found under training_runs; generating baseline bundle",
-        model_path=str(_AUTO_MODEL_PATH),
-    )
-    _AUTO_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    model = TetrisNet(**asdict(NetworkConfig()))
-    model.eval()
-    onnx_export_ok = export_onnx(model, _AUTO_MODEL_PATH)
-    split_export_ok = export_split_models(model, _AUTO_MODEL_PATH)
-    if not onnx_export_ok or not split_export_ok or not has_split_model_bundle(
-        _AUTO_MODEL_PATH
-    ):
-        raise RuntimeError(
-            "Failed to auto-generate optimize model bundle at "
-            f"{_AUTO_MODEL_PATH}. Pass --model_path to a valid split bundle."
-        )
-    return _AUTO_MODEL_PATH
-
-
 def resolve_model_path(model_path_arg: Path | None) -> Path:
     if model_path_arg is not None:
         return model_path_arg
-    model_path = default_model_path()
-    if model_path is not None:
-        return model_path
-    return ensure_auto_model_path()
+    return _BENCHMARK_MODEL_PATH
 
 
 def has_split_model_bundle(model_path: Path) -> bool:
@@ -176,7 +134,7 @@ class ScriptArgs:
     max_worker_evals_per_combo: int = 6
     num_games: int = 20
     num_repeats: int = 1
-    simulations: int = 300
+    simulations: int = _DEFAULT_SELF_PLAY.num_simulations
     max_placements: int = _DEFAULT_SELF_PLAY.max_placements
     seed_start: int = 42
     mcts_seed: int = 12345

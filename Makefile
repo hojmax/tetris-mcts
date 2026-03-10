@@ -262,13 +262,13 @@ profile-samply: $(RELEASE_MARKER)
 	samply record $(PYTHON) tetris_bot/scripts/inspection/profile_games.py --model_path $(MODEL_PROFILE) --simulations $(SIMS) --num_workers $(WORKERS_PROFILE) --num_games 3
 
 # Auto-tune machine-specific build/backend/worker settings (cached by machine fingerprint)
-# Fast defaults:
+# Defaults:
 #   - adaptive worker search (not full grid)
 #   - 20 games/config
-#   - 300 sims/move
+#   - 2000 sims/move (matches training config)
 MODEL_OPTIMIZE ?=
 OPT_GAMES ?= 20
-OPT_SIMS ?= 300
+OPT_SIMS ?= 2000
 OPT_REPEATS ?= 1
 OPT_WORKER_SEARCH ?= adaptive
 OPT_MAX_WORKER_EVALS ?= 6
