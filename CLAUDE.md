@@ -188,17 +188,9 @@ make optimize
 
 Set `MODEL_PROFILE=<existing-onnx-path>` when the Makefile default model path is missing.
 Set `TETRIS_NN_BACKEND=ort` to profile ONNX Runtime instead of default `tract`.
-`make optimize` is intentionally fast by default (`OPT_WORKER_SEARCH=adaptive`, `OPT_BACKEND_STRATEGY=staged`, low game/sim counts).
-The staged strategy searches workers/build on `OPT_PRIMARY_BACKEND` (default `ort`), then compares final backends at the chosen worker count.
-For an exhaustive sweep, use: `make optimize OPT_BACKEND_STRATEGY=exhaustive OPT_WORKER_SEARCH=grid OPT_GAMES=40 OPT_SIMS=500`.
-`make optimize` writes persistent results to:
-- `benchmarks/profiles/optimize_cache/<machine_fingerprint>.json` (machine-type cache)
-- `benchmarks/profiles/optimize_latest.json` (latest resolved recommendation)
-- `benchmarks/profiles/optimize_latest.env` (shell-friendly vars: backend, workers, build flags)
-Build targets use `maturin build --out tetris_core/dist` then `$(PYTHON) -m pip install` to install the wheel. Do NOT use `maturin develop` (with or without `--uv`): maturin resolves the `.venv/bin/python` symlink to the real interpreter path (e.g. `/venv/main/bin/python`) and installs into that environment's site-packages instead of `.venv`. Invoking pip directly via `$(PYTHON) -m pip install` respects `sys.prefix` of `.venv/bin/python` and installs to the right place.
-`make train` will try to use `optimize_latest.env`; if missing, it attempts `make optimize` first.
-If optimized settings request `TETRIS_NN_BACKEND=ort` but `make build-ort` fails (e.g. missing `pkg-config`/OpenSSL dev libs), `make train` now falls back to `tract` for both build and runtime.
-`make train` also validates `optimize_latest.env` against the current machine fingerprint and will refresh optimization cache on mismatch.
+`make optimize` is fast by default; for an exhaustive sweep: `make optimize OPT_BACKEND_STRATEGY=exhaustive OPT_WORKER_SEARCH=grid OPT_GAMES=40 OPT_SIMS=500`.
+Results written to `benchmarks/profiles/optimize_latest.env`; `make train` auto-loads this (runs optimize first if missing).
+Do NOT use `maturin develop` — use `maturin build --out tetris_core/dist` then `$(PYTHON) -m pip install` (respects `.venv` `sys.prefix` correctly).
 
 ## Testing
 
@@ -217,9 +209,6 @@ If you see `ModuleNotFoundError: No module named 'tetris_core.tetris_core'`, the
 - Final WandB model artifact upload includes `training_data.npz` whenever the file exists; no extra Python-side NPZ integrity gate is applied at upload time.
 - Resumed runs create a new `vN` directory and initialize from the source run checkpoint.
 - Promotion state (incumbent model + `nn_value_weight`) is treated as an atomic runtime state.
-- Older WandB model artifacts may miss ONNX external-data sidecars (`*.onnx.data`) for incumbent split models; resume now logs a warning and falls back to checkpoint-initialized model startup if incumbent bundle staging is incomplete.
-- Checkpoint-time incumbent artifact persistence can legitimately resolve to the same source/destination path (for example `incumbent.onnx` already in checkpoint dir); model bundle copy now treats in-place copies as a no-op to avoid `SameFileError`.
-- When `log_individual_games_to_wandb=False`, averaged game logs still emit `game_number` (last game in the window) plus window metadata so W&B plots using `game_number` as x-axis continue updating every log interval.
 
 ## Coding Rules (Condensed)
 
