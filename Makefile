@@ -275,8 +275,7 @@ OPT_MAX_WORKER_EVALS ?= 6
 OPT_BACKEND_STRATEGY ?= staged
 OPT_PRIMARY_BACKEND ?= tract
 OPTIMIZE_ARGS ?= --skip_build --backends tract
-OPT_ENV_FILE ?= benchmarks/profiles/optimize_latest.env
-OPT_VALIDATE_MACHINE ?= 1
+OPT_CACHE_DIR ?= benchmarks/profiles/optimize_cache
 optimize: ensure-rust $(INSTALL_MARKER)
 	$(PYTHON) tetris_bot/scripts/inspection/optimize_machine.py $(if $(MODEL_OPTIMIZE),--model_path $(MODEL_OPTIMIZE),) --num_games $(OPT_GAMES) --simulations $(OPT_SIMS) --num_repeats $(OPT_REPEATS) --worker_search $(OPT_WORKER_SEARCH) --max_worker_evals_per_combo $(OPT_MAX_WORKER_EVALS) --backend_strategy $(OPT_BACKEND_STRATEGY) --primary_backend $(OPT_PRIMARY_BACKEND) $(OPTIMIZE_ARGS)
 
@@ -290,37 +289,31 @@ train: ensure-rust $(INSTALL_MARKER)
 		exit 1; \
 	fi
 	@set -euo pipefail; \
-	OPT_ENV="$(OPT_ENV_FILE)"; \
-	CURRENT_OPT_FINGERPRINT=""; \
-	if [ "$(OPT_VALIDATE_MACHINE)" = "1" ]; then \
-		CURRENT_OPT_FINGERPRINT="$$( $(PYTHON) -c "from tetris_bot.scripts.inspection.optimize_machine import machine_profile, machine_type_fingerprint; print(machine_type_fingerprint(machine_profile()))" 2>/dev/null || true )"; \
+	FINGERPRINT="$$( $(PYTHON) -c "from tetris_bot.scripts.inspection.optimize_machine import machine_profile, machine_type_fingerprint; print(machine_type_fingerprint(machine_profile()))" 2>/dev/null || true )"; \
+	OPT_ENV=""; \
+	if [ -n "$$FINGERPRINT" ]; then \
+		OPT_ENV="$(OPT_CACHE_DIR)/$$FINGERPRINT.env"; \
 	fi; \
-	if [ -f "$$OPT_ENV" ] && [ -n "$$CURRENT_OPT_FINGERPRINT" ]; then \
-		CACHED_OPT_FINGERPRINT="$$(grep -E '^TETRIS_OPT_MACHINE_FINGERPRINT=' "$$OPT_ENV" | tail -n 1 | cut -d= -f2- | sed "s/[\"']//g")"; \
-		if [ -z "$$CACHED_OPT_FINGERPRINT" ] || [ "$$CACHED_OPT_FINGERPRINT" != "$$CURRENT_OPT_FINGERPRINT" ]; then \
-			echo "[train] Optimization cache fingerprint mismatch (cache=$$CACHED_OPT_FINGERPRINT current=$$CURRENT_OPT_FINGERPRINT); refreshing cache."; \
-			rm -f "$$OPT_ENV"; \
-		fi; \
-	fi; \
-	if [ ! -f "$$OPT_ENV" ]; then \
-		echo "[train] No optimization cache at $$OPT_ENV; running make optimize..."; \
+	if [ -z "$$OPT_ENV" ] || [ ! -f "$$OPT_ENV" ]; then \
+		echo "[train] No optimization cache for this machine; running make optimize..."; \
 		if ! $(MAKE) optimize MODEL_OPTIMIZE="$(MODEL_OPTIMIZE)" OPT_GAMES="$(OPT_GAMES)" OPT_SIMS="$(OPT_SIMS)" OPT_REPEATS="$(OPT_REPEATS)" OPT_WORKER_SEARCH="$(OPT_WORKER_SEARCH)" OPT_MAX_WORKER_EVALS="$(OPT_MAX_WORKER_EVALS)" OPTIMIZE_ARGS="$(OPTIMIZE_ARGS)"; then \
 			echo "[train] Optimization failed; falling back to default build/runtime settings."; \
+			OPT_ENV=""; \
 		fi; \
 	fi; \
-		if [ -f "$$OPT_ENV" ]; then \
-			echo "[train] Loading optimized settings from $$OPT_ENV"; \
-			set -a; . "$$OPT_ENV"; set +a; \
-			if [ "$${TETRIS_NN_BACKEND:-tract}" = "ort" ]; then \
-				if ! $(MAKE) build-ort RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; then \
-					echo "[train] ORT build failed; falling back to tract build/runtime settings."; \
-					export TETRIS_NN_BACKEND=tract; \
-					$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
-				fi; \
-			else \
+	if [ -n "$$OPT_ENV" ] && [ -f "$$OPT_ENV" ]; then \
+		echo "[train] Loading optimized settings from $$OPT_ENV"; \
+		set -a; . "$$OPT_ENV"; set +a; \
+		if [ "$${TETRIS_NN_BACKEND:-tract}" = "ort" ]; then \
+			if ! $(MAKE) build-ort RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; then \
+				echo "[train] ORT build failed; falling back to tract build/runtime settings."; \
+				export TETRIS_NN_BACKEND=tract; \
 				$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
 			fi; \
 		else \
+			$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+		fi; \
+	else \
 		$(MAKE) build; \
 	fi; \
 	$(PYTHON) tetris_bot/scripts/train.py $(ARGS)

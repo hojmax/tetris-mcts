@@ -189,7 +189,7 @@ make optimize
 Set `MODEL_PROFILE=<existing-onnx-path>` when the Makefile default model path is missing.
 Set `TETRIS_NN_BACKEND=ort` to profile ONNX Runtime instead of default `tract`.
 `make optimize` is fast by default; for an exhaustive sweep: `make optimize OPT_BACKEND_STRATEGY=exhaustive OPT_WORKER_SEARCH=grid OPT_GAMES=40 OPT_SIMS=500`.
-Results written to `benchmarks/profiles/optimize_latest.env`; `make train` auto-loads this (runs optimize first if missing).
+Results written to `benchmarks/profiles/optimize_cache/<machine_fingerprint>.env`; `make train` computes the current machine fingerprint and loads the matching env (runs optimize first if missing).
 Do NOT use `maturin develop` — use `maturin build --out tetris_core/dist` then `$(PYTHON) -m pip install` (respects `.venv` `sys.prefix` correctly).
 
 ## Testing

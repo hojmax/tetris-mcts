@@ -14,3 +14,4 @@ outputs/
 .DS_store
 tetris_bot/scripts/training_data_scripting.npz
 benchmarks/network_size_models/
+benchmarks/profiles/optimize_latest.*
