@@ -116,6 +116,7 @@ def main(args: ProfileArgs) -> None:
     print("\n" + "=" * 60)
     print("PERFORMANCE SUMMARY")
     print("=" * 60)
+    print(f"Workers:             {args.num_workers}")
     print(f"Total time:          {total_time:.3f}s")
     print(f"Games completed:     {result.num_games}")
     print(f"Total moves:         {total_moves}")
