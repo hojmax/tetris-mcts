@@ -38,8 +38,8 @@ from tetris_bot.constants import (
     BOARD_WIDTH,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
+    INCUMBENT_ONNX_FILENAME,
     NUM_PIECE_TYPES,
-    PARALLEL_ONNX_FILENAME,
     PIECE_COLORS,
     PIECE_NAMES,
     PROJECT_ROOT,
@@ -118,14 +118,14 @@ PIECE_TOKEN_TO_INDEX = {
 def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float | bool | None]:
     run_dir = args.run_dir
     config_path = run_dir / CONFIG_FILENAME
-    model_path = run_dir / CHECKPOINT_DIRNAME / PARALLEL_ONNX_FILENAME
+    model_path = run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
 
     if not run_dir.exists():
         raise ValueError(f"Run dir does not exist: {run_dir}")
     if not config_path.exists():
         raise ValueError(f"Missing run config: {config_path}")
     if not args.use_dummy_network and not model_path.exists():
-        raise ValueError(f"Missing latest ONNX checkpoint: {model_path}")
+        raise ValueError(f"Missing incumbent ONNX checkpoint: {model_path}")
 
     raw = json.loads(config_path.read_text())
     # Support both flat configs and the current nested format (keys under "self_play")
