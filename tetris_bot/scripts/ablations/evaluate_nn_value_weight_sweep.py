@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
-import statistics
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -12,12 +10,14 @@ from PIL import Image, ImageDraw, ImageFont
 from simple_parsing import parse
 
 from tetris_core.tetris_core import MCTSConfig, evaluate_model
-from tetris_bot.constants import (
-    CHECKPOINT_DIRNAME,
-    CONFIG_FILENAME,
-    LATEST_ONNX_FILENAME,
-)
 from tetris_bot.ml.artifacts import assert_rust_inference_artifacts
+from tetris_bot.scripts.utils.eval_utils import (
+    compute_attack_stats,
+    load_run_config,
+    resolve_config_value,
+    resolve_model_path,
+)
+from tetris_bot.scripts.utils.plot_utils import text_size
 
 logger = structlog.get_logger()
 
@@ -55,40 +55,6 @@ def validate_args(args: ScriptArgs) -> None:
         if weight in seen:
             raise ValueError(f"nn_value_weights contains duplicate value: {weight}")
         seen.add(weight)
-
-
-def load_run_config(run_dir: Path) -> dict:
-    config_path = run_dir / CONFIG_FILENAME
-    if not config_path.exists():
-        raise FileNotFoundError(f"Run config not found: {config_path}")
-    data = json.loads(config_path.read_text())
-    if not isinstance(data, dict):
-        raise ValueError(f"Run config must be a JSON object: {config_path}")
-    return data
-
-
-def resolve_config_value(
-    cli_override: int | float | None,
-    run_config: dict,
-    key: str,
-    default: int | float,
-) -> int | float:
-    if cli_override is not None:
-        return cli_override
-    value = run_config.get(key, default)
-    if value is None:
-        raise ValueError(f"Config value for {key} cannot be None")
-    return value
-
-
-def resolve_model_path(args: ScriptArgs) -> Path:
-    if args.model_path is not None:
-        model_path = args.model_path
-    else:
-        model_path = args.run_dir / CHECKPOINT_DIRNAME / LATEST_ONNX_FILENAME
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model not found: {model_path}")
-    return model_path
 
 
 def resolve_output_paths(args: ScriptArgs) -> tuple[Path, Path]:
@@ -142,11 +108,7 @@ def aggregate_eval_result(
         {"seed": seeds[i], "attack": int(attack), "moves": int(moves)}
         for i, (attack, moves) in enumerate(result.game_results)  # type: ignore[attr-defined]
     ]
-    attack_values = [row["attack"] for row in game_rows]
-    attack_std = (
-        float(statistics.pstdev(attack_values)) if len(attack_values) > 1 else 0.0
-    )
-    attack_sem = attack_std / math.sqrt(len(attack_values)) if attack_values else 0.0
+    attack_std, attack_sem = compute_attack_stats(seeds, result)
 
     return {
         "nn_value_weight": float(nn_value_weight),
@@ -186,15 +148,6 @@ def evaluate_weight(
         seeds=seeds,
         result=result,
     )
-
-
-def text_size(
-    draw: ImageDraw.ImageDraw,
-    text: str,
-    font: ImageFont.ImageFont | ImageFont.FreeTypeFont,
-) -> tuple[float, float]:
-    x0, y0, x1, y1 = draw.textbbox((0, 0), text, font=font)
-    return x1 - x0, y1 - y0
 
 
 def create_plot(results: list[dict], output_path: Path) -> None:
@@ -324,7 +277,7 @@ def main(args: ScriptArgs) -> None:
         raise NotADirectoryError(f"Run path is not a directory: {run_dir}")
 
     run_config = load_run_config(run_dir)
-    model_path = resolve_model_path(args)
+    model_path = resolve_model_path(args.model_path, args.run_dir)
     assert_rust_inference_artifacts(model_path)
     output_json, output_plot = resolve_output_paths(args)
     seeds = list(range(args.seed_start, args.seed_start + args.num_games))

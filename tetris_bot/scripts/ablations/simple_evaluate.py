@@ -11,6 +11,7 @@ from simple_parsing import parse
 
 from tetris_core.tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
 from tetris_bot.constants import BENCHMARKS_DIR, PARALLEL_ONNX_FILENAME
+from tetris_bot.scripts.utils.plot_utils import value_to_pixel
 
 logger = structlog.get_logger()
 
@@ -97,19 +98,6 @@ def run_config(
     }
 
 
-def _coord(
-    value: float,
-    value_min: float,
-    value_max: float,
-    pixel_min: float,
-    pixel_max: float,
-) -> int:
-    if value_max == value_min:
-        return int((pixel_min + pixel_max) / 2)
-    ratio = (value - value_min) / (value_max - value_min)
-    return int(pixel_min + ratio * (pixel_max - pixel_min))
-
-
 def create_plot(results: list[dict], output_path: Path) -> None:
     width = 980
     height = 1220
@@ -143,7 +131,7 @@ def create_plot(results: list[dict], output_path: Path) -> None:
 
     x_pos: dict[int, int] = {}
     for i, sim in enumerate(sim_values):
-        x_pos[sim] = _coord(
+        x_pos[sim] = value_to_pixel(
             i,
             0,
             max(1, len(sim_values) - 1),
@@ -167,7 +155,7 @@ def create_plot(results: list[dict], output_path: Path) -> None:
             x = x_pos[sim]
             val = grouped[reuse_tree][sim]
             mapped_val = math.log10(max(val, 1e-10)) if log_scale else val
-            y = _coord(
+            y = value_to_pixel(
                 mapped_val,
                 y_min,
                 y_max,
@@ -213,10 +201,10 @@ def create_plot(results: list[dict], output_path: Path) -> None:
             if log_scale:
                 log_val = y_min + (y_max - y_min) * (tick / 5)
                 y_val = 10**log_val
-                y = _coord(log_val, y_min, y_max, panel_top + plot_height, panel_top)
+                y = value_to_pixel(log_val, y_min, y_max, panel_top + plot_height, panel_top)
             else:
                 y_val = y_min + (y_max - y_min) * (tick / 5)
-                y = _coord(y_val, y_min, y_max, panel_top + plot_height, panel_top)
+                y = value_to_pixel(y_val, y_min, y_max, panel_top + plot_height, panel_top)
             draw.line([(left, y), (left + plot_width, y)], fill="#e0e0e0", width=1)
             draw.text(
                 (left - 75, y - 8),
