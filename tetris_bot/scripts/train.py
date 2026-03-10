@@ -1,5 +1,6 @@
 """Training script for Tetris AlphaZero."""
 
+import math
 import os
 import shutil
 from dataclasses import dataclass
@@ -166,7 +167,7 @@ def restore_trainer_from_checkpoint(
         )
     else:
         restored_nn_value_weight = float(incumbent_nn_value_weight)
-        if restored_nn_value_weight < 0.0:
+        if not math.isfinite(restored_nn_value_weight) or restored_nn_value_weight < 0.0:
             raise ValueError(
                 f"Checkpoint incumbent_nn_value_weight must be >= 0 (got {restored_nn_value_weight})"
             )
@@ -176,6 +177,60 @@ def restore_trainer_from_checkpoint(
             checkpoint=str(checkpoint),
             nn_value_weight=restored_nn_value_weight,
         )
+
+    incumbent_death_penalty = state.get("incumbent_death_penalty")
+    incumbent_overhang_penalty_weight = state.get(
+        "incumbent_overhang_penalty_weight"
+    )
+    if (
+        incumbent_death_penalty is not None
+        and incumbent_overhang_penalty_weight is not None
+    ):
+        restored_death_penalty = float(incumbent_death_penalty)
+        if not math.isfinite(restored_death_penalty) or restored_death_penalty < 0.0:
+            raise ValueError(
+                "Checkpoint incumbent_death_penalty must be finite and >= 0 "
+                f"(got {restored_death_penalty})"
+            )
+
+        restored_overhang_penalty_weight = float(incumbent_overhang_penalty_weight)
+        if (
+            not math.isfinite(restored_overhang_penalty_weight)
+            or restored_overhang_penalty_weight < 0.0
+        ):
+            raise ValueError(
+                "Checkpoint incumbent_overhang_penalty_weight must be finite and >= 0 "
+                f"(got {restored_overhang_penalty_weight})"
+            )
+
+        config.self_play.death_penalty = restored_death_penalty
+        config.self_play.overhang_penalty_weight = restored_overhang_penalty_weight
+        logger.info(
+            "Restored incumbent search penalties from checkpoint",
+            checkpoint=str(checkpoint),
+            death_penalty=restored_death_penalty,
+            overhang_penalty_weight=restored_overhang_penalty_weight,
+        )
+    else:
+        penalties_should_be_disabled = (
+            config.self_play.nn_value_weight >= config.self_play.nn_value_weight_cap
+        )
+        if penalties_should_be_disabled:
+            config.self_play.death_penalty = 0.0
+            config.self_play.overhang_penalty_weight = 0.0
+            logger.warning(
+                "Checkpoint missing incumbent penalty state at nn_value_weight cap; inferring zero penalties",
+                checkpoint=str(checkpoint),
+                nn_value_weight=config.self_play.nn_value_weight,
+                nn_value_weight_cap=config.self_play.nn_value_weight_cap,
+            )
+        else:
+            logger.warning(
+                "Checkpoint missing incumbent penalty state; using config values",
+                checkpoint=str(checkpoint),
+                death_penalty=config.self_play.death_penalty,
+                overhang_penalty_weight=config.self_play.overhang_penalty_weight,
+            )
 
     incumbent_eval_avg_attack = state.get("incumbent_eval_avg_attack")
     if incumbent_eval_avg_attack is None:

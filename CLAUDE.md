@@ -176,6 +176,7 @@ python tetris_bot/scripts/train.py --architecture simple_aux_mlp --fc_hidden 64
 Training runs live under `training_runs/vN/` with checkpoints and ONNX exports.
 `--resume_wandb` accepts either a run reference (`entity/project/run_id`, defaults to the run's `tetris-model-<run_id>:latest` artifact) or a direct artifact reference (`entity/project/tetris-model-<run_id>:alias`).
 During shutdown, the first `Ctrl+C` requests graceful trainer/generator stop; pressing `Ctrl+C` again forces immediate exit with status `130`.
+Checkpoint resume now persists incumbent search penalties (`incumbent_death_penalty`, `incumbent_overhang_penalty_weight`) alongside `incumbent_nn_value_weight`; older checkpoints without those fields infer zero penalties when `nn_value_weight` is already at cap.
 
 ### Profile
 

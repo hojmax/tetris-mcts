@@ -1333,6 +1333,10 @@ class Trainer:
                             "incumbent_uses_network": generator.incumbent_uses_network(),
                             "incumbent_model_step": generator.incumbent_model_step(),
                             "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
+                            "incumbent_death_penalty": generator.incumbent_death_penalty(),
+                            "incumbent_overhang_penalty_weight": (
+                                generator.incumbent_overhang_penalty_weight()
+                            ),
                             "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
                             "incumbent_model_source_path": incumbent_model_source_path,
                             "incumbent_model_artifact": (
@@ -1385,6 +1389,10 @@ class Trainer:
                         "incumbent_uses_network": generator.incumbent_uses_network(),
                         "incumbent_model_step": generator.incumbent_model_step(),
                         "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
+                        "incumbent_death_penalty": generator.incumbent_death_penalty(),
+                        "incumbent_overhang_penalty_weight": (
+                            generator.incumbent_overhang_penalty_weight()
+                        ),
                         "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
                         "incumbent_model_source_path": incumbent_model_source_path,
                         "incumbent_model_artifact": (
