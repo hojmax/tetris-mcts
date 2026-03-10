@@ -22,6 +22,13 @@ from tetris_bot.constants import (
 from tetris_bot.ml.config import TrainingConfig
 from tetris_bot.ml.loss import compute_loss
 from tetris_bot.ml.network import ROW_FILL_COUNT_FEATURES
+from tetris_bot.scripts.ablations.compare_offline_architectures import (
+    ResidualFusionBlock,
+    get_preload_mode,
+    init_wandb_run,
+    pick_device,
+    validate_common_offline_args,
+)
 
 logger = structlog.get_logger()
 
@@ -160,22 +167,6 @@ class OfflineDataSource:
     included_groups: tuple[ExtraFeatureGroup, ...]
 
 
-class ResidualFusionBlock(nn.Module):
-    def __init__(self, hidden_size: int):
-        super().__init__()
-        self.ln1 = nn.LayerNorm(hidden_size)
-        self.fc1 = nn.Linear(hidden_size, hidden_size)
-        self.ln2 = nn.LayerNorm(hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = F.relu(self.ln1(x))
-        h = self.fc1(h)
-        h = F.relu(self.ln2(h))
-        h = self.fc2(h)
-        return x + h
-
-
 class GatedFeatureAblationTetrisNet(nn.Module):
     def __init__(
         self,
@@ -300,45 +291,8 @@ def build_feature_variants(
     return variants
 
 
-def pick_device(device_arg: str) -> str:
-    if device_arg != "auto":
-        return device_arg
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-def get_preload_mode(args: ScriptArgs) -> str:
-    if args.preload_to_gpu and args.preload_to_ram:
-        raise ValueError("preload_to_gpu and preload_to_ram cannot both be true")
-    if args.preload_to_gpu:
-        return "gpu"
-    if args.preload_to_ram:
-        return "ram"
-    return "none"
-
-
 def validate_args(args: ScriptArgs) -> None:
-    if args.steps <= 0:
-        raise ValueError("steps must be > 0")
-    if args.batch_size <= 0:
-        raise ValueError("batch_size must be > 0")
-    if args.eval_interval <= 0:
-        raise ValueError("eval_interval must be > 0")
-    if args.log_train_metrics_every <= 0:
-        raise ValueError("log_train_metrics_every must be > 0")
-    if args.eval_batch_size <= 0:
-        raise ValueError("eval_batch_size must be > 0")
-    if args.eval_examples <= 0:
-        raise ValueError("eval_examples must be > 0")
-    if args.max_examples < 0:
-        raise ValueError("max_examples must be >= 0")
-    if not 0.0 < args.train_fraction < 1.0:
-        raise ValueError("train_fraction must be in (0, 1)")
-    if args.grad_clip_norm <= 0:
-        raise ValueError("grad_clip_norm must be > 0")
+    validate_common_offline_args(args)
     if len(args.conv_filters) != 2:
         raise ValueError("conv_filters must contain exactly two values")
     if args.conv_kernel_size <= 0:
@@ -1050,16 +1004,7 @@ def main(args: ScriptArgs) -> None:
         raise ValueError("preload_to_gpu requires a non-CPU device")
     logger.info("Using device", device=device_str)
 
-    wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=args.wandb_run_name,
-        tags=args.wandb_tags,
-        config=normalize_args_for_wandb(args, variants, extra_feature_groups),
-    )
-    run = wandb.run
-    if run is None:
-        raise RuntimeError("wandb.init did not create a run")
+    run = init_wandb_run(args, normalize_args_for_wandb(args, variants, extra_feature_groups))
     wandb.define_metric("offline_step")
     wandb.define_metric("variants/*", step_metric="offline_step")
     wandb.define_metric(

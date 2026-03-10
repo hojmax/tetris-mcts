@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -19,17 +18,14 @@ from tetris_bot.constants import (
 from tetris_bot.ml.network import BOARD_STATS_FEATURES, PIECE_AUX_FEATURES, TetrisNet
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     FlopBreakdown,
-    OfflineDataSource,
-    OfflineTensorDataset,
-    build_tensor_dataset,
+    OfflineDatasetSetup,
     count_parameters,
-    ensure_required_keys,
     get_preload_mode,
+    init_wandb_run,
     pick_device,
-    select_subset,
-    tensor_dataset_bytes,
+    setup_offline_dataset,
     train_offline_model,
-    validate_shapes,
+    validate_common_offline_args,
 )
 
 logger = structlog.get_logger()
@@ -88,24 +84,7 @@ class ScalingVariant:
 
 
 def validate_args(args: ScriptArgs) -> None:
-    if args.steps <= 0:
-        raise ValueError("steps must be > 0")
-    if args.batch_size <= 0:
-        raise ValueError("batch_size must be > 0")
-    if args.eval_interval <= 0:
-        raise ValueError("eval_interval must be > 0")
-    if args.log_train_metrics_every <= 0:
-        raise ValueError("log_train_metrics_every must be > 0")
-    if args.eval_batch_size <= 0:
-        raise ValueError("eval_batch_size must be > 0")
-    if args.eval_examples <= 0:
-        raise ValueError("eval_examples must be > 0")
-    if args.max_examples < 0:
-        raise ValueError("max_examples must be >= 0")
-    if not 0.0 < args.train_fraction < 1.0:
-        raise ValueError("train_fraction must be in (0, 1)")
-    if args.grad_clip_norm <= 0:
-        raise ValueError("grad_clip_norm must be > 0")
+    validate_common_offline_args(args)
     if args.trunk_channels <= 0:
         raise ValueError("trunk_channels must be > 0")
     if args.num_conv_residual_blocks < 0:
@@ -284,93 +263,25 @@ def main(args: ScriptArgs) -> None:
         raise ValueError("preload_to_gpu requires a non-CPU device")
     logger.info("Using device", device=device_str, variants=[v.name for v in variants])
 
-    wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=args.wandb_run_name,
-        tags=args.wandb_tags,
-        config=normalize_args_for_wandb(args, variants),
-    )
-    run = wandb.run
-    if run is None:
-        raise RuntimeError("wandb.init did not create a run")
-
+    run = init_wandb_run(args, normalize_args_for_wandb(args, variants))
     wandb.define_metric("offline_step")
     wandb.define_metric("variants/*", step_metric="offline_step")
 
     npz = np.load(args.data_path, mmap_mode="r")
     try:
-        ensure_required_keys(npz)
-        total_examples = validate_shapes(npz)
-        selected_global_indices = np.arange(total_examples, dtype=np.int64)
-
-        split_rng = np.random.default_rng(args.seed)
-        split_rng.shuffle(selected_global_indices)
-        if args.max_examples > 0:
-            selected_global_indices = selected_global_indices[: args.max_examples]
-
-        num_selected = len(selected_global_indices)
-        split_point = int(num_selected * args.train_fraction)
-        if split_point <= 0 or split_point >= num_selected:
-            raise ValueError(
-                "Invalid train/val split; adjust max_examples or train_fraction"
-            )
-
-        train_local_indices = np.arange(split_point, dtype=np.int64)
-        val_local_indices = np.arange(split_point, num_selected, dtype=np.int64)
-
-        preload_start = time.perf_counter()
-        tensor_data: OfflineTensorDataset | None = None
-        if preload_mode != "none":
-            tensor_data = build_tensor_dataset(
-                data=npz,
-                selected_global_indices=selected_global_indices,
-                mode=preload_mode,
-                train_device=device,
-            )
-        preload_sec = time.perf_counter() - preload_start
-        source = OfflineDataSource(
+        setup = setup_offline_dataset(
             npz=npz,
-            selected_global_indices=selected_global_indices,
-            tensor_data=tensor_data,
-        )
-
-        train_eval_local_indices = select_subset(
-            train_local_indices,
-            max_examples=args.eval_examples,
-            seed=args.seed + 1,
-        )
-        val_eval_local_indices = select_subset(
-            val_local_indices,
-            max_examples=args.eval_examples,
-            seed=args.seed + 2,
-        )
-
-        logger.info(
-            "Dataset split",
-            total_examples=total_examples,
-            used_examples=num_selected,
-            train_examples=len(train_local_indices),
-            val_examples=len(val_local_indices),
-            train_eval_examples=len(train_eval_local_indices),
-            val_eval_examples=len(val_eval_local_indices),
+            seed=args.seed,
+            max_examples=args.max_examples,
+            train_fraction=args.train_fraction,
+            eval_examples=args.eval_examples,
             preload_mode=preload_mode,
-            preload_seconds=preload_sec,
+            device=device,
         )
-
-        dataset_log: dict[str, float | int | str] = {
-            "dataset/total_examples": total_examples,
-            "dataset/used_examples": num_selected,
-            "dataset/train_examples": len(train_local_indices),
-            "dataset/val_examples": len(val_local_indices),
-            "dataset/train_eval_examples": len(train_eval_local_indices),
-            "dataset/val_eval_examples": len(val_eval_local_indices),
-            "dataset/preload_mode": preload_mode,
-            "dataset/preload_seconds": preload_sec,
-        }
-        if tensor_data is not None:
-            dataset_log["dataset/preload_bytes"] = tensor_dataset_bytes(tensor_data)
-        wandb.log(dataset_log)
+        source = setup.source
+        train_local_indices = setup.train_local_indices
+        train_eval_local_indices = setup.train_eval_local_indices
+        val_eval_local_indices = setup.val_eval_local_indices
 
         results: list[dict] = []
         for index, variant in enumerate(variants):
