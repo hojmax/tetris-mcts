@@ -37,7 +37,7 @@ class OptimizerConfig:
         2000
     )
     use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
-        True
+        False
     )
     use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
         True
@@ -86,7 +86,7 @@ class SelfPlayConfig:
         8.0
     )
     use_parent_value_for_unvisited_q: bool = (  # If True, unvisited action children start from the parent node's initial total-value estimate instead of zero Q
-        False
+        True
     )
     bootstrap_use_min_max_q_normalization: bool = (  # If True, force no-network bootstrap rollouts to use global min-max Q normalization
         True

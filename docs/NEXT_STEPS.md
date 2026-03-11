@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] New Metric: Is past attack + future attack roughly stable? Maybe we log per game variance in this estimate.
 - [ ] I don't want random move sampling in the the last ~10 moves.
 - [ ] Why is the GPU going cold repeatedly like 50% of the time?
 - [ ] Why don't the final moves look full optimal? Like just clean out the board in the last 5 moves? Surely that is highest attack possible? Instead it does random nonsense.
