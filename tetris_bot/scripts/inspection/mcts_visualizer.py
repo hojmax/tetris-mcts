@@ -533,12 +533,18 @@ def find_selected_path_targets(
     selected_action: int,
     selected_chance_outcome: int,
 ) -> tuple[str, str | None]:
-    root = tree_dict["nodes"][tree_dict["root_id"]]
+    nodes_by_id = {node["id"]: node for node in tree_dict["nodes"]}
+    root = nodes_by_id.get(tree_dict["root_id"])
+    if root is None:
+        raise ValueError(f"Root node not found: {tree_dict['root_id']}")
+
     action_target = f"v_{root['id']}_{selected_action}"
     selected_chance_node: dict | None = None
 
     for child_id in root["children"]:
-        child = tree_dict["nodes"][child_id]
+        child = nodes_by_id.get(child_id)
+        if child is None:
+            continue
         if child.get("edge_from_parent") == selected_action:
             action_target = str(child["id"])
             selected_chance_node = child
@@ -549,7 +555,9 @@ def find_selected_path_targets(
 
     chance_target = f"vp_{selected_chance_node['id']}_{selected_chance_outcome}"
     for child_id in selected_chance_node["children"]:
-        child = tree_dict["nodes"][child_id]
+        child = nodes_by_id.get(child_id)
+        if child is None:
+            continue
         if child.get("edge_from_parent") == selected_chance_outcome:
             chance_target = str(child["id"])
             break

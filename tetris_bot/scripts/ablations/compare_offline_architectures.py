@@ -1277,7 +1277,6 @@ def main(args: ScriptArgs) -> None:
         )
         source = setup.source
         train_local_indices = setup.train_local_indices
-        val_local_indices = setup.val_local_indices
         train_eval_local_indices = setup.train_eval_local_indices
         val_eval_local_indices = setup.val_eval_local_indices
 

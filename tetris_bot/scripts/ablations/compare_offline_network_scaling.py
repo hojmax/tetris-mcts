@@ -18,7 +18,6 @@ from tetris_bot.constants import (
 from tetris_bot.ml.network import BOARD_STATS_FEATURES, PIECE_AUX_FEATURES, TetrisNet
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     FlopBreakdown,
-    OfflineDatasetSetup,
     count_parameters,
     get_preload_mode,
     init_wandb_run,

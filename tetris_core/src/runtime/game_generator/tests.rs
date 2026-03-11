@@ -166,6 +166,41 @@ fn test_build_candidate_eval_config_forces_deterministic_gate_settings() {
 }
 
 #[test]
+fn test_effective_search_penalties_disable_penalties_at_cap() {
+    assert_eq!(
+        GameGenerator::effective_search_penalties(0.99, 1.0, 5.0, 3.0),
+        (5.0, 3.0)
+    );
+    assert_eq!(
+        GameGenerator::effective_search_penalties(1.0, 1.0, 5.0, 3.0),
+        (0.0, 0.0)
+    );
+    assert_eq!(
+        GameGenerator::effective_search_penalties(1.2, 1.0, 5.0, 3.0),
+        (0.0, 0.0)
+    );
+}
+
+#[test]
+fn test_incumbent_eval_rebaseline_only_when_penalties_change_for_network_incumbent() {
+    assert!(!GameGenerator::needs_incumbent_eval_rebaseline(
+        false,
+        (5.0, 3.0),
+        (0.0, 0.0),
+    ));
+    assert!(!GameGenerator::needs_incumbent_eval_rebaseline(
+        true,
+        (5.0, 3.0),
+        (5.0, 3.0),
+    ));
+    assert!(GameGenerator::needs_incumbent_eval_rebaseline(
+        true,
+        (5.0, 3.0),
+        (0.0, 0.0),
+    ));
+}
+
+#[test]
 fn test_build_rollout_config_keeps_sampling_settings() {
     let mut config = MCTSConfig::default();
     config.num_simulations = 123;

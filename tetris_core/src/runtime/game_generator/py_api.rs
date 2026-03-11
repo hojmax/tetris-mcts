@@ -395,24 +395,30 @@ impl GameGenerator {
         Ok(true)
     }
 
-    /// Get statistics as a dictionary.
-    pub fn get_stats(&self) -> HashMap<String, u64> {
+    /// Get statistics as a typed Python dictionary.
+    pub fn get_stats(&self, py: Python<'_>) -> HashMap<String, PyObject> {
         let mut stats = HashMap::new();
-        stats.insert("games_generated".to_string(), self.games_generated());
-        stats.insert("examples_generated".to_string(), self.examples_generated());
-        stats.insert("is_running".to_string(), self.is_running() as u64);
-        stats.insert("buffer_size".to_string(), self.buffer_size() as u64);
+        stats.insert(
+            "games_generated".to_string(),
+            self.games_generated().into_py(py),
+        );
+        stats.insert(
+            "examples_generated".to_string(),
+            self.examples_generated().into_py(py),
+        );
+        stats.insert("is_running".to_string(), self.is_running().into_py(py));
+        stats.insert("buffer_size".to_string(), self.buffer_size().into_py(py));
         stats.insert(
             "incumbent_model_step".to_string(),
-            self.incumbent_model_step.load(Ordering::SeqCst),
+            self.incumbent_model_step.load(Ordering::SeqCst).into_py(py),
         );
         stats.insert(
             "incumbent_uses_network".to_string(),
-            self.incumbent_uses_network() as u64,
+            self.incumbent_uses_network().into_py(py),
         );
         stats.insert(
             "incumbent_eval_avg_attack".to_string(),
-            Self::load_atomic_f32(&self.incumbent_eval_avg_attack).to_bits() as u64,
+            Self::load_atomic_f32(&self.incumbent_eval_avg_attack).into_py(py),
         );
         stats
     }

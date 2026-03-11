@@ -16,7 +16,7 @@ make install
 - `uv` (if missing)
 - Rust toolchain via `rustup` (if missing)
 - Python dependencies via `uv sync --frozen`
-- Debug PyO3 extension via `maturin develop`
+- Debug PyO3 extension via `maturin build` + wheel install
 - On Linux, best-effort install of ORT build deps (`pkg-config` + OpenSSL headers) when missing
 
 Then run scripts with:
@@ -41,7 +41,7 @@ uv run python tetris_bot/scripts/inspection/download_wandb_training_data.py --re
 
 ## Troubleshooting
 
-### `rustc` not found during `uv run python -m maturin ...`
+### `rustc` not found during the Rust extension build
 
 Symptom:
 - `maturin failed ... rust compiler is not installed or not in PATH`
@@ -69,9 +69,9 @@ Fix (same shell, repo root):
 source "$HOME/.cargo/env"
 unset CONDA_PREFIX
 unset VIRTUAL_ENV
-PYO3_PYTHON="$PWD/.venv/bin/python" uv run python -m maturin develop --uv --manifest-path tetris_core/Cargo.toml
-uv run python -c "from tetris_core.tetris_core import MCTSConfig; print(MCTSConfig)"
-uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
+make build-dev
+.venv/bin/python -c "from tetris_core.tetris_core import MCTSConfig; print(MCTSConfig)"
+.venv/bin/python tetris_bot/scripts/inspection/sweep_num_workers.py
 ```
 
 If this happens specifically during `make optimize` in a root/container shell, use an env-sanitized rebuild and keep Cargo on `PATH`:
@@ -83,7 +83,10 @@ rustc --version
 cargo --version
 
 env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
-  PYO3_PYTHON="$PWD/.venv/bin/python" .venv/bin/python -m maturin develop --release --uv --features extension-module --manifest-path tetris_core/Cargo.toml
+  PYO3_PYTHON="$PWD/.venv/bin/python" .venv/bin/python -m maturin build --release --out tetris_core/dist --features extension-module --manifest-path tetris_core/Cargo.toml
+
+env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
+  VIRTUAL_ENV="$PWD/.venv" .venv/bin/python -m uv pip install --no-deps --reinstall tetris_core/dist/tetris_core-*.whl
 
 env -u CONDA_PREFIX -u VIRTUAL_ENV -u PYTHONPATH PATH="$HOME/.cargo/bin:$PATH" \
   .venv/bin/python tetris_bot/scripts/inspection/optimize_machine.py \
@@ -105,7 +108,7 @@ unset CONDA_PREFIX
 unset VIRTUAL_ENV
 ```
 
-Then rerun the `uv run python -m maturin develop --uv ...` command.
+Then rerun `make build-dev`.
 
 ### `Failed to set rpath ... did you install patchelf?`
 

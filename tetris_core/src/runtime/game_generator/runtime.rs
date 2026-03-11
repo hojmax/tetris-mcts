@@ -12,6 +12,56 @@ impl GameGenerator {
         target.store(value.to_bits(), Ordering::SeqCst);
     }
 
+    pub(super) fn effective_search_penalties(
+        nn_value_weight: f32,
+        nn_value_weight_cap: f32,
+        death_penalty: f32,
+        overhang_penalty_weight: f32,
+    ) -> (f32, f32) {
+        if nn_value_weight >= nn_value_weight_cap {
+            (0.0, 0.0)
+        } else {
+            (death_penalty, overhang_penalty_weight)
+        }
+    }
+
+    pub(super) fn needs_incumbent_eval_rebaseline(
+        incumbent_uses_network: bool,
+        current_penalties: (f32, f32),
+        candidate_penalties: (f32, f32),
+    ) -> bool {
+        incumbent_uses_network && current_penalties != candidate_penalties
+    }
+
+    fn evaluate_avg_attack_on_fixed_seeds(
+        agent: &MCTSAgent,
+        running: &Arc<AtomicBool>,
+        max_placements: u32,
+        candidate_eval_seeds: &[u64],
+    ) -> Option<f32> {
+        let mut total_attack: u64 = 0;
+        let mut completed_games: u64 = 0;
+
+        for &seed in candidate_eval_seeds {
+            if !running.load(Ordering::SeqCst) {
+                return None;
+            }
+            let (result, _) = agent.play_game_on_env(
+                TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed),
+                max_placements,
+                false,
+            )?;
+            total_attack += result.total_attack as u64;
+            completed_games += 1;
+        }
+
+        if completed_games == 0 {
+            None
+        } else {
+            Some(total_attack as f32 / completed_games as f32)
+        }
+    }
+
     pub(super) fn examples_to_numpy<'py>(
         py: Python<'py>,
         examples: &[TrainingExample],
@@ -471,10 +521,16 @@ impl GameGenerator {
         let previous_incumbent_avg_attack = Self::load_atomic_f32(incumbent_eval_avg_attack);
         let incumbent_path_before = incumbent_model_path.read().unwrap().clone();
 
-        // Read current penalty values for candidate evaluation
-        let candidate_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
-        let candidate_overhang_penalty_weight =
+        let current_incumbent_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
+        let current_incumbent_overhang_penalty_weight =
             Self::load_atomic_f32(incumbent_overhang_penalty_weight);
+        let (candidate_death_penalty, candidate_overhang_penalty_weight) =
+            Self::effective_search_penalties(
+                candidate.nn_value_weight,
+                nn_value_weight_cap,
+                current_incumbent_death_penalty,
+                current_incumbent_overhang_penalty_weight,
+            );
         let Some(candidate_agent) = Self::create_rollout_agent(
             &eval_config,
             true,
@@ -622,7 +678,60 @@ impl GameGenerator {
             })
             .sum::<f32>()
             / candidate_games as f32;
-        let incumbent_avg_attack = previous_incumbent_avg_attack;
+        let mut incumbent_avg_attack = previous_incumbent_avg_attack;
+        if Self::needs_incumbent_eval_rebaseline(
+            incumbent_uses_network_before,
+            (
+                current_incumbent_death_penalty,
+                current_incumbent_overhang_penalty_weight,
+            ),
+            (candidate_death_penalty, candidate_overhang_penalty_weight),
+        ) {
+            let Some(incumbent_agent) = Self::create_rollout_agent(
+                &eval_config,
+                true,
+                non_network_num_simulations,
+                bootstrap_use_min_max_q_normalization,
+                incumbent_nn_value_weight_before,
+                candidate_death_penalty,
+                candidate_overhang_penalty_weight,
+                Some(&incumbent_path_before),
+                worker_id,
+                "incumbent-baseline",
+            ) else {
+                eprintln!(
+                    "[GameGenerator] Worker {} failed to load incumbent baseline from {} for adjusted evaluation",
+                    worker_id,
+                    incumbent_path_before.display()
+                );
+                Self::remove_model_artifacts_if_safe(
+                    &candidate.model_path,
+                    bootstrap_model_path,
+                    &incumbent_path_before,
+                    None,
+                );
+                return 0;
+            };
+            let Some(recomputed_incumbent_avg_attack) = Self::evaluate_avg_attack_on_fixed_seeds(
+                &incumbent_agent,
+                running,
+                max_placements,
+                candidate_eval_seeds,
+            ) else {
+                eprintln!(
+                    "[GameGenerator] Failed to recompute incumbent baseline for adjusted penalties; rejecting candidate step {}",
+                    candidate.model_step
+                );
+                Self::remove_model_artifacts_if_safe(
+                    &candidate.model_path,
+                    bootstrap_model_path,
+                    &incumbent_path_before,
+                    None,
+                );
+                return 0;
+            };
+            incumbent_avg_attack = recomputed_incumbent_avg_attack;
+        }
 
         let auto_promoted = previous_incumbent_avg_attack == 0.0 && !incumbent_uses_network_before;
         let promoted = auto_promoted || candidate_avg_attack > incumbent_avg_attack;
@@ -641,9 +750,17 @@ impl GameGenerator {
             incumbent_uses_network.store(true, Ordering::SeqCst);
             incumbent_model_step.store(candidate.model_step, Ordering::SeqCst);
             Self::store_atomic_f32(incumbent_nn_value_weight, candidate.nn_value_weight);
-            if candidate.nn_value_weight >= nn_value_weight_cap {
-                Self::store_atomic_f32(incumbent_death_penalty, 0.0);
-                Self::store_atomic_f32(incumbent_overhang_penalty_weight, 0.0);
+            Self::store_atomic_f32(incumbent_death_penalty, candidate_death_penalty);
+            Self::store_atomic_f32(
+                incumbent_overhang_penalty_weight,
+                candidate_overhang_penalty_weight,
+            );
+            if (candidate_death_penalty, candidate_overhang_penalty_weight) == (0.0, 0.0)
+                && (
+                    current_incumbent_death_penalty,
+                    current_incumbent_overhang_penalty_weight,
+                ) != (0.0, 0.0)
+            {
                 eprintln!(
                     "[GameGenerator] nn_value_weight reached cap ({:.6}), disabling death_penalty and overhang_penalty_weight",
                     nn_value_weight_cap
