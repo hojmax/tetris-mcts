@@ -47,6 +47,10 @@ pub struct MCTSConfig {
     /// None uses global min-max normalization. Set to None for bootstrap (no-NN) mode.
     #[pyo3(get, set)]
     pub q_scale: Option<f32>,
+    /// If true, unvisited action children start with the parent node's initial backed-up
+    /// total-value estimate instead of zero Q (first-play urgency).
+    #[pyo3(get, set)]
+    pub use_parent_value_for_unvisited_q: bool,
     /// Reuse the MCTS subtree from the previous move instead of building a fresh tree.
     /// After selecting an action, the subtree corresponding to that action + actual piece
     /// spawn is extracted and used as the starting point for the next search.
@@ -72,6 +76,7 @@ impl MCTSConfig {
             overhang_penalty_weight: 0.0,
             nn_value_weight: 1.0,
             q_scale: Some(8.0),
+            use_parent_value_for_unvisited_q: false,
             reuse_tree: true,
         }
     }
@@ -103,6 +108,7 @@ mod tests {
         assert_eq!(config.overhang_penalty_weight, 0.0);
         assert_eq!(config.nn_value_weight, 1.0);
         assert_eq!(config.q_scale, Some(8.0));
+        assert!(!config.use_parent_value_for_unvisited_q);
         assert!(config.reuse_tree);
     }
 }

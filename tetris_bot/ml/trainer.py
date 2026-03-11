@@ -824,6 +824,9 @@ class Trainer:
             if self.config.self_play.use_tanh_q_normalization
             else None
         )
+        mcts_config.use_parent_value_for_unvisited_q = (
+            self.config.self_play.use_parent_value_for_unvisited_q
+        )
         mcts_config.reuse_tree = self.config.self_play.reuse_tree
 
         # Start background game generator

@@ -182,7 +182,12 @@ fn simulate<E: LeafEvaluator>(
             panic!("BUG: non-terminal DecisionNode has no valid actions");
         }
 
-        let action_idx = node.select_action(config.c_puct, config.q_scale, *q_bounds);
+        let action_idx = node.select_action(
+            config.c_puct,
+            config.q_scale,
+            *q_bounds,
+            config.use_parent_value_for_unvisited_q,
+        );
         let next_move_number = node.move_number
             + if action_idx == HOLD_ACTION_INDEX {
                 0
@@ -282,7 +287,7 @@ fn simulate<E: LeafEvaluator>(
             };
             chance_node.children.insert(chance_outcome, decision_child);
 
-            let decision_node = match chance_node.children.get(&chance_outcome) {
+            let decision_node = match chance_node.children.get_mut(&chance_outcome) {
                 Some(MCTSNode::Decision(decision_node)) => decision_node,
                 Some(MCTSNode::Chance(_)) => {
                     unreachable!("BUG: chance expansion should create DecisionNode");
@@ -308,6 +313,7 @@ fn simulate<E: LeafEvaluator>(
                 decision_node.nn_value - leaf_overhang
             };
             let total_value = root_cumulative_attack + path_attack_sum + leaf_value;
+            decision_node.set_initial_total_value_estimate(total_value);
             update_q_bounds(q_bounds, total_value);
             backup_with_value(&path, total_value, config.track_value_history);
             return SimulationOutcome::Expansion;
@@ -631,6 +637,7 @@ pub(super) fn search_internal(
     };
     let mut root = DecisionNode::new(env.clone(), move_number);
     root.set_nn_output(&policy, scale_nn_value(nn_value, config.nn_value_weight));
+    root.set_initial_total_value_estimate(root.state.attack as f32 + root.nn_value);
     run_search(config, &evaluator, root, add_noise)
 }
 
@@ -644,6 +651,7 @@ pub(crate) fn search_internal_without_nn(
     let root_policy = env.get_cached_uniform_policy().as_ref().clone();
     let mut root = DecisionNode::new(env.clone(), move_number);
     root.set_nn_output(&root_policy, 0.0);
+    root.set_initial_total_value_estimate(root.state.attack as f32 + root.nn_value);
     run_search(config, &BootstrapLeafEvaluator, root, add_noise)
 }
 

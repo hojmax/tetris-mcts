@@ -212,6 +212,7 @@ fn test_build_rollout_config_keeps_sampling_settings() {
     config.death_penalty = 5.0;
     config.overhang_penalty_weight = 3.0;
     config.q_scale = Some(7.5);
+    config.use_parent_value_for_unvisited_q = true;
 
     let network_config =
         GameGenerator::build_rollout_config(&config, true, 999, true, 0.123, 5.0, 3.0);
@@ -224,6 +225,7 @@ fn test_build_rollout_config_keeps_sampling_settings() {
     assert_eq!(network_config.death_penalty, 5.0);
     assert_eq!(network_config.overhang_penalty_weight, 3.0);
     assert_eq!(network_config.q_scale, Some(7.5));
+    assert!(network_config.use_parent_value_for_unvisited_q);
 
     let bootstrap_config =
         GameGenerator::build_rollout_config(&config, false, 999, true, 0.456, 5.0, 3.0);
@@ -236,6 +238,7 @@ fn test_build_rollout_config_keeps_sampling_settings() {
     assert_eq!(bootstrap_config.death_penalty, 5.0);
     assert_eq!(bootstrap_config.overhang_penalty_weight, 3.0);
     assert_eq!(bootstrap_config.q_scale, None);
+    assert!(bootstrap_config.use_parent_value_for_unvisited_q);
 
     // Verify penalties are overridden when passed as 0
     let zeroed_config =

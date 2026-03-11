@@ -377,6 +377,9 @@ pub struct TreeNodeExport {
     /// Raw neural network value estimate (for decision nodes)
     #[pyo3(get)]
     pub nn_value: f32,
+    /// Total-value estimate used as first-play urgency for unvisited action children.
+    #[pyo3(get)]
+    pub unvisited_child_value_estimate: f32,
     /// Is terminal state (for decision nodes)
     #[pyo3(get)]
     pub is_terminal: bool,

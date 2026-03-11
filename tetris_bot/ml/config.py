@@ -85,6 +85,9 @@ class SelfPlayConfig:
     q_scale: float = (  # Scale for tanh Q squashing in PUCT (only used when use_tanh_q_normalization=True)
         8.0
     )
+    use_parent_value_for_unvisited_q: bool = (  # If True, unvisited action children start from the parent node's initial total-value estimate instead of zero Q
+        False
+    )
     bootstrap_use_min_max_q_normalization: bool = (  # If True, force no-network bootstrap rollouts to use global min-max Q normalization
         True
     )

@@ -81,6 +81,9 @@ pub struct DecisionNode {
     pub move_number: u32,
     /// Raw neural network value estimate (stored when node is expanded)
     pub nn_value: f32,
+    /// Total value estimate that was initially backed up when this node was expanded.
+    /// Used as a first-play urgency baseline for unvisited action children when enabled.
+    pub initial_total_value_estimate: f32,
     /// All backed-up total values that contributed to value_sum (only when track_value_history=true)
     pub value_history: Option<Vec<f32>>,
 }
@@ -115,6 +118,7 @@ impl DecisionNode {
             is_terminal,
             move_number,
             nn_value: 0.0,
+            initial_total_value_estimate: 0.0,
             value_history: None,
         }
     }
@@ -148,21 +152,36 @@ impl DecisionNode {
         }
     }
 
+    pub fn set_initial_total_value_estimate(&mut self, value: f32) {
+        self.initial_total_value_estimate = value;
+    }
+
     /// Select best action using PUCT formula.
     /// When `q_scale` is `Some(scale)`, uses tanh Q squashing (NN mode).
     /// When `q_scale` is `None`, uses global min-max Q normalization (bootstrap mode).
     /// `q_bounds` is the global (q_min, q_max) tracked across all simulations so far.
-    pub fn select_action(&self, c_puct: f32, q_scale: Option<f32>, q_bounds: (f32, f32)) -> usize {
+    pub fn select_action(
+        &self,
+        c_puct: f32,
+        q_scale: Option<f32>,
+        q_bounds: (f32, f32),
+        use_parent_value_for_unvisited_q: bool,
+    ) -> usize {
         let sqrt_total = (self.visit_count as f32).sqrt();
         let mut best_action = self.valid_actions[0];
         let mut best_value = f32::NEG_INFINITY;
+        let unvisited_q = if use_parent_value_for_unvisited_q {
+            self.initial_total_value_estimate
+        } else {
+            0.0
+        };
 
         for (i, &action_idx) in self.valid_actions.iter().enumerate() {
             let prior = self.action_priors[i];
             let (q, n) = if let Some(child) = self.children.get(&action_idx) {
                 (child.mean_value(), child.visit_count())
             } else {
-                (0.0, 0)
+                (unvisited_q, 0)
             };
             let transformed_q = match q_scale {
                 Some(scale) => squash_q_value(q, scale),
@@ -402,10 +421,10 @@ mod tests {
         node.set_nn_output(&policy, 0.0);
 
         // With no visits, selection should return a valid action (tanh mode)
-        let action = node.select_action(1.0, Some(8.0), (0.0, 0.0));
+        let action = node.select_action(1.0, Some(8.0), (0.0, 0.0), false);
         assert!(node.valid_actions.contains(&action));
         // Also with min-max mode (no bounds yet → all Q=0.5, prior+U wins)
-        let action = node.select_action(1.0, None, (f32::INFINITY, f32::NEG_INFINITY));
+        let action = node.select_action(1.0, None, (f32::INFINITY, f32::NEG_INFINITY), false);
         assert!(node.valid_actions.contains(&action));
     }
 
@@ -426,7 +445,7 @@ mod tests {
         node.children.insert(action_idx, MCTSNode::Chance(child));
 
         // Selection should consider the child's value
-        let selected = node.select_action(1.0, Some(8.0), (0.0, 0.0));
+        let selected = node.select_action(1.0, Some(8.0), (0.0, 0.0), false);
         assert!(node.valid_actions.contains(&selected));
     }
 
@@ -570,7 +589,7 @@ mod tests {
         node.visit_count = 1;
 
         // With high c_puct, should explore high-prior actions
-        let action = node.select_action(10.0, Some(8.0), (0.0, 0.0));
+        let action = node.select_action(10.0, Some(8.0), (0.0, 0.0), false);
         assert!(node.valid_actions.contains(&action));
     }
 
@@ -609,7 +628,7 @@ mod tests {
 
         // Raw-Q PUCT would choose high_q_action; global min-max normalized-Q PUCT
         // should let the strong prior/exploration term win here.
-        let selected = node.select_action(1.0, None, (100.0, 200.0));
+        let selected = node.select_action(1.0, None, (100.0, 200.0), false);
         assert_eq!(selected, high_prior_action);
     }
 
@@ -656,8 +675,37 @@ mod tests {
 
         // With tanh Q squashing both Q terms saturate near +1, so the strong
         // prior/exploration term should dominate this comparison.
-        let selected = node.select_action(1.0, Some(8.0), (0.0, 0.0));
+        let selected = node.select_action(1.0, Some(8.0), (0.0, 0.0), false);
         assert_eq!(selected, high_prior_action);
+    }
+
+    #[test]
+    fn test_decision_node_select_action_can_use_parent_value_for_unvisited_children() {
+        let env = TetrisEnv::new(10, 20);
+        let mut node = DecisionNode::new(env.clone(), 0);
+
+        let visited_action = node.valid_actions[0];
+        let unvisited_action = node.valid_actions[1];
+        node.valid_actions = vec![visited_action, unvisited_action];
+
+        let mut policy = vec![0.0; NUM_ACTIONS];
+        policy[visited_action] = 0.99;
+        policy[unvisited_action] = 0.01;
+        node.set_nn_output(&policy, 0.0);
+        node.visit_count = 100;
+        node.set_initial_total_value_estimate(16.0);
+
+        let mut visited_child = ChanceNode::new(env, 0, 0, 0, vec![]);
+        visited_child.visit_count = 50;
+        visited_child.value_sum = 0.0;
+        node.children
+            .insert(visited_action, MCTSNode::Chance(visited_child));
+
+        let without_parent_value = node.select_action(1.0, Some(8.0), (0.0, 0.0), false);
+        let with_parent_value = node.select_action(1.0, Some(8.0), (0.0, 0.0), true);
+
+        assert_eq!(without_parent_value, visited_action);
+        assert_eq!(with_parent_value, unvisited_action);
     }
 
     #[test]

@@ -372,9 +372,16 @@ def build_decision_action_stats(
             child_by_action[action_idx] = child
 
     raw_q_by_action: dict[int, float] = {}
+    unvisited_raw_q = (
+        float(decision_node.get("unvisited_child_value_estimate", 0.0))
+        if tree_dict.get("use_parent_value_for_unvisited_q", False)
+        else 0.0
+    )
     for action_idx in decision_node["valid_actions"]:
         child = child_by_action.get(action_idx)
-        raw_q_by_action[action_idx] = child["mean_value"] if child is not None else 0.0
+        raw_q_by_action[action_idx] = (
+            child["mean_value"] if child is not None else unvisited_raw_q
+        )
 
     q_min = min(raw_q_by_action.values())
     q_max = max(raw_q_by_action.values())
@@ -446,6 +453,7 @@ def tree_export_to_dict(
     tree,
     c_puct: float,
     q_scale: float | None,
+    use_parent_value_for_unvisited_q: bool,
     search_step: int = 0,
     is_reuse_root: bool = False,
 ) -> dict:
@@ -461,6 +469,7 @@ def tree_export_to_dict(
                 "value_sum": node.value_sum,
                 "value_history": list(node.value_history),
                 "nn_value": node.nn_value,
+                "unvisited_child_value_estimate": node.unvisited_child_value_estimate,
                 "attack": node.attack,
                 "is_terminal": node.is_terminal,
                 "move_number": node.move_number,
@@ -497,6 +506,7 @@ def tree_export_to_dict(
         "num_simulations": tree.num_simulations,
         "c_puct": c_puct,
         "q_scale": q_scale,
+        "use_parent_value_for_unvisited_q": use_parent_value_for_unvisited_q,
         "mode": "single_search",
         "counter_label": f"Sims: {tree.num_simulations}",
         "highlighted_node_ids": [],
@@ -569,6 +579,7 @@ def build_full_game_tree_dict(
     playback,
     c_puct: float,
     q_scale: float | None,
+    use_parent_value_for_unvisited_q: bool,
 ) -> dict:
     combined_nodes: list[dict] = []
     highlighted_node_ids: set[str] = set()
@@ -582,6 +593,7 @@ def build_full_game_tree_dict(
             step.tree,
             c_puct=c_puct,
             q_scale=q_scale,
+            use_parent_value_for_unvisited_q=use_parent_value_for_unvisited_q,
             search_step=step_index,
             is_reuse_root=step_index > 0,
         )
@@ -1980,7 +1992,12 @@ def run_mcts(
 
         _env_cache.clear()
         _env_cache.update(build_full_game_env_cache(playback))
-        tree_dict = build_full_game_tree_dict(playback, config.c_puct, config.q_scale)
+        tree_dict = build_full_game_tree_dict(
+            playback,
+            config.c_puct,
+            config.q_scale,
+            config.use_parent_value_for_unvisited_q,
+        )
         elements = build_cytoscape_elements(tree_dict, None, show_unvisited)
         root_selection = str(tree_dict["root_id"]) if tree_dict.get("nodes") else None
         return (
@@ -2013,7 +2030,12 @@ def run_mcts(
     _, tree = result
     _env_cache.clear()
     _env_cache.update(build_env_cache_for_tree(tree))
-    tree_dict = tree_export_to_dict(tree, config.c_puct, config.q_scale)
+    tree_dict = tree_export_to_dict(
+        tree,
+        config.c_puct,
+        config.q_scale,
+        config.use_parent_value_for_unvisited_q,
+    )
     tree_dict["counter_label"] = f"Sims: {sims_to_run}"
     elements = build_cytoscape_elements(tree_dict, None, show_unvisited)
 
