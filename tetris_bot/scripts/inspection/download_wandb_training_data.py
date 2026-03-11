@@ -51,9 +51,7 @@ def validate_npz_zip(path: Path) -> None:
     with zipfile.ZipFile(path, "r") as archive:
         corrupt_member = archive.testzip()
         if corrupt_member is not None:
-            raise ValueError(
-                f"Corrupt NPZ archive member {corrupt_member!r} in {path}"
-            )
+            raise ValueError(f"Corrupt NPZ archive member {corrupt_member!r} in {path}")
         if not archive.namelist():
             raise ValueError(f"NPZ archive is empty: {path}")
 

@@ -109,7 +109,6 @@ impl ActionSpace {
         let lookup_idx = Self::lookup_index(x, y, rotation)?;
         self.placement_to_action[lookup_idx]
     }
-
 }
 
 impl Default for ActionSpace {
@@ -130,7 +129,10 @@ mod tests {
     #[test]
     fn test_action_space() {
         let action_space = ActionSpace::new();
-        assert_eq!(action_space.action_to_placement.len(), NUM_PLACEMENT_ACTIONS);
+        assert_eq!(
+            action_space.action_to_placement.len(),
+            NUM_PLACEMENT_ACTIONS
+        );
 
         // Test roundtrip
         for (idx, &(x, y, rot)) in action_space.action_to_placement.iter().enumerate() {

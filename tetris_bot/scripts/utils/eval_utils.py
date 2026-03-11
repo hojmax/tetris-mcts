@@ -50,6 +50,8 @@ def resolve_model_path(model_path_override: Path | None, run_dir: Path) -> Path:
 def compute_attack_stats(seeds: list[int], result: object) -> tuple[float, float]:
     """Return (attack_std, attack_sem) for an evaluation result."""
     attack_values = [int(attack) for attack, _ in result.game_results]  # type: ignore[attr-defined]
-    attack_std = float(statistics.pstdev(attack_values)) if len(attack_values) > 1 else 0.0
+    attack_std = (
+        float(statistics.pstdev(attack_values)) if len(attack_values) > 1 else 0.0
+    )
     attack_sem = attack_std / math.sqrt(len(attack_values)) if attack_values else 0.0
     return attack_std, attack_sem

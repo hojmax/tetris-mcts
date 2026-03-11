@@ -11,7 +11,11 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_core.tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
+from tetris_core.tetris_core import (
+    MCTSConfig,
+    evaluate_model,
+    evaluate_model_without_nn,
+)
 from tetris_bot.constants import BENCHMARKS_DIR, PARALLEL_ONNX_FILENAME
 from tetris_bot.ml.config import SelfPlayConfig
 
@@ -123,7 +127,12 @@ def evaluate_once(
     config: MCTSConfig,
 ) -> RunResult:
     seed_offset = repeat_idx * args.num_games
-    seeds = list(range(args.seed_start + seed_offset, args.seed_start + seed_offset + args.num_games))
+    seeds = list(
+        range(
+            args.seed_start + seed_offset,
+            args.seed_start + seed_offset + args.num_games,
+        )
+    )
 
     start = time.perf_counter()
     if args.use_dummy_network:

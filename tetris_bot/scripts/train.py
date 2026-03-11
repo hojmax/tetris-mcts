@@ -167,7 +167,10 @@ def restore_trainer_from_checkpoint(
         )
     else:
         restored_nn_value_weight = float(incumbent_nn_value_weight)
-        if not math.isfinite(restored_nn_value_weight) or restored_nn_value_weight < 0.0:
+        if (
+            not math.isfinite(restored_nn_value_weight)
+            or restored_nn_value_weight < 0.0
+        ):
             raise ValueError(
                 f"Checkpoint incumbent_nn_value_weight must be >= 0 (got {restored_nn_value_weight})"
             )
@@ -179,9 +182,7 @@ def restore_trainer_from_checkpoint(
         )
 
     incumbent_death_penalty = state.get("incumbent_death_penalty")
-    incumbent_overhang_penalty_weight = state.get(
-        "incumbent_overhang_penalty_weight"
-    )
+    incumbent_overhang_penalty_weight = state.get("incumbent_overhang_penalty_weight")
     if (
         incumbent_death_penalty is not None
         and incumbent_overhang_penalty_weight is not None

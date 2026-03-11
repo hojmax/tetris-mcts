@@ -9,7 +9,11 @@ import structlog
 from PIL import Image, ImageDraw, ImageFont
 from simple_parsing import parse
 
-from tetris_core.tetris_core import MCTSConfig, evaluate_model, evaluate_model_without_nn
+from tetris_core.tetris_core import (
+    MCTSConfig,
+    evaluate_model,
+    evaluate_model_without_nn,
+)
 from tetris_bot.constants import BENCHMARKS_DIR, PARALLEL_ONNX_FILENAME
 from tetris_bot.scripts.utils.plot_utils import value_to_pixel
 
@@ -201,10 +205,14 @@ def create_plot(results: list[dict], output_path: Path) -> None:
             if log_scale:
                 log_val = y_min + (y_max - y_min) * (tick / 5)
                 y_val = 10**log_val
-                y = value_to_pixel(log_val, y_min, y_max, panel_top + plot_height, panel_top)
+                y = value_to_pixel(
+                    log_val, y_min, y_max, panel_top + plot_height, panel_top
+                )
             else:
                 y_val = y_min + (y_max - y_min) * (tick / 5)
-                y = value_to_pixel(y_val, y_min, y_max, panel_top + plot_height, panel_top)
+                y = value_to_pixel(
+                    y_val, y_min, y_max, panel_top + plot_height, panel_top
+                )
             draw.line([(left, y), (left + plot_width, y)], fill="#e0e0e0", width=1)
             draw.text(
                 (left - 75, y - 8),

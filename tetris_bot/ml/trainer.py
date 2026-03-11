@@ -716,7 +716,9 @@ class Trainer:
             files_to_upload.extend(
                 [
                     optional_path
-                    for optional_path in optional_model_artifact_paths(incumbent_onnx_path)
+                    for optional_path in optional_model_artifact_paths(
+                        incumbent_onnx_path
+                    )
                     if optional_path.exists()
                 ]
             )
@@ -1236,9 +1238,7 @@ class Trainer:
                                 # a subset to appear in history.
                                 wandb.log(game_metrics)
                         else:
-                            game_avg_metrics = average_completed_games(
-                                completed_games
-                            )
+                            game_avg_metrics = average_completed_games(completed_games)
                             if game_avg_metrics:
                                 game_avg_metrics["trainer_step"] = self.step
                                 wandb.log(game_avg_metrics)

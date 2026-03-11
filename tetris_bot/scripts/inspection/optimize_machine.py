@@ -475,7 +475,9 @@ def _pick_best_neighbor_worker(
 
     scored = []
     for worker in evaluated_workers:
-        score = _median_moves_per_sec_for_worker(results, compile_profile, backend, worker)
+        score = _median_moves_per_sec_for_worker(
+            results, compile_profile, backend, worker
+        )
         scored.append((score, worker))
     scored.sort(reverse=True)
     best_worker = scored[0][1]
@@ -534,7 +536,9 @@ def write_cache_result(
         payload = {"machine_profile": machine, "entries": []}
 
     entries = payload.setdefault("entries", [])
-    entries = [entry for entry in entries if entry.get("request_hash") != request_hash_value]
+    entries = [
+        entry for entry in entries if entry.get("request_hash") != request_hash_value
+    ]
     entries.append(
         {
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -549,7 +553,9 @@ def write_cache_result(
     return path
 
 
-def write_env_cache(*, cache_dir: Path, machine_fingerprint: str, payload: dict) -> Path:
+def write_env_cache(
+    *, cache_dir: Path, machine_fingerprint: str, payload: dict
+) -> Path:
     best = payload["best"]
     build = best["build_profile"]
     env_lines = [

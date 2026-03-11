@@ -134,7 +134,9 @@ def stage_resume_directory_from_wandb_artifact(
     artifact_dir: Path, destination_dir: Path
 ) -> Path:
     if not artifact_dir.exists():
-        raise FileNotFoundError(f"Artifact download directory does not exist: {artifact_dir}")
+        raise FileNotFoundError(
+            f"Artifact download directory does not exist: {artifact_dir}"
+        )
     if not artifact_dir.is_dir():
         raise NotADirectoryError(
             f"Artifact download path is not a directory: {artifact_dir}"

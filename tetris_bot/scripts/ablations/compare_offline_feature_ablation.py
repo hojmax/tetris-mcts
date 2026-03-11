@@ -1004,7 +1004,9 @@ def main(args: ScriptArgs) -> None:
         raise ValueError("preload_to_gpu requires a non-CPU device")
     logger.info("Using device", device=device_str)
 
-    run = init_wandb_run(args, normalize_args_for_wandb(args, variants, extra_feature_groups))
+    run = init_wandb_run(
+        args, normalize_args_for_wandb(args, variants, extra_feature_groups)
+    )
     wandb.define_metric("offline_step")
     wandb.define_metric("variants/*", step_metric="offline_step")
     wandb.define_metric(
