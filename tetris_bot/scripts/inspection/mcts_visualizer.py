@@ -1556,7 +1556,11 @@ app.layout = html.Div(
                 ),
                 dcc.Textarea(
                     id="board-input",
-                    value=STATE_PRESET_DEFAULTS["board"],
+                    value=(
+                        STATE_PRESET_DEFAULTS["board"]
+                        if isinstance(STATE_PRESET_DEFAULTS["board"], str)
+                        else ""
+                    ),
                     placeholder=(
                         "Optional board override: 20 rows x 10 cols.\n"
                         "Use '.' or '0' for empty, I/O/T/S/Z/J/L or 1-7 for filled."

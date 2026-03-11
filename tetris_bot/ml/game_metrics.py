@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 import torch
 
 from tetris_bot.ml.aux_features import AUX_FEATURE_LAYOUT
@@ -31,7 +33,7 @@ def compute_batch_feature_metrics(
 
 
 def average_completed_games(
-    completed_games: list[tuple[int, dict[str, float | int]]],
+    completed_games: Sequence[tuple[int, Mapping[str, float | int]]],
 ) -> dict[str, float]:
     """Average all per-game stats using the same metric names as individual game logging."""
     if not completed_games:
@@ -73,7 +75,7 @@ def average_completed_games(
 
 
 def summarize_completed_games(
-    completed_games: list[tuple[int, dict[str, float | int]]],
+    completed_games: Sequence[tuple[int, Mapping[str, float | int]]],
 ) -> dict[str, float]:
     if not completed_games:
         return {}
