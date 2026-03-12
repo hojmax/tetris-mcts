@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Delete /Users/axelhojmark/Desktop/tetris-mcts/tetris_core/dist/tetris_core-0.1.0-cp312-cp312-macosx_11_0_arm64.whl
 - [ ] New Metric: Is past attack + future attack roughly stable? Maybe we log per game variance in this estimate.
 - [ ] I don't want random move sampling in the the last ~10 moves.
 - [ ] Why is the GPU going cold repeatedly like 50% of the time?
