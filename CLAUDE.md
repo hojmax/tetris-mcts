@@ -8,6 +8,16 @@ Treat this document as a living guide.
 - Add important constraints, workflow gotchas, or debugging tips as they are discovered.
 - Prefer small, continuous updates over occasional big rewrites.
 
+## Memory Workflow
+
+- At the start of every session, read `memories/MEMORY.md` before doing substantive work. If it is missing, create it first.
+- Treat `memories/MEMORY.md` as the short-term operational memory log for repo-specific learnings and user feedback.
+- Write to `memories/MEMORY.md` liberally whenever you learn something useful: corrected command usage, debugging realizations, unintuitive behavior, hard-to-find facts, user preferences, workflow gotchas, or other details likely to save time later.
+- Prefer concise entries with the final takeaway, not a long play-by-play.
+- When `memories/MEMORY.md` reaches 200 lines, compact it. Group related stable notes into themed Markdown files under `memories/`.
+- When compacting, append to an existing themed memory file if one already fits the topic; otherwise create a new file with a descriptive name.
+- After compacting, keep `memories/MEMORY.md` as the active short-term log with a reduced set of current notes and pointers to the long-term themed files.
+
 ## Non-Negotiable Policies
 
 ### Feature Worktrees
@@ -232,4 +242,5 @@ If you see `ModuleNotFoundError: No module named 'tetris_core.tetris_core'`, the
 - Keep Rust focused on engine/search/runtime performance.
 - Keep Python focused on training/analysis/visualization.
 - Parallelize game workloads.
+- Read `memories/MEMORY.md` first and record durable learnings there.
 - Update this file whenever reality changes.

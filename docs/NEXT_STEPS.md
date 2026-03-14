@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] quicktest on replay buffer
 - [ ] Maybe I can simplify code now and drop all the bootstrapping logic, and just pretrain the network on the replay buffer from earlier experiment as warm start. But kind of wack to have unreproducable training run. Like does the method actually work without bootstrapping now? Could we get rid of the penalties and stuff? Once everything is fixed we should try, is kind of ugly. Why would this be necessary. Could of course just be compute multiplier.
 - [ ] Look at game that ends really early, and understand exactly why that happened. I would never expect it to look like higher reward to screw up the game board.
 - [ ] New Metric: Is past attack + future attack roughly stable? Maybe we log per game variance in this estimate.
@@ -96,6 +97,7 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 ## Prompts To Run
 
 > Why does this exist:
+
     ```
 
         fn evaluate_avg_attack_on_fixed_seeds(
@@ -146,6 +148,7 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 > Why is CANDIDATE_EVAL_MCTS_SEED hardcoded? tetris_core/src/runtime/game_generator/runtime.rs
 
 > In tetris_core/src/runtime/game_generator/py_api.rs, do we really need all these checks?:
+
     ```
 
             if max_placements == 0 {
@@ -409,46 +412,9 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
     ```
     So if subfunctions only need a subset, than maybe we can logically group these such that we could just pass that subgroup into that function with the nesting. Or maybe just the full object everywhere sometimes.
 
-
 > Is the slicing algorithm for loading up the gpu and efficient way of doing it? Any simpler way of ensuring the training data is on the gpu? Also why is my gpu not running out of memory, is like 2M training points not a crap ton of data. Or maybe not?
 
-
 > When I do ctrl + c twice, I think this does not actually stop the wandb run properly and upload the current replay buffer and model, but just kills everything. I just want to stop the workers and wrap up, not just stop workers and die.
-
-> Is this ever used?:
-    ```
-
-        /// Get statistics as a typed Python dictionary.
-        pub fn get_stats(&self, py: Python<'_>) -> HashMap<String, PyObject> {
-            let mut stats = HashMap::new();
-            stats.insert(
-                "games_generated".to_string(),
-                self.games_generated().into_py(py),
-            );
-            stats.insert(
-                "examples_generated".to_string(),
-                self.examples_generated().into_py(py),
-            );
-            stats.insert("is_running".to_string(), self.is_running().into_py(py));
-            stats.insert("buffer_size".to_string(), self.buffer_size().into_py(py));
-            stats.insert(
-                "incumbent_model_step".to_string(),
-                self.incumbent_model_step.load(Ordering::SeqCst).into_py(py),
-            );
-            stats.insert(
-                "incumbent_uses_network".to_string(),
-                self.incumbent_uses_network().into_py(py),
-            );
-            stats.insert(
-                "incumbent_eval_avg_attack".to_string(),
-                Self::load_atomic_f32(&self.incumbent_eval_avg_attack).into_py(py),
-            );
-            stats
-        }
-
-    ```
-    I also think in general it seems like the rust code is often exposing things that are not really used, like string representations or dict representations or stuff. Get rid of that.
-
 
 > In tetris_core/src/search/utils.rs why do we need:
 
@@ -477,29 +443,6 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
     Is holes not just 200 - blocks - visit_count. I.e. holes are what is left when you account for all the air you can visit and the placed blocks? But actually thinking of it, since we anyway need the loop for overhang, then kind of makes sense to just do the holes in there?
 
-> is this ever used?:
-
-    ```
-
-        /// Convert to dictionary for logging.
-        pub fn to_dict(&self) -> HashMap<String, f32> {
-            let mut d = HashMap::new();
-            d.insert("eval/num_games".to_string(), self.num_games as f32);
-            d.insert("eval/total_attack".to_string(), self.total_attack as f32);
-            d.insert("eval/max_attack".to_string(), self.max_attack as f32);
-            d.insert("eval/total_lines".to_string(), self.total_lines as f32);
-            d.insert("eval/max_lines".to_string(), self.max_lines as f32);
-            d.insert("eval/avg_attack".to_string(), self.avg_attack);
-            d.insert("eval/avg_lines".to_string(), self.avg_lines);
-            d.insert("eval/avg_moves".to_string(), self.avg_moves);
-            d.insert("eval/attack_per_piece".to_string(), self.attack_per_piece);
-            d.insert("eval/lines_per_piece".to_string(), self.lines_per_piece);
-            d.insert("eval/avg_tree_nodes".to_string(), self.avg_tree_nodes);
-            d
-        }
-    ```
-    tetris_core/src/runtime/evaluation.rs
-
 > Is the replay storage format the most efficient?
 
 > Why is evaluate_agent writing to disk instead of being in memory?
@@ -521,8 +464,6 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 > Clean up dead code please around the repo
 
 > How could I improve my model architecture?
-
-> Why is there so much duplicate code in tetris_core/src/inference/mod.rs? And why are there so many different functions in mod.rs? Seems like a lot of code specialized for a single use case that could have been generalized?
 
 > Why is placement count passed in here?:
 
@@ -563,42 +504,6 @@ pub fn denormalize_combo_feature(combo_feature: f32) -> u32 {
 }
 ```
 
-> I want to do a quicktest type of thing on an actual replay buffer. So the test is pointed to a replay buffer I track in git, with like 10K states, and we have a bunch of consistency checks there on the replay buffer which we check whether hold in practice. Suggest a long list of potential consistency checks we could do on the replay buffer.
-
-> Is the minus the max logit just a way of making the calculation more stable? or what is it doing?:
-
-```
-
-/// Softmax with mask (invalid actions get 0 probability)
-pub fn masked_softmax(logits: &[f32], mask: &[bool]) -> Vec<f32> {
-    let max_logit = logits
-        .iter()
-        .zip(mask.iter())
-        .filter(|(_, &m)| m)
-        .map(|(&x, _)| x)
-        .fold(f32::NEG_INFINITY, f32::max);
-
-    let mut result = vec![0.0; logits.len()];
-    let mut sum = 0.0;
-
-    for (i, (&logit, &valid)) in logits.iter().zip(mask.iter()).enumerate() {
-        if valid {
-            let exp_val = (logit - max_logit).exp();
-            result[i] = exp_val;
-            sum += exp_val;
-        }
-    }
-
-    if sum > 0.0 {
-        for x in &mut result {
-            *x /= sum;
-        }
-    }
-
-    result
-```
-
-> Lets try to do a memory .md file. In the repo, make a memories folder. Then have a main MEMORY.md file. Every time you learn something or get feedback from me, write to that. Like something goes wrong, you figure out how to call that command correctly write it down. Something was uintutivie and you had to think alot to figure it out, write down the final realization. Something was hard to find, write it down. Anything else, write it down. Do this liberally. Now once the MEMORY.md hits 200 lines, you do compaction, and group together relevant stuff and write out into other files .md in that memorieis folder. I want every session of you that starts to always start by reading MEMORY.md. For the long term files, if there already exists a file that matches the theme of the chunck of short term stuff that you are compacting, add to that. If not, just make a new one with a descriptive name. Now add these rules to AGENTS.md and make the memories folder and file.
 
 ## Python Code
 

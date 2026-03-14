@@ -3,7 +3,6 @@
 //! Evaluate models on fixed seeds for consistent benchmarking.
 
 use pyo3::prelude::*;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -59,26 +58,6 @@ pub struct EvalResult {
     /// Individual game results: (attack, moves) for each seed
     #[pyo3(get)]
     pub game_results: Vec<(u32, u32)>,
-}
-
-#[pymethods]
-impl EvalResult {
-    /// Convert to dictionary for logging.
-    pub fn to_dict(&self) -> HashMap<String, f32> {
-        let mut d = HashMap::new();
-        d.insert("eval/num_games".to_string(), self.num_games as f32);
-        d.insert("eval/total_attack".to_string(), self.total_attack as f32);
-        d.insert("eval/max_attack".to_string(), self.max_attack as f32);
-        d.insert("eval/total_lines".to_string(), self.total_lines as f32);
-        d.insert("eval/max_lines".to_string(), self.max_lines as f32);
-        d.insert("eval/avg_attack".to_string(), self.avg_attack);
-        d.insert("eval/avg_lines".to_string(), self.avg_lines);
-        d.insert("eval/avg_moves".to_string(), self.avg_moves);
-        d.insert("eval/attack_per_piece".to_string(), self.attack_per_piece);
-        d.insert("eval/lines_per_piece".to_string(), self.lines_per_piece);
-        d.insert("eval/avg_tree_nodes".to_string(), self.avg_tree_nodes);
-        d
-    }
 }
 
 fn create_replay_writer(output_path: Option<&str>) -> PyResult<Option<BufWriter<File>>> {
