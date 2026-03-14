@@ -1,5 +1,7 @@
 # Next Steps
 
+- [ ] Maybe I can simplify code now and drop all the bootstrapping logic, and just pretrain the network on the replay buffer from earlier experiment as warm start. But kind of wack to have unreproducable training run. Like does the method actually work without bootstrapping now? Could we get rid of the penalties and stuff? Once everything is fixed we should try, is kind of ugly. Why would this be necessary. Could of course just be compute multiplier.
+- [ ] Look at game that ends really early, and understand exactly why that happened. I would never expect it to look like higher reward to screw up the game board.
 - [ ] New Metric: Is past attack + future attack roughly stable? Maybe we log per game variance in this estimate.
 - [ ] I don't want random move sampling in the the last ~10 moves.
 - [ ] Why is the GPU going cold repeatedly like 50% of the time?
@@ -83,9 +85,277 @@ In progress: 🟨
 
 ### tetris_core/src/runtime/evaluation.rs ✅
 
+### tetris_core/src/runtime/mod.rs ✅
+
 Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
 ## Prompts To Run
+
+> In tetris_core/src/runtime/game_generator/py_api.rs, do we really need all these checks?:
+    ```
+
+            if max_placements == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "max_placements must be > 0",
+                ));
+            }
+            if max_examples == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "max_examples must be > 0",
+                ));
+            }
+            if !save_interval_seconds.is_finite() || save_interval_seconds < 0.0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "save_interval_seconds must be finite and >= 0",
+                ));
+            }
+            if num_workers == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "num_workers must be > 0",
+                ));
+            }
+            let candidate_eval_seeds = candidate_eval_seeds.ok_or_else(|| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "candidate_eval_seeds must be provided explicitly",
+                )
+            })?;
+            if candidate_eval_seeds.is_empty() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "candidate_eval_seeds must not be empty",
+                ));
+            }
+            if non_network_num_simulations == 0 {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "non_network_num_simulations must be > 0",
+                ));
+            }
+    ```
+    I think its fine not to do checks like that since it is not an public api, but just something I use. Also this looks very ugly:
+    ```
+
+            // Spawn worker threads
+            for worker_id in 0..self.num_workers {
+                // Clone Arc handles for each thread
+                let bootstrap_model_path = self.bootstrap_model_path.clone();
+                let training_data_path = self.training_data_path.clone();
+                let config = self.config.clone();
+                let max_placements = self.max_placements;
+                let add_noise = self.add_noise;
+                let save_interval_seconds = self.save_interval_seconds;
+                let candidate_eval_seeds = self.candidate_eval_seeds.clone();
+                let non_network_num_simulations = self.non_network_num_simulations;
+                let bootstrap_use_min_max_q_normalization = self.bootstrap_use_min_max_q_normalization;
+                let num_workers = self.num_workers;
+                let is_evaluator_worker = worker_id == evaluator_worker_id;
+                let buffer = Arc::clone(&self.buffer);
+                let running = Arc::clone(&self.running);
+                let games_generated = Arc::clone(&self.games_generated);
+                let examples_generated = Arc::clone(&self.examples_generated);
+                let game_stats = Arc::clone(&self.game_stats);
+                let completed_games = Arc::clone(&self.completed_games);
+                let pending_candidate = Arc::clone(&self.pending_candidate);
+                let evaluating_candidate = Arc::clone(&self.evaluating_candidate);
+                let model_eval_events = Arc::clone(&self.model_eval_events);
+                let incumbent_model_path = Arc::clone(&self.incumbent_model_path);
+                let incumbent_uses_network = Arc::clone(&self.incumbent_uses_network);
+                let incumbent_model_step = Arc::clone(&self.incumbent_model_step);
+                let incumbent_model_version = Arc::clone(&self.incumbent_model_version);
+                let incumbent_nn_value_weight = Arc::clone(&self.incumbent_nn_value_weight);
+                let incumbent_death_penalty = Arc::clone(&self.incumbent_death_penalty);
+                let incumbent_overhang_penalty_weight =
+                    Arc::clone(&self.incumbent_overhang_penalty_weight);
+                let nn_value_weight_cap = self.nn_value_weight_cap;
+                let incumbent_eval_avg_attack = Arc::clone(&self.incumbent_eval_avg_attack);
+
+                let handle = thread::spawn(move || {
+                    Self::worker_loop(
+                        worker_id,
+                        num_workers,
+                        is_evaluator_worker,
+                        bootstrap_model_path,
+                        training_data_path,
+                        config,
+                        max_placements,
+                        add_noise,
+                        save_interval_seconds,
+                        candidate_eval_seeds,
+                        non_network_num_simulations,
+                        bootstrap_use_min_max_q_normalization,
+                        buffer,
+                        running,
+                        games_generated,
+                        examples_generated,
+                        game_stats,
+                        completed_games,
+                        pending_candidate,
+                        evaluating_candidate,
+                        model_eval_events,
+                        incumbent_model_path,
+                        incumbent_uses_network,
+                        incumbent_model_step,
+                        incumbent_model_version,
+                        incumbent_nn_value_weight,
+                        incumbent_death_penalty,
+                        incumbent_overhang_penalty_weight,
+                        nn_value_weight_cap,
+                        incumbent_eval_avg_attack,
+                    );
+                });
+
+                self.thread_handles.push(handle);
+            }
+    ```
+    In general seems like the codebase have many places with huge blocks of passing in many many params. Usually there are better ways of doing this. Like another example of this:
+    ```
+
+        /// Drain all completed game stats in generation order.
+        pub fn drain_completed_game_stats(&self) -> Vec<(u64, HashMap<String, f32>)> {
+            let mut queue = self.completed_games.write().unwrap();
+            let mut drained = Vec::with_capacity(queue.len());
+            while let Some(info) = queue.pop_front() {
+                let mut d = HashMap::new();
+                d.insert("singles".to_string(), info.stats.singles as f32);
+                d.insert("doubles".to_string(), info.stats.doubles as f32);
+                d.insert("triples".to_string(), info.stats.triples as f32);
+                d.insert("tetrises".to_string(), info.stats.tetrises as f32);
+                d.insert("tspin_minis".to_string(), info.stats.tspin_minis as f32);
+                d.insert("tspin_singles".to_string(), info.stats.tspin_singles as f32);
+                d.insert("tspin_doubles".to_string(), info.stats.tspin_doubles as f32);
+                d.insert("tspin_triples".to_string(), info.stats.tspin_triples as f32);
+                d.insert(
+                    "perfect_clears".to_string(),
+                    info.stats.perfect_clears as f32,
+                );
+                d.insert("back_to_backs".to_string(), info.stats.back_to_backs as f32);
+                d.insert("max_combo".to_string(), info.stats.max_combo as f32);
+                d.insert("total_lines".to_string(), info.stats.total_lines as f32);
+                d.insert("holds".to_string(), info.stats.holds as f32);
+                d.insert("total_attack".to_string(), info.total_attack as f32);
+                d.insert("avg_overhang".to_string(), info.avg_overhang_fields);
+                d.insert("episode_length".to_string(), info.num_moves as f32);
+                d.insert("avg_valid_actions".to_string(), info.avg_valid_actions);
+                d.insert(
+                    "max_valid_actions".to_string(),
+                    info.max_valid_actions as f32,
+                );
+                // Tree statistics
+                d.insert(
+                    "tree_avg_branching_factor".to_string(),
+                    info.tree_stats.avg_branching_factor,
+                );
+                d.insert("tree_avg_leaves".to_string(), info.tree_stats.avg_leaves);
+                d.insert(
+                    "tree_avg_total_nodes".to_string(),
+                    info.tree_stats.avg_total_nodes,
+                );
+                d.insert(
+                    "tree_avg_max_depth".to_string(),
+                    info.tree_stats.avg_max_depth,
+                );
+                d.insert(
+                    "tree_max_attack".to_string(),
+                    info.tree_stats.max_tree_attack as f32,
+                );
+                // Board embedding cache statistics
+                let total_lookups = info.cache_hits + info.cache_misses;
+                let hit_rate = if total_lookups > 0 {
+                    info.cache_hits as f32 / total_lookups as f32
+                } else {
+                    0.0
+                };
+                d.insert("cache_hit_rate".to_string(), hit_rate);
+                d.insert("cache_hits".to_string(), info.cache_hits as f32);
+                d.insert("cache_misses".to_string(), info.cache_misses as f32);
+                d.insert("cache_size".to_string(), info.cache_size as f32);
+                // Tree reuse statistics
+                let tree_reuse_total = info.tree_reuse_hits + info.tree_reuse_misses;
+                let tree_reuse_rate = if tree_reuse_total > 0 {
+                    info.tree_reuse_hits as f32 / tree_reuse_total as f32
+                } else {
+                    0.0
+                };
+                d.insert("tree_reuse_rate".to_string(), tree_reuse_rate);
+                d.insert("tree_reuse_hits".to_string(), info.tree_reuse_hits as f32);
+                d.insert(
+                    "tree_reuse_misses".to_string(),
+                    info.tree_reuse_misses as f32,
+                );
+                d.insert(
+                    "tree_reuse_carry_fraction".to_string(),
+                    info.tree_reuse_carry_fraction,
+                );
+                // Traversal outcome statistics
+                d.insert("traversal_total".to_string(), info.traversal_total as f32);
+                d.insert(
+                    "traversal_expansions".to_string(),
+                    info.traversal_expansions as f32,
+                );
+                d.insert(
+                    "traversal_terminal_ends".to_string(),
+                    info.traversal_terminal_ends as f32,
+                );
+                d.insert(
+                    "traversal_horizon_ends".to_string(),
+                    info.traversal_horizon_ends as f32,
+                );
+                d.insert(
+                    "traversal_expansion_fraction".to_string(),
+                    info.traversal_expansion_fraction,
+                );
+                d.insert(
+                    "traversal_terminal_fraction".to_string(),
+                    info.traversal_terminal_fraction,
+                );
+                d.insert(
+                    "traversal_horizon_fraction".to_string(),
+                    info.traversal_horizon_fraction,
+                );
+                drained.push((info.game_number, d));
+            }
+            drained
+        }
+
+    ```
+
+> Is the slicing algorithm for loading up the gpu and efficient way of doing it? Any simpler way of ensuring the training data is on the gpu? Also why is my gpu not running out of memory, is like 2M training points not a crap ton of data. Or maybe not?
+
+
+> When I do ctrl + c twice, I think this does not actually stop the wandb run properly and upload the current replay buffer and model, but just kills everything. I just want to stop the workers and wrap up, not just stop workers and die.
+
+> Is this ever used?:
+    ```
+
+        /// Get statistics as a typed Python dictionary.
+        pub fn get_stats(&self, py: Python<'_>) -> HashMap<String, PyObject> {
+            let mut stats = HashMap::new();
+            stats.insert(
+                "games_generated".to_string(),
+                self.games_generated().into_py(py),
+            );
+            stats.insert(
+                "examples_generated".to_string(),
+                self.examples_generated().into_py(py),
+            );
+            stats.insert("is_running".to_string(), self.is_running().into_py(py));
+            stats.insert("buffer_size".to_string(), self.buffer_size().into_py(py));
+            stats.insert(
+                "incumbent_model_step".to_string(),
+                self.incumbent_model_step.load(Ordering::SeqCst).into_py(py),
+            );
+            stats.insert(
+                "incumbent_uses_network".to_string(),
+                self.incumbent_uses_network().into_py(py),
+            );
+            stats.insert(
+                "incumbent_eval_avg_attack".to_string(),
+                Self::load_atomic_f32(&self.incumbent_eval_avg_attack).into_py(py),
+            );
+            stats
+        }
+
+    ```
+    I also think in general it seems like the rust code is often exposing things that are not really used, like string representations or dict representations or stuff. Get rid of that.
+
 
 > In tetris_core/src/search/utils.rs why do we need:
 
@@ -138,6 +408,8 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
     tetris_core/src/runtime/evaluation.rs
 
 > Is the replay storage format the most efficient?
+
+> Why is evaluate_agent writing to disk instead of being in memory?
 
 > tetris_core/src/replay/npz.rs seems really repetitive. Is there not a library one could use for all this? Or some way of condensing it?
 
