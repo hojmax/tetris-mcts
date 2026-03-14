@@ -86,29 +86,53 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 ## Prompts To Run
 
 > In tetris_core/src/search/utils.rs why do we need:
-  ```
+    ```
 
-      let mut overhang_fields: u32 = 0;
-      let mut holes: u32 = 0;
-      for x in 0..env.width {
-          let mut seen_filled = false;
-          for y in 0..env.height {
-              let idx = y * env.width + x;
-              let cell = board[idx];
-              if cell != 0 {
-                  seen_filled = true;
-                  continue;
-              }
-              if seen_filled {
-                  overhang_fields += 1;
-                  if !reachable[idx] {
-                      holes += 1;
-                  }
-              }
-          }
-      }
-  ```
-  Is holes not just 200 - blocks - visit_count. I.e. holes are what is left when you account for all the air you can visit and the placed blocks? But actually thinking of it, since we anyway need the loop for overhang, then kind of makes sense to just do the holes in there?
+        let mut overhang_fields: u32 = 0;
+        let mut holes: u32 = 0;
+        for x in 0..env.width {
+            let mut seen_filled = false;
+            for y in 0..env.height {
+                let idx = y * env.width + x;
+                let cell = board[idx];
+                if cell != 0 {
+                    seen_filled = true;
+                    continue;
+                }
+                if seen_filled {
+                    overhang_fields += 1;
+                    if !reachable[idx] {
+                        holes += 1;
+                    }
+                }
+            }
+        }
+    ```
+
+    Is holes not just 200 - blocks - visit_count. I.e. holes are what is left when you account for all the air you can visit and the placed blocks? But actually thinking of it, since we anyway need the loop for overhang, then kind of makes sense to just do the holes in there?
+
+> is this ever used?:
+    ```
+
+        /// Convert to dictionary for logging.
+        pub fn to_dict(&self) -> HashMap<String, f32> {
+            let mut d = HashMap::new();
+            d.insert("eval/num_games".to_string(), self.num_games as f32);
+            d.insert("eval/total_attack".to_string(), self.total_attack as f32);
+            d.insert("eval/max_attack".to_string(), self.max_attack as f32);
+            d.insert("eval/total_lines".to_string(), self.total_lines as f32);
+            d.insert("eval/max_lines".to_string(), self.max_lines as f32);
+            d.insert("eval/avg_attack".to_string(), self.avg_attack);
+            d.insert("eval/avg_lines".to_string(), self.avg_lines);
+            d.insert("eval/avg_moves".to_string(), self.avg_moves);
+            d.insert("eval/attack_per_piece".to_string(), self.attack_per_piece);
+            d.insert("eval/lines_per_piece".to_string(), self.lines_per_piece);
+            d.insert("eval/avg_tree_nodes".to_string(), self.avg_tree_nodes);
+            d
+        }
+    ```
+    tetris_core/src/runtime/evaluation.rs
+
 
 > Is the replay storage format the most efficient?
 
