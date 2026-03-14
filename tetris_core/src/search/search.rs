@@ -14,11 +14,12 @@ use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
 use super::results::{MCTSResult, TraversalStats, TreeStats};
 use crate::game::action_space::{HOLD_ACTION_INDEX, NUM_ACTIONS};
 
-fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> {
+fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> usize {
     let total_mass: f32 = policy.iter().sum();
-    if total_mass <= 0.0 {
-        return None;
-    }
+    assert!(
+        total_mass.is_finite() && total_mass > 0.0,
+        "Policy sampling requires positive finite mass, got {total_mass}"
+    );
 
     let mut threshold = rng.gen::<f32>() * total_mass;
     for (idx, &probability) in policy.iter().enumerate() {
@@ -27,7 +28,7 @@ fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> 
         }
         threshold -= probability;
         if threshold <= 0.0 {
-            return Some(idx);
+            return idx;
         }
     }
 
@@ -36,6 +37,7 @@ fn sample_action_from_policy(policy: &[f32], rng: &mut StdRng) -> Option<usize> 
         .enumerate()
         .rfind(|(_, probability)| **probability > 0.0)
         .map(|(idx, _)| idx)
+        .expect("Policy sampling should find a positive-probability action when mass is positive")
 }
 
 #[derive(Debug)]
@@ -571,7 +573,7 @@ fn build_result_from_root(
     let should_sample_action =
         config.visit_sampling_epsilon > 0.0 && rng.gen::<f32>() < config.visit_sampling_epsilon;
     let action = if should_sample_action {
-        sample_action_from_policy(&result_policy, rng).unwrap_or(greedy_action)
+        sample_action_from_policy(&result_policy, rng)
     } else {
         greedy_action
     };

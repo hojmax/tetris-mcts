@@ -67,7 +67,10 @@ const COMBO_TABLE: [u32; 12] = [0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 4];
 /// Get combo attack bonus for the given combo count
 /// Combo count starts at 0 for the first consecutive clear
 pub fn combo_attack(combo: u32) -> u32 {
-    COMBO_TABLE.get(combo as usize).copied().unwrap_or(5)
+    match combo {
+        0..=11 => COMBO_TABLE[combo as usize],
+        _ => 5,
+    }
 }
 
 /// Perfect clear attack value

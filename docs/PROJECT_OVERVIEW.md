@@ -25,7 +25,7 @@ We adapt [AlphaZero](alphazero.pdf) (Silver et al., 2017) for single-player stoc
 | Hold available    | 1          | Binary (can use hold this turn)           |
 | Next queue        | 5 × 7 = 35 | One-hot encoded per slot                  |
 | Placement count   | 1          | Normalized: count / max_placements        |
-| Combo             | 1          | Normalized: clamp(0, 12) / 12             |
+| Combo             | 1          | Normalized: combo / 12 (uncapped)         |
 | Back-to-back      | 1          | Binary (1 = active)                       |
 | Hidden piece dist | 7          | Probability distribution from 7-bag state |
 | Column heights    | 10         | Normalized: height / 20 per column        |

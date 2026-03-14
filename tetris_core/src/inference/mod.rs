@@ -802,14 +802,36 @@ fn encode_board_features(env: &TetrisEnv) -> Vec<f32> {
         .collect()
 }
 
-/// Encode the 19 board-derived statistics for the cached board embedding path.
-fn encode_board_stats(env: &TetrisEnv) -> Vec<f32> {
-    let normalized_column_heights = normalize_column_heights(&env.column_heights);
-    let max_column_height = normalized_column_heights
+#[track_caller]
+fn require_current_piece_type(env: &TetrisEnv) -> usize {
+    env.get_current_piece()
+        .map(|piece| piece.piece_type)
+        .expect("TetrisEnv should always have a current piece while encoding features")
+}
+
+#[track_caller]
+fn require_max_f32(values: &[f32], label: &str) -> f32 {
+    values
         .iter()
         .copied()
         .reduce(f32::max)
-        .unwrap_or(0.0);
+        .unwrap_or_else(|| panic!("{label} should not be empty"))
+}
+
+#[track_caller]
+fn require_max_u8(values: &[u8], label: &str) -> u8 {
+    values
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or_else(|| panic!("{label} should not be empty"))
+}
+
+/// Encode the 19 board-derived statistics for the cached board embedding path.
+fn encode_board_stats(env: &TetrisEnv) -> Vec<f32> {
+    let normalized_column_heights = normalize_column_heights(&env.column_heights);
+    let max_column_height =
+        require_max_f32(&normalized_column_heights, "normalized_column_heights");
     let normalized_row_fill_counts = normalize_row_fill_counts(&env.row_fill_counts, env.width);
     let normalized_total_blocks = normalize_total_blocks(env.total_blocks);
     let raw_bumpiness = compute_bumpiness(&env.column_heights);
@@ -844,7 +866,7 @@ fn encode_piece_aux_features(
         .into());
     }
 
-    let current_piece = env.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
+    let current_piece = require_current_piece_type(env);
     let hold_piece = env.get_hold_piece().map(|p| p.piece_type);
     let queue = env.get_queue(QUEUE_SIZE);
     let hidden_piece_distribution = next_hidden_piece_distribution(env);
@@ -907,16 +929,12 @@ pub fn encode_aux_state_features(
         .into());
     }
 
-    let current_piece = env.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
+    let current_piece = require_current_piece_type(env);
     let hold_piece = env.get_hold_piece().map(|p| p.piece_type);
     let queue = env.get_queue(QUEUE_SIZE);
     let hidden_piece_distribution = next_hidden_piece_distribution(env);
     let normalized_column_heights = normalize_column_heights(&env.column_heights[..env.width]);
-    let raw_max = env.column_heights[..env.width]
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
+    let raw_max = require_max_u8(&env.column_heights[..env.width], "column_heights");
     let max_column_height = normalize_max_column_height(raw_max);
     let normalized_row_fill_counts =
         normalize_row_fill_counts(&env.row_fill_counts[..env.height], env.width);
@@ -954,7 +972,22 @@ pub fn normalize_combo_for_feature(combo: u32) -> f32 {
 }
 
 pub fn denormalize_combo_feature(combo_feature: f32) -> u32 {
-    (combo_feature.max(0.0) * COMBO_NORMALIZATION_MAX as f32).round() as u32
+    assert!(
+        combo_feature.is_finite(),
+        "combo_feature must be finite, got {combo_feature}"
+    );
+    assert!(
+        combo_feature >= 0.0,
+        "combo_feature must be >= 0.0, got {combo_feature}"
+    );
+
+    let scaled_combo = combo_feature * COMBO_NORMALIZATION_MAX as f32;
+    let rounded_combo = scaled_combo.round();
+    assert!(
+        rounded_combo <= u32::MAX as f32,
+        "combo_feature {combo_feature} overflows u32 after scaling"
+    );
+    rounded_combo as u32
 }
 
 pub fn encode_aux_features(
@@ -1276,7 +1309,7 @@ mod tests {
         let mut idx = 0;
 
         // Current piece: one-hot (7)
-        let current_piece = env.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
+        let current_piece = require_current_piece_type(&env);
         let current_onehot = &aux[idx..idx + NUM_PIECE_TYPES];
         let sum: f32 = current_onehot.iter().sum();
         assert!(
@@ -1403,7 +1436,7 @@ mod tests {
         }
         idx += BOARD_WIDTH;
 
-        let raw_max = env.column_heights.iter().copied().max().unwrap_or(0);
+        let raw_max = require_max_u8(&env.column_heights, "column_heights");
         let expected_max_column_height = normalize_max_column_height(raw_max);
         assert!(
             (aux[idx] - expected_max_column_height).abs() < 1e-6,
@@ -1673,7 +1706,7 @@ mod tests {
                     idx += 1;
                 }
 
-                let raw_max = env.column_heights.iter().copied().max().unwrap_or(0);
+                let raw_max = require_max_u8(&env.column_heights, "column_heights");
                 let expected_max_column_height = normalize_max_column_height(raw_max);
                 prop_assert!((aux[idx] - expected_max_column_height).abs() < 1e-6);
                 idx += 1;
@@ -1733,6 +1766,12 @@ mod tests {
             denormalize_combo_feature(normalize_combo_for_feature(99)),
             99
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "combo_feature must be >= 0.0")]
+    fn test_combo_feature_denormalize_rejects_negative_values() {
+        let _ = denormalize_combo_feature(-0.25);
     }
 
     #[test]

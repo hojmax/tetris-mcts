@@ -4,7 +4,7 @@
 
 use pyo3::prelude::*;
 
-use crate::game::constants::{BOARD_HEIGHT, BOARD_WIDTH};
+use crate::game::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
 use crate::game::env::TetrisEnv;
 use crate::replay::ReplayMove;
 
@@ -60,14 +60,14 @@ fn action_reveals_new_visible_piece(env: &TetrisEnv, selected_action: usize) -> 
     selected_action != HOLD_ACTION_INDEX || env.get_hold_piece().is_none()
 }
 
-fn realized_chance_outcome(
-    env: &TetrisEnv,
-    action_reveals_new_visible_piece: bool,
-) -> Option<usize> {
+fn realized_chance_outcome(env: &TetrisEnv, action_reveals_new_visible_piece: bool) -> usize {
     if action_reveals_new_visible_piece {
-        env.piece_queue.get(QUEUE_SIZE - 1).copied()
+        env.piece_queue
+            .get(QUEUE_SIZE - 1)
+            .copied()
+            .expect("Visible queue tail should exist when an action reveals a new piece")
     } else {
-        Some(NO_CHANCE_OUTCOME)
+        NO_CHANCE_OUTCOME
     }
 }
 
@@ -305,8 +305,7 @@ impl MCTSAgent {
                 placement_count += 1;
             }
 
-            let selected_chance_outcome = realized_chance_outcome(&env, reveals_new_visible_piece)
-                .unwrap_or(NO_CHANCE_OUTCOME);
+            let selected_chance_outcome = realized_chance_outcome(&env, reveals_new_visible_piece);
             steps.push(GameTreeStep {
                 frame_index,
                 placement_count: current_placement_count,
@@ -588,8 +587,14 @@ impl MCTSAgent {
                 .map(|&cell| if cell != 0 { 1 } else { 0 })
                 .collect();
 
-            let current_piece = state.get_current_piece().map(|p| p.piece_type).unwrap_or(0);
-            let hold_piece = state.get_hold_piece().map(|p| p.piece_type).unwrap_or(7);
+            let current_piece = state
+                .get_current_piece()
+                .map(|piece| piece.piece_type)
+                .expect("Training examples require a current piece");
+            let hold_piece = match state.get_hold_piece() {
+                Some(piece) => piece.piece_type,
+                None => NUM_PIECE_TYPES,
+            };
             let hold_available = !state.is_hold_used();
             let next_queue = state.get_queue(5);
             let next_hidden_piece_probs = crate::inference::next_hidden_piece_distribution(state);
@@ -609,7 +614,7 @@ impl MCTSAgent {
                 .iter()
                 .copied()
                 .max()
-                .unwrap_or(0);
+                .expect("Training examples require at least one column");
             let max_column_height = super::utils::normalize_max_column_height(raw_max);
 
             examples.push(TrainingExample {

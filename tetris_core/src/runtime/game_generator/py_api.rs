@@ -206,7 +206,7 @@ impl GameGenerator {
                     .iter()
                     .map(|example| example.game_number)
                     .max()
-                    .unwrap_or(0);
+                    .expect("loaded_examples was checked as non-empty");
                 self.buffer.add_examples(loaded_examples);
                 let retained_examples_count = self.buffer.len();
                 let replay_end_index = self.buffer.window_end_index();
