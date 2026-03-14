@@ -1,5 +1,91 @@
 use super::*;
 
+impl GameGenerator {
+    fn invalid_generator_arg(message: impl Into<String>) -> PyErr {
+        pyo3::exceptions::PyValueError::new_err(message.into())
+    }
+
+    fn validate_new_args(
+        max_placements: u32,
+        max_examples: usize,
+        save_interval_seconds: f64,
+        num_workers: usize,
+        candidate_eval_seeds: &[u64],
+        non_network_num_simulations: u32,
+        nn_value_weight: f32,
+    ) -> PyResult<()> {
+        if max_placements == 0 {
+            return Err(Self::invalid_generator_arg("max_placements must be > 0"));
+        }
+        if max_examples == 0 {
+            return Err(Self::invalid_generator_arg("max_examples must be > 0"));
+        }
+        if !save_interval_seconds.is_finite() || save_interval_seconds < 0.0 {
+            return Err(Self::invalid_generator_arg(
+                "save_interval_seconds must be finite and >= 0",
+            ));
+        }
+        if num_workers == 0 {
+            return Err(Self::invalid_generator_arg("num_workers must be > 0"));
+        }
+        if candidate_eval_seeds.is_empty() {
+            return Err(Self::invalid_generator_arg(
+                "candidate_eval_seeds must not be empty",
+            ));
+        }
+        if non_network_num_simulations == 0 {
+            return Err(Self::invalid_generator_arg(
+                "non_network_num_simulations must be > 0",
+            ));
+        }
+        if !nn_value_weight.is_finite() || nn_value_weight < 0.0 {
+            return Err(Self::invalid_generator_arg(
+                "config.nn_value_weight must be finite and >= 0",
+            ));
+        }
+        Ok(())
+    }
+
+    fn worker_settings(&self) -> WorkerSettings {
+        WorkerSettings {
+            bootstrap_model_path: self.bootstrap_model_path.clone(),
+            training_data_path: self.training_data_path.clone(),
+            config: self.config.clone(),
+            max_placements: self.max_placements,
+            add_noise: self.add_noise,
+            save_interval_seconds: self.save_interval_seconds,
+            num_workers: self.num_workers,
+            candidate_eval_seeds: Arc::clone(&self.candidate_eval_seeds),
+            non_network_num_simulations: self.non_network_num_simulations,
+            bootstrap_use_min_max_q_normalization: self.bootstrap_use_min_max_q_normalization,
+            nn_value_weight_cap: self.nn_value_weight_cap,
+        }
+    }
+
+    fn worker_shared_state(&self) -> WorkerSharedState {
+        WorkerSharedState {
+            buffer: Arc::clone(&self.buffer),
+            running: Arc::clone(&self.running),
+            games_generated: Arc::clone(&self.games_generated),
+            examples_generated: Arc::clone(&self.examples_generated),
+            completed_games: Arc::clone(&self.completed_games),
+            pending_candidate: Arc::clone(&self.pending_candidate),
+            evaluating_candidate: Arc::clone(&self.evaluating_candidate),
+            model_eval_events: Arc::clone(&self.model_eval_events),
+            incumbent: IncumbentState {
+                model_path: Arc::clone(&self.incumbent_model_path),
+                uses_network: Arc::clone(&self.incumbent_uses_network),
+                model_step: Arc::clone(&self.incumbent_model_step),
+                model_version: Arc::clone(&self.incumbent_model_version),
+                nn_value_weight: Arc::clone(&self.incumbent_nn_value_weight),
+                death_penalty: Arc::clone(&self.incumbent_death_penalty),
+                overhang_penalty_weight: Arc::clone(&self.incumbent_overhang_penalty_weight),
+                eval_avg_attack: Arc::clone(&self.incumbent_eval_avg_attack),
+            },
+        }
+    }
+}
+
 #[pymethods]
 impl GameGenerator {
     #[new]
@@ -21,49 +107,21 @@ impl GameGenerator {
         initial_incumbent_eval_avg_attack: f32,
         nn_value_weight_cap: f32,
     ) -> PyResult<Self> {
-        if max_placements == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_placements must be > 0",
-            ));
-        }
-        if max_examples == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "max_examples must be > 0",
-            ));
-        }
-        if !save_interval_seconds.is_finite() || save_interval_seconds < 0.0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "save_interval_seconds must be finite and >= 0",
-            ));
-        }
-        if num_workers == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "num_workers must be > 0",
-            ));
-        }
         let candidate_eval_seeds = candidate_eval_seeds.ok_or_else(|| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "candidate_eval_seeds must be provided explicitly",
-            )
+            Self::invalid_generator_arg("candidate_eval_seeds must be provided explicitly")
         })?;
-        if candidate_eval_seeds.is_empty() {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "candidate_eval_seeds must not be empty",
-            ));
-        }
-        if non_network_num_simulations == 0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "non_network_num_simulations must be > 0",
-            ));
-        }
 
         let mut resolved_config = config.unwrap_or_default();
         resolved_config.max_placements = max_placements;
-        if !resolved_config.nn_value_weight.is_finite() || resolved_config.nn_value_weight < 0.0 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "config.nn_value_weight must be finite and >= 0",
-            ));
-        }
+        Self::validate_new_args(
+            max_placements,
+            max_examples,
+            save_interval_seconds,
+            num_workers,
+            &candidate_eval_seeds,
+            non_network_num_simulations,
+            resolved_config.nn_value_weight,
+        )?;
         let initial_nn_value_weight_bits = resolved_config.nn_value_weight.to_bits();
         let initial_death_penalty_bits = resolved_config.death_penalty.to_bits();
         let initial_overhang_penalty_weight_bits =
@@ -78,14 +136,13 @@ impl GameGenerator {
             add_noise,
             save_interval_seconds,
             num_workers,
-            candidate_eval_seeds,
+            candidate_eval_seeds: Arc::from(candidate_eval_seeds),
             non_network_num_simulations,
             bootstrap_use_min_max_q_normalization,
             buffer: Arc::new(SharedBuffer::new(max_examples)),
             running: Arc::new(AtomicBool::new(false)),
             games_generated: Arc::new(AtomicU64::new(0)),
             examples_generated: Arc::new(AtomicU64::new(0)),
-            game_stats: Arc::new(SharedStats::new()),
             completed_games: Arc::new(RwLock::new(VecDeque::new())),
             pending_candidate: Arc::new(RwLock::new(None)),
             evaluating_candidate: Arc::new(RwLock::new(None)),
@@ -175,75 +232,19 @@ impl GameGenerator {
         // Set running flag
         self.running.store(true, Ordering::SeqCst);
         let evaluator_worker_id = self.num_workers - 1;
+        let worker_settings = self.worker_settings();
+        let worker_shared_state = self.worker_shared_state();
 
         // Spawn worker threads
         for worker_id in 0..self.num_workers {
-            // Clone Arc handles for each thread
-            let bootstrap_model_path = self.bootstrap_model_path.clone();
-            let training_data_path = self.training_data_path.clone();
-            let config = self.config.clone();
-            let max_placements = self.max_placements;
-            let add_noise = self.add_noise;
-            let save_interval_seconds = self.save_interval_seconds;
-            let candidate_eval_seeds = self.candidate_eval_seeds.clone();
-            let non_network_num_simulations = self.non_network_num_simulations;
-            let bootstrap_use_min_max_q_normalization = self.bootstrap_use_min_max_q_normalization;
-            let num_workers = self.num_workers;
-            let is_evaluator_worker = worker_id == evaluator_worker_id;
-            let buffer = Arc::clone(&self.buffer);
-            let running = Arc::clone(&self.running);
-            let games_generated = Arc::clone(&self.games_generated);
-            let examples_generated = Arc::clone(&self.examples_generated);
-            let game_stats = Arc::clone(&self.game_stats);
-            let completed_games = Arc::clone(&self.completed_games);
-            let pending_candidate = Arc::clone(&self.pending_candidate);
-            let evaluating_candidate = Arc::clone(&self.evaluating_candidate);
-            let model_eval_events = Arc::clone(&self.model_eval_events);
-            let incumbent_model_path = Arc::clone(&self.incumbent_model_path);
-            let incumbent_uses_network = Arc::clone(&self.incumbent_uses_network);
-            let incumbent_model_step = Arc::clone(&self.incumbent_model_step);
-            let incumbent_model_version = Arc::clone(&self.incumbent_model_version);
-            let incumbent_nn_value_weight = Arc::clone(&self.incumbent_nn_value_weight);
-            let incumbent_death_penalty = Arc::clone(&self.incumbent_death_penalty);
-            let incumbent_overhang_penalty_weight =
-                Arc::clone(&self.incumbent_overhang_penalty_weight);
-            let nn_value_weight_cap = self.nn_value_weight_cap;
-            let incumbent_eval_avg_attack = Arc::clone(&self.incumbent_eval_avg_attack);
+            let worker_context = WorkerContext {
+                worker_id,
+                is_evaluator_worker: worker_id == evaluator_worker_id,
+                settings: worker_settings.clone(),
+                shared: worker_shared_state.clone(),
+            };
 
-            let handle = thread::spawn(move || {
-                Self::worker_loop(
-                    worker_id,
-                    num_workers,
-                    is_evaluator_worker,
-                    bootstrap_model_path,
-                    training_data_path,
-                    config,
-                    max_placements,
-                    add_noise,
-                    save_interval_seconds,
-                    candidate_eval_seeds,
-                    non_network_num_simulations,
-                    bootstrap_use_min_max_q_normalization,
-                    buffer,
-                    running,
-                    games_generated,
-                    examples_generated,
-                    game_stats,
-                    completed_games,
-                    pending_candidate,
-                    evaluating_candidate,
-                    model_eval_events,
-                    incumbent_model_path,
-                    incumbent_uses_network,
-                    incumbent_model_step,
-                    incumbent_model_version,
-                    incumbent_nn_value_weight,
-                    incumbent_death_penalty,
-                    incumbent_overhang_penalty_weight,
-                    nn_value_weight_cap,
-                    incumbent_eval_avg_attack,
-                );
-            });
+            let handle = thread::spawn(move || Self::worker_loop(worker_context));
 
             self.thread_handles.push(handle);
         }
@@ -395,142 +396,12 @@ impl GameGenerator {
         Ok(true)
     }
 
-    /// Get statistics as a typed Python dictionary.
-    pub fn get_stats(&self, py: Python<'_>) -> HashMap<String, PyObject> {
-        let mut stats = HashMap::new();
-        stats.insert(
-            "games_generated".to_string(),
-            self.games_generated().into_py(py),
-        );
-        stats.insert(
-            "examples_generated".to_string(),
-            self.examples_generated().into_py(py),
-        );
-        stats.insert("is_running".to_string(), self.is_running().into_py(py));
-        stats.insert("buffer_size".to_string(), self.buffer_size().into_py(py));
-        stats.insert(
-            "incumbent_model_step".to_string(),
-            self.incumbent_model_step.load(Ordering::SeqCst).into_py(py),
-        );
-        stats.insert(
-            "incumbent_uses_network".to_string(),
-            self.incumbent_uses_network().into_py(py),
-        );
-        stats.insert(
-            "incumbent_eval_avg_attack".to_string(),
-            Self::load_atomic_f32(&self.incumbent_eval_avg_attack).into_py(py),
-        );
-        stats
-    }
-
-    /// Get aggregate game statistics (line clears, T-spins, etc.)
-    pub fn get_game_stats(&self) -> HashMap<String, u32> {
-        self.game_stats.to_dict()
-    }
-
     /// Drain all completed game stats in generation order.
     pub fn drain_completed_game_stats(&self) -> Vec<(u64, HashMap<String, f32>)> {
         let mut queue = self.completed_games.write().unwrap();
         let mut drained = Vec::with_capacity(queue.len());
         while let Some(info) = queue.pop_front() {
-            let mut d = HashMap::new();
-            d.insert("singles".to_string(), info.stats.singles as f32);
-            d.insert("doubles".to_string(), info.stats.doubles as f32);
-            d.insert("triples".to_string(), info.stats.triples as f32);
-            d.insert("tetrises".to_string(), info.stats.tetrises as f32);
-            d.insert("tspin_minis".to_string(), info.stats.tspin_minis as f32);
-            d.insert("tspin_singles".to_string(), info.stats.tspin_singles as f32);
-            d.insert("tspin_doubles".to_string(), info.stats.tspin_doubles as f32);
-            d.insert("tspin_triples".to_string(), info.stats.tspin_triples as f32);
-            d.insert(
-                "perfect_clears".to_string(),
-                info.stats.perfect_clears as f32,
-            );
-            d.insert("back_to_backs".to_string(), info.stats.back_to_backs as f32);
-            d.insert("max_combo".to_string(), info.stats.max_combo as f32);
-            d.insert("total_lines".to_string(), info.stats.total_lines as f32);
-            d.insert("holds".to_string(), info.stats.holds as f32);
-            d.insert("total_attack".to_string(), info.total_attack as f32);
-            d.insert("avg_overhang".to_string(), info.avg_overhang_fields);
-            d.insert("episode_length".to_string(), info.num_moves as f32);
-            d.insert("avg_valid_actions".to_string(), info.avg_valid_actions);
-            d.insert(
-                "max_valid_actions".to_string(),
-                info.max_valid_actions as f32,
-            );
-            // Tree statistics
-            d.insert(
-                "tree_avg_branching_factor".to_string(),
-                info.tree_stats.avg_branching_factor,
-            );
-            d.insert("tree_avg_leaves".to_string(), info.tree_stats.avg_leaves);
-            d.insert(
-                "tree_avg_total_nodes".to_string(),
-                info.tree_stats.avg_total_nodes,
-            );
-            d.insert(
-                "tree_avg_max_depth".to_string(),
-                info.tree_stats.avg_max_depth,
-            );
-            d.insert(
-                "tree_max_attack".to_string(),
-                info.tree_stats.max_tree_attack as f32,
-            );
-            // Board embedding cache statistics
-            let total_lookups = info.cache_hits + info.cache_misses;
-            let hit_rate = if total_lookups > 0 {
-                info.cache_hits as f32 / total_lookups as f32
-            } else {
-                0.0
-            };
-            d.insert("cache_hit_rate".to_string(), hit_rate);
-            d.insert("cache_hits".to_string(), info.cache_hits as f32);
-            d.insert("cache_misses".to_string(), info.cache_misses as f32);
-            d.insert("cache_size".to_string(), info.cache_size as f32);
-            // Tree reuse statistics
-            let tree_reuse_total = info.tree_reuse_hits + info.tree_reuse_misses;
-            let tree_reuse_rate = if tree_reuse_total > 0 {
-                info.tree_reuse_hits as f32 / tree_reuse_total as f32
-            } else {
-                0.0
-            };
-            d.insert("tree_reuse_rate".to_string(), tree_reuse_rate);
-            d.insert("tree_reuse_hits".to_string(), info.tree_reuse_hits as f32);
-            d.insert(
-                "tree_reuse_misses".to_string(),
-                info.tree_reuse_misses as f32,
-            );
-            d.insert(
-                "tree_reuse_carry_fraction".to_string(),
-                info.tree_reuse_carry_fraction,
-            );
-            // Traversal outcome statistics
-            d.insert("traversal_total".to_string(), info.traversal_total as f32);
-            d.insert(
-                "traversal_expansions".to_string(),
-                info.traversal_expansions as f32,
-            );
-            d.insert(
-                "traversal_terminal_ends".to_string(),
-                info.traversal_terminal_ends as f32,
-            );
-            d.insert(
-                "traversal_horizon_ends".to_string(),
-                info.traversal_horizon_ends as f32,
-            );
-            d.insert(
-                "traversal_expansion_fraction".to_string(),
-                info.traversal_expansion_fraction,
-            );
-            d.insert(
-                "traversal_terminal_fraction".to_string(),
-                info.traversal_terminal_fraction,
-            );
-            d.insert(
-                "traversal_horizon_fraction".to_string(),
-                info.traversal_horizon_fraction,
-            );
-            drained.push((info.game_number, d));
+            drained.push((info.game_number, info.to_dict()));
         }
         drained
     }

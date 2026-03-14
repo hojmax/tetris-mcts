@@ -148,7 +148,7 @@ Ownership split:
 - Training: `batch_size=1024`, `learning_rate=5e-4` with decay to `1e-4`, `weight_decay=1e-4`.
 - Workers/buffer: `num_workers=7`, replay ring buffer size `2_000_000`.
 - Bootstrap: starts no-network, typically `bootstrap_num_simulations=4000` until first promotion.
-- Candidate gate: deterministic fixed-seed eval window (default 50 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average.
+- Candidate gate: deterministic fixed-seed eval window (default 20 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average. Fixed-seed eval trajectories are not added to the replay buffer.
 - NN value scaling: `nn_value_weight=0.01` default with promotion-based ramp and cap.
 - Q normalization: min-max mode on by default (`use_tanh_q_normalization=false`, so `q_scale=None` in rollout config).
 
@@ -229,6 +229,7 @@ If you see `ModuleNotFoundError: No module named 'tetris_core.tetris_core'`, the
 - Remove dead code when replacing functionality.
 - Keep imports at top level (except explicit optional/cycle cases).
 - Keep functions focused and short; extract reused logic.
+- Keep the Rust PyO3 API minimal; do not add dict/string/repr convenience wrappers unless they have a concrete in-repo caller.
 - Use modern typing syntax (`A | B`, `list[T]`) and `from __future__ import annotations` when useful.
 - Use `pathlib.Path` and `PROJECT_ROOT` (`tetris_bot.constants`) for project-relative paths.
 - Use `simple_parsing` dataclass args in scripts; put defaults directly in dataclass fields.

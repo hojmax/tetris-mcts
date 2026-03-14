@@ -3,8 +3,6 @@
 //! Evaluate models on fixed seeds for consistent benchmarking.
 
 use pyo3::prelude::*;
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -12,8 +10,6 @@ use std::thread;
 use crate::game::constants::{BOARD_HEIGHT, BOARD_WIDTH};
 use crate::game::env::TetrisEnv;
 use crate::search::{MCTSAgent, MCTSConfig};
-
-use crate::replay::GameReplay;
 
 /// Result of evaluating a model on fixed seeds.
 #[pyclass]
@@ -58,20 +54,6 @@ pub struct EvalResult {
     /// Individual game results: (attack, moves) for each seed
     #[pyo3(get)]
     pub game_results: Vec<(u32, u32)>,
-}
-
-fn create_replay_writer(output_path: Option<&str>) -> PyResult<Option<BufWriter<File>>> {
-    if let Some(path) = output_path {
-        let file = File::create(path).map_err(|error| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                "Failed to create output file {}: {}",
-                path, error
-            ))
-        })?;
-        Ok(Some(BufWriter::new(file)))
-    } else {
-        Ok(None)
-    }
 }
 
 /// Per-game result collected from evaluation.
@@ -152,74 +134,45 @@ fn evaluate_seed(
     })
 }
 
+pub(crate) fn evaluate_avg_attack_on_fixed_seeds<F>(
+    agent: &MCTSAgent,
+    seeds: &[u64],
+    max_placements: u32,
+    add_noise: bool,
+    mut should_continue: F,
+) -> Option<f32>
+where
+    F: FnMut() -> bool,
+{
+    if seeds.is_empty() {
+        return None;
+    }
+
+    let mut total_attack: u64 = 0;
+    for &seed in seeds {
+        if !should_continue() {
+            return None;
+        }
+
+        let eval = evaluate_seed(agent, seed, max_placements, add_noise)?;
+        total_attack += eval.attack as u64;
+    }
+
+    Some(total_attack as f32 / seeds.len() as f32)
+}
+
 fn evaluate_agent(
     agent: &MCTSAgent,
     seeds: &[u64],
     max_placements: u32,
     add_noise: bool,
-    output_path: Option<String>,
-) -> PyResult<EvalResult> {
-    // Replay writing path (single-threaded only)
-    if let Some(path) = output_path.as_deref() {
-        let mut replay_writer = create_replay_writer(Some(path))?;
-        let mut evals = Vec::with_capacity(seeds.len());
-
-        for &seed in seeds {
-            let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed);
-            let Some((result, replay_moves)) =
-                agent.play_game_on_env(env, max_placements, add_noise)
-            else {
-                continue;
-            };
-
-            if let Some(writer) = replay_writer.as_mut() {
-                let replay = GameReplay {
-                    seed,
-                    moves: replay_moves,
-                    total_attack: result.total_attack,
-                    num_moves: result.num_moves,
-                };
-                let json = serde_json::to_string(&replay).map_err(|error| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to serialize replay: {}",
-                        error
-                    ))
-                })?;
-                writeln!(writer, "{}", json).map_err(|error| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                        "Failed to write replay: {}",
-                        error
-                    ))
-                })?;
-            }
-
-            evals.push(GameEval {
-                attack: result.total_attack,
-                lines: result.stats.total_lines,
-                moves: result.num_moves,
-                avg_tree_nodes: result.tree_stats.avg_total_nodes,
-            });
-        }
-
-        if let Some(writer) = replay_writer.as_mut() {
-            writer.flush().map_err(|error| {
-                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                    "Failed to flush output: {}",
-                    error
-                ))
-            })?;
-        }
-
-        return Ok(aggregate_game_evals(&evals));
-    }
-
-    // No replay — simple path
+) -> EvalResult {
     let evals: Vec<GameEval> = seeds
         .iter()
         .copied()
         .filter_map(|seed| evaluate_seed(agent, seed, max_placements, add_noise))
         .collect();
-    Ok(aggregate_game_evals(&evals))
+    aggregate_game_evals(&evals)
 }
 
 /// Run evaluation in parallel across multiple threads.
@@ -304,18 +257,16 @@ fn evaluate_parallel(
 ///     config: MCTS configuration
 ///     max_placements: Maximum placements per game (hold actions do not count)
 ///     add_noise: Whether to add Dirichlet root noise
-///     output_path: Optional path to save replays as JSONL
 ///
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (model_path, seeds, config=None, max_placements=100, output_path=None, num_workers=1, add_noise=false))]
+#[pyo3(signature = (model_path, seeds, config=None, max_placements=100, num_workers=1, add_noise=false))]
 pub fn evaluate_model(
     model_path: &str,
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
     max_placements: u32,
-    output_path: Option<String>,
     num_workers: u32,
     add_noise: bool,
 ) -> PyResult<EvalResult> {
@@ -327,12 +278,6 @@ pub fn evaluate_model(
 
     let mut config = config.unwrap_or_default();
     config.max_placements = max_placements;
-
-    if num_workers > 1 && output_path.is_some() {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "output_path is not supported with num_workers > 1",
-        ));
-    }
 
     if num_workers > 1 {
         return evaluate_parallel(
@@ -353,7 +298,7 @@ pub fn evaluate_model(
         )));
     }
 
-    evaluate_agent(&agent, &seeds, max_placements, add_noise, output_path)
+    Ok(evaluate_agent(&agent, &seeds, max_placements, add_noise))
 }
 
 /// Evaluate MCTS without a network on fixed seeds (uniform priors + zero value).
@@ -367,18 +312,16 @@ pub fn evaluate_model(
 ///     config: MCTS configuration
 ///     max_placements: Maximum placements per game (hold actions do not count)
 ///     add_noise: Whether to add Dirichlet root noise (matches self-play exploration)
-///     output_path: Optional path to save replays as JSONL
 ///
 /// Returns:
 ///     EvalResult with aggregated statistics
 #[pyfunction]
-#[pyo3(signature = (seeds, config=None, max_placements=100, add_noise=false, output_path=None, num_workers=1))]
+#[pyo3(signature = (seeds, config=None, max_placements=100, add_noise=false, num_workers=1))]
 pub fn evaluate_model_without_nn(
     seeds: Vec<u64>,
     config: Option<MCTSConfig>,
     max_placements: u32,
     add_noise: bool,
-    output_path: Option<String>,
     num_workers: u32,
 ) -> PyResult<EvalResult> {
     if max_placements == 0 {
@@ -389,12 +332,6 @@ pub fn evaluate_model_without_nn(
 
     let mut config = config.unwrap_or_default();
     config.max_placements = max_placements;
-
-    if num_workers > 1 && output_path.is_some() {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "output_path is not supported with num_workers > 1",
-        ));
-    }
 
     if num_workers > 1 {
         return evaluate_parallel(
@@ -408,7 +345,7 @@ pub fn evaluate_model_without_nn(
     }
 
     let agent = MCTSAgent::new(config);
-    evaluate_agent(&agent, &seeds, max_placements, add_noise, output_path)
+    Ok(evaluate_agent(&agent, &seeds, max_placements, add_noise))
 }
 
 #[cfg(test)]
@@ -427,10 +364,10 @@ mod tests {
         config.reuse_tree = true;
 
         let single_without_noise =
-            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, false, None, 1)
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, false, 1)
                 .expect("single-thread eval without noise should succeed");
         let single_with_noise =
-            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, true, None, 1)
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, true, 1)
                 .expect("single-thread eval with noise should succeed");
         assert_ne!(
             single_with_noise.game_results, single_without_noise.game_results,
@@ -438,7 +375,7 @@ mod tests {
         );
 
         let parallel_with_noise =
-            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, true, None, 4)
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, true, 4)
                 .expect("parallel eval with noise should succeed");
         assert_eq!(
             parallel_with_noise.game_results, single_with_noise.game_results,
@@ -446,7 +383,7 @@ mod tests {
         );
 
         let parallel_without_noise =
-            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, false, None, 4)
+            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 30, false, 4)
                 .expect("parallel eval without noise should succeed");
         assert_eq!(
             parallel_without_noise.game_results, single_without_noise.game_results,
@@ -463,15 +400,60 @@ mod tests {
         config.max_placements = 35;
         config.reuse_tree = true;
 
-        let first =
-            evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 35, false, None, 8)
-                .expect("first parallel run should succeed");
-        let second = evaluate_model_without_nn(seeds, Some(config), 35, false, None, 8)
+        let first = evaluate_model_without_nn(seeds.clone(), Some(config.clone()), 35, false, 8)
+            .expect("first parallel run should succeed");
+        let second = evaluate_model_without_nn(seeds, Some(config), 35, false, 8)
             .expect("second parallel run should succeed");
 
         assert_eq!(
             first.game_results, second.game_results,
             "repeated parallel runs should preserve deterministic evaluation outputs"
+        );
+    }
+
+    #[test]
+    fn avg_attack_helper_matches_public_eval_without_nn() {
+        let seeds: Vec<u64> = (0..12).collect();
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 40;
+        config.seed = Some(321);
+        config.max_placements = 30;
+        config.reuse_tree = true;
+
+        let agent = MCTSAgent::new(config.clone());
+        let helper_avg =
+            evaluate_avg_attack_on_fixed_seeds(&agent, &seeds, 30, false, || true).unwrap();
+        let public_eval = evaluate_model_without_nn(seeds, Some(config), 30, false, 1)
+            .expect("public eval should succeed");
+
+        assert!(
+            (helper_avg - public_eval.avg_attack).abs() < f32::EPSILON,
+            "shared helper should match the public single-threaded eval path"
+        );
+    }
+
+    #[test]
+    fn avg_attack_helper_stops_when_requested() {
+        let seeds: Vec<u64> = vec![1, 2, 3];
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 20;
+        config.seed = Some(123);
+        config.max_placements = 20;
+
+        let agent = MCTSAgent::new(config);
+        let mut callback_calls = 0;
+        let avg_attack = evaluate_avg_attack_on_fixed_seeds(&agent, &seeds, 20, false, || {
+            callback_calls += 1;
+            callback_calls < 2
+        });
+
+        assert!(
+            avg_attack.is_none(),
+            "helper should abort when the continuation callback stops"
+        );
+        assert_eq!(
+            callback_calls, 2,
+            "helper should check whether evaluation should continue before each seed"
         );
     }
 }

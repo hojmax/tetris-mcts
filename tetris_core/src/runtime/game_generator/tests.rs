@@ -94,56 +94,113 @@ fn test_shared_buffer_logical_indices_follow_fifo_window() {
     assert_eq!(move_numbers, vec![2, 3]);
 }
 
+fn make_game_result(
+    total_attack: u32,
+    total_lines: u32,
+    max_combo: u32,
+    move_numbers: &[u32],
+) -> GameResult {
+    GameResult {
+        examples: move_numbers.iter().copied().map(make_example).collect(),
+        total_attack,
+        num_moves: move_numbers.len() as u32,
+        avg_valid_actions: 5.0,
+        max_valid_actions: 9,
+        stats: GameStats {
+            singles: total_lines,
+            doubles: 0,
+            triples: 0,
+            tetrises: 0,
+            tspin_minis: 0,
+            tspin_singles: 0,
+            tspin_doubles: 0,
+            tspin_triples: 0,
+            perfect_clears: 0,
+            back_to_backs: 0,
+            max_combo,
+            total_lines,
+            holds: 1,
+        },
+        tree_stats: GameTreeStats::default(),
+        total_overhang_fields: 0,
+        avg_overhang_fields: 0.0,
+        cache_hits: 0,
+        cache_misses: 0,
+        cache_size: 0,
+        tree_reuse_hits: 0,
+        tree_reuse_misses: 0,
+        tree_reuse_carry_fraction: 0.0,
+        traversal_total: 0,
+        traversal_expansions: 0,
+        traversal_terminal_ends: 0,
+        traversal_horizon_ends: 0,
+        traversal_expansion_fraction: 0.0,
+        traversal_terminal_fraction: 0.0,
+        traversal_horizon_fraction: 0.0,
+    }
+}
+
 #[test]
-fn test_shared_stats_accumulates_and_tracks_max_combo() {
-    let stats = SharedStats::new();
-    let game_a = GameStats {
-        singles: 1,
-        doubles: 0,
-        triples: 0,
-        tetrises: 0,
-        tspin_minis: 0,
-        tspin_singles: 0,
-        tspin_doubles: 0,
-        tspin_triples: 0,
-        perfect_clears: 0,
-        back_to_backs: 1,
-        max_combo: 2,
-        total_lines: 1,
-        holds: 3,
-    };
-    let game_b = GameStats {
-        singles: 0,
-        doubles: 1,
-        triples: 0,
-        tetrises: 1,
-        tspin_minis: 0,
-        tspin_singles: 1,
-        tspin_doubles: 0,
-        tspin_triples: 0,
-        perfect_clears: 1,
-        back_to_backs: 0,
-        max_combo: 5,
-        total_lines: 6,
-        holds: 4,
+fn test_commit_game_results_batch_tags_examples_and_queues_completed_games() {
+    let buffer = Arc::new(SharedBuffer::new(8));
+    let games_generated = Arc::new(AtomicU64::new(0));
+    let examples_generated = Arc::new(AtomicU64::new(0));
+    let completed_games = Arc::new(RwLock::new(VecDeque::new()));
+    let shared = WorkerSharedState {
+        buffer: Arc::clone(&buffer),
+        running: Arc::new(AtomicBool::new(true)),
+        games_generated: Arc::clone(&games_generated),
+        examples_generated: Arc::clone(&examples_generated),
+        completed_games: Arc::clone(&completed_games),
+        pending_candidate: Arc::new(RwLock::new(None)),
+        evaluating_candidate: Arc::new(RwLock::new(None)),
+        model_eval_events: Arc::new(RwLock::new(VecDeque::new())),
+        incumbent: IncumbentState {
+            model_path: Arc::new(RwLock::new(PathBuf::from("unused.onnx"))),
+            uses_network: Arc::new(AtomicBool::new(false)),
+            model_step: Arc::new(AtomicU64::new(0)),
+            model_version: Arc::new(AtomicU64::new(0)),
+            nn_value_weight: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            death_penalty: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            overhang_penalty_weight: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+            eval_avg_attack: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+        },
     };
 
-    stats.add(&game_a, 0);
-    stats.add(&game_b, 7);
-    let d = stats.to_dict();
+    let committed = GameGenerator::commit_game_results_batch(
+        vec![
+            make_game_result(7, 4, 2, &[1, 2]),
+            make_game_result(3, 1, 1, &[3]),
+        ],
+        &shared,
+    );
 
-    assert_eq!(d["games_with_attack"], 1);
-    assert_eq!(d["games_with_lines"], 2);
-    assert_eq!(d["singles"], 1);
-    assert_eq!(d["doubles"], 1);
-    assert_eq!(d["tetrises"], 1);
-    assert_eq!(d["tspin_singles"], 1);
-    assert_eq!(d["perfect_clears"], 1);
-    assert_eq!(d["back_to_backs"], 1);
-    assert_eq!(d["max_combo"], 5);
-    assert_eq!(d["total_lines"], 7);
-    assert_eq!(d["total_attack"], 7);
-    assert_eq!(d["holds"], 7);
+    assert_eq!(committed, 2);
+    assert_eq!(games_generated.load(Ordering::SeqCst), 2);
+    assert_eq!(examples_generated.load(Ordering::SeqCst), 3);
+
+    let (_, _, buffered_examples) = buffer
+        .logical_window_snapshot()
+        .expect("buffer snapshot should exist");
+    let game_numbers: Vec<u64> = buffered_examples
+        .iter()
+        .map(|example| example.game_number)
+        .collect();
+    let attacks: Vec<u32> = buffered_examples
+        .iter()
+        .map(|example| example.game_total_attack)
+        .collect();
+    assert_eq!(game_numbers, vec![1, 1, 2]);
+    assert_eq!(attacks, vec![7, 7, 3]);
+
+    let completed_games = completed_games.read().unwrap();
+    assert_eq!(completed_games.len(), 2);
+    assert_eq!(completed_games[0].game_number, 1);
+    assert_eq!(completed_games[0].total_attack, 7);
+    assert_eq!(completed_games[0].stats.total_lines, 4);
+    assert_eq!(completed_games[1].game_number, 2);
+    assert_eq!(completed_games[1].total_attack, 3);
+    assert_eq!(completed_games[1].stats.max_combo, 1);
 }
 
 #[test]

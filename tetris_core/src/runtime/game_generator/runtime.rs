@@ -33,35 +33,6 @@ impl GameGenerator {
         incumbent_uses_network && current_penalties != candidate_penalties
     }
 
-    fn evaluate_avg_attack_on_fixed_seeds(
-        agent: &MCTSAgent,
-        running: &Arc<AtomicBool>,
-        max_placements: u32,
-        candidate_eval_seeds: &[u64],
-    ) -> Option<f32> {
-        let mut total_attack: u64 = 0;
-        let mut completed_games: u64 = 0;
-
-        for &seed in candidate_eval_seeds {
-            if !running.load(Ordering::SeqCst) {
-                return None;
-            }
-            let (result, _) = agent.play_game_on_env(
-                TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed),
-                max_placements,
-                false,
-            )?;
-            total_attack += result.total_attack as u64;
-            completed_games += 1;
-        }
-
-        if completed_games == 0 {
-            None
-        } else {
-            Some(total_attack as f32 / completed_games as f32)
-        }
-    }
-
     pub(super) fn examples_to_numpy<'py>(
         py: Python<'py>,
         examples: &[TrainingExample],
@@ -74,25 +45,21 @@ impl GameGenerator {
         &'py PyArray2<f32>,
     )> {
         let batch_size = examples.len();
-        let board_height = BOARD_HEIGHT;
-        let board_width = BOARD_WIDTH;
-        let num_actions = NUM_ACTIONS;
-        let aux_features_size = AUX_FEATURES;
 
-        let mut boards = vec![0.0f32; batch_size * board_height * board_width];
-        let mut aux = vec![0.0f32; batch_size * aux_features_size];
-        let mut policies = vec![0.0f32; batch_size * num_actions];
+        let mut boards = vec![0.0f32; batch_size * BOARD_HEIGHT * BOARD_WIDTH];
+        let mut aux = vec![0.0f32; batch_size * AUX_FEATURES];
+        let mut policies = vec![0.0f32; batch_size * NUM_ACTIONS];
         let mut values = vec![0.0f32; batch_size];
         let mut overhangs = vec![0.0f32; batch_size];
-        let mut masks = vec![0.0f32; batch_size * num_actions];
+        let mut masks = vec![0.0f32; batch_size * NUM_ACTIONS];
 
         for (i, ex) in examples.iter().enumerate() {
             for (j, &val) in ex.board.iter().enumerate() {
-                boards[i * board_height * board_width + j] = val as f32;
+                boards[i * BOARD_HEIGHT * BOARD_WIDTH + j] = val as f32;
             }
 
-            let aux_offset = i * aux_features_size;
-            let aux_slice = &mut aux[aux_offset..aux_offset + aux_features_size];
+            let aux_offset = i * AUX_FEATURES;
+            let aux_slice = &mut aux[aux_offset..aux_offset + AUX_FEATURES];
             let hold_piece = if ex.hold_piece < NUM_PIECE_TYPES {
                 Some(ex.hold_piece)
             } else {
@@ -124,28 +91,28 @@ impl GameGenerator {
             })?;
 
             for (j, &val) in ex.policy.iter().enumerate() {
-                policies[i * num_actions + j] = val;
+                policies[i * NUM_ACTIONS + j] = val;
             }
             values[i] = ex.value;
             overhangs[i] = ex.overhang_fields;
             for (j, &val) in ex.action_mask.iter().enumerate() {
-                masks[i * num_actions + j] = if val { 1.0 } else { 0.0 };
+                masks[i * NUM_ACTIONS + j] = if val { 1.0 } else { 0.0 };
             }
         }
 
         let boards_arr = PyArray1::from_vec(py, boards)
-            .reshape([batch_size, board_height * board_width])
+            .reshape([batch_size, BOARD_HEIGHT * BOARD_WIDTH])
             .unwrap();
         let aux_arr = PyArray1::from_vec(py, aux)
-            .reshape([batch_size, aux_features_size])
+            .reshape([batch_size, AUX_FEATURES])
             .unwrap();
         let policies_arr = PyArray1::from_vec(py, policies)
-            .reshape([batch_size, num_actions])
+            .reshape([batch_size, NUM_ACTIONS])
             .unwrap();
         let values_arr = PyArray1::from_vec(py, values);
         let overhangs_arr = PyArray1::from_vec(py, overhangs);
         let masks_arr = PyArray1::from_vec(py, masks)
-            .reshape([batch_size, num_actions])
+            .reshape([batch_size, NUM_ACTIONS])
             .unwrap();
 
         Ok((
@@ -160,7 +127,7 @@ impl GameGenerator {
 
     pub(super) fn persist_snapshot_if_due(
         training_data_path: &Path,
-        buffer: &Arc<SharedBuffer>,
+        buffer: &SharedBuffer,
         save_interval_seconds: f64,
         next_snapshot_deadline: &mut Option<Instant>,
     ) {
@@ -184,62 +151,28 @@ impl GameGenerator {
     }
 
     /// Worker thread main loop.
-    pub(super) fn worker_loop(
-        worker_id: usize,
-        num_workers: usize,
-        is_evaluator_worker: bool,
-        bootstrap_model_path: PathBuf,
-        training_data_path: PathBuf,
-        config: MCTSConfig,
-        max_placements: u32,
-        add_noise: bool,
-        save_interval_seconds: f64,
-        candidate_eval_seeds: Vec<u64>,
-        non_network_num_simulations: u32,
-        bootstrap_use_min_max_q_normalization: bool,
-        buffer: Arc<SharedBuffer>,
-        running: Arc<AtomicBool>,
-        games_generated: Arc<AtomicU64>,
-        examples_generated: Arc<AtomicU64>,
-        game_stats: Arc<SharedStats>,
-        completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
-        pending_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
-        evaluating_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
-        model_eval_events: Arc<RwLock<VecDeque<ModelEvalEvent>>>,
-        incumbent_model_path: Arc<RwLock<PathBuf>>,
-        incumbent_uses_network: Arc<AtomicBool>,
-        incumbent_model_step: Arc<AtomicU64>,
-        incumbent_model_version: Arc<AtomicU64>,
-        incumbent_nn_value_weight: Arc<AtomicU32>,
-        incumbent_death_penalty: Arc<AtomicU32>,
-        incumbent_overhang_penalty_weight: Arc<AtomicU32>,
-        nn_value_weight_cap: f32,
-        incumbent_eval_avg_attack: Arc<AtomicU32>,
-    ) {
-        let mut agent = MCTSAgent::new(config.clone());
+    pub(super) fn worker_loop(worker_context: WorkerContext) {
+        let WorkerContext {
+            worker_id,
+            is_evaluator_worker,
+            settings,
+            shared,
+        } = worker_context;
+        let mut agent = MCTSAgent::new(settings.config.clone());
         let mut loaded_model_version = u64::MAX;
         let mut loaded_model_step = 0u64;
-        let mut loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
+        let mut loaded_with_network = !shared.incumbent.uses_network.load(Ordering::SeqCst);
         let mut pending_results: Vec<GameResult> = Vec::with_capacity(GAME_COMMIT_BATCH_SIZE);
 
-        while running.load(Ordering::SeqCst)
+        while shared.running.load(Ordering::SeqCst)
             && !Self::sync_incumbent_agent_if_needed(
-                &config,
-                non_network_num_simulations,
-                bootstrap_use_min_max_q_normalization,
+                &settings,
+                &shared.incumbent,
                 &mut agent,
-                &incumbent_model_path,
-                &incumbent_uses_network,
-                &incumbent_model_step,
-                &incumbent_model_version,
-                &incumbent_nn_value_weight,
-                &incumbent_death_penalty,
-                &incumbent_overhang_penalty_weight,
                 &mut loaded_model_version,
                 &mut loaded_model_step,
                 &mut loaded_with_network,
                 worker_id,
-                num_workers,
             )
         {
             thread::sleep(Duration::from_millis(500));
@@ -247,31 +180,22 @@ impl GameGenerator {
 
         // Only worker 0 handles disk saves to avoid race conditions
         let is_save_worker = worker_id == 0;
-        let mut next_snapshot_deadline = if save_interval_seconds > 0.0 {
-            Some(Instant::now() + Duration::from_secs_f64(save_interval_seconds))
+        let mut next_snapshot_deadline = if settings.save_interval_seconds > 0.0 {
+            Some(Instant::now() + Duration::from_secs_f64(settings.save_interval_seconds))
         } else {
             None
         };
 
         // Main generation loop
-        while running.load(Ordering::SeqCst) {
+        while shared.running.load(Ordering::SeqCst) {
             if !Self::sync_incumbent_agent_if_needed(
-                &config,
-                non_network_num_simulations,
-                bootstrap_use_min_max_q_normalization,
+                &settings,
+                &shared.incumbent,
                 &mut agent,
-                &incumbent_model_path,
-                &incumbent_uses_network,
-                &incumbent_model_step,
-                &incumbent_model_version,
-                &incumbent_nn_value_weight,
-                &incumbent_death_penalty,
-                &incumbent_overhang_penalty_weight,
                 &mut loaded_model_version,
                 &mut loaded_model_step,
                 &mut loaded_with_network,
                 worker_id,
-                num_workers,
             ) {
                 thread::sleep(Duration::from_millis(200));
                 continue;
@@ -279,28 +203,21 @@ impl GameGenerator {
 
             if is_evaluator_worker {
                 let maybe_candidate = {
-                    let mut pending = pending_candidate.write().unwrap();
+                    let mut pending = shared.pending_candidate.write().unwrap();
                     pending.take()
                 };
                 if let Some(candidate) = maybe_candidate {
                     if !pending_results.is_empty() {
                         let to_commit = std::mem::take(&mut pending_results);
-                        Self::commit_game_results_batch(
-                            to_commit,
-                            &buffer,
-                            &games_generated,
-                            &examples_generated,
-                            &game_stats,
-                            &completed_games,
-                        );
+                        Self::commit_game_results_batch(to_commit, &shared);
                     }
 
-                    let current_incumbent_step = incumbent_model_step.load(Ordering::SeqCst);
+                    let current_incumbent_step = shared.incumbent.model_step.load(Ordering::SeqCst);
                     if candidate.model_step <= current_incumbent_step {
-                        let incumbent_path = incumbent_model_path.read().unwrap().clone();
+                        let incumbent_path = shared.incumbent.model_path.read().unwrap().clone();
                         Self::remove_model_artifacts_if_safe(
                             &candidate.model_path,
-                            &bootstrap_model_path,
+                            &settings.bootstrap_model_path,
                             &incumbent_path,
                             None,
                         );
@@ -308,49 +225,24 @@ impl GameGenerator {
                     }
 
                     {
-                        let mut evaluating = evaluating_candidate.write().unwrap();
+                        let mut evaluating = shared.evaluating_candidate.write().unwrap();
                         *evaluating = Some(candidate.clone());
                     }
 
-                    let _committed_games = Self::run_candidate_evaluation(
-                        worker_id,
-                        candidate,
-                        &config,
-                        &running,
-                        max_placements,
-                        &candidate_eval_seeds,
-                        non_network_num_simulations,
-                        bootstrap_use_min_max_q_normalization,
-                        &buffer,
-                        &games_generated,
-                        &examples_generated,
-                        &game_stats,
-                        &completed_games,
-                        &model_eval_events,
-                        &bootstrap_model_path,
-                        &incumbent_model_path,
-                        &incumbent_uses_network,
-                        &incumbent_model_step,
-                        &incumbent_model_version,
-                        &incumbent_nn_value_weight,
-                        &incumbent_death_penalty,
-                        &incumbent_overhang_penalty_weight,
-                        nn_value_weight_cap,
-                        &incumbent_eval_avg_attack,
-                    );
+                    Self::run_candidate_evaluation(worker_id, candidate, &settings, &shared);
 
                     {
-                        let mut evaluating = evaluating_candidate.write().unwrap();
+                        let mut evaluating = shared.evaluating_candidate.write().unwrap();
                         *evaluating = None;
                     }
                     loaded_model_version = u64::MAX;
-                    loaded_with_network = !incumbent_uses_network.load(Ordering::SeqCst);
+                    loaded_with_network = !shared.incumbent.uses_network.load(Ordering::SeqCst);
 
                     if is_save_worker {
                         Self::persist_snapshot_if_due(
-                            &training_data_path,
-                            &buffer,
-                            save_interval_seconds,
+                            &settings.training_data_path,
+                            shared.buffer.as_ref(),
+                            settings.save_interval_seconds,
                             &mut next_snapshot_deadline,
                         );
                     }
@@ -359,18 +251,11 @@ impl GameGenerator {
             }
 
             // Play one game
-            if let Some(result) = agent.play_game(max_placements, add_noise) {
+            if let Some(result) = agent.play_game(settings.max_placements, settings.add_noise) {
                 pending_results.push(result);
                 if pending_results.len() >= GAME_COMMIT_BATCH_SIZE {
                     let to_commit = std::mem::take(&mut pending_results);
-                    Self::commit_game_results_batch(
-                        to_commit,
-                        &buffer,
-                        &games_generated,
-                        &examples_generated,
-                        &game_stats,
-                        &completed_games,
-                    );
+                    Self::commit_game_results_batch(to_commit, &shared);
                 }
 
                 // Periodically save to disk for resume capability based on
@@ -378,19 +263,12 @@ impl GameGenerator {
                 if is_save_worker {
                     if !pending_results.is_empty() {
                         let to_commit = std::mem::take(&mut pending_results);
-                        Self::commit_game_results_batch(
-                            to_commit,
-                            &buffer,
-                            &games_generated,
-                            &examples_generated,
-                            &game_stats,
-                            &completed_games,
-                        );
+                        Self::commit_game_results_batch(to_commit, &shared);
                     }
                     Self::persist_snapshot_if_due(
-                        &training_data_path,
-                        &buffer,
-                        save_interval_seconds,
+                        &settings.training_data_path,
+                        shared.buffer.as_ref(),
+                        settings.save_interval_seconds,
                         &mut next_snapshot_deadline,
                     );
                 }
@@ -399,20 +277,13 @@ impl GameGenerator {
 
         if !pending_results.is_empty() {
             let to_commit = std::mem::take(&mut pending_results);
-            Self::commit_game_results_batch(
-                to_commit,
-                &buffer,
-                &games_generated,
-                &examples_generated,
-                &game_stats,
-                &completed_games,
-            );
+            Self::commit_game_results_batch(to_commit, &shared);
         }
 
         // Final save on shutdown (only worker 0)
-        if is_save_worker && buffer.len() > 0 {
-            let n = buffer.len();
-            let _ = buffer.persist_to_npz(&training_data_path);
+        if is_save_worker && shared.buffer.len() > 0 {
+            let n = shared.buffer.len();
+            let _ = shared.buffer.persist_to_npz(&settings.training_data_path);
             eprintln!("[GameGenerator] Saved {} examples to disk", n);
         }
 
@@ -420,43 +291,34 @@ impl GameGenerator {
     }
 
     pub(super) fn sync_incumbent_agent_if_needed(
-        config: &MCTSConfig,
-        non_network_num_simulations: u32,
-        bootstrap_use_min_max_q_normalization: bool,
+        settings: &WorkerSettings,
+        incumbent: &IncumbentState,
         agent: &mut MCTSAgent,
-        incumbent_model_path: &Arc<RwLock<PathBuf>>,
-        incumbent_uses_network: &Arc<AtomicBool>,
-        incumbent_model_step: &Arc<AtomicU64>,
-        incumbent_model_version: &Arc<AtomicU64>,
-        incumbent_nn_value_weight: &Arc<AtomicU32>,
-        incumbent_death_penalty: &Arc<AtomicU32>,
-        incumbent_overhang_penalty_weight: &Arc<AtomicU32>,
         loaded_model_version: &mut u64,
         loaded_model_step: &mut u64,
         loaded_with_network: &mut bool,
         worker_id: usize,
-        num_workers: usize,
     ) -> bool {
-        let target_version = incumbent_model_version.load(Ordering::SeqCst);
-        let target_uses_network = incumbent_uses_network.load(Ordering::SeqCst);
+        let target_version = incumbent.model_version.load(Ordering::SeqCst);
+        let target_uses_network = incumbent.uses_network.load(Ordering::SeqCst);
         if *loaded_model_version == target_version && *loaded_with_network == target_uses_network {
             return true;
         }
 
         let model_path = if target_uses_network {
-            Some(incumbent_model_path.read().unwrap().clone())
+            Some(incumbent.model_path.read().unwrap().clone())
         } else {
             None
         };
-        let target_nn_value_weight = Self::load_atomic_f32(incumbent_nn_value_weight);
-        let target_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
+        let target_nn_value_weight = Self::load_atomic_f32(&incumbent.nn_value_weight);
+        let target_death_penalty = Self::load_atomic_f32(&incumbent.death_penalty);
         let target_overhang_penalty_weight =
-            Self::load_atomic_f32(incumbent_overhang_penalty_weight);
+            Self::load_atomic_f32(&incumbent.overhang_penalty_weight);
         let Some(new_agent) = Self::create_rollout_agent(
-            config,
+            &settings.config,
             target_uses_network,
-            non_network_num_simulations,
-            bootstrap_use_min_max_q_normalization,
+            settings.non_network_num_simulations,
+            settings.bootstrap_use_min_max_q_normalization,
             target_nn_value_weight,
             target_death_penalty,
             target_overhang_penalty_weight,
@@ -467,17 +329,22 @@ impl GameGenerator {
             return false;
         };
 
-        *loaded_model_step = incumbent_model_step.load(Ordering::SeqCst);
+        *loaded_model_step = incumbent.model_step.load(Ordering::SeqCst);
         if worker_id == 0 {
             if target_uses_network {
                 eprintln!(
                     "[GameGenerator] Loaded incumbent NN model step {} ({} workers, sims={}, nn_value_weight={:.6}, death_penalty={:.3}, overhang_penalty_weight={:.3})",
-                    *loaded_model_step, num_workers, config.num_simulations, target_nn_value_weight, target_death_penalty, target_overhang_penalty_weight
+                    *loaded_model_step,
+                    settings.num_workers,
+                    settings.config.num_simulations,
+                    target_nn_value_weight,
+                    target_death_penalty,
+                    target_overhang_penalty_weight
                 );
             } else {
                 eprintln!(
                     "[GameGenerator] Using no-network incumbent at step {} ({} workers, sims={})",
-                    *loaded_model_step, num_workers, non_network_num_simulations
+                    *loaded_model_step, settings.num_workers, settings.non_network_num_simulations
                 );
             }
         }
@@ -491,51 +358,34 @@ impl GameGenerator {
     pub(super) fn run_candidate_evaluation(
         worker_id: usize,
         candidate: CandidateModelRequest,
-        config: &MCTSConfig,
-        running: &Arc<AtomicBool>,
-        max_placements: u32,
-        candidate_eval_seeds: &[u64],
-        non_network_num_simulations: u32,
-        bootstrap_use_min_max_q_normalization: bool,
-        buffer: &Arc<SharedBuffer>,
-        games_generated: &Arc<AtomicU64>,
-        examples_generated: &Arc<AtomicU64>,
-        game_stats: &Arc<SharedStats>,
-        completed_games: &Arc<RwLock<VecDeque<LastGameInfo>>>,
-        model_eval_events: &Arc<RwLock<VecDeque<ModelEvalEvent>>>,
-        bootstrap_model_path: &Path,
-        incumbent_model_path: &Arc<RwLock<PathBuf>>,
-        incumbent_uses_network: &Arc<AtomicBool>,
-        incumbent_model_step: &Arc<AtomicU64>,
-        incumbent_model_version: &Arc<AtomicU64>,
-        incumbent_nn_value_weight: &Arc<AtomicU32>,
-        incumbent_death_penalty: &Arc<AtomicU32>,
-        incumbent_overhang_penalty_weight: &Arc<AtomicU32>,
-        nn_value_weight_cap: f32,
-        incumbent_eval_avg_attack: &Arc<AtomicU32>,
-    ) -> usize {
-        let eval_config = Self::build_candidate_eval_config(config);
-        let incumbent_uses_network_before = incumbent_uses_network.load(Ordering::SeqCst);
-        let incumbent_step_before = incumbent_model_step.load(Ordering::SeqCst);
-        let incumbent_nn_value_weight_before = Self::load_atomic_f32(incumbent_nn_value_weight);
-        let previous_incumbent_avg_attack = Self::load_atomic_f32(incumbent_eval_avg_attack);
-        let incumbent_path_before = incumbent_model_path.read().unwrap().clone();
+        settings: &WorkerSettings,
+        shared: &WorkerSharedState,
+    ) {
+        let eval_config = Self::build_candidate_eval_config(&settings.config);
+        let incumbent_uses_network_before = shared.incumbent.uses_network.load(Ordering::SeqCst);
+        let incumbent_step_before = shared.incumbent.model_step.load(Ordering::SeqCst);
+        let incumbent_nn_value_weight_before =
+            Self::load_atomic_f32(&shared.incumbent.nn_value_weight);
+        let previous_incumbent_avg_attack =
+            Self::load_atomic_f32(&shared.incumbent.eval_avg_attack);
+        let incumbent_path_before = shared.incumbent.model_path.read().unwrap().clone();
 
-        let current_incumbent_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
+        let current_incumbent_death_penalty =
+            Self::load_atomic_f32(&shared.incumbent.death_penalty);
         let current_incumbent_overhang_penalty_weight =
-            Self::load_atomic_f32(incumbent_overhang_penalty_weight);
+            Self::load_atomic_f32(&shared.incumbent.overhang_penalty_weight);
         let (candidate_death_penalty, candidate_overhang_penalty_weight) =
             Self::effective_search_penalties(
                 candidate.nn_value_weight,
-                nn_value_weight_cap,
+                settings.nn_value_weight_cap,
                 current_incumbent_death_penalty,
                 current_incumbent_overhang_penalty_weight,
             );
         let Some(candidate_agent) = Self::create_rollout_agent(
             &eval_config,
             true,
-            non_network_num_simulations,
-            bootstrap_use_min_max_q_normalization,
+            settings.non_network_num_simulations,
+            settings.bootstrap_use_min_max_q_normalization,
             candidate.nn_value_weight,
             candidate_death_penalty,
             candidate_overhang_penalty_weight,
@@ -551,11 +401,11 @@ impl GameGenerator {
             );
             Self::remove_model_artifacts_if_safe(
                 &candidate.model_path,
-                bootstrap_model_path,
+                &settings.bootstrap_model_path,
                 &incumbent_path_before,
                 None,
             );
-            return 0;
+            return;
         };
 
         let eval_start = Instant::now();
@@ -568,23 +418,23 @@ impl GameGenerator {
         }
 
         let mut candidate_results: Vec<CandidateGameResult> =
-            Vec::with_capacity(candidate_eval_seeds.len());
-        for &seed in candidate_eval_seeds {
-            if !running.load(Ordering::SeqCst) {
+            Vec::with_capacity(settings.candidate_eval_seeds.len());
+        for &seed in settings.candidate_eval_seeds.iter() {
+            if !shared.running.load(Ordering::SeqCst) {
                 Self::remove_model_artifacts_if_safe(
                     &candidate.model_path,
-                    bootstrap_model_path,
+                    &settings.bootstrap_model_path,
                     &incumbent_path_before,
                     None,
                 );
-                return 0;
+                return;
             }
 
             // Deterministic fixed-seed evaluation:
             // same seed, no root noise, deterministic MCTS seed in eval_config.
             let candidate_outcome = candidate_agent.play_game_on_env(
                 TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed),
-                max_placements,
+                settings.max_placements,
                 false,
             );
             if let Some((candidate_result, replay)) = candidate_outcome {
@@ -602,22 +452,22 @@ impl GameGenerator {
                 );
                 Self::remove_model_artifacts_if_safe(
                     &candidate.model_path,
-                    bootstrap_model_path,
+                    &settings.bootstrap_model_path,
                     &incumbent_path_before,
                     None,
                 );
-                return 0;
+                return;
             }
         }
 
         if candidate_results.is_empty() {
             Self::remove_model_artifacts_if_safe(
                 &candidate.model_path,
-                bootstrap_model_path,
+                &settings.bootstrap_model_path,
                 &incumbent_path_before,
                 None,
             );
-            return 0;
+            return;
         }
 
         // Build per-game results and find best/worst for replay serialization
@@ -690,8 +540,8 @@ impl GameGenerator {
             let Some(incumbent_agent) = Self::create_rollout_agent(
                 &eval_config,
                 true,
-                non_network_num_simulations,
-                bootstrap_use_min_max_q_normalization,
+                settings.non_network_num_simulations,
+                settings.bootstrap_use_min_max_q_normalization,
                 incumbent_nn_value_weight_before,
                 candidate_death_penalty,
                 candidate_overhang_penalty_weight,
@@ -706,29 +556,32 @@ impl GameGenerator {
                 );
                 Self::remove_model_artifacts_if_safe(
                     &candidate.model_path,
-                    bootstrap_model_path,
+                    &settings.bootstrap_model_path,
                     &incumbent_path_before,
                     None,
                 );
-                return 0;
+                return;
             };
-            let Some(recomputed_incumbent_avg_attack) = Self::evaluate_avg_attack_on_fixed_seeds(
-                &incumbent_agent,
-                running,
-                max_placements,
-                candidate_eval_seeds,
-            ) else {
+            let Some(recomputed_incumbent_avg_attack) =
+                crate::runtime::evaluation::evaluate_avg_attack_on_fixed_seeds(
+                    &incumbent_agent,
+                    &settings.candidate_eval_seeds,
+                    settings.max_placements,
+                    false,
+                    || shared.running.load(Ordering::SeqCst),
+                )
+            else {
                 eprintln!(
                     "[GameGenerator] Failed to recompute incumbent baseline for adjusted penalties; rejecting candidate step {}",
                     candidate.model_step
                 );
                 Self::remove_model_artifacts_if_safe(
                     &candidate.model_path,
-                    bootstrap_model_path,
+                    &settings.bootstrap_model_path,
                     &incumbent_path_before,
                     None,
                 );
-                return 0;
+                return;
             };
             incumbent_avg_attack = recomputed_incumbent_avg_attack;
         }
@@ -741,18 +594,21 @@ impl GameGenerator {
             incumbent_nn_value_weight_before
         };
 
-        let committed_games = if promoted {
-            let previous_incumbent_path = incumbent_model_path.read().unwrap().clone();
+        if promoted {
+            let previous_incumbent_path = shared.incumbent.model_path.read().unwrap().clone();
             {
-                let mut incumbent_path = incumbent_model_path.write().unwrap();
+                let mut incumbent_path = shared.incumbent.model_path.write().unwrap();
                 *incumbent_path = candidate.model_path.clone();
             }
-            incumbent_uses_network.store(true, Ordering::SeqCst);
-            incumbent_model_step.store(candidate.model_step, Ordering::SeqCst);
-            Self::store_atomic_f32(incumbent_nn_value_weight, candidate.nn_value_weight);
-            Self::store_atomic_f32(incumbent_death_penalty, candidate_death_penalty);
+            shared.incumbent.uses_network.store(true, Ordering::SeqCst);
+            shared
+                .incumbent
+                .model_step
+                .store(candidate.model_step, Ordering::SeqCst);
+            Self::store_atomic_f32(&shared.incumbent.nn_value_weight, candidate.nn_value_weight);
+            Self::store_atomic_f32(&shared.incumbent.death_penalty, candidate_death_penalty);
             Self::store_atomic_f32(
-                incumbent_overhang_penalty_weight,
+                &shared.incumbent.overhang_penalty_weight,
                 candidate_overhang_penalty_weight,
             );
             if (candidate_death_penalty, candidate_overhang_penalty_weight) == (0.0, 0.0)
@@ -763,33 +619,24 @@ impl GameGenerator {
             {
                 eprintln!(
                     "[GameGenerator] nn_value_weight reached cap ({:.6}), disabling death_penalty and overhang_penalty_weight",
-                    nn_value_weight_cap
+                    settings.nn_value_weight_cap
                 );
             }
-            incumbent_model_version.fetch_add(1, Ordering::SeqCst);
-            Self::store_atomic_f32(incumbent_eval_avg_attack, candidate_avg_attack);
-
-            let committed = Self::commit_game_results_batch(
-                candidate_results
-                    .into_iter()
-                    .map(|r| r.game_result)
-                    .collect(),
-                buffer,
-                games_generated,
-                examples_generated,
-                game_stats,
-                completed_games,
-            );
+            shared
+                .incumbent
+                .model_version
+                .fetch_add(1, Ordering::SeqCst);
+            Self::store_atomic_f32(&shared.incumbent.eval_avg_attack, candidate_avg_attack);
 
             Self::remove_model_artifacts_if_safe(
                 &previous_incumbent_path,
-                bootstrap_model_path,
+                &settings.bootstrap_model_path,
                 &candidate.model_path,
                 None,
             );
 
             eprintln!(
-                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={}, nn_value_weight {:.6} -> {:.6})",
+                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={}, nn_value_weight {:.6} -> {:.6}, eval trajectories discarded from replay)",
                 candidate.model_step,
                 candidate_avg_attack,
                 incumbent_avg_attack,
@@ -797,11 +644,10 @@ impl GameGenerator {
                 incumbent_nn_value_weight_before,
                 candidate.nn_value_weight
             );
-            committed
         } else {
             Self::remove_model_artifacts_if_safe(
                 &candidate.model_path,
-                bootstrap_model_path,
+                &settings.bootstrap_model_path,
                 &incumbent_path_before,
                 None,
             );
@@ -815,15 +661,15 @@ impl GameGenerator {
                 candidate.nn_value_weight,
                 incumbent_nn_value_weight_before
             );
-            0
-        };
+        }
 
         let evaluation_seconds = eval_start.elapsed().as_secs_f32();
-        let promoted_death_penalty = Self::load_atomic_f32(incumbent_death_penalty);
+        let promoted_death_penalty = Self::load_atomic_f32(&shared.incumbent.death_penalty);
         let promoted_overhang_penalty_weight =
-            Self::load_atomic_f32(incumbent_overhang_penalty_weight);
+            Self::load_atomic_f32(&shared.incumbent.overhang_penalty_weight);
 
-        model_eval_events
+        shared
+            .model_eval_events
             .write()
             .unwrap()
             .push_back(ModelEvalEvent {
@@ -846,8 +692,6 @@ impl GameGenerator {
                 worst_game_replay,
                 per_game_results,
             });
-
-        committed_games
     }
 
     pub(super) fn build_candidate_eval_config(base_config: &MCTSConfig) -> MCTSConfig {
@@ -925,11 +769,7 @@ impl GameGenerator {
 
     pub(super) fn commit_game_results_batch(
         results: Vec<GameResult>,
-        buffer: &Arc<SharedBuffer>,
-        games_generated: &Arc<AtomicU64>,
-        examples_generated: &Arc<AtomicU64>,
-        game_stats: &Arc<SharedStats>,
-        completed_games: &Arc<RwLock<VecDeque<LastGameInfo>>>,
+        shared: &WorkerSharedState,
     ) -> usize {
         if results.is_empty() {
             return 0;
@@ -965,7 +805,7 @@ impl GameGenerator {
                 ..
             } = result;
 
-            let game_number = games_generated.fetch_add(1, Ordering::SeqCst) + 1;
+            let game_number = shared.games_generated.fetch_add(1, Ordering::SeqCst) + 1;
             for example in &mut examples {
                 example.game_number = game_number;
                 example.game_total_attack = total_attack;
@@ -974,7 +814,6 @@ impl GameGenerator {
             total_examples += examples.len() as u64;
             all_examples.extend(examples);
 
-            game_stats.add(&stats, total_attack);
             completed_infos.push(LastGameInfo {
                 game_number,
                 stats,
@@ -1001,20 +840,26 @@ impl GameGenerator {
         }
 
         if !all_examples.is_empty() {
-            buffer.add_examples(all_examples);
+            shared.buffer.add_examples(all_examples);
         }
         if total_examples > 0 {
-            examples_generated.fetch_add(total_examples, Ordering::SeqCst);
+            shared
+                .examples_generated
+                .fetch_add(total_examples, Ordering::SeqCst);
         }
         let committed_games = completed_infos.len();
         if committed_games > 0 {
-            completed_games.write().unwrap().extend(completed_infos);
+            shared
+                .completed_games
+                .write()
+                .unwrap()
+                .extend(completed_infos);
         }
 
         committed_games
     }
 
-    pub(super) fn persist_buffer_snapshot(training_data_path: &Path, buffer: &Arc<SharedBuffer>) {
+    pub(super) fn persist_buffer_snapshot(training_data_path: &Path, buffer: &SharedBuffer) {
         if let Err(error) = buffer.persist_to_npz(training_data_path) {
             eprintln!("[GameGenerator] Failed to write NPZ: {}", error);
         }

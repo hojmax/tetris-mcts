@@ -727,7 +727,6 @@ python scripts/train.py --resume-dir training_runs/v0
 
 - **`tetris_game.py`** - Interactive Pygame Tetris (manual play or MCTS agent)
 - **`scripts/inspection/mcts_visualizer.py`** - Dash app for MCTS tree visualization (port 8050)
-- **`scripts/inspection/replay_viewer.py`** - View saved game replays
 - **`scripts/inspection/buffer_viewer.py`** - Inspect GameGenerator's in-memory training buffer
 
 ### Data Analysis

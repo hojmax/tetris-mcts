@@ -72,197 +72,188 @@ pub(crate) fn write_examples_slices_to_npz(
         .compression_method(CompressionMethod::Deflated)
         .large_file(true);
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "boards.npy",
-        &[n64, BOARD_HEIGHT as u64, BOARD_WIDTH as u64],
+        n64,
+        &[BOARD_HEIGHT as u64, BOARD_WIDTH as u64],
         examples().flat_map(|ex| ex.board.iter().copied()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "current_pieces.npy",
-        &[n64, NUM_PIECE_TYPES as u64],
-        examples().flat_map(|ex| {
-            let mut one_hot = [0.0f32; NUM_PIECE_TYPES];
-            one_hot[ex.current_piece] = 1.0;
-            one_hot.into_iter()
-        }),
+        n64,
+        &[NUM_PIECE_TYPES as u64],
+        examples().flat_map(|ex| encode_piece_one_hot(ex.current_piece).into_iter()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "hold_pieces.npy",
-        &[n64, (NUM_PIECE_TYPES + 1) as u64],
-        examples().flat_map(|ex| {
-            let mut one_hot = [0.0f32; NUM_PIECE_TYPES + 1];
-            if ex.hold_piece < NUM_PIECE_TYPES {
-                one_hot[ex.hold_piece] = 1.0;
-            } else {
-                one_hot[NUM_PIECE_TYPES] = 1.0;
-            }
-            one_hot.into_iter()
-        }),
+        n64,
+        &[(NUM_PIECE_TYPES + 1) as u64],
+        examples().flat_map(|ex| encode_hold_piece_one_hot(ex.hold_piece).into_iter()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "hold_available.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.hold_available as u8),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "next_queue.npy",
-        &[n64, QUEUE_SIZE as u64, NUM_PIECE_TYPES as u64],
-        examples().flat_map(|ex| {
-            let mut queue_data = [0.0f32; QUEUE_SIZE * NUM_PIECE_TYPES];
-            for (j, &piece) in ex.next_queue.iter().take(QUEUE_SIZE).enumerate() {
-                queue_data[j * NUM_PIECE_TYPES + piece] = 1.0;
-            }
-            queue_data.into_iter()
-        }),
+        n64,
+        &[QUEUE_SIZE as u64, NUM_PIECE_TYPES as u64],
+        examples().flat_map(|ex| encode_next_queue(ex).into_iter()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "move_numbers.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.move_number),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "placement_counts.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.placement_count),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "combos.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.combo),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "back_to_back.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.back_to_back as u8),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "next_hidden_piece_probs.npy",
-        &[n64, NUM_PIECE_TYPES as u64],
+        n64,
+        &[NUM_PIECE_TYPES as u64],
         examples().flat_map(|ex| ex.next_hidden_piece_probs.iter().copied()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "column_heights.npy",
-        &[n64, BOARD_WIDTH as u64],
+        n64,
+        &[BOARD_WIDTH as u64],
         examples().flat_map(|ex| ex.column_heights.iter().copied()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "max_column_heights.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.max_column_height),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "row_fill_counts.npy",
-        &[n64, ROW_FILL_FEATURE_ROWS as u64],
+        n64,
+        &[ROW_FILL_FEATURE_ROWS as u64],
         examples().flat_map(|ex| ex.row_fill_counts.iter().copied()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "total_blocks.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.total_blocks),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "bumpiness.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.bumpiness),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "holes.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.holes),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "policy_targets.npy",
-        &[n64, NUM_ACTIONS as u64],
+        n64,
+        &[NUM_ACTIONS as u64],
         examples().flat_map(|ex| ex.policy.iter().copied()),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "value_targets.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.value),
     )?;
 
-    stream_npy_to_zip(
+    write_example_flat_field(
         &mut zip,
         options,
         "action_masks.npy",
-        &[n64, NUM_ACTIONS as u64],
+        n64,
+        &[NUM_ACTIONS as u64],
         examples().flat_map(|ex| ex.action_mask.iter().map(|&b| b as u8)),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "overhang_fields.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.overhang_fields),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "game_numbers.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.game_number),
     )?;
 
-    stream_npy_to_zip(
+    write_example_scalar_field(
         &mut zip,
         options,
         "game_total_attacks.npy",
-        &[n64],
+        n64,
         examples().map(|ex| ex.game_total_attack),
     )?;
 
@@ -275,100 +266,56 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
     let file = File::open(filepath).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
 
-    let (boards, boards_shape) = read_npy_array::<u8>(&mut archive, "boards.npy")?;
-    let (current_pieces, current_pieces_shape) =
-        read_npy_array::<f32>(&mut archive, "current_pieces.npy")?;
-    let (hold_pieces, hold_pieces_shape) = read_npy_array::<f32>(&mut archive, "hold_pieces.npy")?;
-    let (hold_available, hold_available_shape) =
-        read_npy_array_bool_like(&mut archive, "hold_available.npy")?;
-    let (next_queue, next_queue_shape) = read_npy_array::<f32>(&mut archive, "next_queue.npy")?;
-    let (move_numbers, move_numbers_shape) =
-        read_npy_array::<u32>(&mut archive, "move_numbers.npy")?;
-    let (placement_counts, placement_counts_shape) =
-        read_npy_array::<f32>(&mut archive, "placement_counts.npy")?;
-    let (combos, combos_shape) = read_npy_array::<f32>(&mut archive, "combos.npy")?;
-    let (back_to_back, back_to_back_shape) =
-        read_npy_array_bool_like(&mut archive, "back_to_back.npy")?;
-    let (next_hidden_piece_probs, next_hidden_piece_probs_shape) =
-        read_npy_array::<f32>(&mut archive, "next_hidden_piece_probs.npy")?;
-    let (column_heights, column_heights_shape) =
-        read_npy_array::<f32>(&mut archive, "column_heights.npy")?;
-    let (max_column_heights, max_column_heights_shape) =
-        read_npy_array::<f32>(&mut archive, "max_column_heights.npy")?;
-    let (row_fill_counts, row_fill_counts_shape) =
-        read_npy_array::<f32>(&mut archive, "row_fill_counts.npy")?;
-    let (total_blocks, total_blocks_shape) =
-        read_npy_array::<f32>(&mut archive, "total_blocks.npy")?;
-    let (bumpiness, bumpiness_shape) = read_npy_array::<f32>(&mut archive, "bumpiness.npy")?;
-    let (holes, holes_shape) = read_npy_array::<f32>(&mut archive, "holes.npy")?;
-    let (policy_targets, policy_targets_shape) =
-        read_npy_array::<f32>(&mut archive, "policy_targets.npy")?;
-    let (value_targets, value_targets_shape) =
-        read_npy_array::<f32>(&mut archive, "value_targets.npy")?;
-    let (action_masks, action_masks_shape) =
-        read_npy_array_bool_like(&mut archive, "action_masks.npy")?;
-    let (overhang_fields, overhang_fields_shape) =
-        read_npy_array::<f32>(&mut archive, "overhang_fields.npy")?;
-    let (game_numbers, game_numbers_shape) =
-        read_npy_array::<u64>(&mut archive, "game_numbers.npy")?;
-    let (game_total_attacks, game_total_attacks_shape) =
-        read_npy_array::<u32>(&mut archive, "game_total_attacks.npy")?;
-
-    let expected_boards_shape = vec![0, BOARD_HEIGHT as u64, BOARD_WIDTH as u64];
-    let n = validate_shape_with_dynamic_batch("boards", &boards_shape, &expected_boards_shape)?;
-    validate_shape(
-        "current_pieces",
-        &current_pieces_shape,
-        &[n as u64, NUM_PIECE_TYPES as u64],
+    let (boards, n) = read_dynamic_batch_field::<u8>(
+        &mut archive,
+        "boards",
+        &[BOARD_HEIGHT as u64, BOARD_WIDTH as u64],
     )?;
-    validate_shape(
+    let current_pieces =
+        read_batch_field::<f32>(&mut archive, "current_pieces", n, &[NUM_PIECE_TYPES as u64])?;
+    let hold_pieces = read_batch_field::<f32>(
+        &mut archive,
         "hold_pieces",
-        &hold_pieces_shape,
-        &[n as u64, (NUM_PIECE_TYPES + 1) as u64],
+        n,
+        &[(NUM_PIECE_TYPES + 1) as u64],
     )?;
-    validate_shape("hold_available", &hold_available_shape, &[n as u64])?;
-    validate_shape(
+    let hold_available = read_bool_like_batch_field(&mut archive, "hold_available", n, &[])?;
+    let next_queue = read_batch_field::<f32>(
+        &mut archive,
         "next_queue",
-        &next_queue_shape,
-        &[n as u64, QUEUE_SIZE as u64, NUM_PIECE_TYPES as u64],
+        n,
+        &[QUEUE_SIZE as u64, NUM_PIECE_TYPES as u64],
     )?;
-    validate_shape("move_numbers", &move_numbers_shape, &[n as u64])?;
-    validate_shape("placement_counts", &placement_counts_shape, &[n as u64])?;
-    validate_shape("combos", &combos_shape, &[n as u64])?;
-    validate_shape("back_to_back", &back_to_back_shape, &[n as u64])?;
-    validate_shape(
+    let move_numbers = read_batch_field::<u32>(&mut archive, "move_numbers", n, &[])?;
+    let placement_counts = read_batch_field::<f32>(&mut archive, "placement_counts", n, &[])?;
+    let combos = read_batch_field::<f32>(&mut archive, "combos", n, &[])?;
+    let back_to_back = read_bool_like_batch_field(&mut archive, "back_to_back", n, &[])?;
+    let next_hidden_piece_probs = read_batch_field::<f32>(
+        &mut archive,
         "next_hidden_piece_probs",
-        &next_hidden_piece_probs_shape,
-        &[n as u64, NUM_PIECE_TYPES as u64],
+        n,
+        &[NUM_PIECE_TYPES as u64],
     )?;
-    validate_shape(
-        "column_heights",
-        &column_heights_shape,
-        &[n as u64, BOARD_WIDTH as u64],
-    )?;
-    validate_shape("max_column_heights", &max_column_heights_shape, &[n as u64])?;
-    validate_shape(
+    let column_heights =
+        read_batch_field::<f32>(&mut archive, "column_heights", n, &[BOARD_WIDTH as u64])?;
+    let max_column_heights = read_batch_field::<f32>(&mut archive, "max_column_heights", n, &[])?;
+    let row_fill_counts = read_batch_field::<f32>(
+        &mut archive,
         "row_fill_counts",
-        &row_fill_counts_shape,
-        &[n as u64, ROW_FILL_FEATURE_ROWS as u64],
+        n,
+        &[ROW_FILL_FEATURE_ROWS as u64],
     )?;
-    validate_shape("total_blocks", &total_blocks_shape, &[n as u64])?;
-    validate_shape("bumpiness", &bumpiness_shape, &[n as u64])?;
-    validate_shape("holes", &holes_shape, &[n as u64])?;
-    validate_shape(
-        "policy_targets",
-        &policy_targets_shape,
-        &[n as u64, NUM_ACTIONS as u64],
-    )?;
-    validate_shape("value_targets", &value_targets_shape, &[n as u64])?;
-    validate_shape(
-        "action_masks",
-        &action_masks_shape,
-        &[n as u64, NUM_ACTIONS as u64],
-    )?;
-    validate_shape("overhang_fields", &overhang_fields_shape, &[n as u64])?;
-    validate_shape("game_numbers", &game_numbers_shape, &[n as u64])?;
-    validate_shape("game_total_attacks", &game_total_attacks_shape, &[n as u64])?;
+    let total_blocks = read_batch_field::<f32>(&mut archive, "total_blocks", n, &[])?;
+    let bumpiness = read_batch_field::<f32>(&mut archive, "bumpiness", n, &[])?;
+    let holes = read_batch_field::<f32>(&mut archive, "holes", n, &[])?;
+    let policy_targets =
+        read_batch_field::<f32>(&mut archive, "policy_targets", n, &[NUM_ACTIONS as u64])?;
+    let value_targets = read_batch_field::<f32>(&mut archive, "value_targets", n, &[])?;
+    let action_masks =
+        read_bool_like_batch_field(&mut archive, "action_masks", n, &[NUM_ACTIONS as u64])?;
+    let overhang_fields = read_batch_field::<f32>(&mut archive, "overhang_fields", n, &[])?;
+    let game_numbers = read_batch_field::<u64>(&mut archive, "game_numbers", n, &[])?;
+    let game_total_attacks = read_batch_field::<u32>(&mut archive, "game_total_attacks", n, &[])?;
 
     let mut examples = Vec::with_capacity(n);
     let board_size = BOARD_HEIGHT * BOARD_WIDTH;
@@ -467,6 +414,30 @@ fn argmax_index(values: &[f32]) -> usize {
     max_index
 }
 
+fn encode_piece_one_hot(piece: usize) -> [f32; NUM_PIECE_TYPES] {
+    let mut one_hot = [0.0f32; NUM_PIECE_TYPES];
+    one_hot[piece] = 1.0;
+    one_hot
+}
+
+fn encode_hold_piece_one_hot(hold_piece: usize) -> [f32; NUM_PIECE_TYPES + 1] {
+    let mut one_hot = [0.0f32; NUM_PIECE_TYPES + 1];
+    if hold_piece < NUM_PIECE_TYPES {
+        one_hot[hold_piece] = 1.0;
+    } else {
+        one_hot[NUM_PIECE_TYPES] = 1.0;
+    }
+    one_hot
+}
+
+fn encode_next_queue(example: &TrainingExample) -> [f32; QUEUE_SIZE * NUM_PIECE_TYPES] {
+    let mut queue_data = [0.0f32; QUEUE_SIZE * NUM_PIECE_TYPES];
+    for (index, &piece) in example.next_queue.iter().take(QUEUE_SIZE).enumerate() {
+        queue_data[index * NUM_PIECE_TYPES + piece] = 1.0;
+    }
+    queue_data
+}
+
 fn validate_shape(name: &str, actual: &[u64], expected: &[u64]) -> Result<(), String> {
     if actual != expected {
         return Err(format!(
@@ -493,15 +464,80 @@ fn validate_shape_with_dynamic_batch(
     for i in 1..actual.len() {
         if actual[i] != expected_with_batch_placeholder[i] {
             return Err(format!(
-                "{} has shape {:?}, expected [N, {}, {}]",
+                "{} has shape {:?}, expected {}",
                 name,
                 actual,
-                expected_with_batch_placeholder[1],
-                expected_with_batch_placeholder[2]
+                format_expected_shape(expected_with_batch_placeholder)
             ));
         }
     }
     Ok(actual[0] as usize)
+}
+
+fn format_expected_shape(expected_with_batch_placeholder: &[u64]) -> String {
+    let dims = expected_with_batch_placeholder
+        .iter()
+        .enumerate()
+        .map(|(index, dim)| {
+            if index == 0 {
+                "N".to_string()
+            } else {
+                dim.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{}]", dims)
+}
+
+fn validate_batch_shape(
+    name: &str,
+    actual: &[u64],
+    n: usize,
+    trailing_dims: &[u64],
+) -> Result<(), String> {
+    let mut expected = Vec::with_capacity(trailing_dims.len() + 1);
+    expected.push(n as u64);
+    expected.extend_from_slice(trailing_dims);
+    validate_shape(name, actual, &expected)
+}
+
+fn read_dynamic_batch_field<T: npyz::Deserialize>(
+    archive: &mut ZipArchive<File>,
+    field_name: &str,
+    trailing_dims: &[u64],
+) -> Result<(Vec<T>, usize), String> {
+    let entry_name = format!("{field_name}.npy");
+    let (values, shape) = read_npy_array::<T>(archive, &entry_name)?;
+    let mut expected = Vec::with_capacity(trailing_dims.len() + 1);
+    expected.push(0);
+    expected.extend_from_slice(trailing_dims);
+    let n = validate_shape_with_dynamic_batch(field_name, &shape, &expected)?;
+    Ok((values, n))
+}
+
+fn read_batch_field<T: npyz::Deserialize>(
+    archive: &mut ZipArchive<File>,
+    field_name: &str,
+    n: usize,
+    trailing_dims: &[u64],
+) -> Result<Vec<T>, String> {
+    let entry_name = format!("{field_name}.npy");
+    let (values, shape) = read_npy_array::<T>(archive, &entry_name)?;
+    validate_batch_shape(field_name, &shape, n, trailing_dims)?;
+    Ok(values)
+}
+
+fn read_bool_like_batch_field(
+    archive: &mut ZipArchive<File>,
+    field_name: &str,
+    n: usize,
+    trailing_dims: &[u64],
+) -> Result<Vec<u8>, String> {
+    let entry_name = format!("{field_name}.npy");
+    let (values, shape) = read_npy_array_bool_like(archive, &entry_name)?;
+    validate_batch_shape(field_name, &shape, n, trailing_dims)?;
+    Ok(values)
 }
 
 fn read_npy_array<T: npyz::Deserialize>(
@@ -525,6 +561,30 @@ fn read_npy_array_bool_like(
 
     let (values, shape) = read_npy_array::<bool>(archive, entry_name)?;
     Ok((values.into_iter().map(u8::from).collect(), shape))
+}
+
+fn write_example_scalar_field<T: npyz::Serialize + npyz::AutoSerialize>(
+    zip: &mut ZipWriter<File>,
+    options: FileOptions,
+    name: &str,
+    n: u64,
+    data: impl Iterator<Item = T>,
+) -> Result<(), String> {
+    write_example_flat_field(zip, options, name, n, &[], data)
+}
+
+fn write_example_flat_field<T: npyz::Serialize + npyz::AutoSerialize>(
+    zip: &mut ZipWriter<File>,
+    options: FileOptions,
+    name: &str,
+    n: u64,
+    trailing_dims: &[u64],
+    data: impl Iterator<Item = T>,
+) -> Result<(), String> {
+    let mut shape = Vec::with_capacity(trailing_dims.len() + 1);
+    shape.push(n);
+    shape.extend_from_slice(trailing_dims);
+    stream_npy_to_zip(zip, options, name, &shape, data)
 }
 
 /// Stream an npy array directly to a zip entry without intermediate buffers.

@@ -109,7 +109,7 @@ class SelfPlayConfig:
         5
     )
     model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
-        50
+        20
     )
     bootstrap_without_network: bool = True  # If True, self-play starts with uniform-prior/zero-value MCTS until first promotion
     bootstrap_num_simulations: int = (  # Simulations per move before first promoted NN model

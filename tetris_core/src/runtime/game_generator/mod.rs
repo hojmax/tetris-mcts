@@ -32,7 +32,10 @@ mod shared;
 #[cfg(test)]
 mod tests;
 
-use shared::{CandidateModelRequest, LastGameInfo, ModelEvalEvent, SharedBuffer, SharedStats};
+use shared::{
+    CandidateModelRequest, IncumbentState, LastGameInfo, ModelEvalEvent, SharedBuffer,
+    WorkerContext, WorkerSettings, WorkerSharedState,
+};
 
 #[pyclass]
 pub struct GameGenerator {
@@ -51,7 +54,7 @@ pub struct GameGenerator {
     /// Number of worker threads
     num_workers: usize,
     /// Fixed seeds used by the evaluator worker for candidate games.
-    candidate_eval_seeds: Vec<u64>,
+    candidate_eval_seeds: Arc<[u64]>,
     /// Number of simulations per move before the first promoted NN model.
     non_network_num_simulations: u32,
     /// Whether no-network bootstrap rollouts force min-max Q normalization.
@@ -64,8 +67,6 @@ pub struct GameGenerator {
     games_generated: Arc<AtomicU64>,
     /// Number of examples generated since start
     examples_generated: Arc<AtomicU64>,
-    /// Aggregate game statistics
-    game_stats: Arc<SharedStats>,
     /// Completed game stats queue for per-game logging
     completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
     /// Most recent pending candidate model (latest wins, older pending models are dropped).

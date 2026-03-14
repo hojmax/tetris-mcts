@@ -47,3 +47,7 @@ def test_candidate_weight_respects_max_delta_and_cap() -> None:
     candidate_weight = Trainer._compute_candidate_nn_value_weight(0.50, config)
 
     assert candidate_weight == pytest.approx(0.55)
+
+
+def test_promotion_eval_window_default_is_small() -> None:
+    assert SelfPlayConfig().model_promotion_eval_games == 20

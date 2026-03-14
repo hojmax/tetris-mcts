@@ -1,136 +1,5 @@
 use super::*;
 
-/// Aggregate game statistics (thread-safe counters).
-#[derive(Default)]
-pub(super) struct SharedStats {
-    games_with_attack: AtomicU32,
-    games_with_lines: AtomicU32,
-    // Line clears
-    singles: AtomicU32,
-    doubles: AtomicU32,
-    triples: AtomicU32,
-    tetrises: AtomicU32,
-    // T-spins
-    tspin_minis: AtomicU32,
-    tspin_singles: AtomicU32,
-    tspin_doubles: AtomicU32,
-    tspin_triples: AtomicU32,
-    // Other
-    perfect_clears: AtomicU32,
-    back_to_backs: AtomicU32,
-    max_combo: AtomicU32,
-    total_lines: AtomicU32,
-    total_attack: AtomicU32,
-    holds: AtomicU32,
-}
-
-impl SharedStats {
-    pub(super) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Add stats from a completed game.
-    pub(super) fn add(&self, stats: &GameStats, attack: u32) {
-        if attack > 0 {
-            self.games_with_attack.fetch_add(1, Ordering::Relaxed);
-        }
-        if stats.total_lines > 0 {
-            self.games_with_lines.fetch_add(1, Ordering::Relaxed);
-        }
-        self.singles.fetch_add(stats.singles, Ordering::Relaxed);
-        self.doubles.fetch_add(stats.doubles, Ordering::Relaxed);
-        self.triples.fetch_add(stats.triples, Ordering::Relaxed);
-        self.tetrises.fetch_add(stats.tetrises, Ordering::Relaxed);
-        self.tspin_minis
-            .fetch_add(stats.tspin_minis, Ordering::Relaxed);
-        self.tspin_singles
-            .fetch_add(stats.tspin_singles, Ordering::Relaxed);
-        self.tspin_doubles
-            .fetch_add(stats.tspin_doubles, Ordering::Relaxed);
-        self.tspin_triples
-            .fetch_add(stats.tspin_triples, Ordering::Relaxed);
-        self.perfect_clears
-            .fetch_add(stats.perfect_clears, Ordering::Relaxed);
-        self.back_to_backs
-            .fetch_add(stats.back_to_backs, Ordering::Relaxed);
-        self.total_lines
-            .fetch_add(stats.total_lines, Ordering::Relaxed);
-        self.total_attack.fetch_add(attack, Ordering::Relaxed);
-        self.holds.fetch_add(stats.holds, Ordering::Relaxed);
-        // Update max combo (atomic max)
-        let mut current = self.max_combo.load(Ordering::Relaxed);
-        while stats.max_combo > current {
-            match self.max_combo.compare_exchange_weak(
-                current,
-                stats.max_combo,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(c) => current = c,
-            }
-        }
-    }
-
-    /// Get all stats as a HashMap for Python.
-    pub(super) fn to_dict(&self) -> HashMap<String, u32> {
-        let mut d = HashMap::new();
-        d.insert(
-            "games_with_attack".to_string(),
-            self.games_with_attack.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "games_with_lines".to_string(),
-            self.games_with_lines.load(Ordering::Relaxed),
-        );
-        d.insert("singles".to_string(), self.singles.load(Ordering::Relaxed));
-        d.insert("doubles".to_string(), self.doubles.load(Ordering::Relaxed));
-        d.insert("triples".to_string(), self.triples.load(Ordering::Relaxed));
-        d.insert(
-            "tetrises".to_string(),
-            self.tetrises.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "tspin_minis".to_string(),
-            self.tspin_minis.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "tspin_singles".to_string(),
-            self.tspin_singles.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "tspin_doubles".to_string(),
-            self.tspin_doubles.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "tspin_triples".to_string(),
-            self.tspin_triples.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "perfect_clears".to_string(),
-            self.perfect_clears.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "back_to_backs".to_string(),
-            self.back_to_backs.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "max_combo".to_string(),
-            self.max_combo.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "total_lines".to_string(),
-            self.total_lines.load(Ordering::Relaxed),
-        );
-        d.insert(
-            "total_attack".to_string(),
-            self.total_attack.load(Ordering::Relaxed),
-        );
-        d.insert("holds".to_string(), self.holds.load(Ordering::Relaxed));
-        d
-    }
-}
-
 /// Info about the last completed game (for per-game logging).
 pub(super) struct LastGameInfo {
     pub(super) game_number: u64,
@@ -154,6 +23,112 @@ pub(super) struct LastGameInfo {
     pub(super) traversal_expansion_fraction: f32,
     pub(super) traversal_terminal_fraction: f32,
     pub(super) traversal_horizon_fraction: f32,
+}
+
+impl LastGameInfo {
+    fn ratio_or_zero(numerator: u64, denominator: u64) -> f32 {
+        if denominator == 0 {
+            0.0
+        } else {
+            numerator as f32 / denominator as f32
+        }
+    }
+
+    pub(super) fn to_dict(&self) -> HashMap<String, f32> {
+        let mut metrics = HashMap::new();
+        metrics.insert("singles".to_string(), self.stats.singles as f32);
+        metrics.insert("doubles".to_string(), self.stats.doubles as f32);
+        metrics.insert("triples".to_string(), self.stats.triples as f32);
+        metrics.insert("tetrises".to_string(), self.stats.tetrises as f32);
+        metrics.insert("tspin_minis".to_string(), self.stats.tspin_minis as f32);
+        metrics.insert("tspin_singles".to_string(), self.stats.tspin_singles as f32);
+        metrics.insert("tspin_doubles".to_string(), self.stats.tspin_doubles as f32);
+        metrics.insert("tspin_triples".to_string(), self.stats.tspin_triples as f32);
+        metrics.insert(
+            "perfect_clears".to_string(),
+            self.stats.perfect_clears as f32,
+        );
+        metrics.insert("back_to_backs".to_string(), self.stats.back_to_backs as f32);
+        metrics.insert("max_combo".to_string(), self.stats.max_combo as f32);
+        metrics.insert("total_lines".to_string(), self.stats.total_lines as f32);
+        metrics.insert("holds".to_string(), self.stats.holds as f32);
+        metrics.insert("total_attack".to_string(), self.total_attack as f32);
+        metrics.insert("avg_overhang".to_string(), self.avg_overhang_fields);
+        metrics.insert("episode_length".to_string(), self.num_moves as f32);
+        metrics.insert("avg_valid_actions".to_string(), self.avg_valid_actions);
+        metrics.insert(
+            "max_valid_actions".to_string(),
+            self.max_valid_actions as f32,
+        );
+        metrics.insert(
+            "tree_avg_branching_factor".to_string(),
+            self.tree_stats.avg_branching_factor,
+        );
+        metrics.insert("tree_avg_leaves".to_string(), self.tree_stats.avg_leaves);
+        metrics.insert(
+            "tree_avg_total_nodes".to_string(),
+            self.tree_stats.avg_total_nodes,
+        );
+        metrics.insert(
+            "tree_avg_max_depth".to_string(),
+            self.tree_stats.avg_max_depth,
+        );
+        metrics.insert(
+            "tree_max_attack".to_string(),
+            self.tree_stats.max_tree_attack as f32,
+        );
+
+        let cache_lookups = self.cache_hits + self.cache_misses;
+        metrics.insert(
+            "cache_hit_rate".to_string(),
+            Self::ratio_or_zero(self.cache_hits, cache_lookups),
+        );
+        metrics.insert("cache_hits".to_string(), self.cache_hits as f32);
+        metrics.insert("cache_misses".to_string(), self.cache_misses as f32);
+        metrics.insert("cache_size".to_string(), self.cache_size as f32);
+
+        let tree_reuse_total = (self.tree_reuse_hits + self.tree_reuse_misses) as u64;
+        metrics.insert(
+            "tree_reuse_rate".to_string(),
+            Self::ratio_or_zero(self.tree_reuse_hits as u64, tree_reuse_total),
+        );
+        metrics.insert("tree_reuse_hits".to_string(), self.tree_reuse_hits as f32);
+        metrics.insert(
+            "tree_reuse_misses".to_string(),
+            self.tree_reuse_misses as f32,
+        );
+        metrics.insert(
+            "tree_reuse_carry_fraction".to_string(),
+            self.tree_reuse_carry_fraction,
+        );
+
+        metrics.insert("traversal_total".to_string(), self.traversal_total as f32);
+        metrics.insert(
+            "traversal_expansions".to_string(),
+            self.traversal_expansions as f32,
+        );
+        metrics.insert(
+            "traversal_terminal_ends".to_string(),
+            self.traversal_terminal_ends as f32,
+        );
+        metrics.insert(
+            "traversal_horizon_ends".to_string(),
+            self.traversal_horizon_ends as f32,
+        );
+        metrics.insert(
+            "traversal_expansion_fraction".to_string(),
+            self.traversal_expansion_fraction,
+        );
+        metrics.insert(
+            "traversal_terminal_fraction".to_string(),
+            self.traversal_terminal_fraction,
+        );
+        metrics.insert(
+            "traversal_horizon_fraction".to_string(),
+            self.traversal_horizon_fraction,
+        );
+        metrics
+    }
 }
 
 #[derive(Clone)]
@@ -185,6 +160,54 @@ pub(super) struct ModelEvalEvent {
     pub(super) worst_game_replay: Option<GameReplay>,
     /// Per-game results: (seed, attack, lines, moves)
     pub(super) per_game_results: Vec<(u64, u32, u32, u32)>,
+}
+
+#[derive(Clone)]
+pub(super) struct IncumbentState {
+    pub(super) model_path: Arc<RwLock<PathBuf>>,
+    pub(super) uses_network: Arc<AtomicBool>,
+    pub(super) model_step: Arc<AtomicU64>,
+    pub(super) model_version: Arc<AtomicU64>,
+    pub(super) nn_value_weight: Arc<AtomicU32>,
+    pub(super) death_penalty: Arc<AtomicU32>,
+    pub(super) overhang_penalty_weight: Arc<AtomicU32>,
+    pub(super) eval_avg_attack: Arc<AtomicU32>,
+}
+
+#[derive(Clone)]
+pub(super) struct WorkerSharedState {
+    pub(super) buffer: Arc<SharedBuffer>,
+    pub(super) running: Arc<AtomicBool>,
+    pub(super) games_generated: Arc<AtomicU64>,
+    pub(super) examples_generated: Arc<AtomicU64>,
+    pub(super) completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
+    pub(super) pending_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+    pub(super) evaluating_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+    pub(super) model_eval_events: Arc<RwLock<VecDeque<ModelEvalEvent>>>,
+    pub(super) incumbent: IncumbentState,
+}
+
+#[derive(Clone)]
+pub(super) struct WorkerSettings {
+    pub(super) bootstrap_model_path: PathBuf,
+    pub(super) training_data_path: PathBuf,
+    pub(super) config: MCTSConfig,
+    pub(super) max_placements: u32,
+    pub(super) add_noise: bool,
+    pub(super) save_interval_seconds: f64,
+    pub(super) num_workers: usize,
+    pub(super) candidate_eval_seeds: Arc<[u64]>,
+    pub(super) non_network_num_simulations: u32,
+    pub(super) bootstrap_use_min_max_q_normalization: bool,
+    pub(super) nn_value_weight_cap: f32,
+}
+
+#[derive(Clone)]
+pub(super) struct WorkerContext {
+    pub(super) worker_id: usize,
+    pub(super) is_evaluator_worker: bool,
+    pub(super) settings: WorkerSettings,
+    pub(super) shared: WorkerSharedState,
 }
 
 /// Shared replay buffer for thread-safe access between generator and trainer.

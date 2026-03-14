@@ -232,12 +232,6 @@ sweep-mcts-config: $(RELEASE_MARKER)
 compare-offline-network-scaling: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/ablations/compare_offline_network_scaling.py $(ARGS)
 
-# View replay file
-# Usage: make replay FILE=replays.jsonl
-FILE ?= replays.jsonl
-replay: $(RELEASE_MARKER)
-	$(PYTHON) tetris_bot/scripts/inspection/replay_viewer.py $(FILE)
-
 # Download training_data.npz directly from a WandB run/artifact.
 # Usage:
 #   make download-wandb-training-data ARGS="--reference entity/project/run_id --run_dir training_runs/v2 --overwrite true"
