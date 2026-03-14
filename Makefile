@@ -182,6 +182,7 @@ play: $(RELEASE_MARKER)
 # Usage: make viz RUN_DIR=training_runs/v15
 # Usage (dummy/no-network): make viz RUN_DIR=training_runs/v15 DUMMY_NETWORK=1
 # Usage (state preset): make viz VIZ_ARGS="--state_preset tetris_bot/scripts/inspection/viz_state_presets/training_data1_game721_move32.json"
+# Usage (saved eval playback): make viz VIZ_ARGS="--saved_playback training_runs/v15/analysis/eval_trees/latest_worst_candidate_eval_tree.json"
 RUN_DIR ?= training_runs/v3
 DUMMY_NETWORK ?= 0
 VIZ_ARGS ?=

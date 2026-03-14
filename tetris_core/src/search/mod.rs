@@ -4,6 +4,7 @@ mod agent;
 mod config;
 mod export;
 mod nodes;
+pub(crate) mod persistence;
 mod results;
 pub(crate) mod search;
 mod utils;
@@ -16,6 +17,7 @@ pub use crate::game::action_space::{
 pub use agent::MCTSAgent;
 pub use config::MCTSConfig;
 pub use nodes::{get_valid_action_indices, ChanceNode, DecisionNode, MCTSNode};
+pub(crate) use persistence::{persist_saved_game_tree_playback, SavedGameTreePlayback};
 pub use results::{
     GameResult, GameStats, GameTreePlayback, GameTreeStats, GameTreeStep, MCTSResult,
     MCTSTreeExport, TrainingExample, TreeNodeExport,

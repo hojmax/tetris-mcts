@@ -158,6 +158,8 @@ pub(super) struct ModelEvalEvent {
     pub(super) best_game_replay: Option<GameReplay>,
     /// Worst (min attack) game replay, if available.
     pub(super) worst_game_replay: Option<GameReplay>,
+    /// Saved full-game MCTS playback for the worst eval game, if persisted.
+    pub(super) worst_game_tree_path: Option<String>,
     /// Per-game results: (seed, attack, lines, moves)
     pub(super) per_game_results: Vec<(u64, u32, u32, u32)>,
 }

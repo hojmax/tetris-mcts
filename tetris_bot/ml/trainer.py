@@ -1055,6 +1055,13 @@ class Trainer:
                             auto_promoted=bool(event["auto_promoted"]),
                             evaluation_seconds=event["evaluation_seconds"],
                         )
+                        worst_tree_path = event.get("worst_game_tree_path")
+                        if worst_tree_path:
+                            logger.info(
+                                "Saved worst candidate eval tree playback",
+                                candidate_step=event["candidate_step"],
+                                path=worst_tree_path,
+                            )
                         if log_to_wandb:
                             wall_time_hours = (
                                 post_step_time - interval_anchor_s

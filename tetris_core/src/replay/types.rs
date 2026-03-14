@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// A single move in a game replay.
 #[pyclass(get_all)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplayMove {
     pub action: usize,
     pub attack: u32,
@@ -13,7 +13,7 @@ pub struct ReplayMove {
 
 /// A complete game replay that can be saved and replayed.
 #[pyclass(get_all)]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameReplay {
     pub seed: u64,
     pub moves: Vec<ReplayMove>,

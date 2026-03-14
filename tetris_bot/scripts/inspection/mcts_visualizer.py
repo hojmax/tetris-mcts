@@ -16,6 +16,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import dash
 from dash import (
@@ -44,6 +45,10 @@ from tetris_bot.constants import (
     PIECE_NAMES,
     PROJECT_ROOT,
     QUEUE_SIZE,
+)
+from tetris_bot.scripts.inspection.tree_playback_artifact import (
+    build_tree_dict_from_saved_playback,
+    load_tree_playback_artifact,
 )
 
 # Global cache for TetrisEnv states (keyed by node ID)
@@ -102,6 +107,9 @@ class ScriptArgs:
     state_preset: Path | None = (
         None  # Optional Python file exposing VIZ_STATE_PRESET dict
     )
+    saved_playback: Path | None = (
+        None  # Optional compact full-game tree playback artifact to preload
+    )
 
 
 PIECE_TOKEN_TO_INDEX = {
@@ -115,7 +123,46 @@ PIECE_TOKEN_TO_INDEX = {
 }
 
 
-def load_viz_defaults(args: ScriptArgs) -> dict[str, str | int | float | bool | None]:
+def load_saved_playback_defaults(args: ScriptArgs) -> dict[str, Any] | None:
+    if args.saved_playback is None:
+        return None
+
+    saved_path = args.saved_playback.resolve()
+    if not saved_path.exists():
+        raise ValueError(f"Saved playback file does not exist: {saved_path}")
+
+    payload = load_tree_playback_artifact(saved_path)
+    tree_dict, env_cache = build_tree_dict_from_saved_playback(payload)
+    metadata = payload["metadata"]
+    return {
+        "path": saved_path,
+        "payload": payload,
+        "tree_dict": tree_dict,
+        "env_cache": env_cache,
+        "seed": int(metadata["initial_seed"]),
+    }
+
+
+def load_viz_defaults(
+    args: ScriptArgs, saved_playback: dict[str, Any] | None
+) -> dict[str, str | int | float | bool | None]:
+    if saved_playback is not None:
+        metadata = saved_playback["payload"]["metadata"]
+        config = metadata["search_config"]
+        return {
+            "model_path": str(metadata.get("model_path", "")),
+            "num_simulations": int(config["num_simulations"]),
+            "c_puct": float(config["c_puct"]),
+            "temperature": float(config["temperature"]),
+            "dirichlet_alpha": float(config["dirichlet_alpha"]),
+            "dirichlet_epsilon": float(config["dirichlet_epsilon"]),
+            "max_placements": int(config["max_placements"]),
+            "q_scale": (
+                float(config["q_scale"]) if config.get("q_scale") is not None else None
+            ),
+            "use_dummy_network": args.use_dummy_network,
+        }
+
     run_dir = args.run_dir
     config_path = run_dir / CONFIG_FILENAME
     model_path = run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
@@ -314,8 +361,11 @@ def load_state_preset_defaults(
 
 
 SCRIPT_ARGS = parse(ScriptArgs)
-VIZ_DEFAULTS = load_viz_defaults(SCRIPT_ARGS)
+SAVED_PLAYBACK_DEFAULTS = load_saved_playback_defaults(SCRIPT_ARGS)
+VIZ_DEFAULTS = load_viz_defaults(SCRIPT_ARGS, SAVED_PLAYBACK_DEFAULTS)
 STATE_PRESET_DEFAULTS = load_state_preset_defaults(SCRIPT_ARGS)
+if SAVED_PLAYBACK_DEFAULTS is not None:
+    STATE_PRESET_DEFAULTS["seed"] = SAVED_PLAYBACK_DEFAULTS["seed"]
 
 Q_NORMALIZATION_EPSILON = 1e-6
 
@@ -1258,6 +1308,35 @@ def build_cytoscape_elements(
     return elements
 
 
+if SAVED_PLAYBACK_DEFAULTS is not None:
+    _env_cache.clear()
+    _env_cache.update(SAVED_PLAYBACK_DEFAULTS["env_cache"])
+    INITIAL_TREE_DATA = SAVED_PLAYBACK_DEFAULTS["tree_dict"]
+    INITIAL_ENV_DATA: dict[str, int | str | None] | None = {
+        "seed": SAVED_PLAYBACK_DEFAULTS["seed"],
+        "move_number": 0,
+        "mode": "full_game",
+        "saved_playback": str(SAVED_PLAYBACK_DEFAULTS["path"]),
+    }
+    INITIAL_SELECTED_NODE = (
+        str(INITIAL_TREE_DATA["root_id"]) if INITIAL_TREE_DATA.get("nodes") else None
+    )
+    INITIAL_ELEMENTS = build_cytoscape_elements(INITIAL_TREE_DATA, None, False)
+    INITIAL_COUNTER_LABEL = INITIAL_TREE_DATA["counter_label"]
+    INITIAL_ADD_NOISE_VALUE = (
+        ["noise"]
+        if SAVED_PLAYBACK_DEFAULTS["payload"]["metadata"].get("add_noise")
+        else []
+    )
+else:
+    INITIAL_TREE_DATA = None
+    INITIAL_ENV_DATA = None
+    INITIAL_SELECTED_NODE = None
+    INITIAL_ELEMENTS = []
+    INITIAL_COUNTER_LABEL = "Sims: 0"
+    INITIAL_ADD_NOISE_VALUE = ["noise"]
+
+
 # Create Dash app
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.index_string = """
@@ -1455,7 +1534,7 @@ app.layout = html.Div(
                 dcc.Checklist(
                     id="add-noise",
                     options=[{"label": " Root noise", "value": "noise"}],
-                    value=["noise"],
+                    value=INITIAL_ADD_NOISE_VALUE,
                     style={"marginRight": "15px"},
                 ),
                 html.Label("Temp:", style={"marginRight": "5px"}),
@@ -1555,7 +1634,7 @@ app.layout = html.Div(
                 ),
                 html.Div(
                     dcc.Loading(
-                        html.Span(id="sim-counter", children="Sims: 0"),
+                        html.Span(id="sim-counter", children=INITIAL_COUNTER_LABEL),
                         type="dot",
                     ),
                     style={"marginLeft": "15px", "fontWeight": "bold"},
@@ -1604,7 +1683,7 @@ app.layout = html.Div(
                             [
                                 cyto.Cytoscape(
                                     id="cytoscape-tree",
-                                    elements=[],
+                                    elements=INITIAL_ELEMENTS,
                                     style={
                                         "width": "100%",
                                         "height": "100%",
@@ -1710,11 +1789,11 @@ app.layout = html.Div(
             style={"flex": "1", "minHeight": "0"},
         ),
         # Hidden storage for tree data
-        dcc.Store(id="tree-store"),
-        dcc.Store(id="env-store"),
+        dcc.Store(id="tree-store", data=INITIAL_TREE_DATA),
+        dcc.Store(id="env-store", data=INITIAL_ENV_DATA),
         dcc.Store(id="sims-done-store", data=0),
         # Store for current selection and navigation
-        dcc.Store(id="selected-node-store", data=None),
+        dcc.Store(id="selected-node-store", data=INITIAL_SELECTED_NODE),
         dcc.Store(id="nav-history-store", data=[]),
         dcc.Store(id="siblings-store", data=[]),
         # Hidden div to capture keyboard events
@@ -2649,6 +2728,8 @@ cyto.load_extra_layouts()
 def main():
     """Run the MCTS visualizer."""
     print("Starting MCTS Visualizer...")
+    if SAVED_PLAYBACK_DEFAULTS is not None:
+        print(f"Loaded saved playback: {SAVED_PLAYBACK_DEFAULTS['path']}")
     print("Open http://127.0.0.1:8050 in your browser")
     app.run(debug=True, port=8050)
 

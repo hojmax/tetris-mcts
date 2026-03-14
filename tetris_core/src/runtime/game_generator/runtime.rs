@@ -1,4 +1,5 @@
 use super::*;
+use crate::search::{persist_saved_game_tree_playback, SavedGameTreePlayback};
 
 const CANDIDATE_EVAL_MCTS_SEED: u64 = 0;
 const GAME_COMMIT_BATCH_SIZE: usize = 4;
@@ -33,6 +34,105 @@ impl GameGenerator {
         incumbent_uses_network && current_penalties != candidate_penalties
     }
 
+    fn saved_eval_tree_output_dir(training_data_path: &Path) -> PathBuf {
+        training_data_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("analysis")
+            .join("eval_trees")
+    }
+
+    fn saved_eval_tree_path(
+        training_data_path: &Path,
+        candidate_step: u64,
+        seed: u64,
+        total_attack: u32,
+    ) -> PathBuf {
+        Self::saved_eval_tree_output_dir(training_data_path).join(format!(
+            "candidate_step_{candidate_step:09}_worst_seed_{seed}_attack_{total_attack}.json"
+        ))
+    }
+
+    fn latest_saved_eval_tree_path(training_data_path: &Path) -> PathBuf {
+        Self::saved_eval_tree_output_dir(training_data_path)
+            .join("latest_worst_candidate_eval_tree.json")
+    }
+
+    fn persist_worst_candidate_eval_tree(
+        candidate_agent: &MCTSAgent,
+        rollout_config: &MCTSConfig,
+        training_data_path: &Path,
+        candidate: &CandidateModelRequest,
+        worst_seed: u64,
+        expected_replay_moves: &[ReplayMove],
+        expected_total_attack: u32,
+        max_placements: u32,
+        promoted: bool,
+        candidate_avg_attack: f32,
+        evaluation_seconds: f32,
+    ) -> Option<String> {
+        let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, worst_seed);
+        let playback = match candidate_agent.play_game_with_trees(&env, max_placements, false, 0) {
+            Some(playback) => playback,
+            None => {
+                eprintln!(
+                    "[GameGenerator] Failed to export worst candidate tree for step {} seed {}",
+                    candidate.model_step, worst_seed
+                );
+                return None;
+            }
+        };
+
+        if playback.total_attack != expected_total_attack
+            || playback.replay_moves != expected_replay_moves
+        {
+            eprintln!(
+                "[GameGenerator] Skipping worst candidate tree save for step {} seed {}: replay mismatch (expected attack {}, got {})",
+                candidate.model_step,
+                worst_seed,
+                expected_total_attack,
+                playback.total_attack
+            );
+            return None;
+        }
+
+        let saved = SavedGameTreePlayback::from_playback(
+            &playback,
+            worst_seed,
+            rollout_config,
+            false,
+            &candidate.model_path,
+            candidate.model_step,
+            promoted,
+            candidate_avg_attack,
+            evaluation_seconds,
+        );
+        let exact_path = Self::saved_eval_tree_path(
+            training_data_path,
+            candidate.model_step,
+            worst_seed,
+            expected_total_attack,
+        );
+        if let Err(error) = persist_saved_game_tree_playback(&saved, &exact_path) {
+            eprintln!(
+                "[GameGenerator] Failed to persist worst candidate tree {}: {}",
+                exact_path.display(),
+                error
+            );
+            return None;
+        }
+
+        let latest_path = Self::latest_saved_eval_tree_path(training_data_path);
+        if let Err(error) = persist_saved_game_tree_playback(&saved, &latest_path) {
+            eprintln!(
+                "[GameGenerator] Failed to refresh latest worst candidate tree {}: {}",
+                latest_path.display(),
+                error
+            );
+        }
+
+        Some(exact_path.display().to_string())
+    }
     pub(super) fn examples_to_numpy<'py>(
         py: Python<'py>,
         examples: &[TrainingExample],
@@ -381,6 +481,15 @@ impl GameGenerator {
                 current_incumbent_death_penalty,
                 current_incumbent_overhang_penalty_weight,
             );
+        let candidate_rollout_config = Self::build_rollout_config(
+            &eval_config,
+            true,
+            settings.non_network_num_simulations,
+            settings.bootstrap_use_min_max_q_normalization,
+            candidate.nn_value_weight,
+            candidate_death_penalty,
+            candidate_overhang_penalty_weight,
+        );
         let Some(candidate_agent) = Self::create_rollout_agent(
             &eval_config,
             true,
@@ -593,6 +702,23 @@ impl GameGenerator {
         } else {
             incumbent_nn_value_weight_before
         };
+        let evaluation_seconds = eval_start.elapsed().as_secs_f32();
+        let worst_game_tree_path = worst_idx.and_then(|idx| {
+            let worst = &candidate_results[idx];
+            Self::persist_worst_candidate_eval_tree(
+                &candidate_agent,
+                &candidate_rollout_config,
+                &settings.training_data_path,
+                &candidate,
+                worst.seed,
+                &worst.replay_moves,
+                worst.game_result.total_attack,
+                settings.max_placements,
+                promoted,
+                candidate_avg_attack,
+                evaluation_seconds,
+            )
+        });
 
         if promoted {
             let previous_incumbent_path = shared.incumbent.model_path.read().unwrap().clone();
@@ -663,7 +789,6 @@ impl GameGenerator {
             );
         }
 
-        let evaluation_seconds = eval_start.elapsed().as_secs_f32();
         let promoted_death_penalty = Self::load_atomic_f32(&shared.incumbent.death_penalty);
         let promoted_overhang_penalty_weight =
             Self::load_atomic_f32(&shared.incumbent.overhang_penalty_weight);
@@ -690,6 +815,7 @@ impl GameGenerator {
                 evaluation_seconds,
                 best_game_replay,
                 worst_game_replay,
+                worst_game_tree_path,
                 per_game_results,
             });
     }

@@ -486,6 +486,10 @@ impl GameGenerator {
                 event.worst_game_replay.into_py(py),
             );
             d.insert(
+                "worst_game_tree_path".into(),
+                event.worst_game_tree_path.into_py(py),
+            );
+            d.insert(
                 "per_game_results".into(),
                 event.per_game_results.into_py(py),
             );
