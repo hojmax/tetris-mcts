@@ -7,6 +7,8 @@
 - [ ] Why is the GPU going cold repeatedly like 50% of the time?
 - [ ] Why don't the final moves look full optimal? Like just clean out the board in the last 5 moves? Surely that is highest attack possible? Instead it does random nonsense.
 - [ ] Why don't we always have 50 piece episodes??????
+- [ ] One thing we could do is to make the amount of resources allocated to evaluating candidates configurable, and then spend alot on it every time we have upgrade, and then less and less each time they fail to upgrade. So we evaluate frequently when we are seeing big changes, and rarely when we are seeing small changes.
+- [ ] Hmm the test set overfitting is kind of a problem. Maybe we should just never include those trajectories in the replay buffer? Yeah probably the right move. That way we have the low variance model estimate, whilst avoiding the issue of later models being better on the test set simply because they have been trained on it... Yeah drop the adding the samples to the test set.
 
 - [ ] Less sharpening of temperature
 - [ ] Try lower cpuct
@@ -87,9 +89,57 @@ In progress: 🟨
 
 ### tetris_core/src/runtime/mod.rs ✅
 
+### tetris_core/src/runtime/game_generator/py_api.rs ✅
+
 Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
 ## Prompts To Run
+
+> Why does this exist:
+    ```
+
+        fn evaluate_avg_attack_on_fixed_seeds(
+            agent: &MCTSAgent,
+            running: &Arc<AtomicBool>,
+            max_placements: u32,
+            candidate_eval_seeds: &[u64],
+        ) -> Option<f32> {
+            let mut total_attack: u64 = 0;
+            let mut completed_games: u64 = 0;
+
+            for &seed in candidate_eval_seeds {
+                if !running.load(Ordering::SeqCst) {
+                    return None;
+                }
+                let (result, _) = agent.play_game_on_env(
+                    TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, seed),
+                    max_placements,
+                    false,
+                )?;
+                total_attack += result.total_attack as u64;
+                completed_games += 1;
+            }
+
+            if completed_games == 0 {
+                None
+            } else {
+                Some(total_attack as f32 / completed_games as f32)
+            }
+        }
+    ``` in tetris_core/src/runtime/game_generator/runtime.rs, like could we not just call something from evaluate.rs instead of rewriting this type of function. Also why are we defining local constants that just map to global constants?:
+    ```
+
+    let batch_size = examples.len();
+    let board_height = BOARD_HEIGHT;
+    let board_width = BOARD_WIDTH;
+    let num_actions = NUM_ACTIONS;
+    let aux_features_size = AUX_FEATURES;
+
+    ```
+
+> Hmm the test set overfitting is kind of a problem. Maybe we should just never include those trajectories in the replay buffer? Yeah probably the right move. That way we have the low variance model estimate, whilst avoiding the issue of later models being better on the test set simply because they have been trained on it... Yeah drop the adding the samples to the test set.
+
+> Why is CANDIDATE_EVAL_MCTS_SEED hardcoded? tetris_core/src/runtime/game_generator/runtime.rs
 
 > In tetris_core/src/runtime/game_generator/py_api.rs, do we really need all these checks?:
     ```
@@ -316,6 +366,45 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
         }
 
     ```
+    A remdey might be to pass (nested) objects into functions instead of these insane defintions:
+    ```
+
+        /// Worker thread main loop.
+        pub(super) fn worker_loop(
+            worker_id: usize,
+            num_workers: usize,
+            is_evaluator_worker: bool,
+            bootstrap_model_path: PathBuf,
+            training_data_path: PathBuf,
+            config: MCTSConfig,
+            max_placements: u32,
+            add_noise: bool,
+            save_interval_seconds: f64,
+            candidate_eval_seeds: Vec<u64>,
+            non_network_num_simulations: u32,
+            bootstrap_use_min_max_q_normalization: bool,
+            buffer: Arc<SharedBuffer>,
+            running: Arc<AtomicBool>,
+            games_generated: Arc<AtomicU64>,
+            examples_generated: Arc<AtomicU64>,
+            game_stats: Arc<SharedStats>,
+            completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
+            pending_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+            evaluating_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
+            model_eval_events: Arc<RwLock<VecDeque<ModelEvalEvent>>>,
+            incumbent_model_path: Arc<RwLock<PathBuf>>,
+            incumbent_uses_network: Arc<AtomicBool>,
+            incumbent_model_step: Arc<AtomicU64>,
+            incumbent_model_version: Arc<AtomicU64>,
+            incumbent_nn_value_weight: Arc<AtomicU32>,
+            incumbent_death_penalty: Arc<AtomicU32>,
+            incumbent_overhang_penalty_weight: Arc<AtomicU32>,
+            nn_value_weight_cap: f32,
+            incumbent_eval_avg_attack: Arc<AtomicU32>,
+        ) {
+    ```
+    So if subfunctions only need a subset, than maybe we can logically group these such that we could just pass that subgroup into that function with the nesting. Or maybe just the full object everywhere sometimes.
+
 
 > Is the slicing algorithm for loading up the gpu and efficient way of doing it? Any simpler way of ensuring the training data is on the gpu? Also why is my gpu not running out of memory, is like 2M training points not a crap ton of data. Or maybe not?
 
