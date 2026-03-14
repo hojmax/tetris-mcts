@@ -36,6 +36,10 @@ REPLAY_BUFFER_FIXTURE_ENV_VAR = "TETRIS_REPLAY_BUFFER_QUICKTEST_PATH"
 REPLAY_BUFFER_MAX_PLACEMENTS_ENV_VAR = "TETRIS_REPLAY_BUFFER_MAX_PLACEMENTS"
 REPLAY_BUFFER_PAIR_SAMPLE_LIMIT_ENV_VAR = "TETRIS_REPLAY_BUFFER_PAIR_SAMPLE_LIMIT"
 REPLAY_BUFFER_ROW_SAMPLE_LIMIT_ENV_VAR = "TETRIS_REPLAY_BUFFER_ROW_SAMPLE_LIMIT"
+REPLAY_BUFFER_SKIP_ROW_CHECKS_ENV_VAR = "TETRIS_REPLAY_BUFFER_SKIP_ROW_CHECKS"
+REPLAY_BUFFER_SKIP_TRANSITION_CHECKS_ENV_VAR = (
+    "TETRIS_REPLAY_BUFFER_SKIP_TRANSITION_CHECKS"
+)
 
 REQUIRED_KEYS = (
     "boards",
@@ -416,6 +420,13 @@ def _select_transition_indices(
     return selected
 
 
+def _env_flag_enabled(name: str) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _transition_matches(
     data: dict[str, np.ndarray] | np.lib.npyio.NpzFile,
     index: int,
@@ -513,66 +524,67 @@ def validate_replay_buffer_semantics(
     value_targets = np.asarray(data["value_targets"], dtype=np.float32)
     game_total_attacks = np.asarray(data["game_total_attacks"], dtype=np.uint32)
 
-    for index in _select_row_indices(n_examples, row_sample_limit):
-        board = np.asarray(data["boards"][index], dtype=np.uint8)
-        (
-            expected_column_heights,
-            expected_max_column_height,
-            expected_row_fill_counts,
-            expected_total_blocks,
-            expected_bumpiness,
-            expected_holes,
-            expected_overhang_fields,
-        ) = _compute_board_diagnostics(board)
+    if not _env_flag_enabled(REPLAY_BUFFER_SKIP_ROW_CHECKS_ENV_VAR):
+        for index in _select_row_indices(n_examples, row_sample_limit):
+            board = np.asarray(data["boards"][index], dtype=np.uint8)
+            (
+                expected_column_heights,
+                expected_max_column_height,
+                expected_row_fill_counts,
+                expected_total_blocks,
+                expected_bumpiness,
+                expected_holes,
+                expected_overhang_fields,
+            ) = _compute_board_diagnostics(board)
 
-        if not np.allclose(
-            np.asarray(data["column_heights"][index], dtype=np.float32),
-            expected_column_heights,
-            atol=1e-6,
-        ):
-            errors.add(f"row {index}: column_heights do not match board")
-        if not _approx_equal(
-            float(data["max_column_heights"][index]),
-            expected_max_column_height,
-            atol=1e-6,
-        ):
-            errors.add(f"row {index}: max_column_heights does not match board")
-        if not np.allclose(
-            np.asarray(data["row_fill_counts"][index], dtype=np.float32),
-            expected_row_fill_counts,
-            atol=1e-6,
-        ):
-            errors.add(f"row {index}: row_fill_counts do not match board")
-        if not _approx_equal(
-            float(data["total_blocks"][index]),
-            expected_total_blocks,
-            atol=1e-6,
-        ):
-            errors.add(f"row {index}: total_blocks does not match board")
-        if not _approx_equal(
-            float(data["bumpiness"][index]),
-            expected_bumpiness,
-            atol=1e-6,
-        ):
-            errors.add(f"row {index}: bumpiness does not match board")
-        if not _approx_equal(
-            float(data["holes"][index]),
-            expected_holes,
-            atol=1e-6,
-        ):
-            errors.add(f"row {index}: holes do not match board")
-        if not _approx_equal(
-            float(data["overhang_fields"][index]),
-            expected_overhang_fields,
-            atol=1e-6,
-        ):
-            errors.add(f"row {index}: overhang_fields does not match board")
+            if not np.allclose(
+                np.asarray(data["column_heights"][index], dtype=np.float32),
+                expected_column_heights,
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: column_heights do not match board")
+            if not _approx_equal(
+                float(data["max_column_heights"][index]),
+                expected_max_column_height,
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: max_column_heights does not match board")
+            if not np.allclose(
+                np.asarray(data["row_fill_counts"][index], dtype=np.float32),
+                expected_row_fill_counts,
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: row_fill_counts do not match board")
+            if not _approx_equal(
+                float(data["total_blocks"][index]),
+                expected_total_blocks,
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: total_blocks does not match board")
+            if not _approx_equal(
+                float(data["bumpiness"][index]),
+                expected_bumpiness,
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: bumpiness does not match board")
+            if not _approx_equal(
+                float(data["holes"][index]),
+                expected_holes,
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: holes do not match board")
+            if not _approx_equal(
+                float(data["overhang_fields"][index]),
+                expected_overhang_fields,
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: overhang_fields do not match board")
 
-        env = _restore_env(data, index)
-        expected_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
-        actual_mask = np.asarray(data["action_masks"][index], dtype=bool)
-        if not np.array_equal(expected_mask, actual_mask):
-            errors.add(f"row {index}: action_masks do not match restored state")
+            env = _restore_env(data, index)
+            expected_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
+            actual_mask = np.asarray(data["action_masks"][index], dtype=bool)
+            if not np.array_equal(expected_mask, actual_mask):
+                errors.add(f"row {index}: action_masks do not match restored state")
 
     for start, end in _iter_game_segments(game_numbers):
         game_number = int(game_numbers[start])
@@ -615,38 +627,41 @@ def validate_replay_buffer_semantics(
                     f"game {game_number}: value_targets do not sum back to game_total_attack"
                 )
 
-    for index in _select_transition_indices(game_numbers, pair_sample_limit):
-        env = _restore_env(data, index)
-        action_mask = np.asarray(data["action_masks"][index], dtype=bool)
-        matched_action: int | None = None
-        for action_idx in np.flatnonzero(action_mask):
-            env_after = env.clone_state()
-            attack = env_after.execute_action_index(int(action_idx))
-            if attack is None:
-                errors.add(f"row {index}: action {action_idx} is masked valid but not executable")
+    if not _env_flag_enabled(REPLAY_BUFFER_SKIP_TRANSITION_CHECKS_ENV_VAR):
+        for index in _select_transition_indices(game_numbers, pair_sample_limit):
+            env = _restore_env(data, index)
+            action_mask = np.asarray(data["action_masks"][index], dtype=bool)
+            matched_action: int | None = None
+            for action_idx in np.flatnonzero(action_mask):
+                env_after = env.clone_state()
+                attack = env_after.execute_action_index(int(action_idx))
+                if attack is None:
+                    errors.add(
+                        f"row {index}: action {action_idx} is masked valid but not executable"
+                    )
+                    continue
+                board_after = np.asarray(env_after.get_board(), dtype=np.uint8)
+                if _transition_matches(
+                    data,
+                    index,
+                    int(action_idx),
+                    int(attack),
+                    board_after,
+                    max_placements,
+                ):
+                    matched_action = int(action_idx)
+                    break
+
+            if matched_action is None:
+                errors.add(
+                    f"row {index}: no valid action reproduces the next replay-buffer state"
+                )
                 continue
-            board_after = np.asarray(env_after.get_board(), dtype=np.uint8)
-            if _transition_matches(
-                data,
-                index,
-                int(action_idx),
-                int(attack),
-                board_after,
-                max_placements,
-            ):
-                matched_action = int(action_idx)
-                break
 
-        if matched_action is None:
-            errors.add(
-                f"row {index}: no valid action reproduces the next replay-buffer state"
-            )
-            continue
-
-        if float(data["policy_targets"][index][matched_action]) <= 0.0:
-            errors.add(
-                f"row {index}: matched transition action {matched_action} has zero policy mass"
-            )
+            if float(data["policy_targets"][index][matched_action]) <= 0.0:
+                errors.add(
+                    f"row {index}: matched transition action {matched_action} has zero policy mass"
+                )
 
     errors.assert_empty()
 
