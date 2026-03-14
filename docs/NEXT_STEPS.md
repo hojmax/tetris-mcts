@@ -81,11 +81,14 @@ In progress: 🟨
 
 ### tetris_core/src/replay/npz.rs ✅
 
+### tetris_core/src/runtime/evaluation.rs ✅
+
 Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
 ## Prompts To Run
 
 > In tetris_core/src/search/utils.rs why do we need:
+
     ```
 
         let mut overhang_fields: u32 = 0;
@@ -112,6 +115,7 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
     Is holes not just 200 - blocks - visit_count. I.e. holes are what is left when you account for all the air you can visit and the placed blocks? But actually thinking of it, since we anyway need the loop for overhang, then kind of makes sense to just do the holes in there?
 
 > is this ever used?:
+
     ```
 
         /// Convert to dictionary for logging.
@@ -132,7 +136,6 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
         }
     ```
     tetris_core/src/runtime/evaluation.rs
-
 
 > Is the replay storage format the most efficient?
 
