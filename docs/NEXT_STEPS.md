@@ -137,7 +137,10 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
     ```
 
-> Hmm the test set overfitting is kind of a problem. Maybe we should just never include those trajectories in the replay buffer? Yeah probably the right move. That way we have the low variance model estimate, whilst avoiding the issue of later models being better on the test set simply because they have been trained on it... Yeah drop the adding the samples to the test set.
+> Hmm the test set overfitting is kind of a problem. Maybe we should just never include those trajectories in the replay buffer? Yeah probably the right move. That way we have the low variance model estimate, whilst avoiding the issue of later models being better on the test set simply because they have been trained on it... Yeah drop the adding the samples to the test set. Maybe lets then lower the amount of games evalauted on to like 20. Like I think noise is less of an issue than one might think, since models should be getting better over time a priori expecation. So probably not that bad if some go through on noise.
+
+> I think actually we should be saving the full search tree from training for the worst env, so I can look at that exact one later with make viz. So like I think we already have a struct for a search tree to save, but if not imrpove and make so we can save and load from python. And then make a script so I can load one and look at it, with all the info like the network predictions and all that. Probably we can compress a bit by avoiding to save the environments themsleves, but just the initial seed and the actions on the nodes, then we can just reconstruct env etc. We just have to make sure that the randomization is matching actually, so that the seeded random numbers in python is not different than the ones in rust.
+
 
 > Why is CANDIDATE_EVAL_MCTS_SEED hardcoded? tetris_core/src/runtime/game_generator/runtime.rs
 
