@@ -26,8 +26,8 @@ from dash import (
     Output,
     Input,
     State,
+    ALL,
     clientside_callback,
-    dash_table,
 )
 import dash_cytoscape as cyto
 from PIL import Image, ImageDraw
@@ -367,6 +367,8 @@ if SAVED_PLAYBACK_DEFAULTS is not None:
     STATE_PRESET_DEFAULTS["seed"] = SAVED_PLAYBACK_DEFAULTS["seed"]
 
 Q_NORMALIZATION_EPSILON = 1e-6
+VALUE_HISTORY_INLINE_LIMIT = 64
+VALUE_HISTORY_EDGE_SAMPLE = 8
 
 
 def normalize_q_value(q: float, q_min: float, q_max: float) -> float:
@@ -469,6 +471,142 @@ def build_decision_action_stats(
         )
 
     return action_stats
+
+
+def build_value_history_details(node: dict) -> list:
+    value_history = node.get("value_history", [])
+    if not value_history:
+        return []
+
+    details = [html.P(f"Backed-up values tracked: {len(value_history)}")]
+    if len(value_history) <= VALUE_HISTORY_INLINE_LIMIT:
+        terms = " + ".join(f"{value:.6f}" for value in value_history)
+        details.append(
+            html.P(
+                f"Q = ({terms}) / {len(value_history)} = {node['mean_value']:.6f}",
+                style={
+                    "fontFamily": "monospace",
+                    "fontSize": "11px",
+                    "overflowWrap": "anywhere",
+                },
+            )
+        )
+        return details
+
+    head_terms = " + ".join(
+        f"{value:.6f}" for value in value_history[:VALUE_HISTORY_EDGE_SAMPLE]
+    )
+    tail_terms = " + ".join(
+        f"{value:.6f}" for value in value_history[-VALUE_HISTORY_EDGE_SAMPLE:]
+    )
+    details.append(
+        html.P(
+            (
+                "Q preview = "
+                f"({head_terms} + ... + {tail_terms}) / {len(value_history)} = "
+                f"{node['mean_value']:.6f}"
+            ),
+            style={
+                "fontFamily": "monospace",
+                "fontSize": "11px",
+                "overflowWrap": "anywhere",
+            },
+        )
+    )
+    details.append(
+        html.P(
+            f"Showing first/last {VALUE_HISTORY_EDGE_SAMPLE} values only for performance.",
+            style={"fontSize": "11px", "color": "#666"},
+        )
+    )
+    return details
+
+
+def build_action_stats_table(action_stats: list[dict], q_col: str):
+    sorted_rows = sorted(action_stats, key=lambda row: row["puct"], reverse=True)
+    header_cells = [
+        html.Th("Action", style={"textAlign": "left", "padding": "4px 8px"}),
+        html.Th("N", style={"textAlign": "right", "padding": "4px 8px"}),
+        html.Th("P", style={"textAlign": "right", "padding": "4px 8px"}),
+        html.Th(q_col, style={"textAlign": "right", "padding": "4px 8px"}),
+        html.Th("Qraw", style={"textAlign": "right", "padding": "4px 8px"}),
+        html.Th("U", style={"textAlign": "right", "padding": "4px 8px", "color": "#0066cc"}),
+        html.Th(
+            "PUCT",
+            style={"textAlign": "right", "padding": "4px 8px", "fontWeight": "bold"},
+        ),
+        html.Th("Atk", style={"textAlign": "right", "padding": "4px 8px"}),
+        html.Th("NNval", style={"textAlign": "right", "padding": "4px 8px"}),
+    ]
+
+    body_rows = []
+    for row in sorted_rows:
+        action_label = f"a{row['action']}"
+        target_node_id = row["target_node_id"]
+        child = row["child"]
+        body_rows.append(
+            html.Tr(
+                [
+                    html.Td(
+                        html.Button(
+                            action_label,
+                            id={"type": "action-nav-button", "target": target_node_id},
+                            n_clicks=0,
+                            style={
+                                "background": "none",
+                                "border": "none",
+                                "padding": 0,
+                                "cursor": "pointer",
+                                "color": "#0066cc",
+                                "textDecoration": "underline",
+                                "fontFamily": "monospace",
+                                "fontSize": "12px",
+                            },
+                        ),
+                        style={"padding": "4px 8px", "textAlign": "left"},
+                    ),
+                    html.Td(f"{row['visits']}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(f"{row['prior']:.4f}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(
+                        f"{row['q_transformed']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
+                    html.Td(f"{row['raw_q']:.4f}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(
+                        f"{row['u']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right", "color": "#0066cc"},
+                    ),
+                    html.Td(
+                        f"{row['puct']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right", "fontWeight": "bold"},
+                    ),
+                    html.Td(
+                        "" if child is None else f"{child['attack']}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
+                    html.Td(
+                        "" if child is None else f"{child['nn_value']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
+                ]
+            )
+        )
+
+    return html.Div(
+        html.Table(
+            [
+                html.Thead(html.Tr(header_cells)),
+                html.Tbody(body_rows),
+            ],
+            style={
+                "width": "100%",
+                "borderCollapse": "collapse",
+                "fontFamily": "monospace",
+                "fontSize": "12px",
+            },
+        ),
+        style={"overflowX": "auto"},
+    )
 
 
 def build_env_cache_for_tree(tree) -> dict[int, TetrisEnv]:
@@ -2326,19 +2464,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
         html.P(f"MCTS Q-Value: {node['mean_value']:.3f}"),
         html.P(f"Value Sum: {node['value_sum']:.3f}"),
     ]
-    value_history = node.get("value_history", [])
-    if value_history:
-        terms = " + ".join(f"{value:.6f}" for value in value_history)
-        details.append(
-            html.P(
-                f"Q = ({terms}) / {len(value_history)} = {node['mean_value']:.6f}",
-                style={
-                    "fontFamily": "monospace",
-                    "fontSize": "11px",
-                    "overflowWrap": "anywhere",
-                },
-            )
-        )
+    details.extend(build_value_history_details(node))
 
     if node["node_type"] == "decision":
         details.extend(
@@ -2367,78 +2493,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
                     style={"fontSize": "11px", "color": "#666", "marginBottom": "10px"},
                 )
             )
-
-            table_data = []
-            nav_map = {}
-            for row in action_stats:
-                action_label = f"a{row['action']}"
-                nav_map[action_label] = row["target_node_id"]
-                entry: dict[str, str | int | float] = {
-                    "Action": action_label,
-                    "N": row["visits"],
-                    "P": round(row["prior"], 4),
-                    q_col: round(row["q_transformed"], 4),
-                    "Qraw": round(row["raw_q"], 4),
-                    "U": round(row["u"], 4),
-                    "PUCT": round(row["puct"], 4),
-                }
-                if row["child"] is not None:
-                    entry["Atk"] = row["child"]["attack"]
-                    entry["NNval"] = round(row["child"]["nn_value"], 4)
-                else:
-                    entry["Atk"] = ""
-                    entry["NNval"] = ""
-                table_data.append(entry)
-
-            columns = [
-                {"name": "Action", "id": "Action", "type": "text"},
-                {"name": "N", "id": "N", "type": "numeric"},
-                {"name": "P", "id": "P", "type": "numeric"},
-                {"name": q_col, "id": q_col, "type": "numeric"},
-                {"name": "Qraw", "id": "Qraw", "type": "numeric"},
-                {"name": "U", "id": "U", "type": "numeric"},
-                {"name": "PUCT", "id": "PUCT", "type": "numeric"},
-                {"name": "Atk", "id": "Atk", "type": "numeric"},
-                {"name": "NNval", "id": "NNval", "type": "numeric"},
-            ]
-
-            details.append(
-                dcc.Store(id="action-nav-map", data=nav_map),
-            )
-            details.append(
-                dash_table.DataTable(
-                    id="action-stats-table",
-                    columns=columns,  # type: ignore[arg-type]
-                    data=table_data,
-                    sort_action="native",
-                    sort_by=[{"column_id": "PUCT", "direction": "desc"}],
-                    style_table={"overflowX": "auto", "fontSize": "12px"},
-                    style_cell={
-                        "padding": "4px 8px",
-                        "textAlign": "right",
-                        "fontFamily": "monospace",
-                        "minWidth": "50px",
-                    },
-                    style_cell_conditional=[  # type: ignore[arg-type]
-                        {
-                            "if": {"column_id": "Action"},
-                            "textAlign": "left",
-                            "cursor": "pointer",
-                            "color": "#0066cc",
-                            "textDecoration": "underline",
-                        },
-                    ],
-                    style_header={
-                        "fontWeight": "bold",
-                        "cursor": "pointer",
-                    },
-                    style_data_conditional=[  # type: ignore[arg-type]
-                        {"if": {"column_id": "U"}, "color": "#0066cc"},
-                        {"if": {"column_id": "PUCT"}, "fontWeight": "bold"},
-                    ],
-                    page_size=50,
-                ),
-            )
+            details.append(build_action_stats_table(action_stats, q_col))
 
         elif node["action_priors"]:
             # No children yet, show top priors
@@ -2776,20 +2831,23 @@ def navigate_siblings(keyboard_event, selected_node, siblings, tree_dict):
 
 @callback(
     Output("selected-node-store", "data", allow_duplicate=True),
-    Input("action-stats-table", "active_cell"),
-    State("action-stats-table", "derived_virtual_data"),
-    State("action-nav-map", "data"),
+    Input({"type": "action-nav-button", "target": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
-def navigate_to_action_node(active_cell, virtual_data, nav_map):
-    """Navigate to a child node when an Action cell is clicked in the stats table."""
-    if not active_cell or not virtual_data or not nav_map:
+def navigate_to_action_node(_):
+    """Navigate to a child node when an action row button is clicked."""
+    if not dash.callback_context.triggered:
         return dash.no_update
-    if active_cell.get("column_id") != "Action":
+
+    trigger_prop = dash.callback_context.triggered[0]["prop_id"]
+    trigger_id = trigger_prop.split(".")[0]
+    if not trigger_id:
         return dash.no_update
-    row_idx = active_cell["row"]
-    action_label = virtual_data[row_idx]["Action"]
-    target = nav_map.get(action_label)
+
+    try:
+        target = json.loads(trigger_id).get("target")
+    except json.JSONDecodeError:
+        return dash.no_update
     if target is None:
         return dash.no_update
     return target
