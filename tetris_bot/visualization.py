@@ -62,7 +62,11 @@ class PredictedMoveOverlay:
 class _OverlayLabelPlacement:
     predicted_move: PredictedMoveOverlay
     text: str
+    position: tuple[int, int]
     rect: tuple[int, int, int, int]
+
+
+_TEXT_SHADOW_RADIUS = 1
 
 
 def _get_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -113,23 +117,38 @@ def _draw_mini_piece(
     center_x: int,
     center_y: int,
 ):
+    bounds = _mini_piece_bounds(piece_type, center_x, center_y, MINI_CELL)
+    sx, sy = bounds[0], bounds[1]
     cells = PIECE_SPAWN_CELLS[piece_type]
     color = PIECE_COLORS[piece_type]
 
     xs = [c[0] for c in cells]
     ys = [c[1] for c in cells]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-
-    pw = (max_x - min_x + 1) * MINI_CELL
-    ph = (max_y - min_y + 1) * MINI_CELL
-    sx = center_x - pw // 2
-    sy = center_y - ph // 2
+    min_x = min(xs)
+    min_y = min(ys)
 
     for cx, cy in cells:
         px = sx + (cx - min_x) * MINI_CELL
         py = sy + (cy - min_y) * MINI_CELL
         draw.rectangle([px, py, px + MINI_CELL - 2, py + MINI_CELL - 2], fill=color)
+
+
+def _mini_piece_bounds(
+    piece_type: int,
+    center_x: int,
+    center_y: int,
+    cell_size: int,
+) -> tuple[int, int, int, int]:
+    cells = PIECE_SPAWN_CELLS[piece_type]
+    xs = [c[0] for c in cells]
+    ys = [c[1] for c in cells]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    width = (max_x - min_x + 1) * cell_size
+    height = (max_y - min_y + 1) * cell_size
+    left = center_x - width // 2
+    top = center_y - height // 2
+    return (left, top, left + width, top + height)
 
 
 def _draw_board_area(
@@ -216,8 +235,17 @@ def _draw_text_with_shadow(
     fill: tuple[int, int, int, int],
 ) -> None:
     x, y = position
-    shadow = (0, 0, 0, 220)
-    for dx, dy in ((1, 1), (1, 0), (0, 1)):
+    shadow = (0, 0, 0, 235)
+    for dx, dy in (
+        (-_TEXT_SHADOW_RADIUS, -_TEXT_SHADOW_RADIUS),
+        (-_TEXT_SHADOW_RADIUS, 0),
+        (-_TEXT_SHADOW_RADIUS, _TEXT_SHADOW_RADIUS),
+        (0, -_TEXT_SHADOW_RADIUS),
+        (0, _TEXT_SHADOW_RADIUS),
+        (_TEXT_SHADOW_RADIUS, -_TEXT_SHADOW_RADIUS),
+        (_TEXT_SHADOW_RADIUS, 0),
+        (_TEXT_SHADOW_RADIUS, _TEXT_SHADOW_RADIUS),
+    ):
         draw.text((x + dx, y + dy), text, font=font, fill=shadow)
     draw.text((x, y), text, font=font, fill=fill)
 
@@ -247,19 +275,36 @@ def _inflate_rect(
 def _clamp_label_rect(
     left: int,
     top: int,
-    text_w: int,
-    text_h: int,
+    draw_bounds: tuple[int, int, int, int],
     img_w: int,
     img_h: int,
     min_y: int,
-) -> tuple[int, int, int, int]:
-    clamped_left = max(2, min(img_w - text_w - 2, left))
-    clamped_top = max(min_y, min(img_h - text_h - 2, top))
+) -> tuple[tuple[int, int], tuple[int, int, int, int]]:
+    box_left, box_top, box_right, box_bottom = draw_bounds
+    clamped_left = max(2 - box_left, min(img_w - box_right - 2, left))
+    clamped_top = max(min_y - box_top, min(img_h - box_bottom - 2, top))
+    position = (clamped_left, clamped_top)
     return (
-        clamped_left,
-        clamped_top,
-        clamped_left + text_w,
-        clamped_top + text_h,
+        position,
+        (
+            clamped_left + box_left,
+            clamped_top + box_top,
+            clamped_left + box_right,
+            clamped_top + box_bottom,
+        ),
+    )
+
+
+def _measure_text_draw_bounds(
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+) -> tuple[int, int, int, int]:
+    left, top, right, bottom = font.getbbox(text)
+    return (
+        left - _TEXT_SHADOW_RADIUS,
+        top - _TEXT_SHADOW_RADIUS,
+        right + _TEXT_SHADOW_RADIUS,
+        bottom + _TEXT_SHADOW_RADIUS,
     )
 
 
@@ -286,6 +331,21 @@ def _visible_overlay_bounds(
     )
 
 
+def _overlay_anchor_bounds(
+    board_x: int,
+    board_y: int,
+    predicted_move: PredictedMoveOverlay,
+) -> tuple[int, int, int, int] | None:
+    if predicted_move.is_hold and board_x == LEFT_SIDEBAR:
+        return _mini_piece_bounds(
+            predicted_move.piece_type,
+            LEFT_SIDEBAR // 2,
+            board_y + SIDEBAR_PIECE_Y,
+            MINI_CELL,
+        )
+    return _visible_overlay_bounds(board_x, board_y, predicted_move.cells)
+
+
 def _overlay_fill_alpha(rank: int) -> int:
     rank = max(1, min(rank, 3))
     return 64 - (rank - 1) * 14
@@ -297,18 +357,15 @@ def _overlay_outline_alpha(rank: int) -> int:
 
 
 def _overlay_outline_width(rank: int) -> int:
-    return 2 if rank == 1 else 1
+    return 1
 
 
 def _candidate_label_rects(
     bounds: tuple[int, int, int, int],
     text_w: int,
     text_h: int,
-    img_w: int,
-    img_h: int,
-    min_y: int,
     is_hold: bool,
-) -> list[tuple[int, int, int, int]]:
+) -> list[tuple[int, int]]:
     left, top, right, bottom = bounds
     center_x = (left + right - text_w) // 2
     center_y = (top + bottom - text_h) // 2
@@ -317,12 +374,12 @@ def _candidate_label_rects(
 
     raw_positions = (
         [
-            (left - text_w - label_gap, mid_y),
-            (left - text_w - label_gap, top - text_h - label_gap),
-            (left - text_w - label_gap, bottom + label_gap),
-            (right + label_gap, mid_y),
-            (center_x, top - text_h - label_gap),
             (center_x, bottom + label_gap),
+            (center_x, bottom + label_gap + text_h + 4),
+            (center_x, top - text_h - label_gap),
+            (center_x, top - text_h - label_gap),
+            (right + label_gap, mid_y),
+            (left - text_w - label_gap, mid_y),
         ]
         if is_hold
         else [
@@ -338,14 +395,14 @@ def _candidate_label_rects(
         ]
     )
 
-    candidate_rects: list[tuple[int, int, int, int]] = []
-    seen_rects: set[tuple[int, int, int, int]] = set()
+    candidate_positions: list[tuple[int, int]] = []
+    seen_positions: set[tuple[int, int]] = set()
     for raw_left, raw_top in raw_positions:
-        rect = _clamp_label_rect(raw_left, raw_top, text_w, text_h, img_w, img_h, min_y)
-        if rect not in seen_rects:
-            candidate_rects.append(rect)
-            seen_rects.add(rect)
-    return candidate_rects
+        position = (raw_left, raw_top)
+        if position not in seen_positions:
+            candidate_positions.append(position)
+            seen_positions.add(position)
+    return candidate_positions
 
 
 def _place_overlay_label_rects(
@@ -361,39 +418,51 @@ def _place_overlay_label_rects(
 
     for predicted_move in sorted(predicted_move_overlays, key=lambda overlay: overlay.rank):
         label = f"{predicted_move.probability * 100:.1f}%"
-        bounds = _visible_overlay_bounds(board_x, board_y, predicted_move.cells)
+        bounds = _overlay_anchor_bounds(board_x, board_y, predicted_move)
         if bounds is None:
             continue
 
-        text_bbox = font.getbbox(label)
-        text_w = text_bbox[2] - text_bbox[0]
-        text_h = text_bbox[3] - text_bbox[1]
-        candidate_rects = _candidate_label_rects(
+        draw_bounds = _measure_text_draw_bounds(label, font)
+        text_w = draw_bounds[2] - draw_bounds[0]
+        text_h = draw_bounds[3] - draw_bounds[1]
+        candidate_positions = _candidate_label_rects(
             bounds,
             text_w,
             text_h,
-            img_w,
-            img_h,
-            board_y + 2,
             predicted_move.is_hold,
         )
 
-        chosen_rect = candidate_rects[0]
+        chosen_position, chosen_rect = _clamp_label_rect(
+            candidate_positions[0][0],
+            candidate_positions[0][1],
+            draw_bounds,
+            img_w,
+            img_h,
+            board_y + 2,
+        )
         inflated_occupied = [_inflate_rect(rect, 3) for rect in occupied_rects]
-        for candidate in candidate_rects:
+        for raw_left, raw_top in candidate_positions:
+            candidate_position, candidate = _clamp_label_rect(
+                raw_left,
+                raw_top,
+                draw_bounds,
+                img_w,
+                img_h,
+                board_y + 2,
+            )
             if not any(_rects_intersect(candidate, occupied) for occupied in inflated_occupied):
+                chosen_position = candidate_position
                 chosen_rect = candidate
                 break
         else:
-            base_left, base_top, _, _ = candidate_rects[0]
+            base_left, base_top = candidate_positions[0]
             step_y = text_h + 6
             for offset_idx in range(1, 10):
                 for signed_offset in (offset_idx, -offset_idx):
-                    candidate = _clamp_label_rect(
+                    candidate_position, candidate = _clamp_label_rect(
                         base_left,
                         base_top + signed_offset * step_y,
-                        text_w,
-                        text_h,
+                        draw_bounds,
                         img_w,
                         img_h,
                         board_y + 2,
@@ -402,6 +471,7 @@ def _place_overlay_label_rects(
                         _rects_intersect(candidate, occupied)
                         for occupied in inflated_occupied
                     ):
+                        chosen_position = candidate_position
                         chosen_rect = candidate
                         break
                 else:
@@ -412,6 +482,7 @@ def _place_overlay_label_rects(
             _OverlayLabelPlacement(
                 predicted_move=predicted_move,
                 text=label,
+                position=chosen_position,
                 rect=chosen_rect,
             )
         )
@@ -475,22 +546,9 @@ def _apply_predicted_move_overlays(
         font,
     )
     for label_placement in label_placements:
-        left, top, right, bottom = label_placement.rect
-        bg_rect = (left - 3, top - 2, right + 3, bottom + 2)
-        border_color = (
-            *PIECE_COLORS[label_placement.predicted_move.piece_type],
-            210,
-        )
-        label_draw.rounded_rectangle(
-            bg_rect,
-            radius=4,
-            fill=(15, 15, 15, 220),
-            outline=border_color,
-            width=1,
-        )
         _draw_text_with_shadow(
             label_draw,
-            (left, top),
+            label_placement.position,
             label_placement.text,
             font,
             fill=(255, 255, 255, 255),

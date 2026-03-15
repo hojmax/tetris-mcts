@@ -15,10 +15,13 @@ from tetris_bot.visualization import (
     CELL_SIZE,
     INFO_HEIGHT_SIDEBAR,
     LEFT_SIDEBAR,
+    MINI_CELL,
     PredictedMoveOverlay,
     RIGHT_SIDEBAR,
+    SIDEBAR_PIECE_Y,
     _capture_frame,
     _get_font,
+    _mini_piece_bounds,
     _place_overlay_label_rects,
     _rects_intersect,
 )
@@ -116,6 +119,41 @@ def test_hold_overlay_does_not_draw_extra_piece_on_current_piece() -> None:
     assert overlay_frame.getpixel((pixel_x, pixel_y)) == plain_frame.getpixel(
         (pixel_x, pixel_y)
     )
+
+
+def test_hold_overlay_label_is_under_hold_piece() -> None:
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, 1)
+    current_piece = env.get_current_piece()
+    assert current_piece is not None
+
+    hold_overlay = PredictedMoveOverlay(
+        probability=0.4,
+        piece_type=int(current_piece.piece_type),
+        cells=tuple((int(x), int(y)) for x, y in current_piece.get_cells()),
+        rank=1,
+        is_hold=True,
+    )
+
+    placements = _place_overlay_label_rects(
+        LEFT_SIDEBAR,
+        INFO_HEIGHT_SIDEBAR,
+        (
+            LEFT_SIDEBAR + BOARD_WIDTH * CELL_SIZE + RIGHT_SIDEBAR,
+            INFO_HEIGHT_SIDEBAR + BOARD_HEIGHT * CELL_SIZE,
+        ),
+        [hold_overlay],
+        _get_font(12),
+    )
+
+    assert len(placements) == 1
+    _, _, _, hold_bottom = _mini_piece_bounds(
+        hold_overlay.piece_type,
+        LEFT_SIDEBAR // 2,
+        INFO_HEIGHT_SIDEBAR + SIDEBAR_PIECE_Y,
+        MINI_CELL,
+    )
+    assert placements[0].position[1] >= hold_bottom
+    assert placements[0].rect[2] <= LEFT_SIDEBAR
 
 
 def test_overlay_frame_can_hide_live_drop_ghost() -> None:

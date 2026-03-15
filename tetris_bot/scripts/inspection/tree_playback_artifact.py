@@ -62,6 +62,7 @@ def _serialize_tree_node(node: object) -> dict[str, Any]:
         "is_terminal": bool(node.is_terminal),
         "move_number": int(node.move_number),
         "attack": int(node.attack),
+        "cumulative_attack": int(node.state.attack),
         "parent_id": int(node.parent_id) if node.parent_id is not None else None,
         "edge_from_parent": (
             int(node.edge_from_parent) if node.edge_from_parent is not None else None
@@ -218,6 +219,7 @@ def _reconstruct_step_tree(
                 "hold_piece": (
                     int(hold_piece.piece_type) if hold_piece is not None else None
                 ),
+                "cumulative_attack": int(env.attack),
                 "queue": [int(piece) for piece in env.get_queue(QUEUE_SIZE)],
                 "possible_chance_outcomes": (
                     _possible_chance_outcomes(env)

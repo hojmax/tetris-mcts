@@ -550,7 +550,7 @@ def build_action_stats_table(action_stats: list[dict], q_col: str):
                     html.Td(
                         html.Button(
                             action_label,
-                            id={"type": "action-nav-button", "target": target_node_id},
+                            id={"type": "nav-button", "target": target_node_id},
                             n_clicks=0,
                             style={
                                 "background": "none",
@@ -586,6 +586,110 @@ def build_action_stats_table(action_stats: list[dict], q_col: str):
                     ),
                     html.Td(
                         "" if child is None else f"{child['nn_value']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
+                ]
+            )
+        )
+
+    return html.Div(
+        html.Table(
+            [
+                html.Thead(html.Tr(header_cells)),
+                html.Tbody(body_rows),
+            ],
+            style={
+                "width": "100%",
+                "borderCollapse": "collapse",
+                "fontFamily": "monospace",
+                "fontSize": "12px",
+            },
+        ),
+        style={"overflowX": "auto"},
+    )
+
+
+def build_chance_outcome_stats(chance_node: dict, tree_dict: dict) -> list[dict]:
+    child_by_outcome: dict[int, dict] = {}
+    for child_id in chance_node.get("children", []):
+        child = _find_tree_node(tree_dict, child_id)
+        if child is None:
+            continue
+        outcome_idx = child.get("edge_from_parent")
+        if outcome_idx is not None:
+            child_by_outcome[int(outcome_idx)] = child
+
+    outcomes: list[dict] = []
+    seen_outcomes: set[int] = set()
+    for outcome_idx, child in child_by_outcome.items():
+        seen_outcomes.add(outcome_idx)
+        outcomes.append(
+            {
+                "outcome_idx": outcome_idx,
+                "label": format_chance_outcome(outcome_idx),
+                "visits": int(child["visit_count"]),
+                "q": float(child["mean_value"]),
+                "nn_value": float(child["nn_value"]),
+                "target_node_id": str(child["id"]),
+                "is_virtual": False,
+            }
+        )
+
+    for outcome_idx in chance_node.get("possible_chance_outcomes", []):
+        outcome_idx = int(outcome_idx)
+        if outcome_idx in seen_outcomes:
+            continue
+        outcomes.append(
+            {
+                "outcome_idx": outcome_idx,
+                "label": format_chance_outcome(outcome_idx),
+                "visits": 0,
+                "q": 0.0,
+                "nn_value": None,
+                "target_node_id": f"vp_{chance_node['id']}_{outcome_idx}",
+                "is_virtual": True,
+            }
+        )
+
+    outcomes.sort(key=lambda row: (row["visits"], not row["is_virtual"]), reverse=True)
+    return outcomes
+
+
+def build_chance_outcomes_table(outcome_stats: list[dict]):
+    header_cells = [
+        html.Th("Outcome", style={"textAlign": "left", "padding": "4px 8px"}),
+        html.Th("N", style={"textAlign": "right", "padding": "4px 8px"}),
+        html.Th("Qraw", style={"textAlign": "right", "padding": "4px 8px"}),
+        html.Th("NNval", style={"textAlign": "right", "padding": "4px 8px"}),
+    ]
+
+    body_rows = []
+    for row in outcome_stats:
+        body_rows.append(
+            html.Tr(
+                [
+                    html.Td(
+                        html.Button(
+                            row["label"],
+                            id={"type": "nav-button", "target": row["target_node_id"]},
+                            n_clicks=0,
+                            style={
+                                "background": "none",
+                                "border": "none",
+                                "padding": 0,
+                                "cursor": "pointer",
+                                "color": "#0066cc",
+                                "textDecoration": "underline",
+                                "fontFamily": "monospace",
+                                "fontSize": "12px",
+                            },
+                        ),
+                        style={"padding": "4px 8px", "textAlign": "left"},
+                    ),
+                    html.Td(f"{row['visits']}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(f"{row['q']:.4f}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(
+                        "" if row["nn_value"] is None else f"{row['nn_value']:.4f}",
                         style={"padding": "4px 8px", "textAlign": "right"},
                     ),
                 ]
@@ -658,6 +762,7 @@ def tree_export_to_dict(
                 "nn_value": node.nn_value,
                 "unvisited_child_value_estimate": node.unvisited_child_value_estimate,
                 "attack": node.attack,
+                "cumulative_attack": int(node.state.attack),
                 "is_terminal": node.is_terminal,
                 "move_number": node.move_number,
                 "valid_actions": list(node.valid_actions),
@@ -1033,6 +1138,9 @@ def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
         html.P(f"Action Index: {action_idx}"),
         html.P(f"Parent Node: D{parent_id}"),
         html.P(f"Attack: {attack if attack is not None else '?'}"),
+        html.P(
+            f"Cumulative Attack: {env_copy.attack if env_copy is not None else parent.get('cumulative_attack', '?')}"
+        ),
         html.Hr(),
         html.H4("PUCT Components"),
         html.P(f"Prior (P): {action_row['prior']:.4f}", style={"fontWeight": "bold"}),
@@ -1138,6 +1246,7 @@ def display_virtual_piece_node(node_data, tree_dict):
         ),
         html.P(f"Piece Type: {piece_name} ({piece_type})"),
         html.P(f"Parent Chance Node: C{parent_id}"),
+        html.P(f"Cumulative Attack: {parent.get('cumulative_attack', '?')}"),
         html.Hr(),
         html.P(
             (
@@ -1270,8 +1379,9 @@ def build_cytoscape_elements(
                     "visit_count": node["visit_count"],
                     "mean_value": node["mean_value"],
                     "value_sum": node["value_sum"],
-                    "attack": node["attack"],
-                    "attack_color": _node_color(node["attack"], node["node_type"]),
+                            "attack": node["attack"],
+                            "cumulative_attack": node.get("cumulative_attack", 0),
+                            "attack_color": _node_color(node["attack"], node["node_type"]),
                     "is_terminal": node["is_terminal"],
                     "move_number": node["move_number"],
                     "edge_from_parent": node["edge_from_parent"],
@@ -1349,6 +1459,7 @@ def build_cytoscape_elements(
                             "mean_value": 0.0,
                             "value_sum": 0.0,
                             "attack": "?",
+                            "cumulative_attack": node.get("cumulative_attack", 0),
                             "attack_color": _node_color(0, "chance"),
                             "is_terminal": False,
                             "move_number": node["move_number"],
@@ -1408,6 +1519,7 @@ def build_cytoscape_elements(
                             "mean_value": 0.0,
                             "value_sum": 0.0,
                             "attack": 0,
+                            "cumulative_attack": node.get("cumulative_attack", 0),
                             "attack_color": _node_color(0, "decision"),
                             "is_terminal": False,
                             "move_number": node["move_number"],
@@ -1484,6 +1596,7 @@ def _virtual_action_node_data(tree_dict: dict, node_id_str: str) -> dict | None:
         "value_sum": 0.0,
         "attack": "?",
         "attack_color": _node_color(0, "chance"),
+        "cumulative_attack": parent.get("cumulative_attack", 0),
         "is_terminal": False,
         "move_number": parent["move_number"],
         "edge_from_parent": action_idx,
@@ -1513,6 +1626,7 @@ def _virtual_chance_node_data(tree_dict: dict, node_id_str: str) -> dict | None:
         "value_sum": 0.0,
         "attack": 0,
         "attack_color": _node_color(0, "decision"),
+        "cumulative_attack": parent.get("cumulative_attack", 0),
         "is_terminal": False,
         "move_number": parent["move_number"],
         "edge_from_parent": outcome_idx,
@@ -1579,6 +1693,64 @@ def siblings_for_parent(tree_dict: dict, parent_id: int) -> list[str]:
 
     siblings.sort(key=get_edge)
     return siblings
+
+
+def resolve_parent_target(tree_dict: dict, node_id_str: str) -> str | None:
+    node_data = resolve_node_data_from_tree(tree_dict, node_id_str)
+    if node_data is not None and node_data.get("parent_id") is not None:
+        return str(node_data["parent_id"])
+
+    for reuse_edge in tree_dict.get("reuse_edges", []):
+        if reuse_edge.get("target") == node_id_str:
+            return str(reuse_edge["source"])
+    return None
+
+
+def resolve_best_child_target(tree_dict: dict, node_id_str: str) -> str | None:
+    if node_id_str.startswith("v_") or node_id_str.startswith("vp_"):
+        return None
+    if not node_id_str.isdigit():
+        return None
+
+    node = _find_tree_node(tree_dict, int(node_id_str))
+    if node is None:
+        return None
+
+    children = node.get("children", [])
+    if children:
+        best = max(
+            children,
+            key=lambda cid: (
+                tree_dict["nodes"][cid].get("visit_count", 0)
+                if 0 <= cid < len(tree_dict["nodes"])
+                else 0
+            ),
+        )
+        return str(best)
+
+    if node.get("node_type") == "decision" and node.get("valid_actions"):
+        action_stats = build_decision_action_stats(
+            node,
+            tree_dict,
+            tree_dict.get("c_puct", 1.0),
+            tree_dict.get("q_scale"),
+        )
+        if action_stats:
+            best_action = max(action_stats, key=lambda row: (row["visits"], row["puct"]))
+            return str(best_action["target_node_id"])
+
+    if node.get("node_type") == "chance" and node.get("possible_chance_outcomes"):
+        outcome_stats = build_chance_outcome_stats(node, tree_dict)
+        if outcome_stats:
+            best_outcome = max(
+                outcome_stats, key=lambda row: (row["visits"], not row["is_virtual"])
+            )
+            return str(best_outcome["target_node_id"])
+
+    for reuse_edge in tree_dict.get("reuse_edges", []):
+        if reuse_edge.get("source") == node_id_str:
+            return str(reuse_edge["target"])
+    return None
 
 
 if SAVED_PLAYBACK_DEFAULTS is not None:
@@ -2461,6 +2633,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
             f"NN Value: {node['nn_value']:.3f}",
             style={"fontWeight": "bold", "color": "#0066cc"},
         ),
+        html.P(f"Cumulative Attack: {node.get('cumulative_attack', 0)}"),
         html.P(f"MCTS Q-Value: {node['mean_value']:.3f}"),
         html.P(f"Value Sum: {node['value_sum']:.3f}"),
     ]
@@ -2510,6 +2683,16 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
         # Chance node
         details.append(html.P(f"Attack: {node['attack']}"))
         details.append(html.P(f"Placement: {node['move_number']}"))
+        outcome_stats = build_chance_outcome_stats(node, tree_dict)
+        if outcome_stats:
+            details.append(html.Hr())
+            details.append(
+                html.P(
+                    "Outcome children",
+                    style={"fontSize": "11px", "color": "#666", "marginBottom": "10px"},
+                )
+            )
+            details.append(build_chance_outcomes_table(outcome_stats))
 
         # Show parent info if available
         parent_id = node.get("parent_id")
@@ -2723,27 +2906,29 @@ def navigate_to_root(_, tree_dict):
 
 @callback(
     Output("selected-node-store", "data"),
-    Output("siblings-store", "data"),
     Input("cytoscape-tree", "tapNodeData"),
+)
+def update_selection_info(node_data):
+    """Track selected node from clicks."""
+    if node_data is None:
+        return None
+    return str(node_data["id"])
+
+
+@callback(
+    Output("siblings-store", "data"),
+    Input("selected-node-store", "data"),
     State("tree-store", "data"),
 )
-def update_selection_info(node_data, tree_dict):
-    """Track selected node and its siblings for keyboard navigation."""
-    if node_data is None or tree_dict is None:
-        return None, []
+def update_siblings(selected_node_id, tree_dict):
+    """Track siblings for keyboard navigation after any selection change."""
+    if selected_node_id is None or tree_dict is None:
+        return []
 
-    node_id = str(node_data["id"])
-
-    # Find parent_id from node_data or tree_dict
-    parent_id = node_data.get("parent_id")
-    if parent_id is None and node_id.isdigit():
-        nid = int(node_id)
-        if nid < len(tree_dict["nodes"]):
-            parent_id = tree_dict["nodes"][nid].get("parent_id")
-
-    if parent_id is not None:
-        return node_id, siblings_for_parent(tree_dict, int(parent_id))
-    return node_id, []
+    parent_target = resolve_parent_target(tree_dict, str(selected_node_id))
+    if parent_target is None or not str(parent_target).isdigit():
+        return []
+    return siblings_for_parent(tree_dict, int(parent_target))
 
 
 @callback(
@@ -2768,50 +2953,27 @@ def navigate_siblings(keyboard_event, selected_node, siblings, tree_dict):
 
     # ArrowUp: go to parent
     if key == "ArrowUp":
-        if selected_node.startswith("v_") or selected_node.startswith("vp_"):
-            parent_id = int(selected_node.split("_")[1])
-        elif tree_dict and selected_node.isdigit():
-            nid = int(selected_node)
-            parent_id = (
-                tree_dict["nodes"][nid].get("parent_id")
-                if nid < len(tree_dict["nodes"])
-                else None
-            )
-        else:
-            parent_id = None
-        return str(parent_id) if parent_id is not None else dash.no_update
+        if not tree_dict:
+            return dash.no_update
+        parent_target = resolve_parent_target(tree_dict, str(selected_node))
+        return parent_target if parent_target is not None else dash.no_update
 
     # ArrowDown: go to most-visited child
     if key == "ArrowDown":
-        if not tree_dict or not selected_node.isdigit():
+        if not tree_dict:
             return dash.no_update
-        nid = int(selected_node)
-        if nid >= len(tree_dict["nodes"]):
-            return dash.no_update
-        children = tree_dict["nodes"][nid].get("children", [])
-        if not children:
-            return dash.no_update
-        best = max(
-            children,
-            key=lambda cid: tree_dict["nodes"][cid].get("visit_count", 0)
-            if cid < len(tree_dict["nodes"])
-            else 0,
-        )
-        return str(best)
+        child_target = resolve_best_child_target(tree_dict, str(selected_node))
+        return child_target if child_target is not None else dash.no_update
 
     # Extract parent_id from current selection
-    parent_id = None
-    if selected_node.startswith("v_"):
-        parent_id = int(selected_node.split("_")[1])
-    elif selected_node.startswith("vp_"):
-        parent_id = int(selected_node.split("_")[1])
-    elif tree_dict and selected_node.isdigit():
-        nid = int(selected_node)
-        if nid < len(tree_dict["nodes"]):
-            parent_id = tree_dict["nodes"][nid].get("parent_id")
+    parent_target = (
+        resolve_parent_target(tree_dict, str(selected_node)) if tree_dict else None
+    )
 
     all_siblings = (
-        siblings_for_parent(tree_dict, int(parent_id)) if parent_id is not None else []
+        siblings_for_parent(tree_dict, int(parent_target))
+        if parent_target is not None and str(parent_target).isdigit()
+        else []
     )
     if not all_siblings:
         return dash.no_update
@@ -2831,7 +2993,7 @@ def navigate_siblings(keyboard_event, selected_node, siblings, tree_dict):
 
 @callback(
     Output("selected-node-store", "data", allow_duplicate=True),
-    Input({"type": "action-nav-button", "target": ALL}, "n_clicks"),
+    Input({"type": "nav-button", "target": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
 def navigate_to_action_node(_):
@@ -2839,7 +3001,11 @@ def navigate_to_action_node(_):
     if not dash.callback_context.triggered:
         return dash.no_update
 
-    trigger_prop = dash.callback_context.triggered[0]["prop_id"]
+    trigger = dash.callback_context.triggered[0]
+    if int(trigger.get("value") or 0) <= 0:
+        return dash.no_update
+
+    trigger_prop = trigger["prop_id"]
     trigger_id = trigger_prop.split(".")[0]
     if not trigger_id:
         return dash.no_update
