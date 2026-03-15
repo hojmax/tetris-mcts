@@ -259,7 +259,7 @@ impl SharedBuffer {
     ///
     /// Holds the read lock for the duration of the write so that the snapshot is
     /// consistent. Workers calling `add_examples` will block until the save completes
-    /// (typically 10-30 seconds), which is acceptable for a save every 30 minutes.
+    /// (typically 10-30 seconds), so snapshots should stay relatively infrequent.
     pub(super) fn persist_to_npz(&self, filepath: &Path) -> Result<(), String> {
         let state = self.state.read().unwrap();
         let (slice_a, slice_b) = state.examples.as_slices();

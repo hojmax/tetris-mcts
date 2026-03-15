@@ -24,6 +24,7 @@ For large compressed replay archives, the file also supports streaming a
 contiguous row window directly from `training_data.npz` so the semantic checks
 stay fast enough to use as a practical quicktest.
 """
+
 from __future__ import annotations
 
 from collections import deque
@@ -174,7 +175,9 @@ def _read_npy_header(stream: Any) -> tuple[tuple[int, ...], np.dtype[Any]]:
         raise ValueError(f"Unsupported .npy version: {version}")
 
     if fortran_order:
-        raise ValueError("Fortran-ordered arrays are not supported in replay quicktests")
+        raise ValueError(
+            "Fortran-ordered arrays are not supported in replay quicktests"
+        )
 
     return tuple(int(dim) for dim in shape), np.dtype(dtype)
 
@@ -191,7 +194,9 @@ def _read_npy_window_from_npz(
         with archive.open(entry_name) as stream:
             shape, dtype = _read_npy_header(stream)
             if not shape:
-                raise ValueError(f"{entry_name} is scalar; expected at least 1 dimension")
+                raise ValueError(
+                    f"{entry_name} is scalar; expected at least 1 dimension"
+                )
             total_rows = shape[0]
             if start >= total_rows:
                 raise ValueError(
@@ -199,11 +204,15 @@ def _read_npy_window_from_npz(
                 )
             window_rows = min(length, total_rows - start)
             trailing_shape = shape[1:]
-            items_per_row = int(np.prod(trailing_shape, dtype=np.int64)) if trailing_shape else 1
+            items_per_row = (
+                int(np.prod(trailing_shape, dtype=np.int64)) if trailing_shape else 1
+            )
             row_nbytes = items_per_row * dtype.itemsize
             _discard_bytes(stream, start * row_nbytes)
             payload = _read_exact(stream, window_rows * row_nbytes)
-            flat = np.frombuffer(payload, dtype=dtype, count=window_rows * items_per_row)
+            flat = np.frombuffer(
+                payload, dtype=dtype, count=window_rows * items_per_row
+            )
             return flat.reshape((window_rows, *trailing_shape))
 
 
@@ -351,7 +360,9 @@ def _stored_aux_vector(
     index: int,
 ) -> np.ndarray:
     hold_available = np.array([float(data["hold_available"][index])], dtype=np.float32)
-    placement_count = np.array([float(data["placement_counts"][index])], dtype=np.float32)
+    placement_count = np.array(
+        [float(data["placement_counts"][index])], dtype=np.float32
+    )
     combo = np.array([float(data["combos"][index])], dtype=np.float32)
     back_to_back = np.array([float(data["back_to_back"][index])], dtype=np.float32)
     max_column_height = np.array(
@@ -375,7 +386,9 @@ def _stored_aux_vector(
             placement_count,
             combo,
             back_to_back,
-            np.asarray(data["next_hidden_piece_probs"][index], dtype=np.float32).reshape(-1),
+            np.asarray(
+                data["next_hidden_piece_probs"][index], dtype=np.float32
+            ).reshape(-1),
             np.asarray(data["column_heights"][index], dtype=np.float32).reshape(-1),
             max_column_height,
             np.asarray(data["row_fill_counts"][index], dtype=np.float32).reshape(-1),
@@ -456,9 +469,11 @@ def _resolved_attack_for_transition(
         )
         combo_attack = _combo_attack(combo_before)
 
-    difficult_or_pc = bool(result.is_perfect_clear) or bool(result.is_tspin) or int(
-        result.lines_cleared
-    ) == 4
+    difficult_or_pc = (
+        bool(result.is_perfect_clear)
+        or bool(result.is_tspin)
+        or int(result.lines_cleared) == 4
+    )
     back_to_back_attack = (
         1 if bool(data["back_to_back"][index]) and difficult_or_pc else 0
     )
@@ -501,9 +516,11 @@ def _expected_next_back_to_back(
     if result is None:
         return bool(data["back_to_back"][index])
 
-    return bool(result.is_perfect_clear) or bool(result.is_tspin) or int(
-        result.lines_cleared
-    ) == 4
+    return (
+        bool(result.is_perfect_clear)
+        or bool(result.is_tspin)
+        or int(result.lines_cleared) == 4
+    )
 
 
 def _collect_state_row(
@@ -564,7 +581,9 @@ def _collect_state_row(
     }
 
 
-def _stack_rows(rows: list[dict[str, np.ndarray]], attacks: list[int]) -> dict[str, np.ndarray]:
+def _stack_rows(
+    rows: list[dict[str, np.ndarray]], attacks: list[int]
+) -> dict[str, np.ndarray]:
     values = np.zeros(len(attacks), dtype=np.float32)
     cumulative = 0.0
     for i in range(len(attacks) - 1, -1, -1):
@@ -596,7 +615,9 @@ def _build_synthetic_game_data(max_placements: int = 100) -> dict[str, np.ndarra
         else:
             placement_actions = np.flatnonzero(action_mask[:-1])
             if placement_actions.size == 0:
-                raise AssertionError("Synthetic trajectory ran out of placement actions")
+                raise AssertionError(
+                    "Synthetic trajectory ran out of placement actions"
+                )
             chosen_action = int(placement_actions[0])
 
         rows.append(
@@ -740,10 +761,14 @@ def _transition_matches(
     next_current_piece = _piece_type_from_one_hot(
         np.asarray(data["current_pieces"][next_index])
     )
-    next_hold_piece = _piece_type_from_one_hot(np.asarray(data["hold_pieces"][next_index]))
+    next_hold_piece = _piece_type_from_one_hot(
+        np.asarray(data["hold_pieces"][next_index])
+    )
     queue = _queue_from_one_hot(np.asarray(data["next_queue"][index]))
     next_queue = _queue_from_one_hot(np.asarray(data["next_queue"][next_index]))
-    next_hidden_piece_probs = np.asarray(data["next_hidden_piece_probs"][index], dtype=np.float32)
+    next_hidden_piece_probs = np.asarray(
+        data["next_hidden_piece_probs"][index], dtype=np.float32
+    )
 
     placement_delta = float(
         data["placement_counts"][next_index] - data["placement_counts"][index]
@@ -901,7 +926,9 @@ def validate_replay_buffer_semantics(
                 errors.add(f"row {index}: overhang_fields do not match board")
 
             env = _restore_env(data, index)
-            expected_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
+            expected_mask = np.asarray(
+                tetris_core.debug_get_action_mask(env), dtype=bool
+            )
             actual_mask = np.asarray(data["action_masks"][index], dtype=bool)
             if not np.array_equal(expected_mask, actual_mask):
                 errors.add(f"row {index}: action_masks do not match restored state")
@@ -917,9 +944,13 @@ def validate_replay_buffer_semantics(
         game_number = int(game_numbers[start])
         game_total_attack = int(game_total_attacks[start])
         if not np.all(game_total_attacks[start:end] == game_total_attacks[start]):
-            errors.add(f"game {game_number}: game_total_attacks changes within the segment")
+            errors.add(
+                f"game {game_number}: game_total_attacks changes within the segment"
+            )
 
-        expected_moves = np.arange(move_numbers[start], move_numbers[start] + (end - start))
+        expected_moves = np.arange(
+            move_numbers[start], move_numbers[start] + (end - start)
+        )
         if not np.array_equal(move_numbers[start:end], expected_moves):
             errors.add(f"game {game_number}: move_numbers are not contiguous")
 
@@ -936,7 +967,9 @@ def validate_replay_buffer_semantics(
                 )
 
         if int(move_numbers[start]) == 0:
-            if not _approx_equal(float(segment_values[0]), float(game_total_attack), atol=1e-4):
+            if not _approx_equal(
+                float(segment_values[0]), float(game_total_attack), atol=1e-4
+            ):
                 errors.add(
                     f"game {game_number}: first value_target does not equal game_total_attack"
                 )
@@ -948,7 +981,9 @@ def validate_replay_buffer_semantics(
 
             last_value = float(value_targets[end - 1])
             if not _is_close_to_integer(last_value):
-                errors.add(f"game {game_number}: final value_target is not integer-like")
+                errors.add(
+                    f"game {game_number}: final value_target is not integer-like"
+                )
             elif drop_sum + int(round(last_value)) != game_total_attack:
                 errors.add(
                     f"game {game_number}: value_targets do not sum back to game_total_attack"

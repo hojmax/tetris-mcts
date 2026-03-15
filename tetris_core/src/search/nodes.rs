@@ -77,8 +77,11 @@ pub struct DecisionNode {
     pub action_priors: Vec<f32>,
     /// Whether this is a terminal state
     pub is_terminal: bool,
-    /// Raw neural network value estimate (stored when node is expanded)
+    /// Search leaf value estimate used by MCTS backups.
+    /// In NN mode this is after applying `nn_value_weight`.
     pub nn_value: f32,
+    /// Raw unweighted neural-network value estimate for this state.
+    pub raw_nn_value: f32,
     /// Total value estimate that was initially backed up when this node was expanded.
     /// Used as a first-play urgency baseline for unvisited action children when enabled.
     pub initial_total_value_estimate: f32,
@@ -115,6 +118,7 @@ impl DecisionNode {
             action_priors: Vec::new(),
             is_terminal,
             nn_value: 0.0,
+            raw_nn_value: 0.0,
             initial_total_value_estimate: 0.0,
             value_history: None,
         }
@@ -122,13 +126,29 @@ impl DecisionNode {
 
     /// Set priors and value from neural network output
     pub fn set_nn_output(&mut self, policy: &[f32], value: f32) {
+        self.set_nn_output_with_raw(policy, value, value);
+    }
+
+    /// Set priors and both raw/scaled values from neural network output.
+    pub fn set_nn_output_with_raw(&mut self, policy: &[f32], raw_value: f32, value: f32) {
         self.action_priors = self.valid_actions.iter().map(|&idx| policy[idx]).collect();
         self.normalize_action_priors();
+        self.raw_nn_value = raw_value;
         self.nn_value = value;
     }
 
     /// Set priors and value from action priors already aligned with valid_actions.
     pub fn set_nn_output_for_valid_actions(&mut self, action_priors: &[f32], value: f32) {
+        self.set_nn_output_for_valid_actions_with_raw(action_priors, value, value);
+    }
+
+    /// Set priors and both raw/scaled values from aligned action priors.
+    pub fn set_nn_output_for_valid_actions_with_raw(
+        &mut self,
+        action_priors: &[f32],
+        raw_value: f32,
+        value: f32,
+    ) {
         assert_eq!(
             action_priors.len(),
             self.valid_actions.len(),
@@ -138,6 +158,7 @@ impl DecisionNode {
         );
         self.action_priors = action_priors.to_vec();
         self.normalize_action_priors();
+        self.raw_nn_value = raw_value;
         self.nn_value = value;
     }
 

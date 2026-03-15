@@ -89,7 +89,7 @@ impl GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=60.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=0.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
     pub fn new(
         model_path: String,
         training_data_path: String,

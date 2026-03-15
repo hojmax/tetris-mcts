@@ -96,55 +96,15 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
 ## Prompts To Run
 
-> In tetris_core/src/runtime/game_generator/runtime.rs do I have a worker just for saving files? Why? Like is_save_worker. Also wait am I writing to disk every 4 (GAME_COMMIT_BATCH_SIZE) games ending? That seems very slow.
-
-> Is the slicing algorithm for loading up the gpu and efficient way of doing it? Any simpler way of ensuring the training data is on the gpu? Also why is my gpu not running out of memory, is like 2M training points not a crap ton of data. Or maybe not?
-
-> In tetris_core/src/search/utils.rs why do we need:
-
-    ```
-
-        let mut overhang_fields: u32 = 0;
-        let mut holes: u32 = 0;
-        for x in 0..env.width {
-            let mut seen_filled = false;
-            for y in 0..env.height {
-                let idx = y * env.width + x;
-                let cell = board[idx];
-                if cell != 0 {
-                    seen_filled = true;
-                    continue;
-                }
-                if seen_filled {
-                    overhang_fields += 1;
-                    if !reachable[idx] {
-                        holes += 1;
-                    }
-                }
-            }
-        }
-    ```
-
-    Is holes not just 200 - blocks - visit_count. I.e. holes are what is left when you account for all the air you can visit and the placed blocks? But actually thinking of it, since we anyway need the loop for overhang, then kind of makes sense to just do the holes in there?
-
-> Is the replay storage format the most efficient?
-
-> I want a new metric that considers how much variance there is in the value estimate along the chosen trajectory. Like if the model was a perfect predictor, then the past cummulative attack + predicted future, should be fully constant throughout the trajectory. So I want to for each game, get the variance of this for the chosen actions, so variance over past cum + network prediction for each step of played game and return that. Or is variance like the best metric here, or what would you think would be useful to log here for this?
-
 > Should we try to compress the policy targets for saving to disk? Like only saving the floats for the valid actions, rest is just zeros anyway right?
 
-> Am I correctly currently taking the average over 100 steps when logging the step info to wanddb, like I do for games, or am I logging every single GPU step?
-
 > I still cant see a full tree with reuse in the make viz. It just loads for ever please fix.
-
-> Is there a cleaner way than what I am doing right now for syncing replay buffer to GPU?
 
 > Why is tetris_core/src/replay/mod.rs its own file?
 
 > Clean up dead code please around the repo
 
 > Instead of encode_board_features should we just save that directly on the env?
-
 
 ## Python Code
 

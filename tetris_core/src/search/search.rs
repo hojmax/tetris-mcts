@@ -81,7 +81,17 @@ fn action_reveals_new_visible_piece(state: &TetrisEnv, action_idx: usize) -> boo
 }
 
 pub(super) trait LeafEvaluator {
-    fn evaluate(&self, state: &TetrisEnv, max_placements: u32) -> Result<(Vec<f32>, f32), String>;
+    fn evaluate(
+        &self,
+        state: &TetrisEnv,
+        max_placements: u32,
+    ) -> Result<LeafEvaluation, String>;
+}
+
+pub(super) struct LeafEvaluation {
+    pub(super) action_priors: Vec<f32>,
+    pub(super) raw_value: f32,
+    pub(super) value: f32,
 }
 
 pub(super) struct NeuralLeafEvaluator<'a> {
@@ -90,14 +100,22 @@ pub(super) struct NeuralLeafEvaluator<'a> {
 }
 
 impl LeafEvaluator for NeuralLeafEvaluator<'_> {
-    fn evaluate(&self, state: &TetrisEnv, max_placements: u32) -> Result<(Vec<f32>, f32), String> {
+    fn evaluate(
+        &self,
+        state: &TetrisEnv,
+        max_placements: u32,
+    ) -> Result<LeafEvaluation, String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
         match self.nn.predict_with_valid_actions(
             state,
             valid_actions.as_slice(),
             max_placements as usize,
         ) {
-            Ok((policy, value)) => Ok((policy, scale_nn_value(value, self.nn_value_weight))),
+            Ok((policy, value)) => Ok(LeafEvaluation {
+                action_priors: policy,
+                raw_value: value,
+                value: scale_nn_value(value, self.nn_value_weight),
+            }),
             Err(error) => Err(format!(
                 "NN prediction failed during expansion at move {}: {}",
                 state.placement_count, error
@@ -109,12 +127,17 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
 pub(super) struct BootstrapLeafEvaluator;
 
 impl LeafEvaluator for BootstrapLeafEvaluator {
-    fn evaluate(&self, state: &TetrisEnv, _max_placements: u32) -> Result<(Vec<f32>, f32), String> {
+    fn evaluate(
+        &self,
+        state: &TetrisEnv,
+        _max_placements: u32,
+    ) -> Result<LeafEvaluation, String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
-        Ok((
-            uniform_action_priors_for_valid_actions(valid_actions.len()),
-            0.0,
-        ))
+        Ok(LeafEvaluation {
+            action_priors: uniform_action_priors_for_valid_actions(valid_actions.len()),
+            raw_value: 0.0,
+            value: 0.0,
+        })
     }
 }
 
@@ -370,10 +393,14 @@ fn expand_chance<E: LeafEvaluator>(
     }
 
     let mut node = DecisionNode::new(new_state);
-    let (action_priors, value) = evaluator
+    let evaluation = evaluator
         .evaluate(&node.state, max_placements)
         .map_err(ExpandActionError::EvaluatorFailed)?;
-    node.set_nn_output_for_valid_actions(&action_priors, value);
+    node.set_nn_output_for_valid_actions_with_raw(
+        &evaluation.action_priors,
+        evaluation.raw_value,
+        evaluation.value,
+    );
 
     Ok(MCTSNode::Decision(node))
 }
@@ -608,7 +635,11 @@ pub(super) fn search_internal(
         nn_value_weight: config.nn_value_weight,
     };
     let mut root = DecisionNode::new(env.clone());
-    root.set_nn_output(&policy, scale_nn_value(nn_value, config.nn_value_weight));
+    root.set_nn_output_with_raw(
+        &policy,
+        nn_value,
+        scale_nn_value(nn_value, config.nn_value_weight),
+    );
     root.set_initial_total_value_estimate(root.state.attack as f32 + root.nn_value);
     run_search(config, &evaluator, root, add_noise)
 }
@@ -673,12 +704,13 @@ mod tests {
             &self,
             state: &TetrisEnv,
             _max_placements: u32,
-        ) -> Result<(Vec<f32>, f32), String> {
+        ) -> Result<LeafEvaluation, String> {
             let valid_actions = state.get_cached_valid_action_indices_arc();
-            Ok((
-                uniform_action_priors_for_valid_actions(valid_actions.len()),
-                self.value,
-            ))
+            Ok(LeafEvaluation {
+                action_priors: uniform_action_priors_for_valid_actions(valid_actions.len()),
+                raw_value: self.value,
+                value: self.value,
+            })
         }
     }
 
