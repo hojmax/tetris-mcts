@@ -948,6 +948,20 @@ def main(args: ScriptArgs) -> None:
         eval_seeds = list(
             range(args.eval_seed_start, args.eval_seed_start + args.num_eval_games)
         )
+        logger.info(
+            "Starting warm-start final MCTS eval",
+            model_path=str(incumbent_onnx_path),
+            num_games=len(eval_seeds),
+            seed_start=eval_seeds[0],
+            seed_end=eval_seeds[-1],
+            num_workers=eval_num_workers,
+            num_simulations=eval_num_simulations,
+            max_placements=eval_max_placements,
+            mcts_seed=resolved_mcts_seed,
+            nn_value_weight=output_config.self_play.nn_value_weight,
+            death_penalty=output_config.self_play.death_penalty,
+            overhang_penalty_weight=output_config.self_play.overhang_penalty_weight,
+        )
         eval_result = evaluate_model(
             model_path=str(incumbent_onnx_path),
             seeds=eval_seeds,
