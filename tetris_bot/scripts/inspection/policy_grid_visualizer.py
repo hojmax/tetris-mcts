@@ -19,6 +19,8 @@ logger = structlog.get_logger()
 
 ROTATION_LABELS = ["0", "R", "2", "L"]
 GRID_CELLS_PER_MAP = BOARD_HEIGHT * BOARD_WIDTH
+AGGREGATE_PIECE_VALUE = "D"
+AGGREGATE_PIECE_LABEL = "D (all layers)"
 
 TETROMINO_CELLS: list[list[list[tuple[int, int]]]] = [
     [
@@ -93,6 +95,24 @@ class PlacementInfo:
     max_dy: int
 
 
+@dataclass(frozen=True)
+class AggregateCellInfo:
+    grid_x: int
+    grid_y: int
+    active_count: int
+    inactive_count: int
+    active_layer_labels: tuple[str, ...]
+    union_cells: tuple[tuple[int, int], ...]
+
+
+PieceSelection = int | str
+REAL_PIECE_VALUES: list[int] = list(range(len(PIECE_NAMES)))
+PIECE_SELECTOR_VALUES: list[PieceSelection] = REAL_PIECE_VALUES + [AGGREGATE_PIECE_VALUE]
+PIECE_SELECTOR_OPTIONS = [
+    {"label": name, "value": index} for index, name in enumerate(PIECE_NAMES)
+] + [{"label": AGGREGATE_PIECE_LABEL, "value": AGGREGATE_PIECE_VALUE}]
+
+
 def _piece_cells(piece_type: int, rotation: int) -> tuple[tuple[int, int], ...]:
     return tuple(TETROMINO_CELLS[piece_type][rotation])
 
@@ -153,6 +173,38 @@ def build_placement_info(
     )
 
 
+def build_aggregate_cell_info(grid_x: int, grid_y: int) -> AggregateCellInfo:
+    active_placements: list[PlacementInfo] = []
+    for piece_type in REAL_PIECE_VALUES:
+        for rotation in range(4):
+            info = build_placement_info(piece_type, rotation, grid_x, grid_y)
+            if info.valid:
+                active_placements.append(info)
+
+    union_cells = tuple(
+        sorted(
+            {
+                cell
+                for placement in active_placements
+                for cell in placement.in_bounds_cells
+            }
+        )
+    )
+    active_layer_labels = tuple(
+        f"{PIECE_NAMES[placement.piece_type]} {ROTATION_LABELS[placement.rotation]}"
+        for placement in active_placements
+    )
+    active_count = len(active_placements)
+    return AggregateCellInfo(
+        grid_x=grid_x,
+        grid_y=grid_y,
+        active_count=active_count,
+        inactive_count=(len(REAL_PIECE_VALUES) * len(ROTATION_LABELS)) - active_count,
+        active_layer_labels=active_layer_labels,
+        union_cells=union_cells,
+    )
+
+
 def count_valid_cells(piece_type: int, rotation: int) -> int:
     valid = 0
     for grid_y in range(BOARD_HEIGHT):
@@ -179,13 +231,105 @@ def build_summary_counts() -> list[list[dict[str, int]]]:
 
 
 SUMMARY_COUNTS = build_summary_counts()
+AGGREGATE_GRID_COUNTS = [
+    [
+        build_aggregate_cell_info(grid_x, grid_y).active_count
+        for grid_x in range(BOARD_WIDTH)
+    ]
+    for grid_y in range(BOARD_HEIGHT)
+]
+AGGREGATE_UNION_VALID = sum(
+    1 for row in AGGREGATE_GRID_COUNTS for active_count in row if active_count > 0
+)
+AGGREGATE_UNION_MASKED = GRID_CELLS_PER_MAP - AGGREGATE_UNION_VALID
+TOTAL_REAL_LAYER_VALID = sum(
+    counts["valid"] for piece_counts in SUMMARY_COUNTS for counts in piece_counts
+)
+TOTAL_REAL_LAYER_MASKED = sum(
+    counts["masked"] for piece_counts in SUMMARY_COUNTS for counts in piece_counts
+)
 
 
 def _format_cells(cells: tuple[tuple[int, int], ...]) -> str:
     return ", ".join(f"({x}, {y})" for x, y in cells) if cells else "none"
 
 
-def make_policy_grid_figure(piece_type: int, rotation: int) -> go.Figure:
+def _format_layer_labels(labels: tuple[str, ...]) -> str:
+    return ", ".join(labels) if labels else "none"
+
+
+def make_policy_grid_figure(piece_selection: PieceSelection, rotation: int) -> go.Figure:
+    if piece_selection == AGGREGATE_PIECE_VALUE:
+        customdata: list[list[list[str | int]]] = []
+        for grid_y in range(BOARD_HEIGHT):
+            custom_row: list[list[str | int]] = []
+            for grid_x in range(BOARD_WIDTH):
+                aggregate = build_aggregate_cell_info(grid_x, grid_y)
+                custom_row.append(
+                    [
+                        aggregate.active_count,
+                        aggregate.inactive_count,
+                        _format_cells(aggregate.union_cells),
+                        _format_layer_labels(aggregate.active_layer_labels),
+                    ]
+                )
+            customdata.append(custom_row)
+
+        figure = go.Figure(
+            data=[
+                go.Heatmap(
+                    z=AGGREGATE_GRID_COUNTS,
+                    x=list(range(BOARD_WIDTH)),
+                    y=list(range(BOARD_HEIGHT)),
+                    customdata=customdata,
+                    showscale=True,
+                    xgap=2,
+                    ygap=2,
+                    zmin=0,
+                    zmax=len(REAL_PIECE_VALUES) * len(ROTATION_LABELS),
+                    colorbar={"title": "Active<br>layers"},
+                    colorscale=[
+                        [0.0, "#D7D9CE"],
+                        [0.001, "#F2E7C9"],
+                        [0.25, "#D9C36A"],
+                        [0.6, "#8A9A3A"],
+                        [1.0, "#355E3B"],
+                    ],
+                    hovertemplate=(
+                        "Scheme cell: (%{x}, %{y})<br>"
+                        "Active layers: %{customdata[0]}<br>"
+                        "Inactive layers: %{customdata[1]}<br>"
+                        "Union occupied cells: %{customdata[2]}<br>"
+                        "Active piece/rotation layers: %{customdata[3]}<extra></extra>"
+                    ),
+                )
+            ]
+        )
+        figure.update_layout(
+            title=(
+                f"{AGGREGATE_PIECE_LABEL}: {AGGREGATE_UNION_VALID} ever-active cells, "
+                f"{AGGREGATE_UNION_MASKED} never-active cells"
+            ),
+            template="plotly_white",
+            paper_bgcolor="#F7F3E8",
+            plot_bgcolor="#F7F3E8",
+            margin=dict(l=32, r=16, t=56, b=32),
+            font=dict(family="Menlo, Consolas, monospace", color="#2F241F"),
+        )
+        figure.update_xaxes(
+            title="Scheme x",
+            tickmode="array",
+            tickvals=list(range(BOARD_WIDTH)),
+            side="top",
+        )
+        figure.update_yaxes(
+            title="Scheme y",
+            tickmode="array",
+            tickvals=list(range(BOARD_HEIGHT)),
+            autorange="reversed",
+        )
+        return figure
+
     z_values: list[list[int]] = []
     customdata: list[list[list[str | int]]] = []
 
@@ -193,7 +337,7 @@ def make_policy_grid_figure(piece_type: int, rotation: int) -> go.Figure:
         z_row: list[int] = []
         custom_row: list[list[str | int]] = []
         for grid_x in range(BOARD_WIDTH):
-            info = build_placement_info(piece_type, rotation, grid_x, grid_y)
+            info = build_placement_info(int(piece_selection), rotation, grid_x, grid_y)
             z_row.append(1 if info.valid else 0)
             custom_row.append(
                 [
@@ -207,8 +351,8 @@ def make_policy_grid_figure(piece_type: int, rotation: int) -> go.Figure:
         z_values.append(z_row)
         customdata.append(custom_row)
 
-    piece_name = PIECE_NAMES[piece_type]
-    counts = SUMMARY_COUNTS[piece_type][rotation]
+    piece_name = PIECE_NAMES[int(piece_selection)]
+    counts = SUMMARY_COUNTS[int(piece_selection)][rotation]
     figure = go.Figure(
         data=[
             go.Heatmap(
@@ -261,18 +405,15 @@ def make_policy_grid_figure(piece_type: int, rotation: int) -> go.Figure:
     return figure
 
 
-def make_preview_board(info: PlacementInfo) -> html.Div:
-    occupied = set(info.in_bounds_cells)
-    piece_color = PIECE_COLORS[info.piece_type]
+def make_preview_board(
+    occupied_cells: tuple[tuple[int, int], ...], background_color: str
+) -> html.Div:
+    occupied = set(occupied_cells)
     grid_children: list[html.Div] = []
     for y in range(BOARD_HEIGHT):
         for x in range(BOARD_WIDTH):
             is_piece = (x, y) in occupied
-            background = (
-                f"rgb({piece_color[0]}, {piece_color[1]}, {piece_color[2]})"
-                if is_piece
-                else "#EFE6D2"
-            )
+            background = background_color if is_piece else "#EFE6D2"
             grid_children.append(
                 html.Div(
                     style={
@@ -301,7 +442,9 @@ def make_preview_board(info: PlacementInfo) -> html.Div:
     )
 
 
-def make_summary_table(selected_piece: int, selected_rotation: int) -> html.Table:
+def make_summary_table(
+    selected_piece: PieceSelection, selected_rotation: int
+) -> html.Table:
     header = html.Thead(
         html.Tr(
             [
@@ -324,6 +467,16 @@ def make_summary_table(selected_piece: int, selected_rotation: int) -> html.Tabl
                     },
                 )
                 for label in ROTATION_LABELS
+            ]
+            + [
+                html.Th(
+                    "Total",
+                    style={
+                        "padding": "10px 12px",
+                        "textAlign": "left",
+                        "borderBottom": "2px solid #B89F7A",
+                    },
+                )
             ]
         )
     )
@@ -364,7 +517,73 @@ def make_summary_table(selected_piece: int, selected_rotation: int) -> html.Tabl
                     },
                 )
             )
+        total_valid = sum(counts["valid"] for counts in SUMMARY_COUNTS[piece_type])
+        total_masked = sum(counts["masked"] for counts in SUMMARY_COUNTS[piece_type])
+        row_cells.append(
+            html.Td(
+                [
+                    html.Div(
+                        f"{total_valid} valid total",
+                        style={"fontWeight": 700, "marginBottom": "2px"},
+                    ),
+                    html.Div(
+                        f"{total_masked} masked total",
+                        style={"fontSize": "12px", "opacity": 0.8},
+                    ),
+                ],
+                style={
+                    "padding": "10px 12px",
+                    "borderBottom": "1px solid #D8CBB6",
+                    "background": "#D9E8BF"
+                    if piece_type == selected_piece
+                    else "transparent",
+                },
+            )
+        )
         body_rows.append(html.Tr(row_cells))
+
+    aggregate_selected = selected_piece == AGGREGATE_PIECE_VALUE
+    aggregate_row = [
+        html.Td(
+            AGGREGATE_PIECE_LABEL,
+            style={
+                "padding": "10px 12px",
+                "fontWeight": 700,
+                "borderBottom": "1px solid #D8CBB6",
+            },
+        )
+    ]
+    for _ in range(4):
+        aggregate_row.append(
+            html.Td(
+                html.Div("aggregate", style={"fontStyle": "italic", "opacity": 0.8}),
+                style={
+                    "padding": "10px 12px",
+                    "borderBottom": "1px solid #D8CBB6",
+                    "background": "#D9E8BF" if aggregate_selected else "transparent",
+                },
+            )
+        )
+    aggregate_row.append(
+        html.Td(
+            [
+                html.Div(
+                    f"{AGGREGATE_UNION_VALID} ever-active",
+                    style={"fontWeight": 700, "marginBottom": "2px"},
+                ),
+                html.Div(
+                    f"{AGGREGATE_UNION_MASKED} never-active",
+                    style={"fontSize": "12px", "opacity": 0.8},
+                ),
+            ],
+            style={
+                "padding": "10px 12px",
+                "borderBottom": "1px solid #D8CBB6",
+                "background": "#D9E8BF" if aggregate_selected else "transparent",
+            },
+        )
+    )
+    body_rows.append(html.Tr(aggregate_row))
 
     return html.Table(
         [header, html.Tbody(body_rows)],
@@ -377,28 +596,62 @@ def make_summary_table(selected_piece: int, selected_rotation: int) -> html.Tabl
     )
 
 
-def make_hover_details(info: PlacementInfo) -> html.Div:
-    piece_name = PIECE_NAMES[info.piece_type]
+def make_hover_details(
+    piece_selection: PieceSelection,
+    placement_info: PlacementInfo | None = None,
+    aggregate_info: AggregateCellInfo | None = None,
+) -> html.Div:
+    if piece_selection == AGGREGATE_PIECE_VALUE:
+        if aggregate_info is None:
+            raise ValueError("aggregate_info is required for aggregate selection")
+        return html.Div(
+            [
+                html.H3(
+                    f"{AGGREGATE_PIECE_LABEL} @ scheme ({aggregate_info.grid_x}, {aggregate_info.grid_y})",
+                    style={"margin": "0 0 12px 0", "fontSize": "20px"},
+                ),
+                html.P(
+                    f"Active layers: {aggregate_info.active_count} of {len(REAL_PIECE_VALUES) * len(ROTATION_LABELS)}",
+                    style={"margin": "0 0 8px 0"},
+                ),
+                html.P(
+                    f"Never-active layers here: {aggregate_info.inactive_count}",
+                    style={"margin": "0 0 8px 0"},
+                ),
+                html.P(
+                    f"Union occupied cells: {_format_cells(aggregate_info.union_cells)}",
+                    style={"margin": "0 0 8px 0"},
+                ),
+                html.P(
+                    f"Active piece/rotation layers: {_format_layer_labels(aggregate_info.active_layer_labels)}",
+                    style={"margin": "0"},
+                ),
+            ]
+        )
+
+    if placement_info is None:
+        raise ValueError("placement_info is required for real piece selection")
+    piece_name = PIECE_NAMES[placement_info.piece_type]
     return html.Div(
         [
             html.H3(
-                f"{piece_name} @ scheme ({info.grid_x}, {info.grid_y})",
+                f"{piece_name} @ scheme ({placement_info.grid_x}, {placement_info.grid_y})",
                 style={"margin": "0 0 12px 0", "fontSize": "20px"},
             ),
             html.P(
-                f"Rotation {ROTATION_LABELS[info.rotation]} | anchor=({info.anchor_x}, {info.anchor_y}) | status={'valid' if info.valid else 'masked'}",
+                f"Rotation {ROTATION_LABELS[placement_info.rotation]} | anchor=({placement_info.anchor_x}, {placement_info.anchor_y}) | status={'valid' if placement_info.valid else 'masked'}",
                 style={"margin": "0 0 8px 0"},
             ),
             html.P(
-                f"Bounding box: {info.width}x{info.height} from local x=[{info.min_dx}, {info.max_dx}] y=[{info.min_dy}, {info.max_dy}]",
+                f"Bounding box: {placement_info.width}x{placement_info.height} from local x=[{placement_info.min_dx}, {placement_info.max_dx}] y=[{placement_info.min_dy}, {placement_info.max_dy}]",
                 style={"margin": "0 0 8px 0"},
             ),
             html.P(
-                f"In-bounds occupied cells: {_format_cells(info.in_bounds_cells)}",
+                f"In-bounds occupied cells: {_format_cells(placement_info.in_bounds_cells)}",
                 style={"margin": "0 0 8px 0"},
             ),
             html.P(
-                f"Off-board occupied cells: {_format_cells(info.out_of_bounds_cells)}",
+                f"Off-board occupied cells: {_format_cells(placement_info.out_of_bounds_cells)}",
                 style={"margin": "0"},
             ),
         ]
@@ -444,10 +697,7 @@ app.layout = html.Div(
                         ),
                         dcc.Dropdown(
                             id="piece-dropdown",
-                            options=[
-                                {"label": name, "value": index}
-                                for index, name in enumerate(PIECE_NAMES)
-                            ],
+                            options=PIECE_SELECTOR_OPTIONS,
                             value=2,
                             clearable=False,
                         ),
@@ -500,7 +750,7 @@ app.layout = html.Div(
                             style={"fontWeight": 700, "marginBottom": "6px"},
                         ),
                         html.Div(
-                            "Left/Right: rotation, Up/Down: piece, 1-7: direct piece select.",
+                            "Left/Right: rotation, Up/Down: piece, 1-7 real pieces, 8 selects D aggregate.",
                             style={"lineHeight": 1.45, "fontSize": "13px"},
                         ),
                     ],
@@ -578,11 +828,11 @@ app.layout = html.Div(
                 html.Div(
                     [
                         html.Div(
-                            f"Across all 28 piece/rotation maps: {sum(cell['masked'] for piece in SUMMARY_COUNTS for cell in piece)} masked / {sum(cell['valid'] for piece in SUMMARY_COUNTS for cell in piece)} valid",
+                            f"Across all 28 real piece/rotation maps: {TOTAL_REAL_LAYER_MASKED} masked / {TOTAL_REAL_LAYER_VALID} valid",
                             style={"fontWeight": 700},
                         ),
                         html.Div(
-                            "This view only reflects board-boundary masking under the normalized 20x10 scheme, not collisions with an actual board state.",
+                            f"Aggregate D union: {AGGREGATE_UNION_VALID} ever-active cells / {AGGREGATE_UNION_MASKED} never-active cells. This still only reflects board-boundary masking under the normalized 20x10 scheme, not collisions with an actual board state.",
                             style={"marginTop": "6px", "fontSize": "13px"},
                         ),
                     ],
@@ -631,7 +881,8 @@ clientside_callback(
                     '4',
                     '5',
                     '6',
-                    '7'
+                    '7',
+                    '8'
                 ];
                 if (!allowed.includes(e.key)) {
                     return;
@@ -672,9 +923,9 @@ def update_grid_and_summary(piece_type: int, rotation: int) -> tuple[go.Figure, 
 )
 def handle_keyboard_event(
     keyboard_event: dict[str, int | str] | None,
-    current_piece: int,
+    current_piece: PieceSelection,
     current_rotation: int,
-) -> tuple[int, int]:
+) -> tuple[PieceSelection, int]:
     if not keyboard_event:
         return current_piece, current_rotation
 
@@ -686,12 +937,15 @@ def handle_keyboard_event(
         return current_piece, (current_rotation - 1) % 4
     if key == "ArrowRight":
         return current_piece, (current_rotation + 1) % 4
+    current_index = PIECE_SELECTOR_VALUES.index(current_piece)
     if key == "ArrowUp":
-        return (current_piece - 1) % len(PIECE_NAMES), current_rotation
+        return PIECE_SELECTOR_VALUES[(current_index - 1) % len(PIECE_SELECTOR_VALUES)], current_rotation
     if key == "ArrowDown":
-        return (current_piece + 1) % len(PIECE_NAMES), current_rotation
+        return PIECE_SELECTOR_VALUES[(current_index + 1) % len(PIECE_SELECTOR_VALUES)], current_rotation
     if key in {"1", "2", "3", "4", "5", "6", "7"}:
         return int(key) - 1, current_rotation
+    if key == "8":
+        return AGGREGATE_PIECE_VALUE, current_rotation
 
     return current_piece, current_rotation
 
@@ -704,7 +958,7 @@ def handle_keyboard_event(
     Input("policy-grid", "hoverData"),
 )
 def update_hover_preview(
-    piece_type: int, rotation: int, hover_data: dict | None
+    piece_type: PieceSelection, rotation: int, hover_data: dict | None
 ) -> tuple[html.Div, html.Div]:
     if hover_data and hover_data.get("points"):
         point = hover_data["points"][0]
@@ -714,15 +968,31 @@ def update_hover_preview(
         grid_x = 0
         grid_y = 0
 
-    info = build_placement_info(piece_type, rotation, grid_x, grid_y)
-    details = make_hover_details(info)
+    if piece_type == AGGREGATE_PIECE_VALUE:
+        aggregate_info = build_aggregate_cell_info(grid_x, grid_y)
+        details = make_hover_details(piece_type, aggregate_info=aggregate_info)
+        preview_body = make_preview_board(
+            aggregate_info.union_cells,
+            background_color="#9C6644",
+        )
+        preview_title = "Board Preview (union across active layers)"
+    else:
+        placement_info = build_placement_info(int(piece_type), rotation, grid_x, grid_y)
+        details = make_hover_details(piece_type, placement_info=placement_info)
+        piece_color = PIECE_COLORS[int(piece_type)]
+        preview_body = make_preview_board(
+            placement_info.in_bounds_cells,
+            background_color=f"rgb({piece_color[0]}, {piece_color[1]}, {piece_color[2]})",
+        )
+        preview_title = "Board Preview"
+
     preview = html.Div(
         [
             html.H3(
-                "Board Preview",
+                preview_title,
                 style={"margin": "0 0 12px 0", "fontSize": "20px"},
             ),
-            make_preview_board(info),
+            preview_body,
         ]
     )
     return details, preview
