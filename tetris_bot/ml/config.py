@@ -221,7 +221,7 @@ def _coerce_mapping(
     raw_value: object,
     *,
     field_name: str,
-) -> Mapping[str, object]:
+) -> Mapping[str, Any]:
     if not isinstance(raw_value, Mapping):
         raise TypeError(
             f"{field_name} must be a mapping in saved training config "
