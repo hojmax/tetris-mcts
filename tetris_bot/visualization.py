@@ -315,6 +315,7 @@ def _capture_frame(
     move_number: int,
     attack: int,
     is_terminal: bool = False,
+    value_pred: float | None = None,
 ) -> Image.Image:
     board = np.array(env.get_board())
     board_piece_types = env.get_board_piece_types()
@@ -339,6 +340,7 @@ def _capture_frame(
         combo=env.combo,
         back_to_back=env.back_to_back,
         is_terminal=is_terminal,
+        value_pred=value_pred,
         show_piece_info=True,
         hold_piece_type=hold_piece.piece_type if hold_piece else None,
         queue_piece_types=list(queue_piece_types),

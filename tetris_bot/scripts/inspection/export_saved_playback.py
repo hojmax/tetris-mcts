@@ -14,10 +14,7 @@ import structlog
 from simple_parsing import parse
 
 from tetris_core.tetris_core import MCTSAgent, TetrisEnv
-from tetris_bot.constants import (
-    BOARD_HEIGHT,
-    BOARD_WIDTH,
-)
+from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH
 from tetris_bot.scripts.inspection.tree_playback_artifact import (
     save_tree_playback_artifact,
 )
@@ -25,7 +22,6 @@ from tetris_bot.scripts.utils.run_search_config import (
     build_mcts_config,
     default_checkpoint_path,
     default_model_path,
-    load_effective_self_play_config,
 )
 
 logger = structlog.get_logger()
@@ -54,6 +50,8 @@ def resolve_output_path(args: ScriptArgs) -> Path:
         / "eval_trees"
         / f"seed{args.seed}_full_game_playback.json"
     )
+
+
 def main(args: ScriptArgs) -> None:
     run_dir = args.run_dir.resolve()
     model_path = resolve_model_path(args).resolve()
