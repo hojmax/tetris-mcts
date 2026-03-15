@@ -76,18 +76,6 @@ In progress: 🟨
 
 ### tetris_core/src/runtime/game_generator/py_api.rs ✅
 
-Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
-
-## Prompts To Run
-
-> Should we try to compress the policy targets for saving to disk? Like only saving the floats for the valid actions, rest is just zeros anyway right?
-
-> Why is tetris_core/src/replay/mod.rs its own file?
-
-> Clean up dead code please around the repo
-
-> Instead of encode_board_features should we just save that directly on the env?
-
 ## Python Code
 
 ### tetris_bot/config.py ✅

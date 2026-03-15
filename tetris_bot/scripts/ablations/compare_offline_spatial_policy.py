@@ -114,9 +114,7 @@ class ScriptArgs:
     value_loss_weight: float = 1.0
 
     baseline_trunk_channels: int = _DEFAULT_NETWORK.trunk_channels
-    baseline_num_conv_residual_blocks: int = (
-        _DEFAULT_NETWORK.num_conv_residual_blocks
-    )
+    baseline_num_conv_residual_blocks: int = _DEFAULT_NETWORK.num_conv_residual_blocks
     baseline_reduction_channels: int = _DEFAULT_NETWORK.reduction_channels
     baseline_fc_hidden: int = _DEFAULT_NETWORK.fc_hidden
     baseline_aux_hidden: int = _DEFAULT_NETWORK.aux_hidden
@@ -125,9 +123,7 @@ class ScriptArgs:
     baseline_conv_padding: int = _DEFAULT_NETWORK.conv_padding
 
     spatial_trunk_channels: int = _DEFAULT_NETWORK.trunk_channels
-    spatial_num_conv_residual_blocks: int = (
-        _DEFAULT_NETWORK.num_conv_residual_blocks
-    )
+    spatial_num_conv_residual_blocks: int = _DEFAULT_NETWORK.num_conv_residual_blocks
     spatial_aux_hidden: int = _DEFAULT_NETWORK.aux_hidden
     spatial_decoder_channels: int = _DEFAULT_NETWORK.reduction_channels
     spatial_num_decoder_blocks: int = 1
@@ -151,11 +147,18 @@ def _piece_min_offsets(piece_type: int, rotation: int) -> tuple[int, int]:
     return min_dx, min_dy
 
 
-def _is_valid_position_empty_board(piece_type: int, rotation: int, x: int, y: int) -> bool:
+def _is_valid_position_empty_board(
+    piece_type: int, rotation: int, x: int, y: int
+) -> bool:
     for dx, dy in TETROMINO_CELLS[piece_type][rotation]:
         board_x = x + dx
         board_y = y + dy
-        if board_x < 0 or board_x >= BOARD_WIDTH or board_y < 0 or board_y >= BOARD_HEIGHT:
+        if (
+            board_x < 0
+            or board_x >= BOARD_WIDTH
+            or board_y < 0
+            or board_y >= BOARD_HEIGHT
+        ):
             return False
     return True
 
@@ -179,7 +182,9 @@ def _build_action_space_positions() -> list[tuple[int, int, int]]:
     return valid_positions
 
 
-def _build_piece_action_grid_maps() -> tuple[torch.Tensor, torch.Tensor, list[int], list[int]]:
+def _build_piece_action_grid_maps() -> tuple[
+    torch.Tensor, torch.Tensor, list[int], list[int]
+]:
     action_positions = _build_action_space_positions()
     action_grid_index_by_piece = torch.zeros(
         (NUM_PIECE_TYPES, NUM_PLACEMENT_ACTIONS), dtype=torch.long
@@ -205,7 +210,9 @@ def _build_piece_action_grid_maps() -> tuple[torch.Tensor, torch.Tensor, list[in
                     f"piece={piece_type}, rotation={rotation}, x={x}, y={y}, "
                     f"grid_x={grid_x}, grid_y={grid_y}"
                 )
-            flat_index = rotation * BOARD_HEIGHT * BOARD_WIDTH + grid_y * BOARD_WIDTH + grid_x
+            flat_index = (
+                rotation * BOARD_HEIGHT * BOARD_WIDTH + grid_y * BOARD_WIDTH + grid_x
+            )
             if flat_index in unique_flat_indices:
                 raise ValueError(
                     "Structured policy mapping collided within a single piece. "
@@ -305,7 +312,9 @@ class SpatialPolicyDecoderTetrisNet(nn.Module):
                 for _ in range(num_decoder_blocks)
             ]
         )
-        self.policy_head = nn.Conv2d(decoder_channels, len(ROTATION_LABELS), kernel_size=1)
+        self.policy_head = nn.Conv2d(
+            decoder_channels, len(ROTATION_LABELS), kernel_size=1
+        )
 
         pooled_features = trunk_channels + aux_hidden + BOARD_STATS_FEATURES
         self.value_fc = nn.Linear(pooled_features, value_hidden)
@@ -341,7 +350,9 @@ class SpatialPolicyDecoderTetrisNet(nn.Module):
             board_map = block(board_map)
 
         aux_hidden = F.silu(self.aux_ln(self.aux_fc(piece_aux)))
-        gate = torch.sigmoid(self.spatial_gate_fc(aux_hidden)).unsqueeze(-1).unsqueeze(-1)
+        gate = (
+            torch.sigmoid(self.spatial_gate_fc(aux_hidden)).unsqueeze(-1).unsqueeze(-1)
+        )
         bias = self.spatial_bias_fc(aux_hidden).unsqueeze(-1).unsqueeze(-1)
         fused_spatial = board_map * (1.0 + gate) + bias
 
@@ -431,7 +442,9 @@ def log_mapping_metadata() -> dict[str, int]:
         "mapping/hold_actions": 1,
     }
     for rotation_idx, count in enumerate(ROTATION_ACTION_COUNTS):
-        metadata[f"mapping/rotation_{ROTATION_LABELS[rotation_idx]}_action_count"] = count
+        metadata[f"mapping/rotation_{ROTATION_LABELS[rotation_idx]}_action_count"] = (
+            count
+        )
     for piece_idx, count in enumerate(PIECE_VALID_ACTION_COUNTS):
         metadata[f"mapping/piece_{PIECE_NAMES[piece_idx]}_valid_actions"] = count
     return metadata

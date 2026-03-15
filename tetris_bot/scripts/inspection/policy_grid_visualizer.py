@@ -108,7 +108,9 @@ class AggregateCellInfo:
 
 PieceSelection = int | str
 REAL_PIECE_VALUES: list[int] = list(range(len(PIECE_NAMES)))
-PIECE_SELECTOR_VALUES: list[PieceSelection] = REAL_PIECE_VALUES + [AGGREGATE_PIECE_VALUE]
+PIECE_SELECTOR_VALUES: list[PieceSelection] = REAL_PIECE_VALUES + [
+    AGGREGATE_PIECE_VALUE
+]
 PIECE_SELECTOR_OPTIONS = [
     {"label": name, "value": index} for index, name in enumerate(PIECE_NAMES)
 ] + [{"label": AGGREGATE_PIECE_LABEL, "value": AGGREGATE_PIECE_VALUE}]
@@ -136,9 +138,7 @@ def _piece_bounds(
 def build_placement_info(
     piece_type: int, rotation: int, grid_x: int, grid_y: int
 ) -> PlacementInfo:
-    min_dx, max_dx, min_dy, max_dy, width, height = _piece_bounds(
-        piece_type, rotation
-    )
+    min_dx, max_dx, min_dy, max_dy, width, height = _piece_bounds(piece_type, rotation)
     anchor_x = grid_x - min_dx
     anchor_y = grid_y - min_dy
     occupied_cells = tuple(
@@ -174,7 +174,9 @@ def build_placement_info(
     )
 
 
-def build_aggregate_cell_info(rotation: int, grid_x: int, grid_y: int) -> AggregateCellInfo:
+def build_aggregate_cell_info(
+    rotation: int, grid_x: int, grid_y: int
+) -> AggregateCellInfo:
     active_placements: list[PlacementInfo] = []
     for piece_type in REAL_PIECE_VALUES:
         info = build_placement_info(piece_type, rotation, grid_x, grid_y)
@@ -287,7 +289,9 @@ def _format_layer_labels(labels: tuple[str, ...]) -> str:
     return ", ".join(labels) if labels else "none"
 
 
-def make_policy_grid_figure(piece_selection: PieceSelection, rotation: int) -> go.Figure:
+def make_policy_grid_figure(
+    piece_selection: PieceSelection, rotation: int
+) -> go.Figure:
     if piece_selection == AGGREGATE_PIECE_VALUE:
         customdata: list[list[list[str | int]]] = []
         for grid_y in range(BOARD_HEIGHT):
@@ -526,9 +530,7 @@ def make_summary_table(
         ]
         for rotation in range(4):
             counts = SUMMARY_COUNTS[piece_type][rotation]
-            is_selected = (
-                piece_type == selected_piece and rotation == selected_rotation
-            )
+            is_selected = piece_type == selected_piece and rotation == selected_rotation
             row_cells.append(
                 html.Td(
                     [
@@ -699,6 +701,8 @@ def make_hover_details(
             ),
         ]
     )
+
+
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.title = "Policy Grid Visualizer"
 
@@ -950,7 +954,9 @@ clientside_callback(
     Input("piece-dropdown", "value"),
     Input("rotation-radio", "value"),
 )
-def update_grid_and_summary(piece_type: int, rotation: int) -> tuple[go.Figure, html.Table]:
+def update_grid_and_summary(
+    piece_type: int, rotation: int
+) -> tuple[go.Figure, html.Table]:
     return make_policy_grid_figure(piece_type, rotation), make_summary_table(
         piece_type, rotation
     )
@@ -982,9 +988,13 @@ def handle_keyboard_event(
         return current_piece, (current_rotation + 1) % 4
     current_index = PIECE_SELECTOR_VALUES.index(current_piece)
     if key == "ArrowUp":
-        return PIECE_SELECTOR_VALUES[(current_index - 1) % len(PIECE_SELECTOR_VALUES)], current_rotation
+        return PIECE_SELECTOR_VALUES[
+            (current_index - 1) % len(PIECE_SELECTOR_VALUES)
+        ], current_rotation
     if key == "ArrowDown":
-        return PIECE_SELECTOR_VALUES[(current_index + 1) % len(PIECE_SELECTOR_VALUES)], current_rotation
+        return PIECE_SELECTOR_VALUES[
+            (current_index + 1) % len(PIECE_SELECTOR_VALUES)
+        ], current_rotation
     if key in {"1", "2", "3", "4", "5", "6", "7"}:
         return int(key) - 1, current_rotation
     if key == "8":
@@ -1018,7 +1028,9 @@ def update_hover_preview(
             aggregate_info.union_cells,
             background_color="#9C6644",
         )
-        preview_title = "Board Preview (union across active pieces at selected rotation)"
+        preview_title = (
+            "Board Preview (union across active pieces at selected rotation)"
+        )
     else:
         placement_info = build_placement_info(int(piece_type), rotation, grid_x, grid_y)
         details = make_hover_details(piece_type, placement_info=placement_info)
