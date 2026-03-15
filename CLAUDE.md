@@ -150,6 +150,7 @@ Ownership split:
 
 ## Important Defaults (TrainingConfig)
 
+- Network (`gated_fusion` default): `trunk_channels=16`, `num_conv_residual_blocks=3`, `reduction_channels=32`, `fc_hidden=128`, `aux_hidden=64`, `num_fusion_blocks=1`.
 - MCTS: `num_simulations=2000`, `c_puct=1.5`, `temperature=0.8`, `reuse_tree=true`, `max_placements=50`.
 - Training: `batch_size=1024`, `learning_rate=5e-4` with decay to `1e-4`, `weight_decay=1e-4`.
 - Workers/buffer: `num_workers=7`, replay ring buffer size `2_000_000`.

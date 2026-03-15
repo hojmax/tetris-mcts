@@ -53,6 +53,17 @@ def test_network_config_to_model_kwargs_includes_full_gated_fusion_surface() -> 
     }
 
 
+def test_network_config_defaults_reflect_current_cached_trunk_size() -> None:
+    network = NetworkConfig()
+
+    assert network.trunk_channels == 16
+    assert network.num_conv_residual_blocks == 3
+    assert network.reduction_channels == 32
+    assert network.fc_hidden == 128
+    assert network.aux_hidden == 64
+    assert network.num_fusion_blocks == 1
+
+
 def test_trainer_builds_model_from_full_network_config(tmp_path: Path) -> None:
     network = NetworkConfig(
         trunk_channels=6,
