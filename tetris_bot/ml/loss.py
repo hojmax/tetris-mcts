@@ -56,6 +56,33 @@ class RunningLossBalancer:
         policy_avg, value_avg = self.averages()
         return policy_avg / value_avg
 
+    def state_dict(self) -> dict[str, object]:
+        return {
+            "policy_losses": list(self._policy_losses),
+            "value_losses": list(self._value_losses),
+        }
+
+    def load_state_dict(self, state: dict[str, object]) -> None:
+        policy_losses = [float(value) for value in state.get("policy_losses", [])]
+        value_losses = [float(value) for value in state.get("value_losses", [])]
+        if len(policy_losses) != len(value_losses):
+            raise ValueError(
+                "RunningLossBalancer state must have matching policy/value histories"
+            )
+
+        self._policy_losses.clear()
+        self._value_losses.clear()
+        max_history = self._policy_losses.maxlen
+        if max_history is None:
+            raise RuntimeError(
+                "RunningLossBalancer history maxlen was unexpectedly None"
+            )
+
+        for policy_loss, value_loss in zip(
+            policy_losses[-max_history:], value_losses[-max_history:], strict=True
+        ):
+            self.append(policy_loss, value_loss)
+
 
 def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch.Tensor:
     """

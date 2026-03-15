@@ -18,8 +18,10 @@ from simple_parsing import parse
 from tetris_core.tetris_core import MCTSConfig, evaluate_model
 from tetris_bot.constants import (
     BENCHMARKS_DIR,
+    CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     INCUMBENT_ONNX_FILENAME,
+    LATEST_CHECKPOINT_FILENAME,
     LATEST_METADATA_FILENAME,
     LATEST_ONNX_FILENAME,
     PARALLEL_ONNX_FILENAME,
@@ -63,12 +65,14 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
 logger = structlog.get_logger()
 _OPTIMIZE_CACHE_DIR = BENCHMARKS_DIR / "profiles" / "optimize_cache"
 _OPTIMIZED_WORKERS_ENV_VAR = "TETRIS_OPT_NUM_WORKERS"
+_OFFLINE_RESUME_CHECKPOINT_FILENAME = "warm_start_offline_latest.pt"
 
 
 @dataclass
 class ScriptArgs:
     source_run_dir: Path
     output_run_dir: Path | None = None
+    resume_from_source_offline_state: bool = False
     device: str = "auto"
     seed: int = 123
     epochs_per_round: float = 2.0
@@ -108,11 +112,28 @@ class WarmStartTrainingResult:
     best_state_dict: dict[str, torch.Tensor]
     best_record: dict[str, float | int | bool | str]
     history: list[dict[str, float | int | bool | str]]
+    optimizer_state_dict: dict[str, object]
+    loss_balancer_state: dict[str, object]
+    current_value_loss_weight: float
+    rng_state: dict[str, object]
     total_steps: int
     steps_per_round: int
     rounds_completed: int
     stop_reason: str
     stopped_after_non_improving_rounds: int
+
+
+@dataclass(frozen=True)
+class WarmStartOfflineResumeState:
+    checkpoint_path: Path
+    best_state_dict: dict[str, torch.Tensor]
+    best_record: dict[str, float | int | bool | str]
+    history: list[dict[str, float | int | bool | str]]
+    total_steps: int
+    rounds_completed: int
+    non_improving_rounds: int
+    current_value_loss_weight: float
+    rng_state: dict[str, object]
 
 
 def validate_args(args: ScriptArgs) -> None:
@@ -181,6 +202,15 @@ def validate_args(args: ScriptArgs) -> None:
     training_data_path = source_run_dir / TRAINING_DATA_FILENAME
     if not training_data_path.exists():
         raise FileNotFoundError(f"Source training data not found: {training_data_path}")
+    if args.resume_from_source_offline_state:
+        source_offline_resume_checkpoint = offline_resume_checkpoint_path(
+            source_run_dir
+        )
+        if not source_offline_resume_checkpoint.exists():
+            raise FileNotFoundError(
+                "Source run has no offline warm-start resume checkpoint: "
+                f"{source_offline_resume_checkpoint}"
+            )
 
     if args.output_run_dir is not None:
         output_run_dir = args.output_run_dir.resolve()
@@ -211,6 +241,14 @@ def compute_training_steps(
     if epochs <= 0:
         raise ValueError(f"epochs must be > 0 (got {epochs})")
     return max(1, math.ceil((train_examples * epochs) / batch_size))
+
+
+def offline_resume_checkpoint_path(run_dir: Path) -> Path:
+    return run_dir / CHECKPOINT_DIRNAME / _OFFLINE_RESUME_CHECKPOINT_FILENAME
+
+
+def source_latest_checkpoint_path(run_dir: Path) -> Path:
+    return run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
 
 
 def optimized_worker_env_cache_path(
@@ -285,6 +323,90 @@ def resolve_eval_num_workers(
     return EvalWorkerResolution(
         num_workers=max(2, default_workers),
         source="config",
+    )
+
+
+def save_offline_resume_checkpoint(
+    path: Path,
+    *,
+    model: TetrisNet,
+    optimizer_state_dict: dict[str, object],
+    best_state_dict: dict[str, torch.Tensor],
+    best_record: dict[str, float | int | bool | str],
+    history: list[dict[str, float | int | bool | str]],
+    total_steps: int,
+    rounds_completed: int,
+    non_improving_rounds: int,
+    current_value_loss_weight: float,
+    loss_balancer_state: dict[str, object],
+    rng_state: dict[str, object],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "version": 1,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer_state_dict,
+            "best_state_dict": best_state_dict,
+            "best_record": best_record,
+            "history": history,
+            "total_steps": total_steps,
+            "rounds_completed": rounds_completed,
+            "non_improving_rounds": non_improving_rounds,
+            "current_value_loss_weight": current_value_loss_weight,
+            "loss_balancer_state": loss_balancer_state,
+            "rng_state": rng_state,
+        },
+        path,
+    )
+
+
+def load_offline_resume_checkpoint(
+    path: Path,
+    *,
+    model: TetrisNet,
+    optimizer: torch.optim.Optimizer,
+    loss_balancer: RunningLossBalancer,
+) -> WarmStartOfflineResumeState:
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    model_state_dict = state.get("model_state_dict")
+    if model_state_dict is None:
+        raise ValueError(f"Offline resume checkpoint is missing model state: {path}")
+    optimizer_state_dict = state.get("optimizer_state_dict")
+    if optimizer_state_dict is None:
+        raise ValueError(
+            f"Offline resume checkpoint is missing optimizer state: {path}"
+        )
+    best_state_dict = state.get("best_state_dict")
+    if best_state_dict is None:
+        raise ValueError(
+            f"Offline resume checkpoint is missing best model state: {path}"
+        )
+    best_record = state.get("best_record")
+    if best_record is None:
+        raise ValueError(f"Offline resume checkpoint is missing best record: {path}")
+
+    model.load_state_dict(model_state_dict)
+    optimizer.load_state_dict(optimizer_state_dict)
+    loss_balancer.load_state_dict(
+        state.get(
+            "loss_balancer_state",
+            {},
+        )
+    )
+
+    return WarmStartOfflineResumeState(
+        checkpoint_path=path,
+        best_state_dict={
+            key: value.detach().cpu().clone() for key, value in best_state_dict.items()
+        },
+        best_record=dict(best_record),
+        history=[dict(record) for record in state.get("history", [])],
+        total_steps=int(state.get("total_steps", 0)),
+        rounds_completed=int(state.get("rounds_completed", 0)),
+        non_improving_rounds=int(state.get("non_improving_rounds", 0)),
+        current_value_loss_weight=float(state.get("current_value_loss_weight", 1.0)),
+        rng_state=copy.deepcopy(state.get("rng_state", {})),
     )
 
 
@@ -461,6 +583,7 @@ def train_warm_start_model(
     model: TetrisNet,
     *,
     dataset_setup: OfflineDatasetSetup,
+    source_offline_resume_checkpoint: Path | None,
     device: torch.device,
     batch_size: int,
     learning_rate: float,
@@ -496,6 +619,38 @@ def train_warm_start_model(
     rounds_completed = 0
     non_improving_rounds = 0
     stop_reason = "patience_exhausted"
+    resumed_from_checkpoint = False
+
+    if source_offline_resume_checkpoint is not None:
+        resume_state = load_offline_resume_checkpoint(
+            source_offline_resume_checkpoint,
+            model=model,
+            optimizer=optimizer,
+            loss_balancer=loss_balancer,
+        )
+        if resume_state.rng_state:
+            rng.bit_generator.state = resume_state.rng_state
+        current_value_loss_weight = resume_state.current_value_loss_weight
+        history = [dict(record) for record in resume_state.history]
+        best_record = dict(resume_state.best_record)
+        best_state_dict = {
+            key: value.detach().cpu().clone()
+            for key, value in resume_state.best_state_dict.items()
+        }
+        total_steps = resume_state.total_steps
+        rounds_completed = resume_state.rounds_completed
+        non_improving_rounds = resume_state.non_improving_rounds
+        resumed_from_checkpoint = True
+        logger.info(
+            "Resumed warm-start offline state from source run",
+            checkpoint=str(source_offline_resume_checkpoint),
+            total_steps=total_steps,
+            rounds_completed=rounds_completed,
+            non_improving_rounds=non_improving_rounds,
+            best_round_index=best_record.get("round_index"),
+            best_step=best_record.get("step"),
+            best_val_selection_metric=best_record.get("val_selection_metric"),
+        )
 
     def record_eval(round_index: int, step: int, epochs_seen: float) -> None:
         nonlocal best_record, best_state_dict, non_improving_rounds
@@ -695,6 +850,7 @@ def train_warm_start_model(
 
     logger.info(
         "Warm-start offline training complete",
+        resumed_from_checkpoint=resumed_from_checkpoint,
         rounds_completed=rounds_completed,
         total_steps=total_steps,
         steps_per_round=steps_per_round,
@@ -709,6 +865,10 @@ def train_warm_start_model(
         best_state_dict=best_state_dict,
         best_record=best_record,
         history=history,
+        optimizer_state_dict=copy.deepcopy(optimizer.state_dict()),
+        loss_balancer_state=loss_balancer.state_dict(),
+        current_value_loss_weight=current_value_loss_weight,
+        rng_state=copy.deepcopy(rng.bit_generator.state),
         total_steps=total_steps,
         steps_per_round=steps_per_round,
         rounds_completed=rounds_completed,
@@ -733,6 +893,11 @@ def main(args: ScriptArgs) -> None:
     source_run_dir = args.source_run_dir.resolve()
     output_run_dir = (
         args.output_run_dir.resolve() if args.output_run_dir is not None else None
+    )
+    source_offline_resume_checkpoint = (
+        offline_resume_checkpoint_path(source_run_dir)
+        if args.resume_from_source_offline_state
+        else None
     )
     source_config_path = source_run_dir / CONFIG_FILENAME
     source_training_data_path = source_run_dir / TRAINING_DATA_FILENAME
@@ -787,6 +952,12 @@ def main(args: ScriptArgs) -> None:
         "source_run_dir": str(source_run_dir),
         "source_config_path": str(source_config_path),
         "source_training_data_path": str(source_training_data_path),
+        "resume_from_source_offline_state": args.resume_from_source_offline_state,
+        "source_offline_resume_checkpoint": (
+            str(source_offline_resume_checkpoint)
+            if source_offline_resume_checkpoint is not None
+            else None
+        ),
         "output_run_dir": str(output_config.run.run_dir),
         "device": device_str,
         "seed": args.seed,
@@ -831,6 +1002,12 @@ def main(args: ScriptArgs) -> None:
         source_run_dir=str(source_run_dir),
         output_run_dir=str(output_config.run.run_dir),
         device=device_str,
+        resume_from_source_offline_state=args.resume_from_source_offline_state,
+        source_offline_resume_checkpoint=(
+            str(source_offline_resume_checkpoint)
+            if source_offline_resume_checkpoint is not None
+            else None
+        ),
         epochs_per_round=args.epochs_per_round,
         early_stopping_patience=args.early_stopping_patience,
         max_rounds=args.max_rounds,
@@ -882,6 +1059,7 @@ def main(args: ScriptArgs) -> None:
             training_result = train_warm_start_model(
                 model,
                 dataset_setup=dataset_setup,
+                source_offline_resume_checkpoint=source_offline_resume_checkpoint,
                 device=device,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
@@ -897,6 +1075,31 @@ def main(args: ScriptArgs) -> None:
             )
         finally:
             npz.close()
+
+        offline_resume_checkpoint = offline_resume_checkpoint_path(
+            output_config.run.run_dir
+        )
+        save_offline_resume_checkpoint(
+            offline_resume_checkpoint,
+            model=model,
+            optimizer_state_dict=training_result.optimizer_state_dict,
+            best_state_dict=training_result.best_state_dict,
+            best_record=training_result.best_record,
+            history=training_result.history,
+            total_steps=training_result.total_steps,
+            rounds_completed=training_result.rounds_completed,
+            non_improving_rounds=(training_result.stopped_after_non_improving_rounds),
+            current_value_loss_weight=training_result.current_value_loss_weight,
+            loss_balancer_state=training_result.loss_balancer_state,
+            rng_state=training_result.rng_state,
+        )
+        logger.info(
+            "Saved warm-start offline resume checkpoint",
+            checkpoint=str(offline_resume_checkpoint),
+            total_steps=training_result.total_steps,
+            rounds_completed=training_result.rounds_completed,
+            non_improving_rounds=training_result.stopped_after_non_improving_rounds,
+        )
 
         model.load_state_dict(training_result.best_state_dict)
         model.eval()
@@ -1072,6 +1275,12 @@ def main(args: ScriptArgs) -> None:
 
         summary = {
             "source_run_dir": str(source_run_dir),
+            "resume_from_source_offline_state": args.resume_from_source_offline_state,
+            "source_offline_resume_checkpoint": (
+                str(source_offline_resume_checkpoint)
+                if source_offline_resume_checkpoint is not None
+                else None
+            ),
             "output_run_dir": str(output_config.run.run_dir),
             "source_training_data_path": str(source_training_data_path),
             "copied_training_data_path": str(output_training_data_path),
@@ -1115,6 +1324,7 @@ def main(args: ScriptArgs) -> None:
                 "max_placements": eval_max_placements,
             },
             "artifacts": {
+                "offline_resume_checkpoint": str(offline_resume_checkpoint),
                 "latest_checkpoint": str(checkpoint_path),
                 "latest_onnx": str(latest_onnx_path),
                 "incumbent_onnx": str(incumbent_onnx_path),
