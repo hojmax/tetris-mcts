@@ -196,7 +196,8 @@ def render_board(
     current_piece_cells: list[tuple[int, int]] | None = None,
     current_piece_type: int | None = None,
     ghost_cells: list[tuple[int, int]] | None = None,
-    move_number: int = 0,
+    placement_number: int = 0,
+    placement_label: str = "Placement",
     attack: int = 0,
     info_text: str | None = None,
     can_hold: bool | None = None,
@@ -244,7 +245,7 @@ def render_board(
 
     if show_piece_info:
         # --- Top info bar ---
-        parts = [f"Move: {move_number}", f"Attack: {attack}"]
+        parts = [f"{placement_label}: {placement_number}", f"Attack: {attack}"]
         if value_pred is not None:
             parts.append(f"Vpred: {value_pred:.2f}")
         if is_terminal:
@@ -300,7 +301,7 @@ def render_board(
                 _draw_mini_piece(draw, pt, right_cx, cy)
     else:
         # Simple info line (no sidebars)
-        text = f"Move: {move_number}  Attack: {attack}"
+        text = f"{placement_label}: {placement_number}  Attack: {attack}"
         if value_pred is not None:
             text += f"  Vpred: {value_pred:.2f}"
         if info_text:
@@ -312,10 +313,11 @@ def render_board(
 
 def _capture_frame(
     env: TetrisEnv,
-    move_number: int,
+    placement_number: int,
     attack: int,
     is_terminal: bool = False,
     value_pred: float | None = None,
+    placement_label: str = "Placement",
 ) -> Image.Image:
     board = np.array(env.get_board())
     board_piece_types = env.get_board_piece_types()
@@ -334,7 +336,8 @@ def _capture_frame(
         current_piece_cells=piece_cells,
         current_piece_type=piece_type,
         ghost_cells=ghost_cells,
-        move_number=move_number,
+        placement_number=placement_number,
+        placement_label=placement_label,
         attack=attack,
         can_hold=can_hold,
         combo=env.combo,
@@ -352,11 +355,11 @@ def render_replay(replay: GameReplay) -> list[Image.Image]:
     frames: list[Image.Image] = []
     total_attack = 0
 
-    for move_idx, move in enumerate(replay.moves):
+    for move in replay.moves:
         if env.game_over:
             break
 
-        frames.append(_capture_frame(env, move_idx, total_attack))
+        frames.append(_capture_frame(env, env.placement_count, total_attack))
 
         attack = env.execute_action_index(move.action)
         if attack is None:
@@ -365,7 +368,12 @@ def render_replay(replay: GameReplay) -> list[Image.Image]:
 
     # Final frame (post-last-action)
     frames.append(
-        _capture_frame(env, len(frames), total_attack, is_terminal=env.game_over)
+        _capture_frame(
+            env,
+            env.placement_count,
+            total_attack,
+            is_terminal=env.game_over,
+        )
     )
 
     return frames

@@ -1657,7 +1657,7 @@ app.layout = html.Div(
                     value=STATE_PRESET_DEFAULTS["seed"],
                     style={"width": "60px", "marginRight": "15px"},
                 ),
-                html.Label("Move #:", style={"marginRight": "5px"}),
+                html.Label("Placement #:", style={"marginRight": "5px"}),
                 dcc.Input(
                     id="move-number",
                     type="number",
@@ -2343,7 +2343,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
     if node["node_type"] == "decision":
         details.extend(
             [
-                html.P(f"Move Number: {node['move_number']}"),
+                html.P(f"Placement: {node['move_number']}"),
                 html.P(f"Terminal: {node['is_terminal']}"),
                 html.P(f"Valid Actions: {len(node['valid_actions'])}"),
             ]
@@ -2454,7 +2454,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
     else:
         # Chance node
         details.append(html.P(f"Attack: {node['attack']}"))
-        details.append(html.P(f"Move Number: {node['move_number']}"))
+        details.append(html.P(f"Placement: {node['move_number']}"))
 
         # Show parent info if available
         parent_id = node.get("parent_id")

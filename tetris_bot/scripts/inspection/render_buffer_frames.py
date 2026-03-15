@@ -83,9 +83,9 @@ def main(args: ScriptArgs) -> None:
             back_to_back = bool(data["back_to_back"][i])
             value_target = float(data["value_targets"][i])
 
-            game_total_attack, game_start = example_to_game[i]
+            game_total_attack, _game_start = example_to_game[i]
             cumulative_attack = int(round(game_total_attack - value_target))
-            move_number = i - game_start
+            placement_number = int(data["move_numbers"][i])
 
             piece_cells = None
             ghost_cells = None
@@ -97,7 +97,7 @@ def main(args: ScriptArgs) -> None:
                 current_piece_cells=piece_cells,
                 current_piece_type=current_piece,
                 ghost_cells=ghost_cells,
-                move_number=move_number,
+                placement_number=placement_number,
                 attack=cumulative_attack,
                 can_hold=can_hold,
                 combo=combo,

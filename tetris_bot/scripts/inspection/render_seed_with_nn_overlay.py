@@ -12,7 +12,13 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_core.tetris_core import MCTSAgent, TetrisEnv
+from tetris_core.tetris_core import (
+    MCTSAgent,
+    TetrisEnv,
+    debug_encode_state,
+    debug_get_action_mask,
+    debug_predict_masked_from_tensors,
+)
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -43,6 +49,25 @@ def resolve_output_path(run_dir: Path, seed: int, output_path: Path | None) -> P
     if output_path is not None:
         return output_path
     return run_dir / "analysis" / "renders" / f"seed{seed}_nn_overlay.gif"
+
+
+def compute_raw_nn_value(
+    model_path: Path,
+    env: TetrisEnv,
+    max_placements: int,
+) -> float | None:
+    action_mask = debug_get_action_mask(env)
+    if not any(action_mask):
+        return None
+
+    board_flat, aux_flat = debug_encode_state(env, max_placements)
+    _, value = debug_predict_masked_from_tensors(
+        str(model_path),
+        list(board_flat),
+        list(aux_flat),
+        action_mask,
+    )
+    return float(value)
 
 
 def main(args: ScriptArgs) -> None:
@@ -87,20 +112,40 @@ def main(args: ScriptArgs) -> None:
         frame_values.append(frame_value)
         frames.append(
             _capture_frame(
-                root.state.clone_state(),
-                move_number=int(step.frame_index),
+                env,
+                placement_number=int(step.placement_count),
                 attack=total_attack,
                 value_pred=frame_value,
             )
         )
-        total_attack += int(step.attack)
+        if env.placement_count != int(step.placement_count):
+            raise RuntimeError(
+                f"Replay placement count {env.placement_count} did not match step {step.placement_count}"
+            )
+        attack = env.execute_action_index(int(step.selected_action))
+        if attack is None:
+            raise RuntimeError(f"Replay failed for action {step.selected_action}")
+        if int(attack) != int(step.attack):
+            raise RuntimeError(
+                f"Replay attack {attack} did not match step attack {step.attack}"
+            )
+        total_attack += int(attack)
 
     if total_attack != int(playback.total_attack):
         raise RuntimeError(
             f"Rendered attack total {total_attack} did not match playback total {playback.total_attack}"
         )
-    if not frames:
-        raise RuntimeError("Playback contained no frames to render")
+
+    final_frame_value = compute_raw_nn_value(model_path, env, config.max_placements)
+    frames.append(
+        _capture_frame(
+            env,
+            placement_number=int(env.placement_count),
+            attack=total_attack,
+            is_terminal=env.game_over,
+            value_pred=final_frame_value,
+        )
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     create_trajectory_gif(frames, str(output_path), duration=args.frame_duration)
@@ -117,6 +162,7 @@ def main(args: ScriptArgs) -> None:
         nn_value_weight=float(config.nn_value_weight),
         first_frame_nn=round(frame_values[0], 6),
         last_frame_nn=round(frame_values[-1], 6),
+        final_frame_nn=round(final_frame_value, 6) if final_frame_value is not None else None,
     )
 
 
