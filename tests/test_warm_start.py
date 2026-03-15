@@ -14,9 +14,10 @@ from tetris_bot.ml.config import (
 from tetris_bot.scripts.warm_start import (
     build_output_config,
     compute_training_steps,
-    has_better_validation_losses,
+    has_better_validation_metric,
     optimized_worker_env_cache_path,
     resolve_eval_num_workers,
+    warm_start_selection_metric,
 )
 
 
@@ -149,36 +150,41 @@ def test_resolve_eval_num_workers_prefers_environment_override(
     assert resolution.cache_path is None
 
 
-def test_has_better_validation_losses_requires_both_terms_to_drop() -> None:
+def test_warm_start_selection_metric_weights_value_loss_by_quarter() -> None:
+    assert warm_start_selection_metric(1.5, 10.0) == 4.0
+
+
+def test_has_better_validation_metric_uses_fixed_selection_metric() -> None:
     best_record = {
+        "val_selection_metric": 4.0,
         "val_policy_loss": 1.5,
         "val_value_loss": 10.0,
     }
 
     assert (
-        has_better_validation_losses(
+        has_better_validation_metric(
             {"policy_loss": 1.4, "value_loss": 9.9},
             best_record,
         )
         is True
     )
     assert (
-        has_better_validation_losses(
-            {"policy_loss": 1.4, "value_loss": 10.1},
+        has_better_validation_metric(
+            {"policy_loss": 1.55, "value_loss": 9.0},
+            best_record,
+        )
+        is True
+    )
+    assert (
+        has_better_validation_metric(
+            {"policy_loss": 1.4, "value_loss": 10.8},
             best_record,
         )
         is False
     )
     assert (
-        has_better_validation_losses(
-            {"policy_loss": 1.6, "value_loss": 9.9},
-            best_record,
-        )
-        is False
-    )
-    assert (
-        has_better_validation_losses(
-            {"policy_loss": 1.5, "value_loss": 9.9},
+        has_better_validation_metric(
+            {"policy_loss": 1.6, "value_loss": 9.8},
             best_record,
         )
         is False

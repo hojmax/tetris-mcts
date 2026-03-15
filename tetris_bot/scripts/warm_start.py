@@ -72,7 +72,7 @@ class ScriptArgs:
     device: str = "auto"
     seed: int = 123
     epochs_per_round: float = 2.0
-    early_stopping_patience: int = 3
+    early_stopping_patience: int = 20
     max_rounds: int = 0
     max_examples: int = 0
     train_fraction: float = 0.9
@@ -288,15 +288,21 @@ def resolve_eval_num_workers(
     )
 
 
-def has_better_validation_losses(
+def warm_start_selection_metric(policy_loss: float, value_loss: float) -> float:
+    return policy_loss + (value_loss / 4.0)
+
+
+def has_better_validation_metric(
     candidate_metrics: dict[str, float],
     best_record: dict[str, float | int | bool | str] | None,
 ) -> bool:
+    candidate_selection_metric = warm_start_selection_metric(
+        candidate_metrics["policy_loss"],
+        candidate_metrics["value_loss"],
+    )
     if best_record is None:
         return True
-    return float(candidate_metrics["policy_loss"]) < float(
-        best_record["val_policy_loss"]
-    ) and float(candidate_metrics["value_loss"]) < float(best_record["val_value_loss"])
+    return candidate_selection_metric < float(best_record["val_selection_metric"])
 
 
 def setup_offline_dataset(
@@ -511,16 +517,26 @@ def train_warm_start_model(
             value_loss_weight=current_value_loss_weight,
             use_huber_value_loss=use_huber_value_loss,
         )
-        improved = has_better_validation_losses(val_metrics, best_record)
+        train_selection_metric = warm_start_selection_metric(
+            train_metrics["policy_loss"],
+            train_metrics["value_loss"],
+        )
+        val_selection_metric = warm_start_selection_metric(
+            val_metrics["policy_loss"],
+            val_metrics["value_loss"],
+        )
+        improved = has_better_validation_metric(val_metrics, best_record)
         if improved:
             best_record = {
                 "round_index": round_index,
                 "step": step,
                 "epochs_seen": epochs_seen,
                 "value_loss_weight": current_value_loss_weight,
+                "train_selection_metric": train_selection_metric,
                 "train_total_loss": train_metrics["total_loss"],
                 "train_policy_loss": train_metrics["policy_loss"],
                 "train_value_loss": train_metrics["value_loss"],
+                "val_selection_metric": val_selection_metric,
                 "val_total_loss": val_metrics["total_loss"],
                 "val_policy_loss": val_metrics["policy_loss"],
                 "val_value_loss": val_metrics["value_loss"],
@@ -536,9 +552,11 @@ def train_warm_start_model(
             "step": step,
             "epochs_seen": epochs_seen,
             "value_loss_weight": current_value_loss_weight,
+            "train_selection_metric": train_selection_metric,
             "train_total_loss": train_metrics["total_loss"],
             "train_policy_loss": train_metrics["policy_loss"],
             "train_value_loss": train_metrics["value_loss"],
+            "val_selection_metric": val_selection_metric,
             "val_total_loss": val_metrics["total_loss"],
             "val_policy_loss": val_metrics["policy_loss"],
             "val_value_loss": val_metrics["value_loss"],
@@ -551,6 +569,8 @@ def train_warm_start_model(
             round_index=round_index,
             step=step,
             epochs_seen=epochs_seen,
+            train_selection_metric=train_selection_metric,
+            val_selection_metric=val_selection_metric,
             train_total_loss=record["train_total_loss"],
             val_total_loss=record["val_total_loss"],
             train_policy_loss=record["train_policy_loss"],
@@ -567,6 +587,8 @@ def train_warm_start_model(
                 "offline_step": step,
                 "warm_start/eval_round_index": round_index,
                 "warm_start/eval_epochs_seen": epochs_seen,
+                "warm_start/eval_train_selection_metric": train_selection_metric,
+                "warm_start/eval_val_selection_metric": val_selection_metric,
                 "warm_start/value_loss_weight": current_value_loss_weight,
                 "warm_start/eval_train_total_loss": record["train_total_loss"],
                 "warm_start/eval_train_policy_loss": record["train_policy_loss"],
@@ -680,7 +702,7 @@ def train_warm_start_model(
         stopped_after_non_improving_rounds=non_improving_rounds,
         best_round_index=best_record["round_index"],
         best_step=best_record["step"],
-        best_val_total_loss=best_record["val_total_loss"],
+        best_val_selection_metric=best_record["val_selection_metric"],
     )
 
     return WarmStartTrainingResult(
@@ -1112,6 +1134,9 @@ def main(args: ScriptArgs) -> None:
                 "warm_start/best_step": training_result.best_record["step"],
                 "warm_start/best_epochs_seen": training_result.best_record[
                     "epochs_seen"
+                ],
+                "warm_start/best_val_selection_metric": training_result.best_record[
+                    "val_selection_metric"
                 ],
                 "warm_start/best_train_total_loss": training_result.best_record[
                     "train_total_loss"

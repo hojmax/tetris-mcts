@@ -235,7 +235,7 @@ compare-offline-network-scaling: $(RELEASE_MARKER)
 
 # Build a new sibling run dir by offline-training on another run's replay snapshot.
 # Usage: make warm-start ARGS="--source_run_dir training_runs/v3"
-warm-start: $(DEV_MARKER)
+warm-start: $(RELEASE_MARKER)
 	PYTHONPATH=$(CURDIR) $(PYTHON) tetris_bot/scripts/warm_start.py $(ARGS)
 
 # Download training_data.npz directly from a WandB run/artifact.
