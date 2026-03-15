@@ -58,6 +58,13 @@ class PredictedMoveOverlay:
     is_hold: bool = False
 
 
+@dataclass(frozen=True)
+class _OverlayLabelPlacement:
+    predicted_move: PredictedMoveOverlay
+    text: str
+    rect: tuple[int, int, int, int]
+
+
 def _get_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     if size in _font_cache:
         return _font_cache[size]
@@ -215,6 +222,47 @@ def _draw_text_with_shadow(
     draw.text((x, y), text, font=font, fill=fill)
 
 
+def _rects_intersect(
+    rect_a: tuple[int, int, int, int],
+    rect_b: tuple[int, int, int, int],
+) -> bool:
+    left_a, top_a, right_a, bottom_a = rect_a
+    left_b, top_b, right_b, bottom_b = rect_b
+    return not (
+        right_a <= left_b
+        or right_b <= left_a
+        or bottom_a <= top_b
+        or bottom_b <= top_a
+    )
+
+
+def _inflate_rect(
+    rect: tuple[int, int, int, int],
+    padding: int,
+) -> tuple[int, int, int, int]:
+    left, top, right, bottom = rect
+    return (left - padding, top - padding, right + padding, bottom + padding)
+
+
+def _clamp_label_rect(
+    left: int,
+    top: int,
+    text_w: int,
+    text_h: int,
+    img_w: int,
+    img_h: int,
+    min_y: int,
+) -> tuple[int, int, int, int]:
+    clamped_left = max(2, min(img_w - text_w - 2, left))
+    clamped_top = max(min_y, min(img_h - text_h - 2, top))
+    return (
+        clamped_left,
+        clamped_top,
+        clamped_left + text_w,
+        clamped_top + text_h,
+    )
+
+
 def _visible_overlay_bounds(
     board_x: int,
     board_y: int,
@@ -238,9 +286,138 @@ def _visible_overlay_bounds(
     )
 
 
-def _overlay_alpha(rank: int) -> int:
+def _overlay_fill_alpha(rank: int) -> int:
     rank = max(1, min(rank, 3))
-    return 120 - (rank - 1) * 20
+    return 64 - (rank - 1) * 14
+
+
+def _overlay_outline_alpha(rank: int) -> int:
+    rank = max(1, min(rank, 3))
+    return 245 - (rank - 1) * 20
+
+
+def _overlay_outline_width(rank: int) -> int:
+    return 2 if rank == 1 else 1
+
+
+def _candidate_label_rects(
+    bounds: tuple[int, int, int, int],
+    text_w: int,
+    text_h: int,
+    img_w: int,
+    img_h: int,
+    min_y: int,
+    is_hold: bool,
+) -> list[tuple[int, int, int, int]]:
+    left, top, right, bottom = bounds
+    center_x = (left + right - text_w) // 2
+    center_y = (top + bottom - text_h) // 2
+    mid_y = (top + bottom) // 2 - text_h // 2
+    label_gap = 6
+
+    raw_positions = (
+        [
+            (left - text_w - label_gap, mid_y),
+            (left - text_w - label_gap, top - text_h - label_gap),
+            (left - text_w - label_gap, bottom + label_gap),
+            (right + label_gap, mid_y),
+            (center_x, top - text_h - label_gap),
+            (center_x, bottom + label_gap),
+        ]
+        if is_hold
+        else [
+            (center_x, center_y),
+            (center_x, top - text_h - label_gap),
+            (center_x, bottom + label_gap),
+            (left - text_w - label_gap, mid_y),
+            (right + label_gap, mid_y),
+            (left - text_w - label_gap, top - text_h - label_gap),
+            (right + label_gap, top - text_h - label_gap),
+            (left - text_w - label_gap, bottom + label_gap),
+            (right + label_gap, bottom + label_gap),
+        ]
+    )
+
+    candidate_rects: list[tuple[int, int, int, int]] = []
+    seen_rects: set[tuple[int, int, int, int]] = set()
+    for raw_left, raw_top in raw_positions:
+        rect = _clamp_label_rect(raw_left, raw_top, text_w, text_h, img_w, img_h, min_y)
+        if rect not in seen_rects:
+            candidate_rects.append(rect)
+            seen_rects.add(rect)
+    return candidate_rects
+
+
+def _place_overlay_label_rects(
+    board_x: int,
+    board_y: int,
+    img_size: tuple[int, int],
+    predicted_move_overlays: list[PredictedMoveOverlay],
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+) -> list[_OverlayLabelPlacement]:
+    img_w, img_h = img_size
+    occupied_rects: list[tuple[int, int, int, int]] = []
+    placements: list[_OverlayLabelPlacement] = []
+
+    for predicted_move in sorted(predicted_move_overlays, key=lambda overlay: overlay.rank):
+        label = f"{predicted_move.probability * 100:.1f}%"
+        bounds = _visible_overlay_bounds(board_x, board_y, predicted_move.cells)
+        if bounds is None:
+            continue
+
+        text_bbox = font.getbbox(label)
+        text_w = text_bbox[2] - text_bbox[0]
+        text_h = text_bbox[3] - text_bbox[1]
+        candidate_rects = _candidate_label_rects(
+            bounds,
+            text_w,
+            text_h,
+            img_w,
+            img_h,
+            board_y + 2,
+            predicted_move.is_hold,
+        )
+
+        chosen_rect = candidate_rects[0]
+        inflated_occupied = [_inflate_rect(rect, 3) for rect in occupied_rects]
+        for candidate in candidate_rects:
+            if not any(_rects_intersect(candidate, occupied) for occupied in inflated_occupied):
+                chosen_rect = candidate
+                break
+        else:
+            base_left, base_top, _, _ = candidate_rects[0]
+            step_y = text_h + 6
+            for offset_idx in range(1, 10):
+                for signed_offset in (offset_idx, -offset_idx):
+                    candidate = _clamp_label_rect(
+                        base_left,
+                        base_top + signed_offset * step_y,
+                        text_w,
+                        text_h,
+                        img_w,
+                        img_h,
+                        board_y + 2,
+                    )
+                    if not any(
+                        _rects_intersect(candidate, occupied)
+                        for occupied in inflated_occupied
+                    ):
+                        chosen_rect = candidate
+                        break
+                else:
+                    continue
+                break
+
+        placements.append(
+            _OverlayLabelPlacement(
+                predicted_move=predicted_move,
+                text=label,
+                rect=chosen_rect,
+            )
+        )
+        occupied_rects.append(chosen_rect)
+
+    return placements
 
 
 def _apply_predicted_move_overlays(
@@ -256,11 +433,12 @@ def _apply_predicted_move_overlays(
     draw = ImageDraw.Draw(overlay)
     font = _get_font(12)
 
+    # Draw piece fills first so overlaps remain readable.
     for predicted_move in reversed(predicted_move_overlays):
+        if predicted_move.is_hold:
+            continue
         color = PIECE_COLORS[predicted_move.piece_type]
-        alpha = _overlay_alpha(predicted_move.rank)
-        fill_color = (*color, alpha)
-        outline_color = (*color, min(255, alpha + 60))
+        fill_color = (*color, _overlay_fill_alpha(predicted_move.rank))
         for x, y in predicted_move.cells:
             if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                 px = board_x + x * CELL_SIZE + 1
@@ -268,36 +446,58 @@ def _apply_predicted_move_overlays(
                 draw.rectangle(
                     [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2],
                     fill=fill_color,
-                    outline=outline_color,
-                    width=1,
                 )
 
-        label = f"{predicted_move.probability * 100:.1f}%"
-        bounds = _visible_overlay_bounds(board_x, board_y, predicted_move.cells)
-        if bounds is None:
-            continue
-
-        left, top, right, bottom = bounds
-        text_bbox = font.getbbox(label)
-        text_w = text_bbox[2] - text_bbox[0]
-        text_h = text_bbox[3] - text_bbox[1]
-
+    # Draw outlines in a separate pass so stacked placements stay visible.
+    for predicted_move in reversed(predicted_move_overlays):
         if predicted_move.is_hold:
-            text_x = max(2, left - text_w - 4)
-            text_y = max(0, min(img.height - text_h, (top + bottom - text_h) // 2))
-        else:
-            text_x = max(0, min(img.width - text_w, (left + right - text_w) // 2))
-            text_y = max(0, min(img.height - text_h, (top + bottom - text_h) // 2))
+            continue
+        color = PIECE_COLORS[predicted_move.piece_type]
+        outline_color = (*color, _overlay_outline_alpha(predicted_move.rank))
+        outline_width = _overlay_outline_width(predicted_move.rank)
+        for x, y in predicted_move.cells:
+            if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+                px = board_x + x * CELL_SIZE + 1
+                py = board_y + y * CELL_SIZE + 1
+                draw.rectangle(
+                    [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2],
+                    outline=outline_color,
+                    width=outline_width,
+                )
 
+    label_overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    label_draw = ImageDraw.Draw(label_overlay)
+    label_placements = _place_overlay_label_rects(
+        board_x,
+        board_y,
+        img.size,
+        predicted_move_overlays,
+        font,
+    )
+    for label_placement in label_placements:
+        left, top, right, bottom = label_placement.rect
+        bg_rect = (left - 3, top - 2, right + 3, bottom + 2)
+        border_color = (
+            *PIECE_COLORS[label_placement.predicted_move.piece_type],
+            210,
+        )
+        label_draw.rounded_rectangle(
+            bg_rect,
+            radius=4,
+            fill=(15, 15, 15, 220),
+            outline=border_color,
+            width=1,
+        )
         _draw_text_with_shadow(
-            draw,
-            (text_x, text_y),
-            label,
+            label_draw,
+            (left, top),
+            label_placement.text,
             font,
             fill=(255, 255, 255, 255),
         )
 
     composited = Image.alpha_composite(img.convert("RGBA"), overlay)
+    composited = Image.alpha_composite(composited, label_overlay)
     return composited.convert("RGB")
 
 
@@ -321,6 +521,7 @@ def render_board(
     hold_piece_type: int | None = None,
     queue_piece_types: list[int] | None = None,
     predicted_move_overlays: list[PredictedMoveOverlay] | None = None,
+    show_ghost_piece: bool = True,
 ) -> Image.Image:
     board_w_px = BOARD_WIDTH * CELL_SIZE
     board_h_px = BOARD_HEIGHT * CELL_SIZE
@@ -349,7 +550,7 @@ def render_board(
         board_piece_types,
         current_piece_cells,
         current_piece_type,
-        ghost_cells,
+        ghost_cells if show_ghost_piece else None,
     )
 
     if predicted_move_overlays:
@@ -440,6 +641,7 @@ def _capture_frame(
     value_pred: float | None = None,
     placement_label: str = "Placement",
     predicted_move_overlays: list[PredictedMoveOverlay] | None = None,
+    show_ghost_piece: bool = True,
 ) -> Image.Image:
     board = np.array(env.get_board())
     board_piece_types = env.get_board_piece_types()
@@ -470,6 +672,7 @@ def _capture_frame(
         hold_piece_type=hold_piece.piece_type if hold_piece else None,
         queue_piece_types=list(queue_piece_types),
         predicted_move_overlays=predicted_move_overlays,
+        show_ghost_piece=show_ghost_piece,
     )
 
 

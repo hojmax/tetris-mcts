@@ -194,6 +194,7 @@ def main(args: ScriptArgs) -> None:
                 attack=total_attack,
                 value_pred=frame_value,
                 predicted_move_overlays=predicted_move_overlays,
+                show_ghost_piece=False,
             )
         )
         if env.placement_count != int(step.placement_count):
