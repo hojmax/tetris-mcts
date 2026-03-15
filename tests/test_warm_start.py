@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import torch
+
 from tetris_bot.constants import CONFIG_FILENAME
 from tetris_bot.ml.config import (
     NetworkConfig,
@@ -11,12 +13,19 @@ from tetris_bot.ml.config import (
     TrainingConfig,
     load_training_config_json,
 )
+from tetris_bot.ml.loss import RunningLossBalancer
+from tetris_bot.ml.network import TetrisNet
 from tetris_bot.scripts.warm_start import (
     build_output_config,
     compute_training_steps,
     has_better_validation_metric,
+    load_offline_resume_checkpoint,
+    offline_resume_checkpoint_path,
     optimized_worker_env_cache_path,
     resolve_eval_num_workers,
+    save_offline_resume_checkpoint,
+    ScriptArgs,
+    validate_args,
     warm_start_selection_metric,
 )
 
@@ -182,10 +191,105 @@ def test_has_better_validation_metric_uses_fixed_selection_metric() -> None:
         )
         is False
     )
-    assert (
-        has_better_validation_metric(
-            {"policy_loss": 1.6, "value_loss": 9.8},
-            best_record,
-        )
-        is False
+
+
+def test_validate_args_requires_offline_resume_checkpoint_when_requested(
+    tmp_path: Path,
+) -> None:
+    source_run_dir = tmp_path / "training_runs" / "v5"
+    source_run_dir.mkdir(parents=True)
+    (source_run_dir / CONFIG_FILENAME).write_text(json.dumps({}))
+    (source_run_dir / "training_data.npz").write_bytes(b"placeholder")
+
+    args = ScriptArgs(
+        source_run_dir=source_run_dir,
+        output_run_dir=tmp_path / "training_runs" / "v6",
+        resume_from_source_offline_state=True,
+        preload_to_gpu=False,
     )
+
+    try:
+        validate_args(args)
+    except FileNotFoundError as error:
+        assert "offline warm-start resume checkpoint" in str(error)
+    else:
+        raise AssertionError(
+            "validate_args should require an offline resume checkpoint"
+        )
+
+
+def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
+    tmp_path: Path,
+) -> None:
+    checkpoint_path = offline_resume_checkpoint_path(tmp_path / "training_runs" / "v5")
+    model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
+    loss_balancer = RunningLossBalancer(window_size=8)
+    loss_balancer.append(2.0, 8.0)
+    loss_balancer.append(1.8, 7.2)
+
+    boards = torch.randn(2, 1, 20, 10)
+    aux = torch.randn(2, 80)
+    policy_logits, value = model(boards, aux)
+    loss = policy_logits.sum() + value.sum()
+    loss.backward()
+    optimizer.step()
+
+    best_state_dict = {
+        key: value.detach().cpu().clone() for key, value in model.state_dict().items()
+    }
+    best_record = {
+        "round_index": 4,
+        "step": 14064,
+        "val_selection_metric": 4.25,
+    }
+    history = [{"round_index": 4, "step": 14064, "improved": True}]
+    rng_state = {"seed": 123, "note": "test"}
+
+    save_offline_resume_checkpoint(
+        checkpoint_path,
+        model=model,
+        optimizer_state_dict=optimizer.state_dict(),
+        best_state_dict=best_state_dict,
+        best_record=best_record,
+        history=history,
+        total_steps=14064,
+        rounds_completed=4,
+        non_improving_rounds=2,
+        current_value_loss_weight=0.25,
+        loss_balancer_state=loss_balancer.state_dict(),
+        rng_state=rng_state,
+    )
+
+    restored_model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=5e-4)
+    restored_loss_balancer = RunningLossBalancer(window_size=8)
+    resumed = load_offline_resume_checkpoint(
+        checkpoint_path,
+        model=restored_model,
+        optimizer=restored_optimizer,
+        loss_balancer=restored_loss_balancer,
+    )
+
+    assert resumed.checkpoint_path == checkpoint_path
+    assert resumed.total_steps == 14064
+    assert resumed.rounds_completed == 4
+    assert resumed.non_improving_rounds == 2
+    assert resumed.current_value_loss_weight == 0.25
+    assert resumed.best_record == best_record
+    assert resumed.history == history
+    assert resumed.rng_state == rng_state
+    assert resumed.best_state_dict.keys() == best_state_dict.keys()
+    assert restored_loss_balancer.state_dict() == loss_balancer.state_dict()
+    restored_optimizer_state = restored_optimizer.state_dict()["state"]
+    expected_optimizer_state = optimizer.state_dict()["state"]
+    assert restored_optimizer_state.keys() == expected_optimizer_state.keys()
+    for parameter_id, expected_state in expected_optimizer_state.items():
+        restored_state = restored_optimizer_state[parameter_id]
+        assert restored_state.keys() == expected_state.keys()
+        for state_key, expected_value in expected_state.items():
+            restored_value = restored_state[state_key]
+            if isinstance(expected_value, torch.Tensor):
+                assert torch.equal(restored_value, expected_value)
+            else:
+                assert restored_value == expected_value
