@@ -8,22 +8,7 @@
 - [ ] Why don't the final moves look full optimal? Like just clean out the board in the last 5 moves? Surely that is highest attack possible? Instead it does random nonsense.
 - [ ] Why don't we always have 50 piece episodes??????
 - [ ] One thing we could do is to make the amount of resources allocated to evaluating candidates configurable, and then spend alot on it every time we have upgrade, and then less and less each time they fail to upgrade. So we evaluate frequently when we are seeing big changes, and rarely when we are seeing small changes.
-- [ ] Hmm the test set overfitting is kind of a problem. Maybe we should just never include those trajectories in the replay buffer? Yeah probably the right move. That way we have the low variance model estimate, whilst avoiding the issue of later models being better on the test set simply because they have been trained on it... Yeah drop the adding the samples to the test set.
 
-- [ ] Less sharpening of temperature
-- [ ] Try lower cpuct
-- [ ] Higher exploration
-- [ ] We are overfitting on the test evals.
-- [ ] Go back to hyper params like v37 and then scale up and run on vast.ai
-- [ ] What if you subtracted the root node value from all the child values before tanh? Then you immediately see if it is worse or better than expected.
-- [ ] look at mcts tree across multiple moves, not just root
-
-- [ ] Try MSE loss
-- [ ] I screwed up the loose penalty I think
-- [ ] Make network smaller and faster
-- [ ] The tetris tspin stuff is still weird.
-  - Investigate with make viz
-- [ ] Fix the t-spin logic
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
 - [ ] Speed up data generation
 - [ ] Multi machine RL environment generation?
@@ -38,7 +23,6 @@
   - Weight decay
   - Optimizer
   - Architecture choices
-  - Huber loss vs. MSE loss
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
 - [ ] Improving model architecture
 
@@ -116,7 +100,6 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
 # Backlog
 
-- [ ] Is huber loss even better than MSE loss?
 - [ ] Reading through and validating all code
 - [ ] Do we need a larger network?
 - [ ] Looking at training data

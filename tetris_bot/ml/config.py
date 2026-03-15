@@ -67,9 +67,6 @@ class OptimizerConfig:
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
         2000
     )
-    use_huber_value_loss: bool = (  # If True, use Huber loss for value head; if False, use MSE
-        False
-    )
     use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
         True
     )

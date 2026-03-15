@@ -502,7 +502,6 @@ class Trainer:
             value_targets,
             masks,
             value_loss_weight,
-            self.config.optimizer.use_huber_value_loss,
         )
         total_loss.backward()
 

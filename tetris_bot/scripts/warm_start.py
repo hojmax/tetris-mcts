@@ -518,7 +518,6 @@ def evaluate_offline_losses(
     device: torch.device,
     eval_batch_size: int,
     value_loss_weight: float,
-    use_huber_value_loss: bool,
 ) -> dict[str, float]:
     total_sum = 0.0
     policy_sum = 0.0
@@ -540,7 +539,6 @@ def evaluate_offline_losses(
                 value_targets=value_targets,
                 action_masks=action_masks,
                 value_loss_weight=value_loss_weight,
-                use_huber_value_loss=use_huber_value_loss,
             )
             batch_size = len(batch_indices)
             total_sum += total_loss.item() * batch_size
@@ -593,7 +591,6 @@ def train_warm_start_model(
     early_stopping_patience: int,
     max_rounds: int,
     eval_batch_size: int,
-    use_huber_value_loss: bool,
     value_loss_window: int,
     seed: int,
 ) -> WarmStartTrainingResult:
@@ -661,7 +658,6 @@ def train_warm_start_model(
             device=device,
             eval_batch_size=eval_batch_size,
             value_loss_weight=current_value_loss_weight,
-            use_huber_value_loss=use_huber_value_loss,
         )
         val_metrics = evaluate_offline_losses(
             model,
@@ -670,7 +666,6 @@ def train_warm_start_model(
             device=device,
             eval_batch_size=eval_batch_size,
             value_loss_weight=current_value_loss_weight,
-            use_huber_value_loss=use_huber_value_loss,
         )
         train_selection_metric = warm_start_selection_metric(
             train_metrics["policy_loss"],
@@ -781,7 +776,6 @@ def train_warm_start_model(
                 value_targets=value_targets,
                 action_masks=action_masks,
                 value_loss_weight=current_value_loss_weight,
-                use_huber_value_loss=use_huber_value_loss,
             )
             total_loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -1069,7 +1063,6 @@ def main(args: ScriptArgs) -> None:
                 early_stopping_patience=args.early_stopping_patience,
                 max_rounds=args.max_rounds,
                 eval_batch_size=args.eval_batch_size,
-                use_huber_value_loss=output_config.optimizer.use_huber_value_loss,
                 value_loss_window=output_config.optimizer.value_loss_weight_window,
                 seed=args.seed,
             )
