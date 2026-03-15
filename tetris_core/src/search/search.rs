@@ -1093,7 +1093,7 @@ mod tests {
         let visits_after_first = root.visit_count;
 
         // Continue search via run_search (simulates tree reuse)
-        let (result, root, _tree_stats, traversal_stats) =
+        let (result, root, _tree_stats, traversal_stats, _q_bounds) =
             run_search(&config, &evaluator, root, false);
         assert_eq!(result.num_simulations, config.num_simulations);
         assert_eq!(traversal_stats.total(), config.num_simulations);
@@ -1151,7 +1151,7 @@ mod tests {
         let mut root = DecisionNode::new(env.clone());
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
 
-        let (_result, _root, _tree_stats, traversal_stats) =
+        let (_result, _root, _tree_stats, traversal_stats, _q_bounds) =
             run_search(&config, &evaluator, root, false);
 
         assert_eq!(traversal_stats.total(), config.num_simulations);

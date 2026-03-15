@@ -438,7 +438,8 @@ def resolve_search_step_q_bounds(
         (
             node
             for node in tree_dict["nodes"]
-            if node.get("search_step", 0) == search_step and node.get("parent_id") is None
+            if node.get("search_step", 0) == search_step
+            and node.get("parent_id") is None
         ),
         None,
     )

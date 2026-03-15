@@ -391,7 +391,7 @@ impl MCTSAgent {
             .predict_masked(env, &mask, self.config.max_placements as usize)
             .expect("Neural network prediction failed");
 
-        let (mcts_result, _root, _tree_stats, _traversal_stats) =
+        let (mcts_result, _root, _tree_stats, _traversal_stats, _q_bounds) =
             search_internal(&self.config, nn, env, policy, nn_value, add_noise);
         Some(mcts_result)
     }
@@ -448,13 +448,14 @@ impl MCTSAgent {
             let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
 
             // Run MCTS search (with tree reuse if available)
-            let (result, root, move_tree_stats, move_traversal_stats) = self.search_maybe_reuse(
-                &env,
-                &mask,
-                add_noise,
-                max_placements,
-                reused_root.take(),
-            )?;
+            let (result, root, move_tree_stats, move_traversal_stats, _q_bounds) =
+                self.search_maybe_reuse(
+                    &env,
+                    &mask,
+                    add_noise,
+                    max_placements,
+                    reused_root.take(),
+                )?;
 
             let tree_total_nodes = move_tree_stats.total_nodes;
             valid_moves_sum += valid_moves;
@@ -847,7 +848,7 @@ mod tests {
         let nn = agent.nn.as_ref().unwrap();
         let (nn_policy, nn_value) = nn.predict_masked(&env, &mask, 100).unwrap();
 
-        let (_result, root_after, _tree_stats, _traversal_stats) =
+        let (_result, root_after, _tree_stats, _traversal_stats, _q_bounds) =
             search_internal(&agent.config, nn, &env, nn_policy, nn_value, false);
 
         // The root should have children after search
