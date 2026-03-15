@@ -64,6 +64,7 @@ make test       # Rust + Python tests
 make check      # ruff + pyright + rust fixes/formatting
 make train      # training entry point (requires tmux; auto-loads machine optimize cache)
 make warm-start # create a new warm-started run dir from another run's training_data.npz
+make compare-offline-spatial-policy # compare current gated fusion vs 4x20x10 spatial policy decoder offline
 make profile    # performance profile runner
 make optimize   # auto-tune build/backend/workers for this machine (with cache)
 ```
@@ -83,6 +84,7 @@ make sweep-lr-model
 make eval-nn-value-weight
 make sweep-mcts-config
 make compare-offline-network-scaling
+make compare-offline-spatial-policy
 ```
 
 ## High-Level Repository Layout
