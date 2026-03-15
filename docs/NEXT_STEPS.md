@@ -100,8 +100,6 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
 > Is the slicing algorithm for loading up the gpu and efficient way of doing it? Any simpler way of ensuring the training data is on the gpu? Also why is my gpu not running out of memory, is like 2M training points not a crap ton of data. Or maybe not?
 
-> When I do ctrl + c twice, I think this does not actually stop the wandb run properly and upload the current replay buffer and model, but just kills everything. I just want to stop the workers and wrap up, not just stop workers and die.
-
 > In tetris_core/src/search/utils.rs why do we need:
 
     ```

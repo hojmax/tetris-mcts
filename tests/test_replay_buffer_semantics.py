@@ -1,3 +1,24 @@
+"""Semantic replay-buffer consistency checks.
+
+This module intentionally focuses on content-level replay integrity rather than
+basic NPZ schema sanity.
+
+The validator checks:
+- board-derived features match the stored board exactly:
+  `column_heights`, `max_column_heights`, `row_fill_counts`, `total_blocks`,
+  `bumpiness`, `holes`, and `overhang_fields`
+- `action_masks` match the legal actions from the restored state
+- per-game metadata is self-consistent:
+  `move_numbers` are contiguous within a game, `game_total_attacks` are
+  constant within a game, and `value_targets` are nonincreasing integer-like
+- for consecutive states in the same game, some legal action reproduces the
+  next state, with the expected placement-count delta and hidden-piece reveal
+- the matched transition action has positive policy mass
+
+For large compressed replay archives, the file also supports streaming a
+contiguous row window directly from `training_data.npz` so the semantic checks
+stay fast enough to use as a practical quicktest.
+"""
 from __future__ import annotations
 
 from collections import deque
@@ -5,8 +26,10 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 from typing import Any
+import zipfile
 
 import numpy as np
+from numpy.lib import format as npformat
 import pytest
 import tetris_core.tetris_core as tetris_core
 
@@ -28,6 +51,7 @@ HOLES_NORMALIZATION_DIVISOR = 20.0
 OVERHANG_NORMALIZATION_DIVISOR = 25.0
 ROW_FILL_FEATURE_ROWS = 4
 HOLD_ACTION_INDEX = NUM_ACTIONS - 1
+COMBO_NORMALIZATION_MAX = 4.0
 
 DEFAULT_REPLAY_BUFFER_FIXTURE_PATH = (
     PROJECT_ROOT / "tests" / "fixtures" / "replay_buffer_quicktest.npz"
@@ -40,6 +64,8 @@ REPLAY_BUFFER_SKIP_ROW_CHECKS_ENV_VAR = "TETRIS_REPLAY_BUFFER_SKIP_ROW_CHECKS"
 REPLAY_BUFFER_SKIP_TRANSITION_CHECKS_ENV_VAR = (
     "TETRIS_REPLAY_BUFFER_SKIP_TRANSITION_CHECKS"
 )
+REPLAY_BUFFER_WINDOW_START_ENV_VAR = "TETRIS_REPLAY_BUFFER_WINDOW_START"
+REPLAY_BUFFER_WINDOW_SIZE_ENV_VAR = "TETRIS_REPLAY_BUFFER_WINDOW_SIZE"
 
 REQUIRED_KEYS = (
     "boards",
@@ -88,6 +114,104 @@ class ValidationErrors:
         else:
             details = "\n".join(self.errors)
         raise AssertionError(details)
+
+
+def _window_start() -> int:
+    raw_value = os.environ.get(REPLAY_BUFFER_WINDOW_START_ENV_VAR)
+    if raw_value is None:
+        return 0
+    parsed = int(raw_value)
+    if parsed < 0:
+        raise ValueError(f"{REPLAY_BUFFER_WINDOW_START_ENV_VAR} must be >= 0")
+    return parsed
+
+
+def _window_size() -> int | None:
+    raw_value = os.environ.get(REPLAY_BUFFER_WINDOW_SIZE_ENV_VAR)
+    if raw_value is None:
+        return None
+    parsed = int(raw_value)
+    if parsed <= 0:
+        raise ValueError(f"{REPLAY_BUFFER_WINDOW_SIZE_ENV_VAR} must be > 0")
+    return parsed
+
+
+def _read_exact(stream: Any, num_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = num_bytes
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            raise EOFError(f"Unexpected EOF while reading {num_bytes} bytes")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _discard_bytes(stream: Any, num_bytes: int) -> None:
+    remaining = num_bytes
+    chunk_size = 1 << 20
+    while remaining > 0:
+        chunk = stream.read(min(chunk_size, remaining))
+        if not chunk:
+            raise EOFError(f"Unexpected EOF while discarding {num_bytes} bytes")
+        remaining -= len(chunk)
+
+
+def _read_npy_header(stream: Any) -> tuple[tuple[int, ...], np.dtype[Any]]:
+    version = npformat.read_magic(stream)
+    if version == (1, 0):
+        shape, fortran_order, dtype = npformat.read_array_header_1_0(stream)
+    elif version == (2, 0):
+        shape, fortran_order, dtype = npformat.read_array_header_2_0(stream)
+    else:
+        raise ValueError(f"Unsupported .npy version: {version}")
+
+    if fortran_order:
+        raise ValueError("Fortran-ordered arrays are not supported in replay quicktests")
+
+    return tuple(int(dim) for dim in shape), np.dtype(dtype)
+
+
+def _read_npy_window_from_npz(
+    npz_path: Path,
+    *,
+    key: str,
+    start: int,
+    length: int,
+) -> np.ndarray:
+    entry_name = f"{key}.npy"
+    with zipfile.ZipFile(npz_path) as archive:
+        with archive.open(entry_name) as stream:
+            shape, dtype = _read_npy_header(stream)
+            if not shape:
+                raise ValueError(f"{entry_name} is scalar; expected at least 1 dimension")
+            total_rows = shape[0]
+            if start >= total_rows:
+                raise ValueError(
+                    f"Window start {start} is out of range for {key} with {total_rows} rows"
+                )
+            window_rows = min(length, total_rows - start)
+            trailing_shape = shape[1:]
+            items_per_row = int(np.prod(trailing_shape, dtype=np.int64)) if trailing_shape else 1
+            row_nbytes = items_per_row * dtype.itemsize
+            _discard_bytes(stream, start * row_nbytes)
+            payload = _read_exact(stream, window_rows * row_nbytes)
+            flat = np.frombuffer(payload, dtype=dtype, count=window_rows * items_per_row)
+            return flat.reshape((window_rows, *trailing_shape))
+
+
+def _load_contiguous_replay_window(
+    npz_path: Path,
+    *,
+    start: int,
+    length: int,
+    keys: tuple[str, ...] = REQUIRED_KEYS,
+) -> dict[str, np.ndarray]:
+    return {
+        key: _read_npy_window_from_npz(npz_path, key=key, start=start, length=length)
+        for key in keys
+    }
 
 
 def _piece_type_from_one_hot(one_hot: np.ndarray) -> int | None:
@@ -214,6 +338,49 @@ def _policy_row(chosen_action: int, action_mask: np.ndarray) -> np.ndarray:
     policy[chosen_action] = 1.0
     policy[~action_mask] = 0.0
     return policy
+
+
+def _combo_attack(combo_before: int) -> int:
+    combo_table = [0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 4]
+    if combo_before < len(combo_table):
+        return combo_table[combo_before]
+    return 5
+
+
+def _resolved_attack_for_transition(
+    data: dict[str, np.ndarray] | np.lib.npyio.NpzFile,
+    index: int,
+    action_idx: int,
+    env_after: Any,
+) -> int:
+    if action_idx == HOLD_ACTION_INDEX:
+        return 0
+
+    result = env_after.get_last_attack_result()
+    if result is None:
+        return 0
+
+    if int(result.lines_cleared) == 0:
+        combo_attack = 0
+    else:
+        combo_before = int(
+            round(float(data["combos"][index]) * COMBO_NORMALIZATION_MAX)
+        )
+        combo_attack = _combo_attack(combo_before)
+
+    difficult_or_pc = bool(result.is_perfect_clear) or bool(result.is_tspin) or int(
+        result.lines_cleared
+    ) == 4
+    back_to_back_attack = (
+        1 if bool(data["back_to_back"][index]) and difficult_or_pc else 0
+    )
+    perfect_clear_attack = 10 if bool(result.is_perfect_clear) else 0
+    return (
+        int(result.base_attack)
+        + combo_attack
+        + back_to_back_attack
+        + perfect_clear_attack
+    )
 
 
 def _collect_state_row(
@@ -634,12 +801,17 @@ def validate_replay_buffer_semantics(
             matched_action: int | None = None
             for action_idx in np.flatnonzero(action_mask):
                 env_after = env.clone_state()
-                attack = env_after.execute_action_index(int(action_idx))
-                if attack is None:
+                if env_after.execute_action_index(int(action_idx)) is None:
                     errors.add(
                         f"row {index}: action {action_idx} is masked valid but not executable"
                     )
                     continue
+                attack = _resolved_attack_for_transition(
+                    data,
+                    index,
+                    int(action_idx),
+                    env_after,
+                )
                 board_after = np.asarray(env_after.get_board(), dtype=np.uint8)
                 if _transition_matches(
                     data,
@@ -673,9 +845,46 @@ def _resolve_replay_buffer_fixture_path() -> Path:
     return DEFAULT_REPLAY_BUFFER_FIXTURE_PATH
 
 
+def _find_newest_training_data_npz(search_root: Path) -> Path | None:
+    candidates = sorted(
+        search_root.rglob("training_data.npz"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return None
+    return candidates[0]
+
+
 def test_replay_buffer_semantics_on_synthetic_game() -> None:
     data = _build_synthetic_game_data(max_placements=100)
     validate_replay_buffer_semantics(data, max_placements=100, pair_sample_limit=None)
+
+
+def test_load_contiguous_replay_window_reads_expected_slice(tmp_path: Path) -> None:
+    npz_path = tmp_path / "window_test.npz"
+    boards = np.arange(10 * BOARD_HEIGHT * BOARD_WIDTH, dtype=np.uint8).reshape(
+        10, BOARD_HEIGHT, BOARD_WIDTH
+    )
+    value_targets = np.arange(10, dtype=np.float32)
+    game_numbers = np.arange(10, dtype=np.uint64)
+    np.savez_compressed(
+        npz_path,
+        boards=boards,
+        value_targets=value_targets,
+        game_numbers=game_numbers,
+    )
+
+    window = _load_contiguous_replay_window(
+        npz_path,
+        start=3,
+        length=4,
+        keys=("boards", "value_targets", "game_numbers"),
+    )
+
+    assert np.array_equal(window["boards"], boards[3:7])
+    assert np.array_equal(window["value_targets"], value_targets[3:7])
+    assert np.array_equal(window["game_numbers"], game_numbers[3:7])
 
 
 def test_replay_buffer_semantics_on_tracked_fixture() -> None:
@@ -686,5 +895,24 @@ def test_replay_buffer_semantics_on_tracked_fixture() -> None:
             f"{fixture_path} or set {REPLAY_BUFFER_FIXTURE_ENV_VAR}."
         )
 
+    window_size = _window_size()
+    if window_size is not None:
+        data = _load_contiguous_replay_window(
+            fixture_path,
+            start=_window_start(),
+            length=window_size,
+        )
+        validate_replay_buffer_semantics(data)
+        return
+
     with np.load(fixture_path, mmap_mode="r") as data:
         validate_replay_buffer_semantics(data)
+
+
+def test_replay_buffer_semantics_on_newest_training_run_window() -> None:
+    fixture_path = _find_newest_training_data_npz(PROJECT_ROOT / "training_runs")
+    if fixture_path is None:
+        pytest.skip("No training_data.npz found under training_runs")
+
+    data = _load_contiguous_replay_window(fixture_path, start=0, length=512)
+    validate_replay_buffer_semantics(data)
