@@ -98,8 +98,6 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 
 > Should we try to compress the policy targets for saving to disk? Like only saving the floats for the valid actions, rest is just zeros anyway right?
 
-> I still cant see a full tree with reuse in the make viz. It just loads for ever please fix.
-
 > Why is tetris_core/src/replay/mod.rs its own file?
 
 > Clean up dead code please around the repo

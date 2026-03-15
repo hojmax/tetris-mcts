@@ -441,6 +441,12 @@ pub struct MCTSTreeExport {
     /// Policy from search
     #[pyo3(get)]
     pub policy: Vec<f32>,
+    /// Final global minimum total value tracked across all simulations.
+    #[pyo3(get)]
+    pub q_min: f32,
+    /// Final global maximum total value tracked across all simulations.
+    #[pyo3(get)]
+    pub q_max: f32,
 }
 
 #[pymethods]

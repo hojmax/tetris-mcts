@@ -587,7 +587,7 @@ pub(super) fn run_search<E: LeafEvaluator>(
     evaluator: &E,
     mut root: DecisionNode,
     add_noise: bool,
-) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
+) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats, (f32, f32)) {
     let mut rng = create_search_rng(config, &root.state);
     if add_noise {
         root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
@@ -606,7 +606,7 @@ pub(super) fn run_search<E: LeafEvaluator>(
 
     let mcts_result = build_result_from_root(config, &root, &mut rng);
     let tree_stats = compute_tree_stats(&root);
-    (mcts_result, root, tree_stats, traversal_stats)
+    (mcts_result, root, tree_stats, traversal_stats, q_bounds)
 }
 
 /// Run MCTS search with NN guidance from a fresh root.
@@ -617,7 +617,7 @@ pub(super) fn search_internal(
     policy: Vec<f32>,
     nn_value: f32,
     add_noise: bool,
-) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
+) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats, (f32, f32)) {
     let evaluator = NeuralLeafEvaluator {
         nn,
         nn_value_weight: config.nn_value_weight,
@@ -637,7 +637,7 @@ pub(crate) fn search_internal_without_nn(
     config: &MCTSConfig,
     env: &TetrisEnv,
     add_noise: bool,
-) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
+) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats, (f32, f32)) {
     let root_policy = env.get_cached_uniform_policy().as_ref().clone();
     let mut root = DecisionNode::new(env.clone());
     root.set_nn_output(&root_policy, 0.0);

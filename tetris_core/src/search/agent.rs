@@ -87,6 +87,7 @@ fn export_tree(
     root: &DecisionNode,
     num_simulations: u32,
     mcts_result: &MCTSResult,
+    q_bounds: (f32, f32),
 ) -> MCTSTreeExport {
     let mut nodes: Vec<TreeNodeExport> = Vec::new();
     export_decision_node(root, None, None, &mut nodes);
@@ -97,6 +98,8 @@ fn export_tree(
         num_simulations,
         selected_action: mcts_result.action,
         policy: mcts_result.policy.clone(),
+        q_min: q_bounds.0,
+        q_max: q_bounds.1,
     }
 }
 
@@ -244,20 +247,20 @@ impl MCTSAgent {
             return None;
         }
 
-        let (mcts_result, root, _tree_stats, _traversal_stats) = if let Some(nn) = self.nn.as_ref()
-        {
-            let (policy, nn_value) = nn
-                .predict_masked(env, &mask, self.config.max_placements as usize)
-                .expect("Neural network prediction failed");
+        let (mcts_result, root, _tree_stats, _traversal_stats, q_bounds) =
+            if let Some(nn) = self.nn.as_ref() {
+                let (policy, nn_value) = nn
+                    .predict_masked(env, &mask, self.config.max_placements as usize)
+                    .expect("Neural network prediction failed");
 
-            search_internal(&self.config, nn, env, policy, nn_value, add_noise)
-        } else {
-            search_internal_without_nn(&self.config, env, add_noise)
-        };
+                search_internal(&self.config, nn, env, policy, nn_value, add_noise)
+            } else {
+                search_internal_without_nn(&self.config, env, add_noise)
+            };
 
         Some((
             mcts_result.clone(),
-            export_tree(&root, self.config.num_simulations, &mcts_result),
+            export_tree(&root, self.config.num_simulations, &mcts_result, q_bounds),
         ))
     }
 
@@ -305,7 +308,7 @@ impl MCTSAgent {
             }
 
             let current_placement_count = env.placement_count;
-            let (result, root, _tree_stats, _traversal_stats) = self.search_maybe_reuse(
+            let (result, root, _tree_stats, _traversal_stats, q_bounds) = self.search_maybe_reuse(
                 &env,
                 &mask,
                 add_noise,
@@ -313,7 +316,8 @@ impl MCTSAgent {
                 reused_root.take(),
             )?;
             let root = root.expect("search_maybe_reuse should always return a root");
-            let tree_export = export_tree(&root, self.config.num_simulations, &result);
+            let tree_export =
+                export_tree(&root, self.config.num_simulations, &result, q_bounds);
 
             let selected_action = result.action;
             let reveals_new_visible_piece = action_reveals_new_visible_piece(&env, selected_action);
@@ -731,7 +735,7 @@ impl MCTSAgent {
 
     /// Run MCTS search, optionally reusing a subtree from a previous search.
     ///
-    /// Returns (MCTSResult, Option<DecisionNode>, TreeStats, TraversalStats).
+    /// Returns (MCTSResult, Option<DecisionNode>, TreeStats, TraversalStats, q_bounds).
     /// The DecisionNode is returned for tree reuse extraction on the next move.
     /// Returns None (propagated from NN prediction failure) to discard the game.
     fn search_maybe_reuse(
@@ -741,41 +745,49 @@ impl MCTSAgent {
         add_noise: bool,
         max_placements: u32,
         reused_root: Option<DecisionNode>,
-    ) -> Option<(MCTSResult, Option<DecisionNode>, TreeStats, TraversalStats)> {
+    ) -> Option<(
+        MCTSResult,
+        Option<DecisionNode>,
+        TreeStats,
+        TraversalStats,
+        (f32, f32),
+    )> {
         if let Some(nn) = self.nn.as_ref() {
-            let (result, root, tree_stats, traversal_stats) = if let Some(root) = reused_root {
+            let (result, root, tree_stats, traversal_stats, q_bounds) =
+                if let Some(root) = reused_root {
                 let evaluator = super::search::NeuralLeafEvaluator {
                     nn,
                     nn_value_weight: self.config.nn_value_weight,
                 };
                 run_search(&self.config, &evaluator, root, add_noise)
-            } else {
-                let (policy, nn_value) = match nn.predict_masked(env, mask, max_placements as usize)
-                {
-                    Ok(result) => result,
-                    Err(e) => {
-                        eprintln!(
-                            "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
-                            env.placement_count, e
-                        );
-                        return None;
-                    }
+                } else {
+                    let (policy, nn_value) =
+                        match nn.predict_masked(env, mask, max_placements as usize) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                eprintln!(
+                                    "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
+                                    env.placement_count, e
+                                );
+                                return None;
+                            }
+                        };
+                    search_internal(&self.config, nn, env, policy, nn_value, add_noise)
                 };
-                search_internal(&self.config, nn, env, policy, nn_value, add_noise)
-            };
-            Some((result, Some(root), tree_stats, traversal_stats))
+            Some((result, Some(root), tree_stats, traversal_stats, q_bounds))
         } else {
-            let (result, root, tree_stats, traversal_stats) = if let Some(root) = reused_root {
-                run_search(
-                    &self.config,
-                    &super::search::BootstrapLeafEvaluator,
-                    root,
-                    add_noise,
-                )
-            } else {
-                search_internal_without_nn(&self.config, env, add_noise)
-            };
-            Some((result, Some(root), tree_stats, traversal_stats))
+            let (result, root, tree_stats, traversal_stats, q_bounds) =
+                if let Some(root) = reused_root {
+                    run_search(
+                        &self.config,
+                        &super::search::BootstrapLeafEvaluator,
+                        root,
+                        add_noise,
+                    )
+                } else {
+                    search_internal_without_nn(&self.config, env, add_noise)
+                };
+            Some((result, Some(root), tree_stats, traversal_stats, q_bounds))
         }
     }
 }

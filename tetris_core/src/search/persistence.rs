@@ -100,6 +100,8 @@ pub(crate) struct SavedTreeExport {
     pub num_simulations: u32,
     pub selected_action: usize,
     pub policy: Vec<f32>,
+    pub q_min: f32,
+    pub q_max: f32,
 }
 
 impl From<&MCTSTreeExport> for SavedTreeExport {
@@ -110,6 +112,8 @@ impl From<&MCTSTreeExport> for SavedTreeExport {
             num_simulations: tree.num_simulations,
             selected_action: tree.selected_action,
             policy: tree.policy.clone(),
+            q_min: tree.q_min,
+            q_max: tree.q_max,
         }
     }
 }

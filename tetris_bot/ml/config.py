@@ -96,7 +96,7 @@ class SelfPlayConfig:
         True
     )
     nn_value_weight: float = (  # Scale factor for NN value output in MCTS (0.0 ignores value head)
-        0.01
+        1
     )
     nn_value_weight_promotion_multiplier: float = (  # Multiplicative growth target per accepted promotion (e.g. 1.4 means plus-40pct)
         1.4
@@ -132,9 +132,9 @@ class SelfPlayConfig:
     max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
         50
     )
-    death_penalty: float = 5.0  # Search-time terminal penalty when game ends in death
+    death_penalty: float = 0.0  # Search-time terminal penalty when game ends in death
     overhang_penalty_weight: float = (  # Search-time weight for normalized overhang penalty
-        5
+        0.0
     )
     model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
         20
@@ -149,7 +149,7 @@ class SelfPlayConfig:
 class ReplayConfig:
     """Replay buffer and batch sampling hyperparameters."""
 
-    buffer_size: int = 2_000_000  # Maximum buffer size. FIFO eviction.
+    buffer_size: int = 4_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
     prefetch_batches: int = (  # Number of train batches sampled/staged per generator.sample_batch call
         1
