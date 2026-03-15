@@ -1,8 +1,4 @@
-"""Render a seeded NN-driven rollout as a GIF with per-frame root NN values.
-
-The overlay uses each search root's exported `nn_value`, so it matches the
-value shown in `make viz` for the same run/checkpoint configuration.
-"""
+"""Render plain and move-ghost seeded rollout GIFs with per-frame NN values."""
 
 from __future__ import annotations
 
@@ -55,6 +51,10 @@ def resolve_output_path(run_dir: Path, seed: int, output_path: Path | None) -> P
     if output_path is not None:
         return output_path
     return run_dir / "analysis" / "renders" / f"seed{seed}_nn_overlay.gif"
+
+
+def resolve_move_overlay_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.stem}_top3_moves{output_path.suffix}")
 
 
 def compute_raw_nn_value(
@@ -165,7 +165,9 @@ def main(args: ScriptArgs) -> None:
     if playback is None:
         raise RuntimeError("play_game_with_trees returned None")
 
-    frames = []
+    move_overlay_output_path = resolve_move_overlay_output_path(output_path)
+    plain_frames = []
+    move_overlay_frames = []
     frame_values: list[float] = []
     total_attack = 0
     for step in playback.steps:
@@ -177,7 +179,15 @@ def main(args: ScriptArgs) -> None:
             list(root.valid_actions),
             list(root.action_priors),
         )
-        frames.append(
+        plain_frames.append(
+            _capture_frame(
+                env,
+                placement_number=int(step.placement_count),
+                attack=total_attack,
+                value_pred=frame_value,
+            )
+        )
+        move_overlay_frames.append(
             _capture_frame(
                 env,
                 placement_number=int(step.placement_count),
@@ -205,27 +215,34 @@ def main(args: ScriptArgs) -> None:
         )
 
     final_frame_value = compute_raw_nn_value(model_path, env, config.max_placements)
-    frames.append(
-        _capture_frame(
-            env,
-            placement_number=int(env.placement_count),
-            attack=total_attack,
-            is_terminal=env.game_over,
-            value_pred=final_frame_value,
-        )
+    final_frame = _capture_frame(
+        env,
+        placement_number=int(env.placement_count),
+        attack=total_attack,
+        is_terminal=env.game_over,
+        value_pred=final_frame_value,
     )
+    plain_frames.append(final_frame)
+    move_overlay_frames.append(final_frame.copy())
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    create_trajectory_gif(frames, str(output_path), duration=args.frame_duration)
+    move_overlay_output_path.parent.mkdir(parents=True, exist_ok=True)
+    create_trajectory_gif(plain_frames, str(output_path), duration=args.frame_duration)
+    create_trajectory_gif(
+        move_overlay_frames,
+        str(move_overlay_output_path),
+        duration=args.frame_duration,
+    )
 
     logger.info(
-        "Rendered seed rollout with NN overlay",
+        "Rendered seed rollout with NN overlays",
         run_dir=str(run_dir),
         seed=args.seed,
         model_path=str(model_path),
         checkpoint_path=str(checkpoint_path) if checkpoint_path.exists() else None,
         output_path=str(output_path),
-        num_frames=len(frames),
+        move_overlay_output_path=str(move_overlay_output_path),
+        num_frames=len(plain_frames),
         total_attack=int(playback.total_attack),
         nn_value_weight=float(config.nn_value_weight),
         first_frame_nn=round(frame_values[0], 6),

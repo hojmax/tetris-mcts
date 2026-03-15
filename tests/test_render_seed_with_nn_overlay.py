@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tetris_core.tetris_core import TetrisEnv
@@ -7,6 +9,7 @@ from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS
 from tetris_bot.scripts.inspection.render_seed_with_nn_overlay import (
     HOLD_ACTION_INDEX,
     build_predicted_move_overlays,
+    resolve_move_overlay_output_path,
 )
 
 
@@ -59,3 +62,11 @@ def test_build_predicted_move_overlays_validates_inputs() -> None:
             valid_actions=[0, NUM_ACTIONS - 1],
             action_priors=[1.0],
         )
+
+
+def test_resolve_move_overlay_output_path_uses_sibling_suffix() -> None:
+    output_path = Path("/tmp/seed12_nn_overlay.gif")
+
+    resolved = resolve_move_overlay_output_path(output_path)
+
+    assert resolved == Path("/tmp/seed12_nn_overlay_top3_moves.gif")
