@@ -6,6 +6,7 @@ Renders Tetris board states to PIL Images for logging to wandb.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
@@ -360,6 +361,19 @@ def _overlay_outline_width(rank: int) -> int:
     return 1
 
 
+def _count_overlay_cell_overlaps(
+    predicted_move_overlays: list[PredictedMoveOverlay],
+) -> Counter[tuple[int, int]]:
+    overlap_counts: Counter[tuple[int, int]] = Counter()
+    for predicted_move in predicted_move_overlays:
+        if predicted_move.is_hold:
+            continue
+        for x, y in predicted_move.cells:
+            if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+                overlap_counts[(x, y)] += 1
+    return overlap_counts
+
+
 def _candidate_label_rects(
     bounds: tuple[int, int, int, int],
     text_w: int,
@@ -520,20 +534,21 @@ def _apply_predicted_move_overlays(
                 )
 
     # Draw outlines in a separate pass so stacked placements stay visible.
+    overlap_counts = _count_overlay_cell_overlaps(predicted_move_overlays)
     for predicted_move in reversed(predicted_move_overlays):
         if predicted_move.is_hold:
             continue
         color = PIECE_COLORS[predicted_move.piece_type]
         outline_color = (*color, _overlay_outline_alpha(predicted_move.rank))
-        outline_width = _overlay_outline_width(predicted_move.rank)
         for x, y in predicted_move.cells:
             if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
                 px = board_x + x * CELL_SIZE + 1
                 py = board_y + y * CELL_SIZE + 1
+                overlap_width = 2 if overlap_counts[(x, y)] >= 2 else 1
                 draw.rectangle(
                     [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2],
                     outline=outline_color,
-                    width=outline_width,
+                    width=max(_overlay_outline_width(predicted_move.rank), overlap_width),
                 )
 
     label_overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -548,7 +563,7 @@ def _apply_predicted_move_overlays(
     for label_placement in label_placements:
         _draw_text_with_shadow(
             label_draw,
-            label_placement.position,
+            (label_placement.position[0] + 2, label_placement.position[1]),
             label_placement.text,
             font,
             fill=(255, 255, 255, 255),

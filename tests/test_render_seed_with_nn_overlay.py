@@ -19,6 +19,7 @@ from tetris_bot.visualization import (
     PredictedMoveOverlay,
     RIGHT_SIDEBAR,
     SIDEBAR_PIECE_Y,
+    _count_overlay_cell_overlaps,
     _capture_frame,
     _get_font,
     _mini_piece_bounds,
@@ -196,3 +197,25 @@ def test_place_overlay_label_rects_avoids_direct_label_overlap() -> None:
     for idx, placement in enumerate(placements):
         for other in placements[idx + 1 :]:
             assert not _rects_intersect(placement.rect, other.rect)
+
+
+def test_count_overlay_cell_overlaps_counts_shared_cells_only_for_placements() -> None:
+    overlays = [
+        PredictedMoveOverlay(0.41, 0, ((3, 18), (4, 18), (5, 18), (6, 18)), rank=1),
+        PredictedMoveOverlay(0.33, 1, ((4, 18), (5, 18), (6, 18), (7, 18)), rank=2),
+        PredictedMoveOverlay(
+            0.26,
+            2,
+            ((4, 18), (5, 18), (6, 18), (7, 18)),
+            rank=3,
+            is_hold=True,
+        ),
+    ]
+
+    counts = _count_overlay_cell_overlaps(overlays)
+
+    assert counts[(3, 18)] == 1
+    assert counts[(4, 18)] == 2
+    assert counts[(5, 18)] == 2
+    assert counts[(6, 18)] == 2
+    assert counts[(7, 18)] == 1
