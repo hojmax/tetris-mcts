@@ -1232,8 +1232,6 @@ def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
     if action_idx not in stats_by_action:
         return "Action not found in parent valid actions", "", ""
     action_row = stats_by_action[action_idx]
-    q_min = min(row["raw_q"] for row in action_stats)
-    q_max = max(row["raw_q"] for row in action_stats)
 
     # Try to compute the resulting board by executing the action
     attack = None
@@ -1261,7 +1259,11 @@ def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
         html.P(
             f"Q_tanh: tanh({action_row['raw_q']:.4f}/{q_scale:.1f}) = {action_row['q_transformed']:.6f}"
             if q_scale is not None
-            else f"Q_norm: {action_row['q_transformed']:.6f} (sibling q_min={q_min:.6f}, q_max={q_max:.6f})"
+            else (
+                "Q_norm: "
+                f"{action_row['q_transformed']:.6f} "
+                f"({describe_q_bounds_source(action_row['q_bounds_source'], action_row['q_min'], action_row['q_max'])})"
+            )
         ),
         html.P(
             f"Exploration (U): {action_row['u']:.3f}",
@@ -2763,17 +2765,20 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
             ]
         )
         action_stats = build_decision_action_stats(node, tree_dict, c_puct, q_scale)
-        q_min = min(row["raw_q"] for row in action_stats) if action_stats else 0.0
-        q_max = max(row["raw_q"] for row in action_stats) if action_stats else 0.0
         q_col = "Qtanh" if q_scale is not None else "Qnorm"
 
         if action_stats:
+            q_min = float(action_stats[0]["q_min"])
+            q_max = float(action_stats[0]["q_max"])
+            q_bounds_source = str(action_stats[0]["q_bounds_source"])
             details.append(html.Hr())
             q_desc = (
                 f"PUCT = Q_tanh + U, where Q_tanh = tanh(Q/{q_scale:.1f})"
                 if q_scale is not None
-                else f"PUCT = Q_norm + U, where Q_norm is min-max normalized "
-                f"(q_min={q_min:.4f}, q_max={q_max:.4f})"
+                else (
+                    "PUCT = Q_norm + U, where Q_norm is min-max normalized "
+                    f"using {describe_q_bounds_source(q_bounds_source, q_min, q_max)}"
+                )
             )
             details.append(
                 html.P(
@@ -2822,8 +2827,6 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
                     (row for row in parent_action_stats if row["action"] == edge), None
                 )
                 if selection_row is not None:
-                    q_min = min(row["raw_q"] for row in parent_action_stats)
-                    q_max = max(row["raw_q"] for row in parent_action_stats)
                     n_parent = parent["visit_count"]
                     n_child = node["visit_count"]
                     details.append(html.Hr())
@@ -2844,7 +2847,11 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
                         html.P(
                             f"Q_tanh: tanh({selection_row['raw_q']:.4f}/{q_scale:.1f}) = {selection_row['q_transformed']:.6f}"
                             if q_scale is not None
-                            else f"Q_norm: {selection_row['q_transformed']:.6f} (sibling q_min={q_min:.6f}, q_max={q_max:.6f})",
+                            else (
+                                "Q_norm: "
+                                f"{selection_row['q_transformed']:.6f} "
+                                f"({describe_q_bounds_source(selection_row['q_bounds_source'], selection_row['q_min'], selection_row['q_max'])})"
+                            ),
                         )
                     )
                     details.append(
