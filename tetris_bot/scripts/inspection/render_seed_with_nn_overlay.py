@@ -23,15 +23,21 @@ from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
     DEFAULT_GIF_FRAME_DURATION_MS,
+    NUM_ACTIONS,
 )
 from tetris_bot.scripts.utils.run_search_config import (
     build_mcts_config,
     default_checkpoint_path,
     default_model_path,
 )
-from tetris_bot.visualization import _capture_frame, create_trajectory_gif
+from tetris_bot.visualization import (
+    PredictedMoveOverlay,
+    _capture_frame,
+    create_trajectory_gif,
+)
 
 logger = structlog.get_logger()
+HOLD_ACTION_INDEX = NUM_ACTIONS - 1
 
 
 @dataclass
@@ -68,6 +74,62 @@ def compute_raw_nn_value(
         action_mask,
     )
     return float(value)
+
+
+def build_predicted_move_overlays(
+    env: TetrisEnv,
+    valid_actions: list[int],
+    action_priors: list[float],
+    limit: int = 3,
+) -> list[PredictedMoveOverlay]:
+    if len(valid_actions) != len(action_priors):
+        raise ValueError(
+            "valid_actions and action_priors must have the same length "
+            f"(got {len(valid_actions)} vs {len(action_priors)})"
+        )
+
+    current_piece = env.get_current_piece()
+    placements_by_action = {
+        int(placement.action_index): placement
+        for placement in env.get_possible_placements()
+    }
+    top_actions = sorted(
+        zip(valid_actions, action_priors),
+        key=lambda item: (-item[1], item[0]),
+    )[:limit]
+
+    overlays: list[PredictedMoveOverlay] = []
+    for rank, (action_idx, probability) in enumerate(top_actions, start=1):
+        action_idx = int(action_idx)
+        if action_idx == HOLD_ACTION_INDEX:
+            if current_piece is None:
+                continue
+            overlays.append(
+                PredictedMoveOverlay(
+                    probability=float(probability),
+                    piece_type=int(current_piece.piece_type),
+                    cells=tuple((int(x), int(y)) for x, y in current_piece.get_cells()),
+                    rank=rank,
+                    is_hold=True,
+                )
+            )
+            continue
+
+        placement = placements_by_action.get(action_idx)
+        if placement is None:
+            raise RuntimeError(
+                f"Missing placement for valid action {action_idx} while rendering NN overlay"
+            )
+        overlays.append(
+            PredictedMoveOverlay(
+                probability=float(probability),
+                piece_type=int(placement.piece.piece_type),
+                cells=tuple((int(x), int(y)) for x, y in placement.piece.get_cells()),
+                rank=rank,
+            )
+        )
+
+    return overlays
 
 
 def main(args: ScriptArgs) -> None:
@@ -110,12 +172,18 @@ def main(args: ScriptArgs) -> None:
         root = step.tree.get_root()
         frame_value = float(root.nn_value)
         frame_values.append(frame_value)
+        predicted_move_overlays = build_predicted_move_overlays(
+            env,
+            list(root.valid_actions),
+            list(root.action_priors),
+        )
         frames.append(
             _capture_frame(
                 env,
                 placement_number=int(step.placement_count),
                 attack=total_attack,
                 value_pred=frame_value,
+                predicted_move_overlays=predicted_move_overlays,
             )
         )
         if env.placement_count != int(step.placement_count):

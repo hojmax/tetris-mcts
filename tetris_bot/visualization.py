@@ -6,6 +6,8 @@ Renders Tetris board states to PIL Images for logging to wandb.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -45,6 +47,15 @@ LABEL_COLOR = (140, 140, 140)
 GRAY = (80, 80, 80)
 
 _font_cache: dict[int, ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
+
+
+@dataclass(frozen=True)
+class PredictedMoveOverlay:
+    probability: float
+    piece_type: int
+    cells: tuple[tuple[int, int], ...]
+    rank: int
+    is_hold: bool = False
 
 
 def _get_font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -190,6 +201,106 @@ def _draw_board_area(
     )
 
 
+def _draw_text_with_shadow(
+    draw: ImageDraw.ImageDraw,
+    position: tuple[int, int],
+    text: str,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill: tuple[int, int, int, int],
+) -> None:
+    x, y = position
+    shadow = (0, 0, 0, 220)
+    for dx, dy in ((1, 1), (1, 0), (0, 1)):
+        draw.text((x + dx, y + dy), text, font=font, fill=shadow)
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _visible_overlay_bounds(
+    board_x: int,
+    board_y: int,
+    cells: tuple[tuple[int, int], ...],
+) -> tuple[int, int, int, int] | None:
+    visible_cells = [
+        (x, y) for x, y in cells if 0 <= x < BOARD_WIDTH and 0 <= y < BOARD_HEIGHT
+    ]
+    if not visible_cells:
+        return None
+
+    min_x = min(x for x, _ in visible_cells)
+    max_x = max(x for x, _ in visible_cells)
+    min_y = min(y for _, y in visible_cells)
+    max_y = max(y for _, y in visible_cells)
+    return (
+        board_x + min_x * CELL_SIZE + 1,
+        board_y + min_y * CELL_SIZE + 1,
+        board_x + (max_x + 1) * CELL_SIZE - 1,
+        board_y + (max_y + 1) * CELL_SIZE - 1,
+    )
+
+
+def _overlay_alpha(rank: int) -> int:
+    rank = max(1, min(rank, 3))
+    return 120 - (rank - 1) * 20
+
+
+def _apply_predicted_move_overlays(
+    img: Image.Image,
+    board_x: int,
+    board_y: int,
+    predicted_move_overlays: list[PredictedMoveOverlay],
+) -> Image.Image:
+    if not predicted_move_overlays:
+        return img
+
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    font = _get_font(12)
+
+    for predicted_move in reversed(predicted_move_overlays):
+        color = PIECE_COLORS[predicted_move.piece_type]
+        alpha = _overlay_alpha(predicted_move.rank)
+        fill_color = (*color, alpha)
+        outline_color = (*color, min(255, alpha + 60))
+        for x, y in predicted_move.cells:
+            if 0 <= y < BOARD_HEIGHT and 0 <= x < BOARD_WIDTH:
+                px = board_x + x * CELL_SIZE + 1
+                py = board_y + y * CELL_SIZE + 1
+                draw.rectangle(
+                    [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2],
+                    fill=fill_color,
+                    outline=outline_color,
+                    width=1,
+                )
+
+        label = f"{predicted_move.probability * 100:.1f}%"
+        bounds = _visible_overlay_bounds(board_x, board_y, predicted_move.cells)
+        if bounds is None:
+            continue
+
+        left, top, right, bottom = bounds
+        text_bbox = font.getbbox(label)
+        text_w = text_bbox[2] - text_bbox[0]
+        text_h = text_bbox[3] - text_bbox[1]
+
+        if predicted_move.is_hold:
+            text_x = max(2, left - text_w - 4)
+            text_y = max(0, min(img.height - text_h, (top + bottom - text_h) // 2))
+        else:
+            text_x = max(0, min(img.width - text_w, (left + right - text_w) // 2))
+            text_y = max(0, min(img.height - text_h, (top + bottom - text_h) // 2))
+
+        _draw_text_with_shadow(
+            draw,
+            (text_x, text_y),
+            label,
+            font,
+            fill=(255, 255, 255, 255),
+        )
+
+    composited = Image.alpha_composite(img.convert("RGBA"), overlay)
+    return composited.convert("RGB")
+
+
 def render_board(
     board: np.ndarray,
     board_piece_types: list[list[int | None]] | None = None,
@@ -209,6 +320,7 @@ def render_board(
     show_piece_info: bool = False,
     hold_piece_type: int | None = None,
     queue_piece_types: list[int] | None = None,
+    predicted_move_overlays: list[PredictedMoveOverlay] | None = None,
 ) -> Image.Image:
     board_w_px = BOARD_WIDTH * CELL_SIZE
     board_h_px = BOARD_HEIGHT * CELL_SIZE
@@ -239,6 +351,15 @@ def render_board(
         current_piece_type,
         ghost_cells,
     )
+
+    if predicted_move_overlays:
+        img = _apply_predicted_move_overlays(
+            img,
+            board_x,
+            board_y,
+            predicted_move_overlays,
+        )
+        draw = ImageDraw.Draw(img)
 
     font = _get_font(14)
     label_font = _get_font(11)
@@ -318,6 +439,7 @@ def _capture_frame(
     is_terminal: bool = False,
     value_pred: float | None = None,
     placement_label: str = "Placement",
+    predicted_move_overlays: list[PredictedMoveOverlay] | None = None,
 ) -> Image.Image:
     board = np.array(env.get_board())
     board_piece_types = env.get_board_piece_types()
@@ -347,6 +469,7 @@ def _capture_frame(
         show_piece_info=True,
         hold_piece_type=hold_piece.piece_type if hold_piece else None,
         queue_piece_types=list(queue_piece_types),
+        predicted_move_overlays=predicted_move_overlays,
     )
 
 
