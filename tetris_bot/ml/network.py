@@ -10,7 +10,7 @@ Piece/game auxiliary features (61, uncached heads path):
 - Hold available: 1 (binary)
 - Next queue: 5 x 7 = 35 (one-hot per slot)
 - Placement count: 1 (pre-normalized: placements_so_far / max_placements, [0,1])
-- Combo: 1 (pre-normalized: min(combo, 4) / 4, [0,1])
+- Combo: 1 (pre-normalized: combo / 4, uncapped linear scaling)
 - Back-to-back: 1 (binary)
 - Next hidden piece distribution: 7 (7-bag probabilities)
 

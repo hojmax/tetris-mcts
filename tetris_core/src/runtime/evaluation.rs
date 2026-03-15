@@ -51,9 +51,27 @@ pub struct EvalResult {
     /// Average tree size in nodes (mean of per-game avg tree nodes across moves)
     #[pyo3(get)]
     pub avg_tree_nodes: f32,
+    /// Average per-game variance of `past_attack + raw_nn_value` along the chosen trajectory.
+    #[pyo3(get)]
+    pub avg_trajectory_predicted_total_attack_variance: f32,
+    /// Average per-game std of `past_attack + raw_nn_value` along the chosen trajectory.
+    #[pyo3(get)]
+    pub avg_trajectory_predicted_total_attack_std: f32,
+    /// Average per-game RMSE between `past_attack + raw_nn_value` and final total attack.
+    #[pyo3(get)]
+    pub avg_trajectory_predicted_total_attack_rmse: f32,
     /// Individual game results: (attack, moves) for each seed
     #[pyo3(get)]
     pub game_results: Vec<(u32, u32)>,
+    /// Per-game variance of `past_attack + raw_nn_value` along the chosen trajectory.
+    #[pyo3(get)]
+    pub trajectory_predicted_total_attack_variances: Vec<f32>,
+    /// Per-game std of `past_attack + raw_nn_value` along the chosen trajectory.
+    #[pyo3(get)]
+    pub trajectory_predicted_total_attack_stds: Vec<f32>,
+    /// Per-game RMSE between `past_attack + raw_nn_value` and final total attack.
+    #[pyo3(get)]
+    pub trajectory_predicted_total_attack_rmses: Vec<f32>,
 }
 
 /// Per-game result collected from evaluation.
@@ -63,6 +81,9 @@ struct GameEval {
     lines: u32,
     moves: u32,
     avg_tree_nodes: f32,
+    trajectory_predicted_total_attack_variance: f32,
+    trajectory_predicted_total_attack_std: f32,
+    trajectory_predicted_total_attack_rmse: f32,
 }
 
 #[inline]
@@ -83,6 +104,12 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
     let mut total_moves: u32 = 0;
     let mut total_avg_tree_nodes: f32 = 0.0;
     let mut game_results: Vec<(u32, u32)> = Vec::with_capacity(evals.len());
+    let mut total_trajectory_predicted_total_attack_variance: f32 = 0.0;
+    let mut total_trajectory_predicted_total_attack_std: f32 = 0.0;
+    let mut total_trajectory_predicted_total_attack_rmse: f32 = 0.0;
+    let mut trajectory_predicted_total_attack_variances: Vec<f32> = Vec::with_capacity(evals.len());
+    let mut trajectory_predicted_total_attack_stds: Vec<f32> = Vec::with_capacity(evals.len());
+    let mut trajectory_predicted_total_attack_rmses: Vec<f32> = Vec::with_capacity(evals.len());
 
     for eval in evals {
         total_attack += eval.attack;
@@ -91,7 +118,15 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
         max_lines = max_lines.max(eval.lines);
         total_moves += eval.moves;
         total_avg_tree_nodes += eval.avg_tree_nodes;
+        total_trajectory_predicted_total_attack_variance +=
+            eval.trajectory_predicted_total_attack_variance;
+        total_trajectory_predicted_total_attack_std += eval.trajectory_predicted_total_attack_std;
+        total_trajectory_predicted_total_attack_rmse += eval.trajectory_predicted_total_attack_rmse;
         game_results.push((eval.attack, eval.moves));
+        trajectory_predicted_total_attack_variances
+            .push(eval.trajectory_predicted_total_attack_variance);
+        trajectory_predicted_total_attack_stds.push(eval.trajectory_predicted_total_attack_std);
+        trajectory_predicted_total_attack_rmses.push(eval.trajectory_predicted_total_attack_rmse);
     }
 
     let avg_attack = div_or_zero(total_attack as f32, num_games);
@@ -100,6 +135,12 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
     let attack_per_piece = div_or_zero(total_attack as f32, total_moves);
     let lines_per_piece = div_or_zero(total_lines as f32, total_moves);
     let avg_tree_nodes = div_or_zero(total_avg_tree_nodes, num_games);
+    let avg_trajectory_predicted_total_attack_variance =
+        div_or_zero(total_trajectory_predicted_total_attack_variance, num_games);
+    let avg_trajectory_predicted_total_attack_std =
+        div_or_zero(total_trajectory_predicted_total_attack_std, num_games);
+    let avg_trajectory_predicted_total_attack_rmse =
+        div_or_zero(total_trajectory_predicted_total_attack_rmse, num_games);
 
     EvalResult {
         num_games,
@@ -114,7 +155,13 @@ fn aggregate_game_evals(evals: &[GameEval]) -> EvalResult {
         attack_per_piece,
         lines_per_piece,
         avg_tree_nodes,
+        avg_trajectory_predicted_total_attack_variance,
+        avg_trajectory_predicted_total_attack_std,
+        avg_trajectory_predicted_total_attack_rmse,
         game_results,
+        trajectory_predicted_total_attack_variances,
+        trajectory_predicted_total_attack_stds,
+        trajectory_predicted_total_attack_rmses,
     }
 }
 
@@ -131,6 +178,10 @@ fn evaluate_seed(
         lines: result.stats.total_lines,
         moves: result.num_moves,
         avg_tree_nodes: result.tree_stats.avg_total_nodes,
+        trajectory_predicted_total_attack_variance: result
+            .trajectory_predicted_total_attack_variance,
+        trajectory_predicted_total_attack_std: result.trajectory_predicted_total_attack_std,
+        trajectory_predicted_total_attack_rmse: result.trajectory_predicted_total_attack_rmse,
     })
 }
 

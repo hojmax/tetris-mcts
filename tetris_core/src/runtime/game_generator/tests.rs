@@ -137,6 +137,10 @@ fn make_game_result(
         traversal_expansion_fraction: 0.0,
         traversal_terminal_fraction: 0.0,
         traversal_horizon_fraction: 0.0,
+        trajectory_predicted_total_attack_count: 0,
+        trajectory_predicted_total_attack_variance: 0.0,
+        trajectory_predicted_total_attack_std: 0.0,
+        trajectory_predicted_total_attack_rmse: 0.0,
     }
 }
 

@@ -1087,6 +1087,32 @@ class Trainer:
                         promoted_overhang_penalty_weight = float(
                             event["promoted_overhang_penalty_weight"]
                         )
+                        per_game_prediction_metrics = event[
+                            "per_game_prediction_metrics"
+                        ]
+                        prediction_metric_rows = [
+                            row
+                            for row in per_game_prediction_metrics
+                            if int(row[4]) > 0
+                        ]
+                        candidate_trajectory_predicted_total_attack_variance = (
+                            sum(float(row[1]) for row in prediction_metric_rows)
+                            / len(prediction_metric_rows)
+                            if prediction_metric_rows
+                            else 0.0
+                        )
+                        candidate_trajectory_predicted_total_attack_std = (
+                            sum(float(row[2]) for row in prediction_metric_rows)
+                            / len(prediction_metric_rows)
+                            if prediction_metric_rows
+                            else 0.0
+                        )
+                        candidate_trajectory_predicted_total_attack_rmse = (
+                            sum(float(row[3]) for row in prediction_metric_rows)
+                            / len(prediction_metric_rows)
+                            if prediction_metric_rows
+                            else 0.0
+                        )
                         logger.info(
                             "Model evaluation decision",
                             trainer_step=self.step,
@@ -1103,6 +1129,9 @@ class Trainer:
                             ),
                             incumbent_avg_attack=event["incumbent_avg_attack"],
                             incumbent_nn_value_weight=incumbent_nn_value_weight,
+                            candidate_trajectory_predicted_total_attack_variance=candidate_trajectory_predicted_total_attack_variance,
+                            candidate_trajectory_predicted_total_attack_std=candidate_trajectory_predicted_total_attack_std,
+                            candidate_trajectory_predicted_total_attack_rmse=candidate_trajectory_predicted_total_attack_rmse,
                             promoted_nn_value_weight=promoted_nn_value_weight,
                             promoted_death_penalty=promoted_death_penalty,
                             promoted_overhang_penalty_weight=promoted_overhang_penalty_weight,
@@ -1144,6 +1173,9 @@ class Trainer:
                                     "incumbent_avg_attack"
                                 ],
                                 "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
+                                "model_gate/candidate_trajectory_predicted_total_attack_variance": candidate_trajectory_predicted_total_attack_variance,
+                                "model_gate/candidate_trajectory_predicted_total_attack_std": candidate_trajectory_predicted_total_attack_std,
+                                "model_gate/candidate_trajectory_predicted_total_attack_rmse": candidate_trajectory_predicted_total_attack_rmse,
                                 "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
                                 "model_gate/promoted_death_penalty": promoted_death_penalty,
                                 "model_gate/promoted_overhang_penalty_weight": promoted_overhang_penalty_weight,
@@ -1181,6 +1213,16 @@ class Trainer:
                                     if total_moves > 0
                                     else 0.0
                                 )
+                                if prediction_metric_rows:
+                                    wandb_data[
+                                        "eval/trajectory_predicted_total_attack_variance"
+                                    ] = candidate_trajectory_predicted_total_attack_variance
+                                    wandb_data[
+                                        "eval/trajectory_predicted_total_attack_std"
+                                    ] = candidate_trajectory_predicted_total_attack_std
+                                    wandb_data[
+                                        "eval/trajectory_predicted_total_attack_rmse"
+                                    ] = candidate_trajectory_predicted_total_attack_rmse
                                 wandb_data["eval/nn_value_weight"] = (
                                     promoted_nn_value_weight
                                 )

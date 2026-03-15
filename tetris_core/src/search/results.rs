@@ -295,6 +295,18 @@ pub struct GameResult {
     /// Fraction of traversals that stopped at max placement horizon
     #[pyo3(get)]
     pub traversal_horizon_fraction: f32,
+    /// Number of chosen-trajectory states that contributed a raw NN total-attack forecast.
+    #[pyo3(get)]
+    pub trajectory_predicted_total_attack_count: u32,
+    /// Variance of `past_attack + raw_nn_value` along the chosen trajectory.
+    #[pyo3(get)]
+    pub trajectory_predicted_total_attack_variance: f32,
+    /// Standard deviation of `past_attack + raw_nn_value` along the chosen trajectory.
+    #[pyo3(get)]
+    pub trajectory_predicted_total_attack_std: f32,
+    /// RMSE between `past_attack + raw_nn_value` and the realized final total attack.
+    #[pyo3(get)]
+    pub trajectory_predicted_total_attack_rmse: f32,
 }
 
 /// One move of a full-game visualization playback with the exported tree snapshot.
@@ -374,7 +386,8 @@ pub struct TreeNodeExport {
     /// Backed-up total values that contribute to value_sum (empty unless track_value_history=true)
     #[pyo3(get)]
     pub value_history: Vec<f32>,
-    /// Raw neural network value estimate (for decision nodes)
+    /// Search leaf value estimate for decision nodes.
+    /// In NN mode this is after applying `nn_value_weight`.
     #[pyo3(get)]
     pub nn_value: f32,
     /// Total-value estimate used as first-play urgency for unvisited action children.
@@ -737,6 +750,10 @@ mod tests {
             traversal_expansion_fraction: 0.0,
             traversal_terminal_fraction: 0.0,
             traversal_horizon_fraction: 0.0,
+            trajectory_predicted_total_attack_count: 0,
+            trajectory_predicted_total_attack_variance: 0.0,
+            trajectory_predicted_total_attack_std: 0.0,
+            trajectory_predicted_total_attack_rmse: 0.0,
         };
 
         assert!(result.examples.is_empty());
@@ -820,6 +837,10 @@ mod tests {
             traversal_expansion_fraction: 0.0,
             traversal_terminal_fraction: 0.0,
             traversal_horizon_fraction: 0.0,
+            trajectory_predicted_total_attack_count: 0,
+            trajectory_predicted_total_attack_variance: 0.0,
+            trajectory_predicted_total_attack_std: 0.0,
+            trajectory_predicted_total_attack_rmse: 0.0,
         };
 
         assert_eq!(result.examples.len(), 2);
@@ -856,6 +877,10 @@ mod tests {
             traversal_expansion_fraction: 0.0,
             traversal_terminal_fraction: 0.0,
             traversal_horizon_fraction: 0.0,
+            trajectory_predicted_total_attack_count: 0,
+            trajectory_predicted_total_attack_variance: 0.0,
+            trajectory_predicted_total_attack_std: 0.0,
+            trajectory_predicted_total_attack_rmse: 0.0,
         };
 
         let cloned = result.clone();

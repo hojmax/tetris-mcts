@@ -23,6 +23,10 @@ pub(super) struct LastGameInfo {
     pub(super) traversal_expansion_fraction: f32,
     pub(super) traversal_terminal_fraction: f32,
     pub(super) traversal_horizon_fraction: f32,
+    pub(super) trajectory_predicted_total_attack_count: u32,
+    pub(super) trajectory_predicted_total_attack_variance: f32,
+    pub(super) trajectory_predicted_total_attack_std: f32,
+    pub(super) trajectory_predicted_total_attack_rmse: f32,
 }
 
 impl LastGameInfo {
@@ -127,6 +131,22 @@ impl LastGameInfo {
             "traversal_horizon_fraction".to_string(),
             self.traversal_horizon_fraction,
         );
+        metrics.insert(
+            "trajectory_predicted_total_attack_count".to_string(),
+            self.trajectory_predicted_total_attack_count as f32,
+        );
+        metrics.insert(
+            "trajectory_predicted_total_attack_variance".to_string(),
+            self.trajectory_predicted_total_attack_variance,
+        );
+        metrics.insert(
+            "trajectory_predicted_total_attack_std".to_string(),
+            self.trajectory_predicted_total_attack_std,
+        );
+        metrics.insert(
+            "trajectory_predicted_total_attack_rmse".to_string(),
+            self.trajectory_predicted_total_attack_rmse,
+        );
         metrics
     }
 }
@@ -162,6 +182,10 @@ pub(super) struct ModelEvalEvent {
     pub(super) worst_game_tree_path: Option<String>,
     /// Per-game results: (seed, attack, lines, moves)
     pub(super) per_game_results: Vec<(u64, u32, u32, u32)>,
+    /// Per-game prediction metrics:
+    /// (seed, trajectory_predicted_total_attack_variance, trajectory_predicted_total_attack_std,
+    ///  trajectory_predicted_total_attack_rmse, trajectory_predicted_total_attack_count)
+    pub(super) per_game_prediction_metrics: Vec<(u64, f32, f32, f32, u32)>,
 }
 
 #[derive(Clone)]

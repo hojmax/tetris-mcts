@@ -81,11 +81,7 @@ fn action_reveals_new_visible_piece(state: &TetrisEnv, action_idx: usize) -> boo
 }
 
 pub(super) trait LeafEvaluator {
-    fn evaluate(
-        &self,
-        state: &TetrisEnv,
-        max_placements: u32,
-    ) -> Result<LeafEvaluation, String>;
+    fn evaluate(&self, state: &TetrisEnv, max_placements: u32) -> Result<LeafEvaluation, String>;
 }
 
 pub(super) struct LeafEvaluation {
@@ -100,11 +96,7 @@ pub(super) struct NeuralLeafEvaluator<'a> {
 }
 
 impl LeafEvaluator for NeuralLeafEvaluator<'_> {
-    fn evaluate(
-        &self,
-        state: &TetrisEnv,
-        max_placements: u32,
-    ) -> Result<LeafEvaluation, String> {
+    fn evaluate(&self, state: &TetrisEnv, max_placements: u32) -> Result<LeafEvaluation, String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
         match self.nn.predict_with_valid_actions(
             state,
@@ -127,11 +119,7 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
 pub(super) struct BootstrapLeafEvaluator;
 
 impl LeafEvaluator for BootstrapLeafEvaluator {
-    fn evaluate(
-        &self,
-        state: &TetrisEnv,
-        _max_placements: u32,
-    ) -> Result<LeafEvaluation, String> {
+    fn evaluate(&self, state: &TetrisEnv, _max_placements: u32) -> Result<LeafEvaluation, String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
         Ok(LeafEvaluation {
             action_priors: uniform_action_priors_for_valid_actions(valid_actions.len()),

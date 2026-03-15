@@ -493,6 +493,10 @@ impl GameGenerator {
                 "per_game_results".into(),
                 event.per_game_results.into_py(py),
             );
+            d.insert(
+                "per_game_prediction_metrics".into(),
+                event.per_game_prediction_metrics.into_py(py),
+            );
             drained.push(d);
         }
         drained

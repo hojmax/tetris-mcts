@@ -591,6 +591,18 @@ impl GameGenerator {
                 )
             })
             .collect();
+        let per_game_prediction_metrics: Vec<(u64, f32, f32, f32, u32)> = candidate_results
+            .iter()
+            .map(|r| {
+                (
+                    r.seed,
+                    r.game_result.trajectory_predicted_total_attack_variance,
+                    r.game_result.trajectory_predicted_total_attack_std,
+                    r.game_result.trajectory_predicted_total_attack_rmse,
+                    r.game_result.trajectory_predicted_total_attack_count,
+                )
+            })
+            .collect();
 
         let best_idx = candidate_results
             .iter()
@@ -817,6 +829,7 @@ impl GameGenerator {
                 worst_game_replay,
                 worst_game_tree_path,
                 per_game_results,
+                per_game_prediction_metrics,
             });
     }
 
@@ -928,6 +941,10 @@ impl GameGenerator {
                 traversal_expansion_fraction,
                 traversal_terminal_fraction,
                 traversal_horizon_fraction,
+                trajectory_predicted_total_attack_count,
+                trajectory_predicted_total_attack_variance,
+                trajectory_predicted_total_attack_std,
+                trajectory_predicted_total_attack_rmse,
                 ..
             } = result;
 
@@ -962,6 +979,10 @@ impl GameGenerator {
                 traversal_expansion_fraction,
                 traversal_terminal_fraction,
                 traversal_horizon_fraction,
+                trajectory_predicted_total_attack_count,
+                trajectory_predicted_total_attack_variance,
+                trajectory_predicted_total_attack_std,
+                trajectory_predicted_total_attack_rmse,
             });
         }
 

@@ -36,6 +36,51 @@ struct StateSnapshot {
     mask: Vec<bool>,
     overhang_fields: u32,
     hole_count: u32,
+    predicted_total_attack: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TrajectoryPredictionMetrics {
+    count: u32,
+    variance: f32,
+    std: f32,
+    rmse: f32,
+}
+
+fn summarize_trajectory_predictions(
+    predicted_totals: &[f32],
+    final_total_attack: f32,
+) -> TrajectoryPredictionMetrics {
+    if predicted_totals.is_empty() {
+        return TrajectoryPredictionMetrics::default();
+    }
+
+    let count = predicted_totals.len() as u32;
+    let mean_prediction = predicted_totals.iter().sum::<f32>() / count as f32;
+    let variance = predicted_totals
+        .iter()
+        .map(|prediction| {
+            let centered = *prediction - mean_prediction;
+            centered * centered
+        })
+        .sum::<f32>()
+        / count as f32;
+    let rmse = (predicted_totals
+        .iter()
+        .map(|prediction| {
+            let error = *prediction - final_total_attack;
+            error * error
+        })
+        .sum::<f32>()
+        / count as f32)
+        .sqrt();
+
+    TrajectoryPredictionMetrics {
+        count,
+        variance,
+        std: variance.sqrt(),
+        rmse,
+    }
 }
 
 fn export_tree(
@@ -420,6 +465,12 @@ impl MCTSAgent {
             }
 
             let (overhang_count, hole_count) = super::utils::count_overhang_fields_and_holes(&env);
+            let predicted_total_attack = if self.nn.is_some() {
+                root.as_ref()
+                    .map(|search_root| env.attack as f32 + search_root.raw_nn_value)
+            } else {
+                None
+            };
             states.push(StateSnapshot {
                 state: env.clone(),
                 frame_idx: frame_index,
@@ -427,6 +478,7 @@ impl MCTSAgent {
                 mask: mask.clone(),
                 overhang_fields: overhang_count,
                 hole_count,
+                predicted_total_attack,
             });
 
             // Decide which chance outcome key will be realized after executing this action.
@@ -598,6 +650,12 @@ impl MCTSAgent {
         }
 
         let total_attack: u32 = attacks.iter().sum();
+        let predicted_total_attacks: Vec<f32> = states
+            .iter()
+            .filter_map(|snapshot| snapshot.predicted_total_attack)
+            .collect();
+        let prediction_metrics =
+            summarize_trajectory_predictions(&predicted_total_attacks, total_attack as f32);
         let total_overhang_fields: u32 = states.iter().map(|s| s.overhang_fields).sum();
         let num_frames = states.len() as u32;
         let num_moves = env.placement_count.saturating_sub(starting_placement_count);
@@ -662,6 +720,10 @@ impl MCTSAgent {
                 traversal_expansion_fraction,
                 traversal_terminal_fraction,
                 traversal_horizon_fraction,
+                trajectory_predicted_total_attack_count: prediction_metrics.count,
+                trajectory_predicted_total_attack_variance: prediction_metrics.variance,
+                trajectory_predicted_total_attack_std: prediction_metrics.std,
+                trajectory_predicted_total_attack_rmse: prediction_metrics.rmse,
             },
             replay_moves,
         ))
@@ -723,6 +785,26 @@ mod tests {
     use super::super::nodes::{DecisionNode, MCTSNode};
     use super::*;
     use crate::search::NUM_ACTIONS;
+
+    #[test]
+    fn test_summarize_trajectory_predictions_zero_variance_and_error() {
+        let metrics = summarize_trajectory_predictions(&[10.0, 10.0, 10.0], 10.0);
+
+        assert_eq!(metrics.count, 3);
+        assert_eq!(metrics.variance, 0.0);
+        assert_eq!(metrics.std, 0.0);
+        assert_eq!(metrics.rmse, 0.0);
+    }
+
+    #[test]
+    fn test_summarize_trajectory_predictions_separates_variance_and_rmse() {
+        let metrics = summarize_trajectory_predictions(&[9.0, 9.0, 9.0], 10.0);
+
+        assert_eq!(metrics.count, 3);
+        assert_eq!(metrics.variance, 0.0);
+        assert_eq!(metrics.std, 0.0);
+        assert!((metrics.rmse - 1.0).abs() < 1e-6);
+    }
 
     #[test]
     fn test_expand_action_updates_state() {

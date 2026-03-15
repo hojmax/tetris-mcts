@@ -108,8 +108,8 @@ def encode_aux(
     aux[idx] = placement_count / MAX_PLACEMENTS
     idx += 1
 
-    # Combo: normalized
-    aux[idx] = min(combo, COMBO_NORMALIZATION_MAX) / COMBO_NORMALIZATION_MAX
+    # Combo: normalized with uncapped linear scaling.
+    aux[idx] = combo / COMBO_NORMALIZATION_MAX
     idx += 1
 
     # Back-to-back: binary
