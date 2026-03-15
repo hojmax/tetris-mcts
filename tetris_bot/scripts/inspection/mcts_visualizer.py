@@ -1781,18 +1781,18 @@ def siblings_for_parent(tree_dict: dict, parent_id: int) -> list[str]:
 
     if parent["node_type"] == "decision":
         visited_actions = {
-            _find_tree_node(tree_dict, child_id).get("edge_from_parent")
+            child.get("edge_from_parent")
             for child_id in parent.get("children", [])
-            if _find_tree_node(tree_dict, child_id) is not None
+            if (child := _find_tree_node(tree_dict, child_id)) is not None
         }
         for action_idx in parent.get("valid_actions", []):
             if action_idx not in visited_actions:
                 siblings.append(f"v_{parent_id}_{action_idx}")
     else:
         visited_outcomes = {
-            _find_tree_node(tree_dict, child_id).get("edge_from_parent")
+            child.get("edge_from_parent")
             for child_id in parent.get("children", [])
-            if _find_tree_node(tree_dict, child_id) is not None
+            if (child := _find_tree_node(tree_dict, child_id)) is not None
         }
         for outcome_idx in parent.get("possible_chance_outcomes", []):
             if outcome_idx not in visited_outcomes:

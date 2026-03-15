@@ -299,10 +299,10 @@ def _measure_text_draw_bounds(
 ) -> tuple[int, int, int, int]:
     left, top, right, bottom = font.getbbox(text)
     return (
-        left - _TEXT_SHADOW_RADIUS,
-        top - _TEXT_SHADOW_RADIUS,
-        right + _TEXT_SHADOW_RADIUS,
-        bottom + _TEXT_SHADOW_RADIUS,
+        int(left) - _TEXT_SHADOW_RADIUS,
+        int(top) - _TEXT_SHADOW_RADIUS,
+        int(right) + _TEXT_SHADOW_RADIUS,
+        int(bottom) + _TEXT_SHADOW_RADIUS,
     )
 
 
