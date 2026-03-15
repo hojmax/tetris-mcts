@@ -464,13 +464,12 @@ impl TetrisNN {
     fn predict_policy_logits_and_value(
         &self,
         env: &TetrisEnv,
-        placement_count: usize,
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
         let board_embed = self.get_or_compute_board_embedding(env)?;
 
         // Encode only piece/game aux features (61-dim) for the heads model.
-        let piece_aux_vec = encode_piece_aux_features(env, placement_count, max_placements)?;
+        let piece_aux_vec = encode_piece_aux_features(env, max_placements)?;
         self.run_heads_for_embedding(&board_embed, &piece_aux_vec)
     }
 
@@ -535,12 +534,10 @@ impl TetrisNN {
     pub fn predict_masked(
         &self,
         env: &TetrisEnv,
-        placement_count: usize,
         action_mask: &[bool],
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits, value) =
-            self.predict_policy_logits_and_value(env, placement_count, max_placements)?;
+        let (policy_logits, value) = self.predict_policy_logits_and_value(env, max_placements)?;
         self.validate_policy_output_len(policy_logits.len(), action_mask.len())?;
 
         let policy = masked_softmax(&policy_logits, action_mask);
@@ -551,12 +548,10 @@ impl TetrisNN {
     pub fn predict_with_valid_actions(
         &self,
         env: &TetrisEnv,
-        placement_count: usize,
         valid_actions: &[usize],
         max_placements: usize,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits, value) =
-            self.predict_policy_logits_and_value(env, placement_count, max_placements)?;
+        let (policy_logits, value) = self.predict_policy_logits_and_value(env, max_placements)?;
         self.validate_valid_actions(policy_logits.len(), valid_actions)?;
         Ok((
             softmax_over_valid_actions(&policy_logits, valid_actions),
@@ -679,12 +674,8 @@ fn load_fc_binary(path: &Path) -> TractResult<(Array2<f32>, Array1<f32>)> {
 
 /// Encode a TetrisEnv state into neural network input tensors
 #[cfg(test)]
-fn encode_state(
-    env: &TetrisEnv,
-    placement_count: usize,
-    max_placements: usize,
-) -> TractResult<(Tensor, Tensor)> {
-    let (board_tensor, aux_tensor) = encode_state_features(env, placement_count, max_placements)?;
+fn encode_state(env: &TetrisEnv, max_placements: usize) -> TractResult<(Tensor, Tensor)> {
+    let (board_tensor, aux_tensor) = encode_state_features(env, max_placements)?;
     let board =
         tract_ndarray::Array4::from_shape_vec((1, 1, BOARD_HEIGHT, BOARD_WIDTH), board_tensor)?
             .into_tensor();
@@ -694,10 +685,9 @@ fn encode_state(
 
 pub fn encode_state_features(
     env: &TetrisEnv,
-    placement_count: usize,
     max_placements: usize,
 ) -> TractResult<(Vec<f32>, Vec<f32>)> {
-    let aux = encode_aux_state_features(env, placement_count, max_placements)?;
+    let aux = encode_aux_state_features(env, max_placements)?;
     let board_tensor = encode_board_features(env);
     Ok((board_tensor, aux))
 }
@@ -738,11 +728,7 @@ struct PieceAuxInputs {
 }
 
 impl PieceAuxInputs {
-    fn from_env(
-        env: &TetrisEnv,
-        placement_count: usize,
-        max_placements: usize,
-    ) -> TractResult<Self> {
+    fn from_env(env: &TetrisEnv, max_placements: usize) -> TractResult<Self> {
         if max_placements == 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -756,7 +742,7 @@ impl PieceAuxInputs {
             hold_piece: env.get_hold_piece().map(|p| p.piece_type),
             hold_available: !env.is_hold_used(),
             next_queue: env.get_queue(QUEUE_SIZE),
-            placement_count_feature: placement_count as f32 / max_placements as f32,
+            placement_count_feature: env.placement_count as f32 / max_placements as f32,
             combo_feature: normalize_combo_for_feature(env.combo),
             back_to_back: env.back_to_back,
             next_hidden_piece_probs: next_hidden_piece_distribution(env),
@@ -983,20 +969,12 @@ fn encode_board_stats(env: &TetrisEnv) -> Vec<f32> {
 }
 
 /// Encode only the 61 piece/game auxiliary features for the uncached heads model.
-fn encode_piece_aux_features(
-    env: &TetrisEnv,
-    placement_count: usize,
-    max_placements: usize,
-) -> TractResult<Vec<f32>> {
-    Ok(PieceAuxInputs::from_env(env, placement_count, max_placements)?.encode_vec())
+fn encode_piece_aux_features(env: &TetrisEnv, max_placements: usize) -> TractResult<Vec<f32>> {
+    Ok(PieceAuxInputs::from_env(env, max_placements)?.encode_vec())
 }
 
-pub fn encode_aux_state_features(
-    env: &TetrisEnv,
-    placement_count: usize,
-    max_placements: usize,
-) -> TractResult<Vec<f32>> {
-    let piece_aux = PieceAuxInputs::from_env(env, placement_count, max_placements)?;
+pub fn encode_aux_state_features(env: &TetrisEnv, max_placements: usize) -> TractResult<Vec<f32>> {
+    let piece_aux = PieceAuxInputs::from_env(env, max_placements)?;
     let board_stats = BoardStatInputs::from_env(env);
     let mut aux = vec![0.0; AUX_FEATURES];
     let (piece_out, board_out) = aux.split_at_mut(PIECE_AUX_FEATURES);

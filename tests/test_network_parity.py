@@ -230,9 +230,8 @@ def _build_env_variants() -> list[tuple[tetris_core.TetrisEnv, int, int]]:
 
 def test_encode_state_matches_between_rust_inference_and_python_training_view() -> None:
     for env, move_number, max_placements in _build_env_variants():
-        rust_board, rust_aux = tetris_core.debug_encode_state(
-            env, move_number, max_placements
-        )
+        env.placement_count = move_number
+        rust_board, rust_aux = tetris_core.debug_encode_state(env, max_placements)
         py_board, py_aux = _encode_state_python(env, move_number, max_placements)
 
         np.testing.assert_array_equal(
@@ -672,16 +671,16 @@ def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
     assert cached_agent.load_model(str(onnx_path))
     assert cached_agent.set_board_cache_enabled(True)
 
-    warmup = cached_agent.search_with_tree(
-        env.clone_state(), add_noise=False, placement_count=17
-    )
+    warmup_env = env.clone_state()
+    warmup_env.placement_count = 17
+    warmup = cached_agent.search_with_tree(warmup_env, add_noise=False)
     assert warmup is not None
     warmup_stats = cached_agent.get_and_reset_cache_stats()
     assert warmup_stats is not None
 
-    cached_search = cached_agent.search_with_tree(
-        env.clone_state(), add_noise=False, placement_count=17
-    )
+    cached_env = env.clone_state()
+    cached_env.placement_count = 17
+    cached_search = cached_agent.search_with_tree(cached_env, add_noise=False)
     assert cached_search is not None
     cached_result, cached_tree = cached_search
     cached_stats = cached_agent.get_and_reset_cache_stats()
@@ -694,9 +693,9 @@ def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
     uncached_agent = tetris_core.MCTSAgent(config)
     assert uncached_agent.load_model(str(onnx_path))
     assert uncached_agent.set_board_cache_enabled(False)
-    uncached_search = uncached_agent.search_with_tree(
-        env.clone_state(), add_noise=False, placement_count=17
-    )
+    uncached_env = env.clone_state()
+    uncached_env.placement_count = 17
+    uncached_search = uncached_agent.search_with_tree(uncached_env, add_noise=False)
     assert uncached_search is not None
     uncached_result, uncached_tree = uncached_search
     uncached_stats = uncached_agent.get_and_reset_cache_stats()

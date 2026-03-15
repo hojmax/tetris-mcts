@@ -88,6 +88,7 @@ impl TetrisEnv {
             }
             // Tetrominos always have 4 cells (all within bounds due to is_valid_position check)
             self.total_blocks += 4;
+            self.placement_count += 1;
 
             // Invalidate placements cache since board changed
             self.invalidate_placement_cache();

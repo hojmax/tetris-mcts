@@ -280,7 +280,7 @@ mod tests {
         let agent = MCTSAgent::new(config.clone());
         let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, 17);
         let playback = agent
-            .play_game_with_trees(&env, 4, false, 0)
+            .play_game_with_trees(&env, 4, false)
             .expect("playback should succeed");
 
         let saved = SavedGameTreePlayback::from_playback(

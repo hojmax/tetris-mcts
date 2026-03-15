@@ -9,7 +9,7 @@ fn test_board_encoding_is_binary() {
     env.hard_drop();
     env.hard_drop();
 
-    let (board_tensor, _) = encode_state(&env, 0, 100).expect("encoding failed");
+    let (board_tensor, _) = encode_state(&env, 100).expect("encoding failed");
     let board_array = board_tensor
         .to_array_view::<f32>()
         .expect("board tensor should contain f32");
@@ -42,8 +42,9 @@ fn test_board_encoding_is_binary() {
 
 #[test]
 fn test_auxiliary_features_format() {
-    let env = TetrisEnv::new(10, 20);
-    let (_, aux) = encode_state(&env, 42, 100).expect("encoding failed");
+    let mut env = TetrisEnv::new(10, 20);
+    env.placement_count = 42;
+    let (_, aux) = encode_state(&env, 100).expect("encoding failed");
     let aux_array = aux
         .to_array_view::<f32>()
         .expect("aux tensor should contain f32");
@@ -243,8 +244,9 @@ fn test_auxiliary_features_format() {
 
 #[test]
 fn test_encoding_specification() {
-    let env = TetrisEnv::new(10, 20);
-    let (board, aux) = encode_state(&env, 50, 100).expect("encoding failed");
+    let mut env = TetrisEnv::new(10, 20);
+    env.placement_count = 50;
+    let (board, aux) = encode_state(&env, 100).expect("encoding failed");
     let board_array = board
         .to_array_view::<f32>()
         .expect("board tensor should contain f32");
@@ -389,9 +391,9 @@ proptest! {
         let mut env = TetrisEnv::with_seed(10, 20, seed);
 
         for (step_idx, action) in actions.iter().copied().enumerate() {
-            let placement_count = step_idx % max_placements;
+            env.placement_count = (step_idx % max_placements) as u32;
             let (_, aux_tensor) =
-                encode_state(&env, placement_count, max_placements)
+                encode_state(&env, max_placements)
                     .expect("encoding should succeed for valid max_placements");
             let aux_array = aux_tensor
                 .to_array_view::<f32>()
@@ -526,7 +528,7 @@ fn test_load_and_predict_split_model() {
     let mask = get_action_mask(&env);
 
     let (policy1, value1) = nn
-        .predict_masked(&env, 0, &mask, 100)
+        .predict_masked(&env, &mask, 100)
         .expect("First inference failed");
     assert_eq!(policy1.len(), mask.len());
     let policy_sum: f32 = policy1.iter().sum();
@@ -537,13 +539,15 @@ fn test_load_and_predict_split_model() {
     );
 
     let (policy2, value2) = nn
-        .predict_masked(&env, 0, &mask, 100)
+        .predict_masked(&env, &mask, 100)
         .expect("Second inference (cache hit) failed");
     assert_eq!(policy1, policy2, "Cache hit should produce same policy");
     assert_eq!(value1, value2, "Cache hit should produce same value");
 
+    let mut env_with_late_count = env.clone();
+    env_with_late_count.placement_count = 50;
     let (_policy3, value3) = nn
-        .predict_masked(&env, 50, &mask, 100)
+        .predict_masked(&env_with_late_count, &mask, 100)
         .expect("Third inference (different aux) failed");
     assert_ne!(
         value1, value3,
@@ -575,10 +579,10 @@ fn test_predict_with_valid_actions_matches_masked_policy_subset() {
         .collect();
 
     let (masked_policy, masked_value) = nn
-        .predict_masked(&env, 0, &mask, 100)
+        .predict_masked(&env, &mask, 100)
         .expect("Masked inference failed");
     let (valid_policy, valid_value) = nn
-        .predict_with_valid_actions(&env, 0, &valid_actions, 100)
+        .predict_with_valid_actions(&env, &valid_actions, 100)
         .expect("Valid-actions inference failed");
 
     let expected_valid_policy: Vec<f32> = valid_actions

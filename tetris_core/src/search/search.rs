@@ -81,12 +81,7 @@ fn action_reveals_new_visible_piece(state: &TetrisEnv, action_idx: usize) -> boo
 }
 
 pub(super) trait LeafEvaluator {
-    fn evaluate(
-        &self,
-        state: &TetrisEnv,
-        move_number: u32,
-        max_placements: u32,
-    ) -> Result<(Vec<f32>, f32), String>;
+    fn evaluate(&self, state: &TetrisEnv, max_placements: u32) -> Result<(Vec<f32>, f32), String>;
 }
 
 pub(super) struct NeuralLeafEvaluator<'a> {
@@ -95,23 +90,17 @@ pub(super) struct NeuralLeafEvaluator<'a> {
 }
 
 impl LeafEvaluator for NeuralLeafEvaluator<'_> {
-    fn evaluate(
-        &self,
-        state: &TetrisEnv,
-        move_number: u32,
-        max_placements: u32,
-    ) -> Result<(Vec<f32>, f32), String> {
+    fn evaluate(&self, state: &TetrisEnv, max_placements: u32) -> Result<(Vec<f32>, f32), String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
         match self.nn.predict_with_valid_actions(
             state,
-            move_number as usize,
             valid_actions.as_slice(),
             max_placements as usize,
         ) {
             Ok((policy, value)) => Ok((policy, scale_nn_value(value, self.nn_value_weight))),
             Err(error) => Err(format!(
                 "NN prediction failed during expansion at move {}: {}",
-                move_number, error
+                state.placement_count, error
             )),
         }
     }
@@ -120,12 +109,7 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
 pub(super) struct BootstrapLeafEvaluator;
 
 impl LeafEvaluator for BootstrapLeafEvaluator {
-    fn evaluate(
-        &self,
-        state: &TetrisEnv,
-        _move_number: u32,
-        _max_placements: u32,
-    ) -> Result<(Vec<f32>, f32), String> {
+    fn evaluate(&self, state: &TetrisEnv, _max_placements: u32) -> Result<(Vec<f32>, f32), String> {
         let valid_actions = state.get_cached_valid_action_indices_arc();
         Ok((
             uniform_action_priors_for_valid_actions(valid_actions.len()),
@@ -161,7 +145,7 @@ fn simulate<E: LeafEvaluator>(
         node.visit_count += 1;
 
         // No value tail beyond horizon.
-        if node.move_number >= config.max_placements {
+        if node.state.placement_count >= config.max_placements {
             let total_value = root_cumulative_attack + path_attack_sum;
             update_q_bounds(q_bounds, total_value);
             backup_with_value(&path, total_value, config.track_value_history);
@@ -170,7 +154,7 @@ fn simulate<E: LeafEvaluator>(
 
         if node.is_terminal {
             let penalty = super::utils::compute_death_penalty(
-                node.move_number,
+                node.state.placement_count,
                 config.max_placements,
                 config.death_penalty,
             );
@@ -190,15 +174,9 @@ fn simulate<E: LeafEvaluator>(
             *q_bounds,
             config.use_parent_value_for_unvisited_q,
         );
-        let next_move_number = node.move_number
-            + if action_idx == HOLD_ACTION_INDEX {
-                0
-            } else {
-                1
-            };
         let mut expanded_action = false;
         if !node.children.contains_key(&action_idx) {
-            let child = match expand_action(node, action_idx, next_move_number) {
+            let child = match expand_action(node, action_idx) {
                 Ok(child) => child,
                 Err(ExpandActionError::InvariantViolation { action_idx }) => {
                     panic!(
@@ -234,7 +212,7 @@ fn simulate<E: LeafEvaluator>(
         path_attack_sum += chance_node.attack as f32;
         if chance_node.state.game_over {
             let penalty = super::utils::compute_death_penalty(
-                chance_node.move_number,
+                chance_node.state.placement_count,
                 config.max_placements,
                 config.death_penalty,
             );
@@ -247,7 +225,7 @@ fn simulate<E: LeafEvaluator>(
                 SimulationOutcome::TerminalEnd
             };
         }
-        if chance_node.move_number >= config.max_placements {
+        if chance_node.state.placement_count >= config.max_placements {
             let total_value = root_cumulative_attack + path_attack_sum;
             update_q_bounds(q_bounds, total_value);
             backup_with_value(&path, total_value, config.track_value_history);
@@ -264,7 +242,6 @@ fn simulate<E: LeafEvaluator>(
                 evaluator,
                 chance_node,
                 chance_outcome,
-                chance_node.move_number,
                 config.max_placements,
             ) {
                 Ok(child) => child,
@@ -305,11 +282,11 @@ fn simulate<E: LeafEvaluator>(
             );
             let leaf_value = if decision_node.is_terminal {
                 -super::utils::compute_death_penalty(
-                    decision_node.move_number,
+                    decision_node.state.placement_count,
                     config.max_placements,
                     config.death_penalty,
                 )
-            } else if decision_node.move_number >= config.max_placements {
+            } else if decision_node.state.placement_count >= config.max_placements {
                 0.0
             } else {
                 decision_node.nn_value - leaf_overhang
@@ -336,11 +313,7 @@ fn simulate<E: LeafEvaluator>(
 /// Expand an action from a decision node (creates chance node)
 ///
 /// Returns an error if action execution fails.
-fn expand_action(
-    parent: &DecisionNode,
-    action_idx: usize,
-    move_number: u32,
-) -> Result<MCTSNode, ExpandActionError> {
+fn expand_action(parent: &DecisionNode, action_idx: usize) -> Result<MCTSNode, ExpandActionError> {
     let mut new_state = parent.state.mcts_clone();
     let attack = match new_state.execute_action_index(action_idx) {
         Some(attack) => attack,
@@ -371,7 +344,6 @@ fn expand_action(
         new_state,
         attack,
         overhang_fields,
-        move_number,
         bag_remaining,
     )))
 }
@@ -385,7 +357,6 @@ fn expand_chance<E: LeafEvaluator>(
     evaluator: &E,
     parent: &ChanceNode,
     chance_outcome: usize,
-    move_number: u32,
     max_placements: u32,
 ) -> Result<MCTSNode, ExpandActionError> {
     let mut new_state = parent.state.mcts_clone();
@@ -398,9 +369,9 @@ fn expand_chance<E: LeafEvaluator>(
         });
     }
 
-    let mut node = DecisionNode::new(new_state, move_number);
+    let mut node = DecisionNode::new(new_state);
     let (action_priors, value) = evaluator
-        .evaluate(&node.state, move_number, max_placements)
+        .evaluate(&node.state, max_placements)
         .map_err(ExpandActionError::EvaluatorFailed)?;
     node.set_nn_output_for_valid_actions(&action_priors, value);
 
@@ -521,11 +492,11 @@ pub(super) fn compute_tree_stats(root: &DecisionNode) -> TreeStats {
     }
 }
 
-fn create_search_rng(config: &MCTSConfig, env: &TetrisEnv, move_number: u32) -> StdRng {
+fn create_search_rng(config: &MCTSConfig, env: &TetrisEnv) -> StdRng {
     if let Some(mcts_seed) = config.seed {
         let combined_seed = mcts_seed
             .wrapping_add(env.seed)
-            .wrapping_add(move_number as u64);
+            .wrapping_add(env.placement_count as u64);
         StdRng::seed_from_u64(combined_seed)
     } else {
         StdRng::from_rng(thread_rng()).expect("Failed to create RNG from thread_rng")
@@ -602,7 +573,7 @@ pub(super) fn run_search<E: LeafEvaluator>(
     mut root: DecisionNode,
     add_noise: bool,
 ) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
-    let mut rng = create_search_rng(config, &root.state, root.move_number);
+    let mut rng = create_search_rng(config, &root.state);
     if add_noise {
         root.add_dirichlet_noise(config.dirichlet_alpha, config.dirichlet_epsilon, &mut rng);
     }
@@ -631,13 +602,12 @@ pub(super) fn search_internal(
     policy: Vec<f32>,
     nn_value: f32,
     add_noise: bool,
-    move_number: u32,
 ) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
     let evaluator = NeuralLeafEvaluator {
         nn,
         nn_value_weight: config.nn_value_weight,
     };
-    let mut root = DecisionNode::new(env.clone(), move_number);
+    let mut root = DecisionNode::new(env.clone());
     root.set_nn_output(&policy, scale_nn_value(nn_value, config.nn_value_weight));
     root.set_initial_total_value_estimate(root.state.attack as f32 + root.nn_value);
     run_search(config, &evaluator, root, add_noise)
@@ -648,10 +618,9 @@ pub(crate) fn search_internal_without_nn(
     config: &MCTSConfig,
     env: &TetrisEnv,
     add_noise: bool,
-    move_number: u32,
 ) -> (MCTSResult, DecisionNode, TreeStats, TraversalStats) {
     let root_policy = env.get_cached_uniform_policy().as_ref().clone();
-    let mut root = DecisionNode::new(env.clone(), move_number);
+    let mut root = DecisionNode::new(env.clone());
     root.set_nn_output(&root_policy, 0.0);
     root.set_initial_total_value_estimate(root.state.attack as f32 + root.nn_value);
     run_search(config, &BootstrapLeafEvaluator, root, add_noise)
@@ -703,7 +672,6 @@ mod tests {
         fn evaluate(
             &self,
             state: &TetrisEnv,
-            _move_number: u32,
             _max_placements: u32,
         ) -> Result<(Vec<f32>, f32), String> {
             let valid_actions = state.get_cached_valid_action_indices_arc();
@@ -736,8 +704,8 @@ mod tests {
         let alt_hidden_piece = (hidden_piece + 1) % NUM_PIECE_TYPES;
         env_b.piece_queue[hidden_idx] = alt_hidden_piece;
 
-        let root_a = DecisionNode::new(env_a, 0);
-        let root_b = DecisionNode::new(env_b, 0);
+        let root_a = DecisionNode::new(env_a);
+        let root_b = DecisionNode::new(env_b);
         let placement_action = root_a
             .valid_actions
             .iter()
@@ -749,13 +717,13 @@ mod tests {
             "Placement action should remain valid after hidden-piece mutation"
         );
 
-        let chance_a = match expand_action(&root_a, placement_action, 1)
+        let chance_a = match expand_action(&root_a, placement_action)
             .expect("expand_action should succeed for placement")
         {
             MCTSNode::Chance(node) => node,
             MCTSNode::Decision(_) => unreachable!("expand_action should return ChanceNode"),
         };
-        let chance_b = match expand_action(&root_b, placement_action, 1)
+        let chance_b = match expand_action(&root_b, placement_action)
             .expect("expand_action should succeed for placement")
         {
             MCTSNode::Chance(node) => node,
@@ -787,13 +755,13 @@ mod tests {
         env.hold_used = false;
         env.hold_piece_bag_position = Some(env.current_piece_bag_position);
 
-        let root = DecisionNode::new(env.clone(), 0);
+        let root = DecisionNode::new(env.clone());
         assert!(
             root.valid_actions.contains(&HOLD_ACTION_INDEX),
             "Hold should be valid when hold slot is occupied and hold is unused"
         );
 
-        let chance = match expand_action(&root, HOLD_ACTION_INDEX, 0)
+        let chance = match expand_action(&root, HOLD_ACTION_INDEX)
             .expect("expand_action should succeed for hold-swap")
         {
             MCTSNode::Chance(node) => node,
@@ -821,7 +789,7 @@ mod tests {
             env.board[env.width + x] = 1;
         }
 
-        let mut root = DecisionNode::new(env, 0);
+        let mut root = DecisionNode::new(env);
         let mut root_policy = vec![0.0; NUM_ACTIONS];
         root_policy[HOLD_ACTION_INDEX] = 1.0;
         root.set_nn_output(&root_policy, 0.0);
@@ -857,8 +825,9 @@ mod tests {
 
     #[test]
     fn test_simulate_stops_at_max_placements_horizon() {
-        let env = TetrisEnv::new(10, 20);
-        let mut root = DecisionNode::new(env, 3);
+        let mut env = TetrisEnv::new(10, 20);
+        env.placement_count = 3;
+        let mut root = DecisionNode::new(env);
         let mut root_policy = vec![0.0; NUM_ACTIONS];
         root_policy[HOLD_ACTION_INDEX] = 1.0;
         root.set_nn_output(&root_policy, 0.0);
@@ -887,7 +856,7 @@ mod tests {
     #[should_panic(expected = "non-terminal DecisionNode has no valid actions")]
     fn test_simulate_panics_when_non_terminal_node_has_no_valid_actions() {
         let env = TetrisEnv::new(10, 20);
-        let mut root = DecisionNode::new(env, 0);
+        let mut root = DecisionNode::new(env);
         root.valid_actions.clear();
         root.action_priors.clear();
 
@@ -909,8 +878,9 @@ mod tests {
 
     #[test]
     fn test_simulate_horizon_after_last_placement_uses_immediate_reward_only() {
-        let env = TetrisEnv::new(10, 20);
-        let mut root = DecisionNode::new(env, 2);
+        let mut env = TetrisEnv::new(10, 20);
+        env.placement_count = 2;
+        let mut root = DecisionNode::new(env);
         let placement_action = root
             .valid_actions
             .iter()
@@ -953,13 +923,17 @@ mod tests {
     #[test]
     fn test_root_greedy_tie_break_prefers_lower_action_index() {
         let env = TetrisEnv::new(10, 20);
-        let mut root = DecisionNode::new(env.clone(), 0);
+        let mut root = DecisionNode::new(env.clone());
         let root_policy = vec![1.0 / NUM_ACTIONS as f32; NUM_ACTIONS];
         root.set_nn_output(&root_policy, 0.0);
 
-        let mut left_child = ChanceNode::new(env.clone(), 0, 0, 1, Vec::new());
+        let mut left_env = env.clone();
+        left_env.placement_count = 1;
+        let mut left_child = ChanceNode::new(left_env, 0, 0, Vec::new());
         left_child.visit_count = 5;
-        let mut right_child = ChanceNode::new(env, 0, 0, 1, Vec::new());
+        let mut right_env = env;
+        right_env.placement_count = 1;
+        let mut right_child = ChanceNode::new(right_env, 0, 0, Vec::new());
         right_child.visit_count = 5;
         root.children.insert(10, MCTSNode::Chance(left_child));
         root.children.insert(20, MCTSNode::Chance(right_child));
@@ -986,7 +960,7 @@ mod tests {
         let root_policy = uniform_action_priors_for_valid_actions(
             env.get_cached_valid_action_indices_arc().len(),
         );
-        let mut root = DecisionNode::new(env.clone(), 0);
+        let mut root = DecisionNode::new(env.clone());
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
         let mut rng = StdRng::seed_from_u64(42);
         let mut q_bounds = (0.0_f32, 0.0_f32);
@@ -1047,7 +1021,7 @@ mod tests {
         let root_policy = uniform_action_priors_for_valid_actions(
             env.get_cached_valid_action_indices_arc().len(),
         );
-        let mut root = DecisionNode::new(env.clone(), 0);
+        let mut root = DecisionNode::new(env.clone());
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
         let mut rng = StdRng::seed_from_u64(42);
         let mut q_bounds = (0.0_f32, 0.0_f32);
@@ -1087,7 +1061,7 @@ mod tests {
         let root_policy = uniform_action_priors_for_valid_actions(
             env.get_cached_valid_action_indices_arc().len(),
         );
-        let mut root = DecisionNode::new(env.clone(), 0);
+        let mut root = DecisionNode::new(env.clone());
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
 
         // Run initial search
@@ -1123,7 +1097,7 @@ mod tests {
             env.board[env.width + x] = 1;
         }
 
-        let mut root = DecisionNode::new(env, 0);
+        let mut root = DecisionNode::new(env);
         let mut root_policy = vec![0.0; NUM_ACTIONS];
         root_policy[HOLD_ACTION_INDEX] = 1.0;
         root.set_nn_output(&root_policy, 0.0);
@@ -1154,7 +1128,7 @@ mod tests {
         let root_policy = uniform_action_priors_for_valid_actions(
             env.get_cached_valid_action_indices_arc().len(),
         );
-        let mut root = DecisionNode::new(env.clone(), 0);
+        let mut root = DecisionNode::new(env.clone());
         root.set_nn_output_for_valid_actions(&root_policy, 0.0);
 
         let (_result, _root, _tree_stats, traversal_stats) =

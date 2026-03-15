@@ -32,7 +32,6 @@ pub struct MCTSAgent {
 struct StateSnapshot {
     state: TetrisEnv,
     frame_idx: u32,
-    placement_idx: u32,
     policy: Vec<f32>,
     mask: Vec<bool>,
     overhang_fields: u32,
@@ -185,16 +184,14 @@ impl MCTSAgent {
     /// Args:
     ///     env: The game state to search from
     ///     add_noise: Whether to add Dirichlet noise to root priors
-    ///     placement_count: The current placement count in the game
     ///
     /// Returns:
     ///     Tuple of (MCTSResult, MCTSTreeExport), or None if no valid actions exist
-    #[pyo3(signature = (env, add_noise=false, placement_count=0))]
+    #[pyo3(signature = (env, add_noise=false))]
     pub fn search_with_tree(
         &self,
         env: &TetrisEnv,
         add_noise: bool,
-        placement_count: u32,
     ) -> Option<(MCTSResult, MCTSTreeExport)> {
         // Keep parity with select_action/play_game: no valid actions means terminal state.
         let mask = crate::inference::get_action_mask(env);
@@ -205,25 +202,12 @@ impl MCTSAgent {
         let (mcts_result, root, _tree_stats, _traversal_stats) = if let Some(nn) = self.nn.as_ref()
         {
             let (policy, nn_value) = nn
-                .predict_masked(
-                    env,
-                    placement_count as usize,
-                    &mask,
-                    self.config.max_placements as usize,
-                )
+                .predict_masked(env, &mask, self.config.max_placements as usize)
                 .expect("Neural network prediction failed");
 
-            search_internal(
-                &self.config,
-                nn,
-                env,
-                policy,
-                nn_value,
-                add_noise,
-                placement_count,
-            )
+            search_internal(&self.config, nn, env, policy, nn_value, add_noise)
         } else {
-            search_internal_without_nn(&self.config, env, add_noise, placement_count)
+            search_internal_without_nn(&self.config, env, add_noise)
         };
 
         Some((
@@ -241,21 +225,18 @@ impl MCTSAgent {
     ///     env: Starting game state (left unchanged; the playback clones it)
     ///     max_placements: Absolute placement horizon for the rollout
     ///     add_noise: Whether to add Dirichlet noise at each root
-    ///     placement_count: Starting placement count for the provided env
     ///
     /// Returns:
     ///     GameTreePlayback with per-move tree exports, or None if NN inference fails
-    #[pyo3(signature = (env, max_placements=100, add_noise=true, placement_count=0))]
+    #[pyo3(signature = (env, max_placements=100, add_noise=true))]
     pub fn play_game_with_trees(
         &self,
         env: &TetrisEnv,
         max_placements: u32,
         add_noise: bool,
-        placement_count: u32,
     ) -> Option<GameTreePlayback> {
         let mut env = env.clone();
-        let starting_placement_count = placement_count;
-        let mut placement_count = placement_count;
+        let starting_placement_count = env.placement_count;
         let mut frame_index: u32 = 0;
         let mut total_attack: u32 = 0;
         let mut replay_moves: Vec<ReplayMove> = Vec::new();
@@ -264,7 +245,7 @@ impl MCTSAgent {
         let mut tree_reuse_hits: u32 = 0;
         let mut tree_reuse_misses: u32 = 0;
 
-        while placement_count < max_placements {
+        while env.placement_count < max_placements {
             if env.game_over {
                 break;
             }
@@ -278,12 +259,11 @@ impl MCTSAgent {
                 break;
             }
 
-            let current_placement_count = placement_count;
+            let current_placement_count = env.placement_count;
             let (result, root, _tree_stats, _traversal_stats) = self.search_maybe_reuse(
                 &env,
                 &mask,
                 add_noise,
-                current_placement_count,
                 max_placements,
                 reused_root.take(),
             )?;
@@ -301,9 +281,6 @@ impl MCTSAgent {
                 action: selected_action,
                 attack,
             });
-            if selected_action != HOLD_ACTION_INDEX {
-                placement_count += 1;
-            }
 
             let selected_chance_outcome = realized_chance_outcome(&env, reveals_new_visible_piece);
             steps.push(GameTreeStep {
@@ -316,7 +293,7 @@ impl MCTSAgent {
             });
             frame_index += 1;
 
-            let should_attempt_tree_reuse = !env.game_over && placement_count < max_placements;
+            let should_attempt_tree_reuse = !env.game_over && env.placement_count < max_placements;
             if self.config.reuse_tree && should_attempt_tree_reuse {
                 if let Some(subtree) =
                     extract_subtree(root, selected_action, selected_chance_outcome)
@@ -333,7 +310,7 @@ impl MCTSAgent {
             steps,
             replay_moves,
             total_attack,
-            num_moves: placement_count.saturating_sub(starting_placement_count),
+            num_moves: env.placement_count.saturating_sub(starting_placement_count),
             num_frames: frame_index,
             tree_reuse_hits,
             tree_reuse_misses,
@@ -348,17 +325,11 @@ impl MCTSAgent {
     /// Args:
     ///     env: The game state to search from
     ///     add_noise: Whether to add Dirichlet noise to root priors
-    ///     placement_count: The current placement count in the game
     ///
     /// Returns:
     ///     MCTSResult with selected action and policy, or None if no model loaded
-    #[pyo3(signature = (env, add_noise=false, placement_count=0))]
-    pub fn select_action(
-        &self,
-        env: &TetrisEnv,
-        add_noise: bool,
-        placement_count: u32,
-    ) -> Option<MCTSResult> {
+    #[pyo3(signature = (env, add_noise=false))]
+    pub fn select_action(&self, env: &TetrisEnv, add_noise: bool) -> Option<MCTSResult> {
         let nn = self.nn.as_ref()?;
 
         // Get action mask and initial policy
@@ -368,23 +339,11 @@ impl MCTSAgent {
         }
 
         let (policy, nn_value) = nn
-            .predict_masked(
-                env,
-                placement_count as usize,
-                &mask,
-                self.config.max_placements as usize,
-            )
+            .predict_masked(env, &mask, self.config.max_placements as usize)
             .expect("Neural network prediction failed");
 
-        let (mcts_result, _root, _tree_stats, _traversal_stats) = search_internal(
-            &self.config,
-            nn,
-            env,
-            policy,
-            nn_value,
-            add_noise,
-            placement_count,
-        );
+        let (mcts_result, _root, _tree_stats, _traversal_stats) =
+            search_internal(&self.config, nn, env, policy, nn_value, add_noise);
         Some(mcts_result)
     }
 }
@@ -411,7 +370,7 @@ impl MCTSAgent {
         let mut max_valid_moves: u32 = 0;
         let mut tree_stats_acc = TreeStatsAccumulator::new();
         let mut frame_index: u32 = 0;
-        let mut placement_count: u32 = 0;
+        let starting_placement_count = env.placement_count;
 
         // Tree reuse state: carry the subtree from previous move
         let mut reused_root: Option<DecisionNode> = None;
@@ -423,7 +382,7 @@ impl MCTSAgent {
         let mut traversal_terminal_ends: u64 = 0;
         let mut traversal_horizon_ends: u64 = 0;
 
-        while placement_count < max_placements {
+        while env.placement_count < max_placements {
             if env.game_over {
                 break;
             }
@@ -444,7 +403,6 @@ impl MCTSAgent {
                 &env,
                 &mask,
                 add_noise,
-                placement_count,
                 max_placements,
                 reused_root.take(),
             )?;
@@ -465,7 +423,6 @@ impl MCTSAgent {
             states.push(StateSnapshot {
                 state: env.clone(),
                 frame_idx: frame_index,
-                placement_idx: placement_count,
                 policy: result.policy.clone(),
                 mask: mask.clone(),
                 overhang_fields: overhang_count,
@@ -487,9 +444,6 @@ impl MCTSAgent {
                 action: selected_action,
                 attack,
             });
-            if selected_action != HOLD_ACTION_INDEX {
-                placement_count += 1;
-            }
             frame_index += 1;
 
             // Try to extract subtree for reuse on the next move.
@@ -499,7 +453,7 @@ impl MCTSAgent {
             //
             // Do not count terminal or max-placement transitions as reuse misses:
             // there is no next search step, so reuse is not applicable.
-            let should_attempt_tree_reuse = !env.game_over && placement_count < max_placements;
+            let should_attempt_tree_reuse = !env.game_over && env.placement_count < max_placements;
             if self.config.reuse_tree && should_attempt_tree_reuse {
                 if let Some(root) = root {
                     let chance_outcome = if action_reveals_new_visible_piece {
@@ -624,7 +578,7 @@ impl MCTSAgent {
                 hold_available,
                 next_queue,
                 move_number: snapshot.frame_idx,
-                placement_count: snapshot.placement_idx as f32 / max_placements as f32,
+                placement_count: snapshot.state.placement_count as f32 / max_placements as f32,
                 combo: crate::inference::normalize_combo_for_feature(state.combo),
                 back_to_back: state.back_to_back,
                 next_hidden_piece_probs,
@@ -646,7 +600,7 @@ impl MCTSAgent {
         let total_attack: u32 = attacks.iter().sum();
         let total_overhang_fields: u32 = states.iter().map(|s| s.overhang_fields).sum();
         let num_frames = states.len() as u32;
-        let num_moves = placement_count;
+        let num_moves = env.placement_count.saturating_sub(starting_placement_count);
         let avg_valid_moves = if num_frames > 0 {
             valid_moves_sum as f32 / num_frames as f32
         } else {
@@ -723,7 +677,6 @@ impl MCTSAgent {
         env: &TetrisEnv,
         mask: &[bool],
         add_noise: bool,
-        placement_count: u32,
         max_placements: u32,
         reused_root: Option<DecisionNode>,
     ) -> Option<(MCTSResult, Option<DecisionNode>, TreeStats, TraversalStats)> {
@@ -735,30 +688,18 @@ impl MCTSAgent {
                 };
                 run_search(&self.config, &evaluator, root, add_noise)
             } else {
-                let (policy, nn_value) = match nn.predict_masked(
-                    env,
-                    placement_count as usize,
-                    mask,
-                    max_placements as usize,
-                ) {
+                let (policy, nn_value) = match nn.predict_masked(env, mask, max_placements as usize)
+                {
                     Ok(result) => result,
                     Err(e) => {
                         eprintln!(
                             "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
-                            placement_count, e
+                            env.placement_count, e
                         );
                         return None;
                     }
                 };
-                search_internal(
-                    &self.config,
-                    nn,
-                    env,
-                    policy,
-                    nn_value,
-                    add_noise,
-                    placement_count,
-                )
+                search_internal(&self.config, nn, env, policy, nn_value, add_noise)
             };
             Some((result, Some(root), tree_stats, traversal_stats))
         } else {
@@ -770,7 +711,7 @@ impl MCTSAgent {
                     add_noise,
                 )
             } else {
-                search_internal_without_nn(&self.config, env, add_noise, placement_count)
+                search_internal_without_nn(&self.config, env, add_noise)
             };
             Some((result, Some(root), tree_stats, traversal_stats))
         }
@@ -803,17 +744,17 @@ mod tests {
 
         // Create a decision node
         let policy = vec![1.0 / NUM_ACTIONS as f32; NUM_ACTIONS];
-        let mut root = DecisionNode::new(env.clone(), 0);
+        let mut root = DecisionNode::new(env.clone());
         root.set_nn_output(&policy, 0.0);
 
         // Get a valid action
         // Run MCTS search to expand the action
         let mask = crate::inference::get_action_mask(&env);
         let nn = agent.nn.as_ref().unwrap();
-        let (nn_policy, nn_value) = nn.predict_masked(&env, 0, &mask, 100).unwrap();
+        let (nn_policy, nn_value) = nn.predict_masked(&env, &mask, 100).unwrap();
 
         let (_result, root_after, _tree_stats, _traversal_stats) =
-            search_internal(&agent.config, nn, &env, nn_policy, nn_value, false, 0);
+            search_internal(&agent.config, nn, &env, nn_policy, nn_value, false);
 
         // The root should have children after search
         assert!(
@@ -905,7 +846,7 @@ mod tests {
         let env = TetrisEnv::with_seed(10, 20, 123);
 
         let playback = agent
-            .play_game_with_trees(&env, 4, false, 0)
+            .play_game_with_trees(&env, 4, false)
             .expect("play_game_with_trees should return playback data");
 
         assert!(

@@ -503,17 +503,15 @@ def run_seed_audit(
     logger.info("Auditing seed", seed=seed, max_placements=args.max_placements)
 
     frame_idx = 0
-    placement_count = 0
-    while placement_count < args.max_placements:
+    while env.placement_count < args.max_placements:
         if env.game_over:
             logger.info("Game over reached", seed=seed, move=frame_idx)
             break
 
         pre_snapshot = get_state_snapshot(env)
+        current_placement_count = int(env.placement_count)
 
-        result = agent.search_with_tree(
-            env, add_noise=False, placement_count=placement_count
-        )
+        result = agent.search_with_tree(env, add_noise=False)
         if result is None:
             logger.warning(
                 "Search returned None (no valid action mask)",
@@ -960,7 +958,7 @@ def run_seed_audit(
         move_record = {
             "seed": int(seed),
             "move": int(frame_idx),
-            "placement_count": int(placement_count),
+            "placement_count": current_placement_count,
             "pre_state": pre_snapshot,
             "search": {
                 "num_nodes": int(len(nodes)),
@@ -1055,8 +1053,6 @@ def run_seed_audit(
             num_nodes=int(len(nodes)),
             failures=int(len(failures)),
         )
-        if selected_action != HOLD_ACTION_INDEX:
-            placement_count += 1
         frame_idx += 1
 
     seed_summary = {

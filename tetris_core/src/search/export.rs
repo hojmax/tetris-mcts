@@ -24,7 +24,7 @@ pub(super) fn export_decision_node(
         nn_value: node.nn_value,
         unvisited_child_value_estimate: node.initial_total_value_estimate,
         is_terminal: node.is_terminal,
-        move_number: node.move_number,
+        move_number: node.state.placement_count,
         attack: 0,
         state: node.state.clone(),
         parent_id,
@@ -73,7 +73,7 @@ pub(super) fn export_chance_node(
         nn_value: 0.0,
         unvisited_child_value_estimate: 0.0,
         is_terminal: false,
-        move_number: node.move_number,
+        move_number: node.state.placement_count,
         attack: node.attack,
         state: node.state.clone(),
         parent_id,
@@ -110,18 +110,22 @@ mod tests {
     #[test]
     fn test_export_decision_node_sorts_children_and_sets_edges() {
         let env = TetrisEnv::with_seed(10, 20, 7);
-        let mut root = DecisionNode::new(env.clone(), 0);
+        let mut root = DecisionNode::new(env.clone());
         root.visit_count = 4;
         root.value_sum = 10.0;
 
-        let chance_high = ChanceNode::new(env.clone(), 3, 0, 0, vec![1, 2]);
-        let mut chance_low = ChanceNode::new(env.clone(), 1, 0, 0, vec![4, 5]);
+        let chance_high = ChanceNode::new(env.clone(), 3, 0, vec![1, 2]);
+        let mut chance_low = ChanceNode::new(env.clone(), 1, 0, vec![4, 5]);
 
         // Insert out of order to verify deterministic sorting in export.
-        let mut decision_piece_5 = DecisionNode::new(env.clone(), 1);
+        let mut env_piece_5 = env.clone();
+        env_piece_5.placement_count = 1;
+        let mut decision_piece_5 = DecisionNode::new(env_piece_5);
         decision_piece_5.visit_count = 2;
         decision_piece_5.value_sum = 5.0;
-        let mut decision_piece_2 = DecisionNode::new(env.clone(), 1);
+        let mut env_piece_2 = env.clone();
+        env_piece_2.placement_count = 1;
+        let mut decision_piece_2 = DecisionNode::new(env_piece_2);
         decision_piece_2.visit_count = 1;
         decision_piece_2.value_sum = 1.0;
         chance_low

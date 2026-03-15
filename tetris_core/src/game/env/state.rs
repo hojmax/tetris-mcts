@@ -31,6 +31,8 @@ pub struct TetrisEnv {
     pub width: usize,
     #[pyo3(get)]
     pub height: usize,
+    #[pyo3(get, set)]
+    pub placement_count: u32,
     #[pyo3(get)]
     pub lines_cleared: u32,
     #[pyo3(get)]
@@ -79,6 +81,7 @@ impl TetrisEnv {
         let mut env = TetrisEnv {
             width,
             height,
+            placement_count: 0,
             attack: 0,
             lines_cleared: 0,
             game_over: false,
@@ -115,6 +118,7 @@ impl TetrisEnv {
     pub fn reset_internal(&mut self, seed: u64) {
         self.board.fill(0);
         self.board_piece_types = vec![None; self.width * self.height];
+        self.placement_count = 0;
         self.attack = 0;
         self.lines_cleared = 0;
         self.game_over = false;
@@ -148,6 +152,7 @@ impl TetrisEnv {
         TetrisEnv {
             width: self.width,
             height: self.height,
+            placement_count: self.placement_count,
             lines_cleared: self.lines_cleared,
             game_over: self.game_over,
             attack: self.attack,

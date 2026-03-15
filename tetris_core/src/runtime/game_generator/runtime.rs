@@ -72,7 +72,7 @@ impl GameGenerator {
         evaluation_seconds: f32,
     ) -> Option<String> {
         let env = TetrisEnv::with_seed(BOARD_WIDTH, BOARD_HEIGHT, worst_seed);
-        let playback = match candidate_agent.play_game_with_trees(&env, max_placements, false, 0) {
+        let playback = match candidate_agent.play_game_with_trees(&env, max_placements, false) {
             Some(playback) => playback,
             None => {
                 eprintln!(

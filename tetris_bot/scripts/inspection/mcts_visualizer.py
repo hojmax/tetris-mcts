@@ -2053,13 +2053,13 @@ def run_mcts(
 
     add_noise = "noise" in (add_noise_value or [])
     placement_count_int = int(move_number) if move_number is not None else 0
+    env.placement_count = placement_count_int
 
     if triggered_id == "play-full-game-button":
         playback = agent.play_game_with_trees(
             env,
             max_placements=max_placements,
             add_noise=add_noise,
-            placement_count=placement_count_int,
         )
         if playback is None:
             _env_cache.clear()
@@ -2096,7 +2096,6 @@ def run_mcts(
     result = agent.search_with_tree(
         env,
         add_noise=add_noise,
-        placement_count=placement_count_int,
     )
     if result is None:
         _env_cache.clear()
