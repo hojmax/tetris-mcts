@@ -62,6 +62,7 @@ make viz        # MCTS tree visualizer
 make test       # Rust + Python tests
 make check      # ruff + pyright + rust fixes/formatting
 make train      # training entry point (requires tmux; auto-loads machine optimize cache)
+make warm-start # create a new warm-started run dir from another run's training_data.npz
 make profile    # performance profile runner
 make optimize   # auto-tune build/backend/workers for this machine (with cache)
 ```
@@ -184,10 +185,12 @@ python tetris_bot/scripts/train.py --resume_dir training_runs/vN
 python tetris_bot/scripts/train.py --resume_wandb entity/project/run_id
 python tetris_bot/scripts/inspection/download_wandb_training_data.py --reference entity/project/run_id --run_dir training_runs/vN --overwrite true
 python tetris_bot/scripts/train.py --architecture simple_aux_mlp --fc_hidden 64
+python tetris_bot/scripts/warm_start.py --source_run_dir training_runs/v3
 ```
 
 Training runs live under `training_runs/vN/` with checkpoints and ONNX exports.
 `--resume_wandb` accepts either a run reference (`entity/project/run_id`, defaults to the run's `tetris-model-<run_id>:latest` artifact) or a direct artifact reference (`entity/project/tetris-model-<run_id>:alias`).
+`warm_start.py` creates the next sibling `training_runs/vN` by default, builds the network from the source `config.json`, trains offline on the source `training_data.npz`, copies that NPZ into the new run, saves `latest`/`incumbent`/`parallel` model bundles plus `checkpoint_0.pt`, forces the saved incumbent startup state to `nn_value_weight=1.0` with zero search penalties, and writes `analysis/warm_start_summary.json` with the offline-loss history and fixed-seed eval result. Use `--output_run_dir` to override the destination and `--eval_num_simulations` / `--eval_max_placements` for quicker smoke checks without changing the saved run config.
 During shutdown, the first `Ctrl+C` requests graceful trainer/generator stop; additional `Ctrl+C` presses are deferred until the trainer finishes generator shutdown, the final replay snapshot/checkpoint save, and the WandB artifact upload.
 Checkpoint resume now persists incumbent search penalties (`incumbent_death_penalty`, `incumbent_overhang_penalty_weight`) alongside `incumbent_nn_value_weight`; older checkpoints without those fields infer zero penalties when `nn_value_weight` is already at cap.
 

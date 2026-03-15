@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
+from typing import Any, Mapping, TypeVar
 from typing import TypedDict
 
 
@@ -202,3 +205,83 @@ class TrainingConfig:
     self_play: SelfPlayConfig
     replay: ReplayConfig
     run: RunConfig
+
+
+_ConfigSectionT = TypeVar(
+    "_ConfigSectionT",
+    NetworkConfig,
+    OptimizerConfig,
+    SelfPlayConfig,
+    ReplayConfig,
+    RunConfig,
+)
+
+
+def _coerce_mapping(
+    raw_value: object,
+    *,
+    field_name: str,
+) -> Mapping[str, object]:
+    if not isinstance(raw_value, Mapping):
+        raise TypeError(
+            f"{field_name} must be a mapping in saved training config "
+            f"(got {type(raw_value).__name__})"
+        )
+    return raw_value
+
+
+def _load_config_section(
+    section_type: type[_ConfigSectionT],
+    data: Mapping[str, Any],
+    *,
+    section_name: str,
+    path_fields: frozenset[str] = frozenset(),
+) -> _ConfigSectionT:
+    known_fields = {field.name for field in dataclass_fields(section_type)}
+    raw_section = data.get(section_name)
+    if raw_section is None:
+        section_data = {
+            key: value for key, value in data.items() if key in known_fields
+        }
+    else:
+        section_data = dict(_coerce_mapping(raw_section, field_name=section_name))
+
+    kwargs = {key: value for key, value in section_data.items() if key in known_fields}
+    for path_field in path_fields:
+        if kwargs.get(path_field) is not None:
+            kwargs[path_field] = Path(str(kwargs[path_field]))
+    return section_type(**kwargs)
+
+
+def training_config_from_dict(data: Mapping[str, Any]) -> TrainingConfig:
+    if not isinstance(data, Mapping):
+        raise TypeError(
+            "Saved training config must be a mapping at the top level "
+            f"(got {type(data).__name__})"
+        )
+
+    return TrainingConfig(
+        network=_load_config_section(NetworkConfig, data, section_name="network"),
+        optimizer=_load_config_section(
+            OptimizerConfig,
+            data,
+            section_name="optimizer",
+        ),
+        self_play=_load_config_section(
+            SelfPlayConfig,
+            data,
+            section_name="self_play",
+        ),
+        replay=_load_config_section(ReplayConfig, data, section_name="replay"),
+        run=_load_config_section(
+            RunConfig,
+            data,
+            section_name="run",
+            path_fields=frozenset({"run_dir", "checkpoint_dir", "data_dir"}),
+        ),
+    )
+
+
+def load_training_config_json(path: Path) -> TrainingConfig:
+    raw_data = json.loads(path.read_text())
+    return training_config_from_dict(_coerce_mapping(raw_data, field_name="config"))
