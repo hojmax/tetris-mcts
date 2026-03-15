@@ -1,6 +1,5 @@
 # Next Steps
 
-- [ ] quicktest on replay buffer
 - [ ] Maybe I can simplify code now and drop all the bootstrapping logic, and just pretrain the network on the replay buffer from earlier experiment as warm start. But kind of wack to have unreproducable training run. Like does the method actually work without bootstrapping now? Could we get rid of the penalties and stuff? Once everything is fixed we should try, is kind of ugly. Why would this be necessary. Could of course just be compute multiplier.
 - [ ] Look at game that ends really early, and understand exactly why that happened. I would never expect it to look like higher reward to screw up the game board.
 - [ ] New Metric: Is past attack + future attack roughly stable? Maybe we log per game variance in this estimate.
@@ -41,6 +40,7 @@
   - Architecture choices
   - Huber loss vs. MSE loss
 - [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
+- [ ] Improving model architecture
 
 # Confusions
 
@@ -144,8 +144,6 @@ Why is there so much duplicate code in tetris_core/src/inference/mod.rs?
 > Why is tetris_core/src/replay/mod.rs its own file?
 
 > Clean up dead code please around the repo
-
-> How could I improve my model architecture?
 
 > Instead of encode_board_features should we just save that directly on the env?
 
