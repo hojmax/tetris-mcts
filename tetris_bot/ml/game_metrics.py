@@ -22,7 +22,7 @@ def compute_batch_feature_metrics(
 
     return {
         "batch/value_target_mean": value_targets.mean().item(),
-        "batch/valid_actions_mean": masks.sum(dim=1).mean().item(),
+        "batch/valid_actions_mean": masks.sum(dim=1).float().mean().item(),
         "batch/board_fill_mean": total_blocks.mean().item(),
         "batch/max_height_mean": max_column_heights.mean().item(),
         "batch/row_fill_mean": row_fill_counts.mean().item(),

@@ -15,6 +15,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _as_bool_mask(action_masks: torch.Tensor) -> torch.Tensor:
+    if action_masks.dtype == torch.bool:
+        return action_masks
+    return action_masks != 0
+
+
 class RunningLossBalancer:
     def __init__(self, window_size: int) -> None:
         if window_size <= 0:
@@ -65,7 +71,8 @@ def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch
     Raises:
         ValueError: If any sample has no valid actions (indicates terminal state in training data)
     """
-    valid_counts = action_masks.sum(dim=1)
+    bool_masks = _as_bool_mask(action_masks)
+    valid_counts = bool_masks.sum(dim=1)
     if (valid_counts == 0).any():
         invalid_indices = (valid_counts == 0).nonzero(as_tuple=True)[0].tolist()
         raise ValueError(
@@ -73,7 +80,7 @@ def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch
             "Terminal states should not be in training data."
         )
 
-    return logits.masked_fill(action_masks == 0, float("-inf"))
+    return logits.masked_fill(~bool_masks, float("-inf"))
 
 
 def compute_loss(
@@ -102,6 +109,8 @@ def compute_loss(
     Returns:
         total_loss, policy_loss, value_loss
     """
+    boards = boards.float()
+
     # Forward pass
     policy_logits, value_pred = model(boards, aux_features)
 
@@ -141,19 +150,19 @@ def compute_metrics(
     action_masks: torch.Tensor,
 ) -> dict:
     """Compute additional metrics for logging."""
+    boards = boards.float()
+    bool_masks = _as_bool_mask(action_masks)
     with torch.no_grad():
         policy_logits, value_pred = model(boards, aux_features)
 
         # Apply action mask and compute softmax
-        masked_logits = apply_action_mask(policy_logits, action_masks)
+        masked_logits = apply_action_mask(policy_logits, bool_masks)
         policy_probs = F.softmax(masked_logits, dim=-1)
 
         # Policy entropy (only over valid actions to avoid 0 * -inf = NaN)
         log_probs = F.log_softmax(masked_logits, dim=-1)
         # Replace -inf with 0 so that 0 * 0 = 0 instead of 0 * -inf = NaN
-        log_probs_safe = torch.where(
-            action_masks == 1, log_probs, torch.zeros_like(log_probs)
-        )
+        log_probs_safe = torch.where(bool_masks, log_probs, torch.zeros_like(log_probs))
         entropy = -torch.sum(policy_probs * log_probs_safe, dim=-1).mean()
 
         value_pred_flat = value_pred.squeeze(-1)

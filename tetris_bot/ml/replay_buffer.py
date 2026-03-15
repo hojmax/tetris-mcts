@@ -50,16 +50,24 @@ class CircularReplayMirror:
     """Pre-allocated circular buffer for device-resident replay mirror.
 
     All tensors are allocated once at full capacity. Incremental updates
-    use in-place copy_() to avoid any new GPU allocations.
+    use in-place copy_() to avoid any new GPU allocations. Binary replay
+    fields stay packed as bool and are widened only for the sampled batch.
     """
 
     def __init__(self, capacity: int, device: torch.device) -> None:
-        self.boards = torch.zeros(capacity, 1, BOARD_HEIGHT, BOARD_WIDTH, device=device)
+        self.boards = torch.zeros(
+            capacity,
+            1,
+            BOARD_HEIGHT,
+            BOARD_WIDTH,
+            device=device,
+            dtype=torch.bool,
+        )
         self.aux = torch.zeros(capacity, AUX_FEATURES, device=device)
         self.policy_targets = torch.zeros(capacity, NUM_ACTIONS, device=device)
         self.value_targets = torch.zeros(capacity, device=device)
         self.overhang_fields = torch.zeros(capacity, device=device)
-        self.masks = torch.zeros(capacity, NUM_ACTIONS, device=device)
+        self.masks = torch.zeros(capacity, NUM_ACTIONS, device=device, dtype=torch.bool)
 
         self.capacity = capacity
         self.count = 0
