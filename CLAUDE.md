@@ -59,6 +59,7 @@ make build-ort  # release build with ONNX Runtime support (`nn-ort` feature)
 make build-dev  # debug Rust extension (fast iteration)
 make play       # interactive game
 make viz        # MCTS tree visualizer
+make viz-policy-grid # policy-grid visualizer for structured placement-head inspection
 make test       # Rust + Python tests
 make check      # ruff + pyright + rust fixes/formatting
 make train      # training entry point (requires tmux; auto-loads machine optimize cache)
@@ -69,6 +70,7 @@ make optimize   # auto-tune build/backend/workers for this machine (with cache)
 
 `make install` performs a best-effort Linux system dependency bootstrap for ORT builds (`pkg-config` + OpenSSL headers) and maturin builds (`patchelf`); disable with `AUTO_INSTALL_SYSTEM_DEPS=0`.
 `make viz` accepts pass-through args via `VIZ_ARGS`, e.g. `make viz VIZ_ARGS="--state_preset tetris_bot/scripts/inspection/viz_state_presets/training_data1_game721_move32.json"`; generate presets from NPZ with `python tetris_bot/scripts/inspection/extract_viz_state_preset.py`. By default it loads `checkpoints/incumbent.onnx` from the selected run.
+`make viz-policy-grid` launches the browser visualizer for the normalized `20x10x4` placement scheme; pass flags such as `--port` via `POLICY_GRID_ARGS`.
 Candidate-gate evaluation now also saves the worst full-game tree playback to `training_runs/vN/analysis/eval_trees/`; reopen it with `make viz VIZ_ARGS="--saved_playback training_runs/vN/analysis/eval_trees/latest_worst_candidate_eval_tree.json"`.
 If a saved full-game playback is too large to load comfortably, extract one exact step into a smaller playback with `./.venv/bin/python tetris_bot/scripts/inspection/extract_saved_playback_step.py --saved_playback <full-playback.json> --step_index <n>` and open that output with `make viz VIZ_ARGS="--saved_playback <step-playback.json>"`.
 For inspection/export defaults, prefer the effective incumbent search state from the saved checkpoint (`latest.pt`) over bare `config.json`; older runs can have promoted `nn_value_weight` / penalty settings that differ from the static config file.

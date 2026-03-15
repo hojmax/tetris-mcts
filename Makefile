@@ -1,4 +1,4 @@
-.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config warm-start download-wandb-training-data
+.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz viz-policy-grid train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling sweep-mcts-config warm-start download-wandb-training-data
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -188,6 +188,13 @@ DUMMY_NETWORK ?= 0
 VIZ_ARGS ?=
 viz: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/inspection/mcts_visualizer.py $(if $(RUN_DIR),--run_dir $(RUN_DIR),) $(if $(filter 1 true TRUE yes YES,$(DUMMY_NETWORK)),--use_dummy_network true,) $(VIZ_ARGS)
+
+# Run the policy-grid visualizer (pure Python; does not require Rust build)
+# Usage: make viz-policy-grid
+# Usage: make viz-policy-grid POLICY_GRID_ARGS="--port 8061"
+POLICY_GRID_ARGS ?=
+viz-policy-grid: $(INSTALL_MARKER)
+	PYTHONPATH=$(CURDIR) $(PYTHON) tetris_bot/scripts/inspection/policy_grid_visualizer.py $(POLICY_GRID_ARGS)
 
 # Force rebuild (clean first to avoid caching issues)
 rebuild: ensure-rust $(INSTALL_MARKER)

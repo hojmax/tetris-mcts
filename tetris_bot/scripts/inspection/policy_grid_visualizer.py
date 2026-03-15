@@ -97,11 +97,12 @@ class PlacementInfo:
 
 @dataclass(frozen=True)
 class AggregateCellInfo:
+    rotation: int
     grid_x: int
     grid_y: int
     active_count: int
     inactive_count: int
-    active_layer_labels: tuple[str, ...]
+    active_piece_labels: tuple[str, ...]
     union_cells: tuple[tuple[int, int], ...]
 
 
@@ -173,13 +174,12 @@ def build_placement_info(
     )
 
 
-def build_aggregate_cell_info(grid_x: int, grid_y: int) -> AggregateCellInfo:
+def build_aggregate_cell_info(rotation: int, grid_x: int, grid_y: int) -> AggregateCellInfo:
     active_placements: list[PlacementInfo] = []
     for piece_type in REAL_PIECE_VALUES:
-        for rotation in range(4):
-            info = build_placement_info(piece_type, rotation, grid_x, grid_y)
-            if info.valid:
-                active_placements.append(info)
+        info = build_placement_info(piece_type, rotation, grid_x, grid_y)
+        if info.valid:
+            active_placements.append(info)
 
     union_cells = tuple(
         sorted(
@@ -190,17 +190,17 @@ def build_aggregate_cell_info(grid_x: int, grid_y: int) -> AggregateCellInfo:
             }
         )
     )
-    active_layer_labels = tuple(
-        f"{PIECE_NAMES[placement.piece_type]} {ROTATION_LABELS[placement.rotation]}"
-        for placement in active_placements
+    active_piece_labels = tuple(
+        PIECE_NAMES[placement.piece_type] for placement in active_placements
     )
     active_count = len(active_placements)
     return AggregateCellInfo(
+        rotation=rotation,
         grid_x=grid_x,
         grid_y=grid_y,
         active_count=active_count,
-        inactive_count=(len(REAL_PIECE_VALUES) * len(ROTATION_LABELS)) - active_count,
-        active_layer_labels=active_layer_labels,
+        inactive_count=len(REAL_PIECE_VALUES) - active_count,
+        active_piece_labels=active_piece_labels,
         union_cells=union_cells,
     )
 
@@ -231,17 +231,46 @@ def build_summary_counts() -> list[list[dict[str, int]]]:
 
 
 SUMMARY_COUNTS = build_summary_counts()
-AGGREGATE_GRID_COUNTS = [
+AGGREGATE_ROTATION_COUNTS = [
+    {
+        "valid": sum(
+            1
+            for grid_y in range(BOARD_HEIGHT)
+            for grid_x in range(BOARD_WIDTH)
+            if build_aggregate_cell_info(rotation, grid_x, grid_y).active_count > 0
+        )
+    }
+    for rotation in range(4)
+]
+for counts in AGGREGATE_ROTATION_COUNTS:
+    counts["masked"] = GRID_CELLS_PER_MAP - counts["valid"]
+
+AGGREGATE_GRID_COUNTS_BY_ROTATION = [
     [
-        build_aggregate_cell_info(grid_x, grid_y).active_count
-        for grid_x in range(BOARD_WIDTH)
+        [
+            build_aggregate_cell_info(rotation, grid_x, grid_y).active_count
+            for grid_x in range(BOARD_WIDTH)
+        ]
+        for grid_y in range(BOARD_HEIGHT)
     ]
-    for grid_y in range(BOARD_HEIGHT)
+    for rotation in range(4)
 ]
 AGGREGATE_UNION_VALID = sum(
-    1 for row in AGGREGATE_GRID_COUNTS for active_count in row if active_count > 0
+    1
+    for grid_y in range(BOARD_HEIGHT)
+    for grid_x in range(BOARD_WIDTH)
+    if any(
+        build_aggregate_cell_info(rotation, grid_x, grid_y).active_count > 0
+        for rotation in range(4)
+    )
 )
 AGGREGATE_UNION_MASKED = GRID_CELLS_PER_MAP - AGGREGATE_UNION_VALID
+AGGREGATE_ROTATION_TOTAL_VALID = sum(
+    counts["valid"] for counts in AGGREGATE_ROTATION_COUNTS
+)
+AGGREGATE_ROTATION_TOTAL_MASKED = sum(
+    counts["masked"] for counts in AGGREGATE_ROTATION_COUNTS
+)
 TOTAL_REAL_LAYER_VALID = sum(
     counts["valid"] for piece_counts in SUMMARY_COUNTS for counts in piece_counts
 )
@@ -264,21 +293,22 @@ def make_policy_grid_figure(piece_selection: PieceSelection, rotation: int) -> g
         for grid_y in range(BOARD_HEIGHT):
             custom_row: list[list[str | int]] = []
             for grid_x in range(BOARD_WIDTH):
-                aggregate = build_aggregate_cell_info(grid_x, grid_y)
+                aggregate = build_aggregate_cell_info(rotation, grid_x, grid_y)
                 custom_row.append(
                     [
                         aggregate.active_count,
                         aggregate.inactive_count,
                         _format_cells(aggregate.union_cells),
-                        _format_layer_labels(aggregate.active_layer_labels),
+                        _format_layer_labels(aggregate.active_piece_labels),
                     ]
                 )
             customdata.append(custom_row)
 
+        counts = AGGREGATE_ROTATION_COUNTS[rotation]
         figure = go.Figure(
             data=[
                 go.Heatmap(
-                    z=AGGREGATE_GRID_COUNTS,
+                    z=AGGREGATE_GRID_COUNTS_BY_ROTATION[rotation],
                     x=list(range(BOARD_WIDTH)),
                     y=list(range(BOARD_HEIGHT)),
                     customdata=customdata,
@@ -286,8 +316,8 @@ def make_policy_grid_figure(piece_selection: PieceSelection, rotation: int) -> g
                     xgap=2,
                     ygap=2,
                     zmin=0,
-                    zmax=len(REAL_PIECE_VALUES) * len(ROTATION_LABELS),
-                    colorbar={"title": "Active<br>layers"},
+                    zmax=len(REAL_PIECE_VALUES),
+                    colorbar={"title": "Active<br>pieces"},
                     colorscale=[
                         [0.0, "#D7D9CE"],
                         [0.001, "#F2E7C9"],
@@ -297,18 +327,19 @@ def make_policy_grid_figure(piece_selection: PieceSelection, rotation: int) -> g
                     ],
                     hovertemplate=(
                         "Scheme cell: (%{x}, %{y})<br>"
-                        "Active layers: %{customdata[0]}<br>"
-                        "Inactive layers: %{customdata[1]}<br>"
+                        "Active pieces: %{customdata[0]}<br>"
+                        "Inactive pieces: %{customdata[1]}<br>"
                         "Union occupied cells: %{customdata[2]}<br>"
-                        "Active piece/rotation layers: %{customdata[3]}<extra></extra>"
+                        "Active pieces at this rotation: %{customdata[3]}<extra></extra>"
                     ),
                 )
             ]
         )
         figure.update_layout(
             title=(
-                f"{AGGREGATE_PIECE_LABEL}: {AGGREGATE_UNION_VALID} ever-active cells, "
-                f"{AGGREGATE_UNION_MASKED} never-active cells"
+                f"{AGGREGATE_PIECE_LABEL} rotation {ROTATION_LABELS[rotation]}: "
+                f"{counts['valid']} valid, {counts['masked']} masked "
+                f"| all-rotation union: {AGGREGATE_UNION_VALID} ever-active, {AGGREGATE_UNION_MASKED} never-active"
             ),
             template="plotly_white",
             paper_bgcolor="#F7F3E8",
@@ -553,14 +584,26 @@ def make_summary_table(
             },
         )
     ]
-    for _ in range(4):
+    for rotation in range(4):
+        counts = AGGREGATE_ROTATION_COUNTS[rotation]
         aggregate_row.append(
             html.Td(
-                html.Div("aggregate", style={"fontStyle": "italic", "opacity": 0.8}),
+                [
+                    html.Div(
+                        f"{counts['masked']} masked",
+                        style={"fontWeight": 700, "marginBottom": "2px"},
+                    ),
+                    html.Div(
+                        f"{counts['valid']} valid",
+                        style={"fontSize": "12px", "opacity": 0.8},
+                    ),
+                ],
                 style={
                     "padding": "10px 12px",
                     "borderBottom": "1px solid #D8CBB6",
-                    "background": "#D9E8BF" if aggregate_selected else "transparent",
+                    "background": "#D9E8BF"
+                    if aggregate_selected and rotation == selected_rotation
+                    else "transparent",
                 },
             )
         )
@@ -568,11 +611,11 @@ def make_summary_table(
         html.Td(
             [
                 html.Div(
-                    f"{AGGREGATE_UNION_VALID} ever-active",
+                    f"{AGGREGATE_ROTATION_TOTAL_VALID} valid total",
                     style={"fontWeight": 700, "marginBottom": "2px"},
                 ),
                 html.Div(
-                    f"{AGGREGATE_UNION_MASKED} never-active",
+                    f"{AGGREGATE_ROTATION_TOTAL_MASKED} masked total",
                     style={"fontSize": "12px", "opacity": 0.8},
                 ),
             ],
@@ -607,15 +650,15 @@ def make_hover_details(
         return html.Div(
             [
                 html.H3(
-                    f"{AGGREGATE_PIECE_LABEL} @ scheme ({aggregate_info.grid_x}, {aggregate_info.grid_y})",
+                    f"{AGGREGATE_PIECE_LABEL} rot {ROTATION_LABELS[aggregate_info.rotation]} @ scheme ({aggregate_info.grid_x}, {aggregate_info.grid_y})",
                     style={"margin": "0 0 12px 0", "fontSize": "20px"},
                 ),
                 html.P(
-                    f"Active layers: {aggregate_info.active_count} of {len(REAL_PIECE_VALUES) * len(ROTATION_LABELS)}",
+                    f"Active pieces: {aggregate_info.active_count} of {len(REAL_PIECE_VALUES)}",
                     style={"margin": "0 0 8px 0"},
                 ),
                 html.P(
-                    f"Never-active layers here: {aggregate_info.inactive_count}",
+                    f"Inactive pieces at this rotation here: {aggregate_info.inactive_count}",
                     style={"margin": "0 0 8px 0"},
                 ),
                 html.P(
@@ -623,7 +666,7 @@ def make_hover_details(
                     style={"margin": "0 0 8px 0"},
                 ),
                 html.P(
-                    f"Active piece/rotation layers: {_format_layer_labels(aggregate_info.active_layer_labels)}",
+                    f"Active pieces at this rotation: {_format_layer_labels(aggregate_info.active_piece_labels)}",
                     style={"margin": "0"},
                 ),
             ]
@@ -969,13 +1012,13 @@ def update_hover_preview(
         grid_y = 0
 
     if piece_type == AGGREGATE_PIECE_VALUE:
-        aggregate_info = build_aggregate_cell_info(grid_x, grid_y)
+        aggregate_info = build_aggregate_cell_info(rotation, grid_x, grid_y)
         details = make_hover_details(piece_type, aggregate_info=aggregate_info)
         preview_body = make_preview_board(
             aggregate_info.union_cells,
             background_color="#9C6644",
         )
-        preview_title = "Board Preview (union across active layers)"
+        preview_title = "Board Preview (union across active pieces at selected rotation)"
     else:
         placement_info = build_placement_info(int(piece_type), rotation, grid_x, grid_y)
         details = make_hover_details(piece_type, placement_info=placement_info)
