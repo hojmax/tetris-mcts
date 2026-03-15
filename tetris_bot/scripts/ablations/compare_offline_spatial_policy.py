@@ -363,8 +363,8 @@ class SpatialPolicyDecoderTetrisNet(nn.Module):
             board.size(0), PLACEMENT_GRID_SLOTS
         )
 
-        action_indices = self.action_grid_index_by_piece.index_select(0, current_piece)
-        action_valid = self.action_grid_valid_by_piece.index_select(0, current_piece)
+        action_indices = self.action_grid_index_by_piece.index_select(0, current_piece)  # type: ignore[operator]
+        action_valid = self.action_grid_valid_by_piece.index_select(0, current_piece)  # type: ignore[operator]
         action_logits = torch.gather(placement_logits, dim=1, index=action_indices)
         action_logits = torch.where(
             action_valid,

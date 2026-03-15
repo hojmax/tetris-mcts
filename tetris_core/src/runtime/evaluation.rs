@@ -284,7 +284,7 @@ fn evaluate_parallel(
             .map_err(|_| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Evaluation thread panicked")
             })?
-            .map_err(|error| PyErr::new::<pyo3::exceptions::PyIOError, _>(error))?;
+            .map_err(PyErr::new::<pyo3::exceptions::PyIOError, _>)?;
         for (seed_index, eval) in worker_results {
             results_by_seed[seed_index] = eval;
         }

@@ -211,7 +211,7 @@ impl TetrisEnv {
     }
 
     pub fn get_hold_piece(&self) -> Option<Piece> {
-        self.hold_piece.map(|pt| Piece::new(pt))
+        self.hold_piece.map(Piece::new)
     }
 
     pub fn is_hold_used(&self) -> bool {
