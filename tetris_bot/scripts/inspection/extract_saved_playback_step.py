@@ -36,25 +36,85 @@ class ScriptArgs:
     output_path: Path | None = None
 
 
-def collapse_step_to_root_only(step: dict[str, Any]) -> dict[str, Any]:
+def collapse_step_to_selected_path(step: dict[str, Any]) -> dict[str, Any]:
     tree = step["tree"]
     root_id = int(tree["root_id"])
-    root_node = next(
-        (node for node in tree["nodes"] if int(node["id"]) == root_id),
-        None,
-    )
+    nodes_by_id = {int(node["id"]): node for node in tree["nodes"]}
+    root_node = nodes_by_id.get(root_id)
     if root_node is None:
         raise ValueError(f"Step tree is missing root node {root_id}")
 
-    collapsed_root = {
-        **root_node,
-        "children": [],
+    kept_nodes: dict[int, dict[str, Any]] = {
+        root_id: {
+            **root_node,
+            "children": [],
+        }
     }
+    selected_action = int(step["selected_action"])
+    selected_chance_outcome = int(step["selected_chance_outcome"])
+
+    selected_action_child = next(
+        (
+            node
+            for node in tree["nodes"]
+            if node.get("parent_id") == root_id
+            and node.get("edge_from_parent") == selected_action
+        ),
+        None,
+    )
+    if selected_action_child is not None:
+        action_child_id = int(selected_action_child["id"])
+        kept_nodes[root_id]["children"] = [action_child_id]
+        kept_nodes[action_child_id] = {
+            **selected_action_child,
+            "children": [],
+        }
+
+        selected_chance_child = next(
+            (
+                node
+                for node in tree["nodes"]
+                if node.get("parent_id") == action_child_id
+                and node.get("edge_from_parent") == selected_chance_outcome
+            ),
+            None,
+        )
+        if selected_chance_child is not None:
+            chance_child_id = int(selected_chance_child["id"])
+            kept_nodes[action_child_id]["children"] = [chance_child_id]
+            kept_nodes[chance_child_id] = {
+                **selected_chance_child,
+                "children": [],
+            }
+
+    ordered_original_ids = [
+        int(node["id"]) for node in tree["nodes"] if int(node["id"]) in kept_nodes
+    ]
+    id_map = {
+        original_id: new_id for new_id, original_id in enumerate(ordered_original_ids)
+    }
+    renumbered_nodes = []
+    for original_id in ordered_original_ids:
+        node = kept_nodes[original_id]
+        renumbered_nodes.append(
+            {
+                **node,
+                "id": id_map[original_id],
+                "parent_id": (
+                    id_map[int(node["parent_id"])]
+                    if node.get("parent_id") is not None
+                    else None
+                ),
+                "children": [id_map[int(child_id)] for child_id in node["children"]],
+            }
+        )
+
     return {
         **step,
         "tree": {
             **tree,
-            "nodes": [collapsed_root],
+            "root_id": id_map[root_id],
+            "nodes": renumbered_nodes,
         },
     }
 
@@ -78,7 +138,7 @@ def build_step_slice_payload(
         )
 
     sliced_steps = [
-        steps[idx] if idx == step_index else collapse_step_to_root_only(steps[idx])
+        steps[idx] if idx == step_index else collapse_step_to_selected_path(steps[idx])
         for idx in range(step_index + 1)
     ]
     sliced_replay_moves = replay_moves[: step_index + 1]

@@ -50,6 +50,7 @@ from tetris_bot.scripts.inspection.tree_playback_artifact import (
     build_tree_dict_from_saved_playback,
     load_tree_playback_artifact,
 )
+from tetris_bot.scripts.utils.run_search_config import load_effective_self_play_config
 
 # Global cache for TetrisEnv states (keyed by node ID)
 # This allows us to clone states and execute actions for visualization
@@ -174,9 +175,7 @@ def load_viz_defaults(
     if not args.use_dummy_network and not model_path.exists():
         raise ValueError(f"Missing incumbent ONNX checkpoint: {model_path}")
 
-    raw = json.loads(config_path.read_text())
-    # Support both flat configs and the current nested format (keys under "self_play")
-    config = raw.get("self_play", raw)
+    config = load_effective_self_play_config(run_dir)
     required_keys = [
         "num_simulations",
         "c_puct",
