@@ -316,8 +316,7 @@ impl MCTSAgent {
                 reused_root.take(),
             )?;
             let root = root.expect("search_maybe_reuse should always return a root");
-            let tree_export =
-                export_tree(&root, self.config.num_simulations, &result, q_bounds);
+            let tree_export = export_tree(&root, self.config.num_simulations, &result, q_bounds);
 
             let selected_action = result.action;
             let reveals_new_visible_piece = action_reveals_new_visible_piece(&env, selected_action);
@@ -448,14 +447,8 @@ impl MCTSAgent {
             let valid_moves = mask.iter().filter(|&&is_valid| is_valid).count() as u32;
 
             // Run MCTS search (with tree reuse if available)
-            let (result, root, move_tree_stats, move_traversal_stats, _q_bounds) =
-                self.search_maybe_reuse(
-                    &env,
-                    &mask,
-                    add_noise,
-                    max_placements,
-                    reused_root.take(),
-                )?;
+            let (result, root, move_tree_stats, move_traversal_stats, _q_bounds) = self
+                .search_maybe_reuse(&env, &mask, add_noise, max_placements, reused_root.take())?;
 
             let tree_total_nodes = move_tree_stats.total_nodes;
             valid_moves_sum += valid_moves;
@@ -754,27 +747,28 @@ impl MCTSAgent {
         (f32, f32),
     )> {
         if let Some(nn) = self.nn.as_ref() {
-            let (result, root, tree_stats, traversal_stats, q_bounds) =
-                if let Some(root) = reused_root {
+            let (result, root, tree_stats, traversal_stats, q_bounds) = if let Some(root) =
+                reused_root
+            {
                 let evaluator = super::search::NeuralLeafEvaluator {
                     nn,
                     nn_value_weight: self.config.nn_value_weight,
                 };
                 run_search(&self.config, &evaluator, root, add_noise)
-                } else {
-                    let (policy, nn_value) =
-                        match nn.predict_masked(env, mask, max_placements as usize) {
-                            Ok(result) => result,
-                            Err(e) => {
-                                eprintln!(
+            } else {
+                let (policy, nn_value) = match nn.predict_masked(env, mask, max_placements as usize)
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!(
                                     "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
                                     env.placement_count, e
                                 );
-                                return None;
-                            }
-                        };
-                    search_internal(&self.config, nn, env, policy, nn_value, add_noise)
+                        return None;
+                    }
                 };
+                search_internal(&self.config, nn, env, policy, nn_value, add_noise)
+            };
             Some((result, Some(root), tree_stats, traversal_stats, q_bounds))
         } else {
             let (result, root, tree_stats, traversal_stats, q_bounds) =
