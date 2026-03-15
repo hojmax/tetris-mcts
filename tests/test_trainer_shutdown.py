@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import signal
+from pathlib import Path
+
+from tetris_bot.ml.config import (
+    NetworkConfig,
+    OptimizerConfig,
+    ReplayConfig,
+    RunConfig,
+    SelfPlayConfig,
+    TrainingConfig,
+)
+from tetris_bot.ml.trainer import Trainer
+
+
+def _make_config(tmp_path: Path) -> TrainingConfig:
+    checkpoint_dir = tmp_path / "checkpoints"
+    data_dir = tmp_path / "data"
+    return TrainingConfig(
+        network=NetworkConfig(),
+        optimizer=OptimizerConfig(),
+        self_play=SelfPlayConfig(),
+        replay=ReplayConfig(),
+        run=RunConfig(
+            run_dir=tmp_path,
+            checkpoint_dir=checkpoint_dir,
+            data_dir=data_dir,
+        ),
+    )
+
+
+def _make_trainer(tmp_path: Path) -> Trainer:
+    return Trainer(_make_config(tmp_path), device="cpu")
+
+
+def test_defer_sigint_during_shutdown_restores_previous_handler(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    previous_handler = object()
+    signal_calls: list[tuple[int, object]] = []
+
+    monkeypatch.setattr(
+        "tetris_bot.ml.trainer.signal.getsignal",
+        lambda signum: previous_handler,
+    )
+
+    def fake_signal(signum: int, handler: object) -> None:
+        signal_calls.append((signum, handler))
+
+    monkeypatch.setattr("tetris_bot.ml.trainer.signal.signal", fake_signal)
+
+    with trainer._defer_sigint_during_shutdown():
+        pass
+
+    assert signal_calls == [
+        (signal.SIGINT, signal.SIG_IGN),
+        (signal.SIGINT, previous_handler),
+    ]
+
+
+def test_shutdown_after_training_stops_generator_and_finishes_wandb(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    calls: list[str] = []
+    saved_state: dict[str, object] = {}
+
+    class FakeGenerator:
+        def stop(self) -> None:
+            calls.append("stop")
+
+        def games_generated(self) -> int:
+            return 12
+
+        def examples_generated(self) -> int:
+            return 34
+
+        def incumbent_uses_network(self) -> bool:
+            return False
+
+        def incumbent_model_step(self) -> int:
+            return 56
+
+        def incumbent_nn_value_weight(self) -> float:
+            return 0.3
+
+        def incumbent_death_penalty(self) -> float:
+            return 5.0
+
+        def incumbent_overhang_penalty_weight(self) -> float:
+            return 4.0
+
+        def incumbent_eval_avg_attack(self) -> float:
+            return 9.5
+
+    generator = FakeGenerator()
+
+    monkeypatch.setattr(
+        trainer,
+        "_persist_incumbent_model_artifacts",
+        lambda _generator: (None, "/tmp/bootstrap.onnx"),
+    )
+
+    def fake_save(
+        *,
+        extra_checkpoint_state: dict[str, object] | None = None,
+    ) -> dict[str, Path]:
+        calls.append("save")
+        saved_state["extra_checkpoint_state"] = extra_checkpoint_state
+        return {
+            "checkpoint": tmp_path / "latest.pt",
+            "metadata": tmp_path / "metadata.json",
+            "onnx": tmp_path / "latest.onnx",
+        }
+
+    monkeypatch.setattr(trainer, "save", fake_save)
+    monkeypatch.setattr(
+        trainer,
+        "_log_final_wandb_model_artifact",
+        lambda _saved_paths: calls.append("artifact"),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "_cleanup_wandb_gif_files",
+        lambda: calls.append("cleanup"),
+    )
+    monkeypatch.setattr(
+        "tetris_bot.ml.trainer.wandb.finish",
+        lambda: calls.append("finish"),
+    )
+
+    stop_error = trainer._shutdown_after_training(
+        generator=generator,
+        export_model=trainer.model,
+        log_to_wandb=True,
+        interrupted=True,
+    )
+
+    assert stop_error is None
+    assert calls == ["stop", "save", "artifact", "finish", "cleanup"]
+    assert saved_state["extra_checkpoint_state"] == {
+        "incumbent_uses_network": False,
+        "incumbent_model_step": 56,
+        "incumbent_nn_value_weight": 0.3,
+        "incumbent_death_penalty": 5.0,
+        "incumbent_overhang_penalty_weight": 4.0,
+        "incumbent_eval_avg_attack": 9.5,
+        "incumbent_model_source_path": "/tmp/bootstrap.onnx",
+        "incumbent_model_artifact": None,
+    }

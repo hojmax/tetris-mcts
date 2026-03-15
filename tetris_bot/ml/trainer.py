@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import deque
-import os
+from contextlib import contextmanager
 from pathlib import Path
+import signal
 import tempfile
 import time
 from typing import cast
@@ -639,6 +640,15 @@ class Trainer:
                 )
         self._pending_eval_gif_paths.clear()
 
+    @contextmanager
+    def _defer_sigint_during_shutdown(self):
+        previous_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            yield
+        finally:
+            signal.signal(signal.SIGINT, previous_handler)
+
     def save(self, extra_checkpoint_state: dict[str, object] | None = None):
         """Save model checkpoint."""
         paths = self.weight_manager.save(
@@ -745,14 +755,67 @@ class Trainer:
             files=[path.name for path in files_to_upload],
         )
 
-    @staticmethod
-    def _force_exit_after_second_interrupt(stage: str) -> None:
-        logger.warning(
-            "Received second interrupt during shutdown; forcing immediate exit",
-            stage=stage,
-            exit_code=130,
-        )
-        os._exit(130)
+    def _shutdown_after_training(
+        self,
+        generator: GameGenerator,
+        export_model: TetrisNet,
+        log_to_wandb: bool,
+        interrupted: bool,
+    ) -> BaseException | None:
+        if interrupted:
+            logger.info(
+                "Completing graceful shutdown; deferring additional Ctrl+C until final checkpointing finishes",
+                step=self.step,
+            )
+
+        stop_error: BaseException | None = None
+        with self._defer_sigint_during_shutdown():
+            try:
+                logger.info("Stopping game generator")
+                generator.stop()
+                logger.info(
+                    "Game generator stopped",
+                    games_generated=generator.games_generated(),
+                    examples_generated=generator.examples_generated(),
+                )
+            except BaseException as error:
+                stop_error = error
+                logger.exception("Failed to stop game generator cleanly")
+
+            # Restore uncompiled model for final save + ONNX export
+            self.model = export_model
+
+            # Always save latest model state on shutdown/interruption.
+            try:
+                (
+                    incumbent_model_artifact,
+                    incumbent_model_source_path,
+                ) = self._persist_incumbent_model_artifacts(generator)
+                final_saved_paths = self.save(
+                    extra_checkpoint_state={
+                        "incumbent_uses_network": generator.incumbent_uses_network(),
+                        "incumbent_model_step": generator.incumbent_model_step(),
+                        "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
+                        "incumbent_death_penalty": generator.incumbent_death_penalty(),
+                        "incumbent_overhang_penalty_weight": (
+                            generator.incumbent_overhang_penalty_weight()
+                        ),
+                        "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
+                        "incumbent_model_source_path": incumbent_model_source_path,
+                        "incumbent_model_artifact": (
+                            incumbent_model_artifact.name
+                            if incumbent_model_artifact is not None
+                            else None
+                        ),
+                    }
+                )
+                if log_to_wandb:
+                    self._log_final_wandb_model_artifact(final_saved_paths)
+                    wandb.finish()
+            finally:
+                self._cleanup_wandb_gif_files()
+
+        return stop_error
 
     def train(self, log_to_wandb: bool = True):
         """
@@ -1370,55 +1433,12 @@ class Trainer:
             pending_error = error
             logger.exception("Training loop failed", step=self.step)
         finally:
-            # Stop generator
-            try:
-                logger.info("Stopping game generator")
-                generator.stop()
-                logger.info(
-                    "Game generator stopped",
-                    games_generated=generator.games_generated(),
-                    examples_generated=generator.examples_generated(),
-                )
-            except KeyboardInterrupt:
-                self._force_exit_after_second_interrupt(stage="stop_game_generator")
-            except BaseException as error:
-                stop_error = error
-                logger.exception("Failed to stop game generator cleanly")
-
-            # Restore uncompiled model for final save + ONNX export
-            self.model = export_model
-
-            # Always save latest model state on shutdown/interruption.
-            try:
-                (
-                    incumbent_model_artifact,
-                    incumbent_model_source_path,
-                ) = self._persist_incumbent_model_artifacts(generator)
-                final_saved_paths = self.save(
-                    extra_checkpoint_state={
-                        "incumbent_uses_network": generator.incumbent_uses_network(),
-                        "incumbent_model_step": generator.incumbent_model_step(),
-                        "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
-                        "incumbent_death_penalty": generator.incumbent_death_penalty(),
-                        "incumbent_overhang_penalty_weight": (
-                            generator.incumbent_overhang_penalty_weight()
-                        ),
-                        "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
-                        "incumbent_model_source_path": incumbent_model_source_path,
-                        "incumbent_model_artifact": (
-                            incumbent_model_artifact.name
-                            if incumbent_model_artifact is not None
-                            else None
-                        ),
-                    }
-                )
-                if log_to_wandb:
-                    self._log_final_wandb_model_artifact(final_saved_paths)
-                    wandb.finish()
-            except KeyboardInterrupt:
-                self._force_exit_after_second_interrupt(stage="save_final_checkpoint")
-            finally:
-                self._cleanup_wandb_gif_files()
+            stop_error = self._shutdown_after_training(
+                generator=generator,
+                export_model=export_model,
+                log_to_wandb=log_to_wandb,
+                interrupted=interrupted,
+            )
 
         if pending_error is not None:
             raise pending_error

@@ -8,11 +8,16 @@ The validator checks:
   `column_heights`, `max_column_heights`, `row_fill_counts`, `total_blocks`,
   `bumpiness`, `holes`, and `overhang_fields`
 - `action_masks` match the legal actions from the restored state
+- aux-feature layout parity:
+  the stored feature fields pack into the exact 80-feature aux layout expected
+  by `tetris_bot.ml.network.build_aux_features(...)`
 - per-game metadata is self-consistent:
   `move_numbers` are contiguous within a game, `game_total_attacks` are
   constant within a game, and `value_targets` are nonincreasing integer-like
 - for consecutive states in the same game, some legal action reproduces the
   next state, with the expected placement-count delta and hidden-piece reveal
+- matched transitions reproduce the next row's `combo` and `back_to_back`
+  exactly
 - the matched transition action has positive policy mass
 
 For large compressed replay archives, the file also supports streaming a
@@ -33,6 +38,7 @@ from numpy.lib import format as npformat
 import pytest
 import tetris_core.tetris_core as tetris_core
 
+from tetris_bot.ml.network import build_aux_features
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -340,6 +346,88 @@ def _policy_row(chosen_action: int, action_mask: np.ndarray) -> np.ndarray:
     return policy
 
 
+def _stored_aux_vector(
+    data: dict[str, np.ndarray] | np.lib.npyio.NpzFile,
+    index: int,
+) -> np.ndarray:
+    hold_available = np.array([float(data["hold_available"][index])], dtype=np.float32)
+    placement_count = np.array([float(data["placement_counts"][index])], dtype=np.float32)
+    combo = np.array([float(data["combos"][index])], dtype=np.float32)
+    back_to_back = np.array([float(data["back_to_back"][index])], dtype=np.float32)
+    max_column_height = np.array(
+        [float(data["max_column_heights"][index])],
+        dtype=np.float32,
+    )
+    total_blocks = np.array([float(data["total_blocks"][index])], dtype=np.float32)
+    bumpiness = np.array([float(data["bumpiness"][index])], dtype=np.float32)
+    holes = np.array([float(data["holes"][index])], dtype=np.float32)
+    overhang_fields = np.array(
+        [float(data["overhang_fields"][index])],
+        dtype=np.float32,
+    )
+
+    return np.concatenate(
+        [
+            np.asarray(data["current_pieces"][index], dtype=np.float32).reshape(-1),
+            np.asarray(data["hold_pieces"][index], dtype=np.float32).reshape(-1),
+            hold_available,
+            np.asarray(data["next_queue"][index], dtype=np.float32).reshape(-1),
+            placement_count,
+            combo,
+            back_to_back,
+            np.asarray(data["next_hidden_piece_probs"][index], dtype=np.float32).reshape(-1),
+            np.asarray(data["column_heights"][index], dtype=np.float32).reshape(-1),
+            max_column_height,
+            np.asarray(data["row_fill_counts"][index], dtype=np.float32).reshape(-1),
+            total_blocks,
+            bumpiness,
+            holes,
+            overhang_fields,
+        ]
+    )
+
+
+def _network_aux_vector(
+    data: dict[str, np.ndarray] | np.lib.npyio.NpzFile,
+    index: int,
+) -> np.ndarray:
+    return build_aux_features(
+        current_piece=np.asarray(data["current_pieces"][index], dtype=np.float32),
+        hold_piece=np.asarray(data["hold_pieces"][index], dtype=np.float32),
+        hold_available=float(data["hold_available"][index]),
+        next_queue=np.asarray(data["next_queue"][index], dtype=np.float32),
+        placement_count=float(data["placement_counts"][index]),
+        combo_feature=float(data["combos"][index]),
+        back_to_back=float(data["back_to_back"][index]),
+        next_hidden_piece_probs=np.asarray(
+            data["next_hidden_piece_probs"][index],
+            dtype=np.float32,
+        ),
+        column_heights=np.asarray(data["column_heights"][index], dtype=np.float32),
+        max_column_height=float(data["max_column_heights"][index]),
+        row_fill_counts=np.asarray(data["row_fill_counts"][index], dtype=np.float32),
+        total_blocks=float(data["total_blocks"][index]),
+        bumpiness=float(data["bumpiness"][index]),
+        holes=float(data["holes"][index]),
+        overhang_fields=float(data["overhang_fields"][index]),
+    )
+
+
+def _placement_index(
+    data: dict[str, np.ndarray] | np.lib.npyio.NpzFile,
+    index: int,
+    max_placements: int,
+) -> int:
+    placement_feature = float(data["placement_counts"][index])
+    placement_index = placement_feature * float(max_placements)
+    if not _is_close_to_integer(placement_index):
+        raise AssertionError(
+            f"row {index}: placement_counts is not integer-like for max_placements="
+            f"{max_placements}: {placement_feature}"
+        )
+    return int(round(placement_index))
+
+
 def _combo_attack(combo_before: int) -> int:
     combo_table = [0, 0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 4]
     if combo_before < len(combo_table):
@@ -599,6 +687,7 @@ def _transition_matches(
     index: int,
     action_idx: int,
     attack: int,
+    env_after: Any,
     board_after: np.ndarray,
     max_placements: int,
 ) -> bool:
@@ -625,6 +714,11 @@ def _transition_matches(
         data["placement_counts"][next_index] - data["placement_counts"][index]
     )
     expected_step = 1.0 / float(max_placements)
+    current_back_to_back = bool(data["back_to_back"][index])
+    next_combo_feature = float(data["combos"][next_index])
+    next_back_to_back = bool(data["back_to_back"][next_index])
+
+    result = env_after.get_last_attack_result()
 
     if action_idx == HOLD_ACTION_INDEX:
         if not bool(data["hold_available"][index]):
@@ -634,6 +728,10 @@ def _transition_matches(
         if bool(data["hold_available"][next_index]):
             return False
         if next_hold_piece != current_piece:
+            return False
+        if not _approx_equal(next_combo_feature, float(data["combos"][index]), atol=1e-6):
+            return False
+        if next_back_to_back != current_back_to_back:
             return False
 
         if hold_piece is None:
@@ -657,6 +755,18 @@ def _transition_matches(
     if next_current_piece != queue[0]:
         return False
     if next_queue[:-1] != queue[1:]:
+        return False
+
+    if result is None:
+        expected_next_combo_feature = 0.0
+        expected_next_back_to_back = current_back_to_back
+    else:
+        expected_next_combo_feature = float(result.combo) / COMBO_NORMALIZATION_MAX
+        expected_next_back_to_back = bool(result.back_to_back_active)
+
+    if not _approx_equal(next_combo_feature, expected_next_combo_feature, atol=1e-6):
+        return False
+    if next_back_to_back != expected_next_back_to_back:
         return False
 
     revealed_piece = next_queue[-1]
@@ -753,6 +863,13 @@ def validate_replay_buffer_semantics(
             if not np.array_equal(expected_mask, actual_mask):
                 errors.add(f"row {index}: action_masks do not match restored state")
 
+            if not np.allclose(
+                _network_aux_vector(data, index),
+                _stored_aux_vector(data, index),
+                atol=1e-6,
+            ):
+                errors.add(f"row {index}: build_aux_features aux vector mismatch")
+
     for start, end in _iter_game_segments(game_numbers):
         game_number = int(game_numbers[start])
         game_total_attack = int(game_total_attacks[start])
@@ -818,6 +935,7 @@ def validate_replay_buffer_semantics(
                     index,
                     int(action_idx),
                     int(attack),
+                    env_after,
                     board_after,
                     max_placements,
                 ):
