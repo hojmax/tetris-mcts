@@ -288,6 +288,17 @@ def resolve_eval_num_workers(
     )
 
 
+def has_better_validation_losses(
+    candidate_metrics: dict[str, float],
+    best_record: dict[str, float | int | bool | str] | None,
+) -> bool:
+    if best_record is None:
+        return True
+    return float(candidate_metrics["policy_loss"]) < float(
+        best_record["val_policy_loss"]
+    ) and float(candidate_metrics["value_loss"]) < float(best_record["val_value_loss"])
+
+
 def setup_offline_dataset(
     npz: np.lib.npyio.NpzFile,
     *,
@@ -500,9 +511,7 @@ def train_warm_start_model(
             value_loss_weight=current_value_loss_weight,
             use_huber_value_loss=use_huber_value_loss,
         )
-        improved = best_record is None or float(val_metrics["total_loss"]) < float(
-            best_record["val_total_loss"]
-        )
+        improved = has_better_validation_losses(val_metrics, best_record)
         if improved:
             best_record = {
                 "round_index": round_index,

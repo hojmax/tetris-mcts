@@ -14,6 +14,7 @@ from tetris_bot.ml.config import (
 from tetris_bot.scripts.warm_start import (
     build_output_config,
     compute_training_steps,
+    has_better_validation_losses,
     optimized_worker_env_cache_path,
     resolve_eval_num_workers,
 )
@@ -146,3 +147,39 @@ def test_resolve_eval_num_workers_prefers_environment_override(
     assert resolution.num_workers == 10
     assert resolution.source == "environment"
     assert resolution.cache_path is None
+
+
+def test_has_better_validation_losses_requires_both_terms_to_drop() -> None:
+    best_record = {
+        "val_policy_loss": 1.5,
+        "val_value_loss": 10.0,
+    }
+
+    assert (
+        has_better_validation_losses(
+            {"policy_loss": 1.4, "value_loss": 9.9},
+            best_record,
+        )
+        is True
+    )
+    assert (
+        has_better_validation_losses(
+            {"policy_loss": 1.4, "value_loss": 10.1},
+            best_record,
+        )
+        is False
+    )
+    assert (
+        has_better_validation_losses(
+            {"policy_loss": 1.6, "value_loss": 9.9},
+            best_record,
+        )
+        is False
+    )
+    assert (
+        has_better_validation_losses(
+            {"policy_loss": 1.5, "value_loss": 9.9},
+            best_record,
+        )
+        is False
+    )
