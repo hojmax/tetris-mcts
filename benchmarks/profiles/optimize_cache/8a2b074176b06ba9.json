@@ -1,0 +1,301 @@
+{
+  "machine_profile": {
+    "optimizer_version": 1,
+    "platform_system": "Linux",
+    "platform_release": "5.15.0-152-generic",
+    "platform_machine": "x86_64",
+    "python_version": "3.12.12",
+    "cpu_physical": 512,
+    "cpu_logical": 512,
+    "hostname": "58dcbb11aea6"
+  },
+  "entries": [
+    {
+      "created_at": "2026-03-05T21:48:09.221432+00:00",
+      "request_hash": "9311f3f68ee2a35835de62cfbf91ad37517ec98e610f73583a90edd8f733473e",
+      "request": {
+        "optimizer_version": 1,
+        "model_path": "/workspace/tetris-mcts/benchmarks/models/optimize_bootstrap.onnx",
+        "model_signature": {
+          "optimize_bootstrap.onnx:size": 68543,
+          "optimize_bootstrap.onnx:mtime_ns": 1772571710541264417,
+          "optimize_bootstrap.conv.onnx:size": 40210,
+          "optimize_bootstrap.conv.onnx:mtime_ns": 1772571710485265573,
+          "optimize_bootstrap.heads.onnx:size": 24463,
+          "optimize_bootstrap.heads.onnx:mtime_ns": 1772571710497265325,
+          "optimize_bootstrap.fc.bin:size": 215048,
+          "optimize_bootstrap.fc.bin:mtime_ns": 1772571710497265325
+        },
+        "worker_candidates": [
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          16,
+          24,
+          32,
+          48,
+          64,
+          512
+        ],
+        "backend_strategy": "staged",
+        "primary_backend": "tract",
+        "worker_search": "adaptive",
+        "max_worker_evals_per_combo": 6,
+        "compile_profiles": [
+          "tuned",
+          "baseline"
+        ],
+        "backends": [
+          "tract"
+        ],
+        "num_games": 20,
+        "num_repeats": 1,
+        "simulations": 300,
+        "max_placements": 50,
+        "seed_start": 42,
+        "mcts_seed": 12345,
+        "c_puct": 1.5
+      },
+      "results": {
+        "created_at": "2026-03-05T21:48:09.220780+00:00",
+        "optimizer_version": 1,
+        "machine_profile": {
+          "optimizer_version": 1,
+          "platform_system": "Linux",
+          "platform_release": "5.15.0-152-generic",
+          "platform_machine": "x86_64",
+          "python_version": "3.12.12",
+          "cpu_physical": 512,
+          "cpu_logical": 512,
+          "hostname": "58dcbb11aea6"
+        },
+        "machine_fingerprint": "8a2b074176b06ba9",
+        "request_hash": "9311f3f68ee2a35835de62cfbf91ad37517ec98e610f73583a90edd8f733473e",
+        "model_path": "/workspace/tetris-mcts/benchmarks/models/optimize_bootstrap.onnx",
+        "request": {
+          "optimizer_version": 1,
+          "model_path": "/workspace/tetris-mcts/benchmarks/models/optimize_bootstrap.onnx",
+          "model_signature": {
+            "optimize_bootstrap.onnx:size": 68543,
+            "optimize_bootstrap.onnx:mtime_ns": 1772571710541264417,
+            "optimize_bootstrap.conv.onnx:size": 40210,
+            "optimize_bootstrap.conv.onnx:mtime_ns": 1772571710485265573,
+            "optimize_bootstrap.heads.onnx:size": 24463,
+            "optimize_bootstrap.heads.onnx:mtime_ns": 1772571710497265325,
+            "optimize_bootstrap.fc.bin:size": 215048,
+            "optimize_bootstrap.fc.bin:mtime_ns": 1772571710497265325
+          },
+          "worker_candidates": [
+            2,
+            4,
+            6,
+            8,
+            10,
+            12,
+            16,
+            24,
+            32,
+            48,
+            64,
+            512
+          ],
+          "backend_strategy": "staged",
+          "primary_backend": "tract",
+          "worker_search": "adaptive",
+          "max_worker_evals_per_combo": 6,
+          "compile_profiles": [
+            "tuned",
+            "baseline"
+          ],
+          "backends": [
+            "tract"
+          ],
+          "num_games": 20,
+          "num_repeats": 1,
+          "simulations": 300,
+          "max_placements": 50,
+          "seed_start": 42,
+          "mcts_seed": 12345,
+          "c_puct": 1.5
+        },
+        "runs": [
+          {
+            "compile_profile": "tuned",
+            "backend": "tract",
+            "num_workers": 16,
+            "repeat_idx": 0,
+            "total_time_sec": 1.8692784439772367,
+            "games_per_sec": 10.699315591232246,
+            "moves_per_sec": 244.4793612596568,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_tuned_tract_w16.jsonl"
+          },
+          {
+            "compile_profile": "tuned",
+            "backend": "tract",
+            "num_workers": 2,
+            "repeat_idx": 0,
+            "total_time_sec": 19.436104818014428,
+            "games_per_sec": 1.0290127670778417,
+            "moves_per_sec": 23.512941727728684,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_tuned_tract_w2.jsonl"
+          },
+          {
+            "compile_profile": "tuned",
+            "backend": "tract",
+            "num_workers": 512,
+            "repeat_idx": 0,
+            "total_time_sec": 1.3667770309839398,
+            "games_per_sec": 14.632964665496349,
+            "moves_per_sec": 334.3632426065916,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_tuned_tract_w512.jsonl"
+          },
+          {
+            "compile_profile": "tuned",
+            "backend": "tract",
+            "num_workers": 8,
+            "repeat_idx": 0,
+            "total_time_sec": 8.559225244214758,
+            "games_per_sec": 2.3366600865560985,
+            "moves_per_sec": 53.39268297780685,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_tuned_tract_w8.jsonl"
+          },
+          {
+            "compile_profile": "tuned",
+            "backend": "tract",
+            "num_workers": 32,
+            "repeat_idx": 0,
+            "total_time_sec": 1.482274586101994,
+            "games_per_sec": 13.492776701106996,
+            "moves_per_sec": 308.30994762029485,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_tuned_tract_w32.jsonl"
+          },
+          {
+            "compile_profile": "tuned",
+            "backend": "tract",
+            "num_workers": 12,
+            "repeat_idx": 0,
+            "total_time_sec": 2.552988609066233,
+            "games_per_sec": 7.833955830815512,
+            "moves_per_sec": 179.00589073413445,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_tuned_tract_w12.jsonl"
+          },
+          {
+            "compile_profile": "baseline",
+            "backend": "tract",
+            "num_workers": 16,
+            "repeat_idx": 0,
+            "total_time_sec": 1.7928504350129515,
+            "games_per_sec": 11.155420223246631,
+            "moves_per_sec": 254.90135210118552,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_baseline_tract_w16.jsonl"
+          },
+          {
+            "compile_profile": "baseline",
+            "backend": "tract",
+            "num_workers": 2,
+            "repeat_idx": 0,
+            "total_time_sec": 9.302341795060784,
+            "games_per_sec": 2.149996252623108,
+            "moves_per_sec": 49.12741437243802,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_baseline_tract_w2.jsonl"
+          },
+          {
+            "compile_profile": "baseline",
+            "backend": "tract",
+            "num_workers": 512,
+            "repeat_idx": 0,
+            "total_time_sec": 1.3694078419357538,
+            "games_per_sec": 14.60485283312574,
+            "moves_per_sec": 333.72088723692315,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_baseline_tract_w512.jsonl"
+          },
+          {
+            "compile_profile": "baseline",
+            "backend": "tract",
+            "num_workers": 8,
+            "repeat_idx": 0,
+            "total_time_sec": 5.833260712912306,
+            "games_per_sec": 3.4286141121257763,
+            "moves_per_sec": 78.34383246207399,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_baseline_tract_w8.jsonl"
+          },
+          {
+            "compile_profile": "baseline",
+            "backend": "tract",
+            "num_workers": 32,
+            "repeat_idx": 0,
+            "total_time_sec": 1.348373478045687,
+            "games_per_sec": 14.832685695500114,
+            "moves_per_sec": 338.9268681421776,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_baseline_tract_w32.jsonl"
+          },
+          {
+            "compile_profile": "baseline",
+            "backend": "tract",
+            "num_workers": 12,
+            "repeat_idx": 0,
+            "total_time_sec": 1.882380808936432,
+            "games_per_sec": 10.62484270188679,
+            "moves_per_sec": 242.77765573811314,
+            "avg_moves": 22.850000381469727,
+            "avg_attack": 0.0,
+            "max_attack": 0,
+            "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_baseline_tract_w12.jsonl"
+          }
+        ],
+        "best": {
+          "compile_profile": "baseline",
+          "backend": "tract",
+          "num_workers": 32,
+          "moves_per_sec": 338.9268681421776,
+          "games_per_sec": 14.832685695500114,
+          "avg_moves": 22.850000381469727,
+          "avg_attack": 0.0,
+          "result_path": "/workspace/tetris-mcts/benchmarks/profiles/optimize_runs_8a2b074176b06ba9_baseline_tract_w32.jsonl",
+          "build_profile": {
+            "name": "baseline",
+            "rustflags": "",
+            "lto": "off",
+            "codegen_units": "16"
+          }
+        }
+      }
+    }
+  ]
+}
