@@ -85,11 +85,7 @@ def _saved_tree_q_bounds(saved_tree: dict[str, Any]) -> dict[str, float | str] |
 
     root_id = int(saved_tree["root_id"])
     root_node = next(
-        (
-            node
-            for node in saved_tree["nodes"]
-            if int(node["id"]) == root_id
-        ),
+        (node for node in saved_tree["nodes"] if int(node["id"]) == root_id),
         None,
     )
     if root_node is None:

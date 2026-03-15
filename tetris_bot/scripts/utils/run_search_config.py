@@ -31,7 +31,9 @@ def load_self_play_config(run_dir: Path) -> dict[str, Any]:
     data = load_run_config(run_dir)
     self_play = data.get("self_play", data)
     if not isinstance(self_play, dict):
-        raise ValueError(f"self_play config must be a JSON object: {run_dir / CONFIG_FILENAME}")
+        raise ValueError(
+            f"self_play config must be a JSON object: {run_dir / CONFIG_FILENAME}"
+        )
     return dict(self_play)
 
 
@@ -82,10 +84,7 @@ def apply_checkpoint_search_overrides(
     ):
         restored_death_penalty = float(incumbent_death_penalty)
         restored_overhang_penalty_weight = float(incumbent_overhang_penalty_weight)
-        if (
-            not math.isfinite(restored_death_penalty)
-            or restored_death_penalty < 0.0
-        ):
+        if not math.isfinite(restored_death_penalty) or restored_death_penalty < 0.0:
             raise ValueError(
                 "Checkpoint incumbent_death_penalty must be finite and >= 0 "
                 f"(got {restored_death_penalty})"
@@ -102,7 +101,9 @@ def apply_checkpoint_search_overrides(
         resolved["overhang_penalty_weight"] = restored_overhang_penalty_weight
     else:
         nn_value_weight = float(
-            resolved.get("nn_value_weight", self_play_config.get("nn_value_weight", 0.0))
+            resolved.get(
+                "nn_value_weight", self_play_config.get("nn_value_weight", 0.0)
+            )
         )
         nn_value_weight_cap = float(
             resolved.get(
@@ -123,7 +124,9 @@ def load_effective_self_play_config(
 ) -> dict[str, Any]:
     self_play_config = load_self_play_config(run_dir)
     resolved_checkpoint_path = (
-        checkpoint_path if checkpoint_path is not None else default_checkpoint_path(run_dir)
+        checkpoint_path
+        if checkpoint_path is not None
+        else default_checkpoint_path(run_dir)
     )
     if not resolved_checkpoint_path.exists():
         return self_play_config
@@ -146,7 +149,9 @@ def build_mcts_config(
     config.temperature = float(config_data["temperature"])
     config.dirichlet_alpha = float(config_data["dirichlet_alpha"])
     config.dirichlet_epsilon = float(config_data["dirichlet_epsilon"])
-    config.visit_sampling_epsilon = float(config_data.get("visit_sampling_epsilon", 0.0))
+    config.visit_sampling_epsilon = float(
+        config_data.get("visit_sampling_epsilon", 0.0)
+    )
     config.max_placements = int(config_data["max_placements"])
     config.q_scale = (
         float(config_data["q_scale"])
@@ -155,7 +160,9 @@ def build_mcts_config(
         else None
     )
     config.reuse_tree = bool(config_data.get("reuse_tree", True))
-    config.nn_value_weight = float(config_data.get("nn_value_weight", config.nn_value_weight))
+    config.nn_value_weight = float(
+        config_data.get("nn_value_weight", config.nn_value_weight)
+    )
     config.death_penalty = float(config_data.get("death_penalty", config.death_penalty))
     config.overhang_penalty_weight = float(
         config_data.get("overhang_penalty_weight", config.overhang_penalty_weight)

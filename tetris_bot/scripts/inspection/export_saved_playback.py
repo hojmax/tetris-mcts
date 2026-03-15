@@ -38,7 +38,11 @@ class ScriptArgs:
 
 
 def resolve_model_path(args: ScriptArgs) -> Path:
-    return args.model_path if args.model_path is not None else default_model_path(args.run_dir)
+    return (
+        args.model_path
+        if args.model_path is not None
+        else default_model_path(args.run_dir)
+    )
 
 
 def resolve_output_path(args: ScriptArgs) -> Path:

@@ -258,10 +258,7 @@ def _rects_intersect(
     left_a, top_a, right_a, bottom_a = rect_a
     left_b, top_b, right_b, bottom_b = rect_b
     return not (
-        right_a <= left_b
-        or right_b <= left_a
-        or bottom_a <= top_b
-        or bottom_b <= top_a
+        right_a <= left_b or right_b <= left_a or bottom_a <= top_b or bottom_b <= top_a
     )
 
 
@@ -430,7 +427,9 @@ def _place_overlay_label_rects(
     occupied_rects: list[tuple[int, int, int, int]] = []
     placements: list[_OverlayLabelPlacement] = []
 
-    for predicted_move in sorted(predicted_move_overlays, key=lambda overlay: overlay.rank):
+    for predicted_move in sorted(
+        predicted_move_overlays, key=lambda overlay: overlay.rank
+    ):
         label = f"{predicted_move.probability * 100:.1f}%"
         bounds = _overlay_anchor_bounds(board_x, board_y, predicted_move)
         if bounds is None:
@@ -464,7 +463,9 @@ def _place_overlay_label_rects(
                 img_h,
                 board_y + 2,
             )
-            if not any(_rects_intersect(candidate, occupied) for occupied in inflated_occupied):
+            if not any(
+                _rects_intersect(candidate, occupied) for occupied in inflated_occupied
+            ):
                 chosen_position = candidate_position
                 chosen_rect = candidate
                 break
@@ -548,7 +549,9 @@ def _apply_predicted_move_overlays(
                 draw.rectangle(
                     [px, py, px + CELL_SIZE - 2, py + CELL_SIZE - 2],
                     outline=outline_color,
-                    width=max(_overlay_outline_width(predicted_move.rank), overlap_width),
+                    width=max(
+                        _overlay_outline_width(predicted_move.rank), overlap_width
+                    ),
                 )
 
     label_overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))

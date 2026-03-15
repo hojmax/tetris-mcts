@@ -390,6 +390,69 @@ def transform_q(
     return normalize_q_value(raw_q, q_min, q_max)
 
 
+def build_q_bounds_entry(
+    q_min: float,
+    q_max: float,
+    *,
+    source: str,
+) -> dict[str, float | str]:
+    return {"q_min": float(q_min), "q_max": float(q_max), "source": source}
+
+
+def derive_q_bounds_from_root_node(root_node: dict) -> dict[str, float | str] | None:
+    q_min = root_node.get("q_min")
+    q_max = root_node.get("q_max")
+    if q_min is not None and q_max is not None:
+        return build_q_bounds_entry(float(q_min), float(q_max), source="export")
+
+    value_history = [float(value) for value in root_node.get("value_history", [])]
+    if not value_history:
+        return None
+    return build_q_bounds_entry(
+        min(value_history),
+        max(value_history),
+        source="root_value_history",
+    )
+
+
+def resolve_search_step_q_bounds(
+    tree_dict: dict,
+    search_step: int,
+) -> dict[str, float | str] | None:
+    q_bounds_by_step = tree_dict.get("search_step_q_bounds")
+    if isinstance(q_bounds_by_step, dict):
+        step_entry = q_bounds_by_step.get(search_step)
+        if step_entry is None:
+            step_entry = q_bounds_by_step.get(str(search_step))
+        if isinstance(step_entry, dict):
+            q_min = step_entry.get("q_min")
+            q_max = step_entry.get("q_max")
+            if q_min is not None and q_max is not None:
+                return build_q_bounds_entry(
+                    float(q_min),
+                    float(q_max),
+                    source=str(step_entry.get("source", "tree_dict")),
+                )
+
+    root_node = next(
+        (
+            node
+            for node in tree_dict["nodes"]
+            if node.get("search_step", 0) == search_step and node.get("parent_id") is None
+        ),
+        None,
+    )
+    if root_node is None:
+        return None
+    return derive_q_bounds_from_root_node(root_node)
+
+
+def describe_q_bounds_source(q_bounds_source: str, q_min: float, q_max: float) -> str:
+    if q_bounds_source == "local_siblings_fallback":
+        return f"fallback local q_min={q_min:.6f}, q_max={q_max:.6f}"
+    return f"global q_min={q_min:.6f}, q_max={q_max:.6f}"
+
+
 def format_chance_outcome(outcome_idx: int) -> str:
     if outcome_idx == NO_CHANCE_OUTCOME:
         return NO_CHANCE_OUTCOME_LABEL
@@ -434,8 +497,17 @@ def build_decision_action_stats(
             child["mean_value"] if child is not None else unvisited_raw_q
         )
 
-    q_min = min(raw_q_by_action.values())
-    q_max = max(raw_q_by_action.values())
+    q_bounds = resolve_search_step_q_bounds(
+        tree_dict, int(decision_node.get("search_step", 0))
+    )
+    if q_bounds is None:
+        q_min = min(raw_q_by_action.values())
+        q_max = max(raw_q_by_action.values())
+        q_bounds_source = "local_siblings_fallback"
+    else:
+        q_min = float(q_bounds["q_min"])
+        q_max = float(q_bounds["q_max"])
+        q_bounds_source = str(q_bounds["source"])
     # Rust MCTS increments visit_count BEFORE calling select_action, so the
     # next simulation will use sqrt(visit_count + 1) for PUCT computation.
     sqrt_parent = (decision_node["visit_count"] + 1) ** 0.5
@@ -465,6 +537,9 @@ def build_decision_action_stats(
                 "q_transformed": transformed_q,
                 "u": u_value,
                 "puct": puct_total,
+                "q_min": q_min,
+                "q_max": q_max,
+                "q_bounds_source": q_bounds_source,
                 "child": child,
                 "target_node_id": target_node_id,
             }
@@ -530,7 +605,9 @@ def build_action_stats_table(action_stats: list[dict], q_col: str):
         html.Th("P", style={"textAlign": "right", "padding": "4px 8px"}),
         html.Th(q_col, style={"textAlign": "right", "padding": "4px 8px"}),
         html.Th("Qraw", style={"textAlign": "right", "padding": "4px 8px"}),
-        html.Th("U", style={"textAlign": "right", "padding": "4px 8px", "color": "#0066cc"}),
+        html.Th(
+            "U", style={"textAlign": "right", "padding": "4px 8px", "color": "#0066cc"}
+        ),
         html.Th(
             "PUCT",
             style={"textAlign": "right", "padding": "4px 8px", "fontWeight": "bold"},
@@ -565,20 +642,37 @@ def build_action_stats_table(action_stats: list[dict], q_col: str):
                         ),
                         style={"padding": "4px 8px", "textAlign": "left"},
                     ),
-                    html.Td(f"{row['visits']}", style={"padding": "4px 8px", "textAlign": "right"}),
-                    html.Td(f"{row['prior']:.4f}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(
+                        f"{row['visits']}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
+                    html.Td(
+                        f"{row['prior']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
                     html.Td(
                         f"{row['q_transformed']:.4f}",
                         style={"padding": "4px 8px", "textAlign": "right"},
                     ),
-                    html.Td(f"{row['raw_q']:.4f}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(
+                        f"{row['raw_q']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
                     html.Td(
                         f"{row['u']:.4f}",
-                        style={"padding": "4px 8px", "textAlign": "right", "color": "#0066cc"},
+                        style={
+                            "padding": "4px 8px",
+                            "textAlign": "right",
+                            "color": "#0066cc",
+                        },
                     ),
                     html.Td(
                         f"{row['puct']:.4f}",
-                        style={"padding": "4px 8px", "textAlign": "right", "fontWeight": "bold"},
+                        style={
+                            "padding": "4px 8px",
+                            "textAlign": "right",
+                            "fontWeight": "bold",
+                        },
                     ),
                     html.Td(
                         "" if child is None else f"{child['attack']}",
@@ -686,8 +780,14 @@ def build_chance_outcomes_table(outcome_stats: list[dict]):
                         ),
                         style={"padding": "4px 8px", "textAlign": "left"},
                     ),
-                    html.Td(f"{row['visits']}", style={"padding": "4px 8px", "textAlign": "right"}),
-                    html.Td(f"{row['q']:.4f}", style={"padding": "4px 8px", "textAlign": "right"}),
+                    html.Td(
+                        f"{row['visits']}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
+                    html.Td(
+                        f"{row['q']:.4f}",
+                        style={"padding": "4px 8px", "textAlign": "right"},
+                    ),
                     html.Td(
                         "" if row["nn_value"] is None else f"{row['nn_value']:.4f}",
                         style={"padding": "4px 8px", "textAlign": "right"},
@@ -749,6 +849,11 @@ def tree_export_to_dict(
     is_reuse_root: bool = False,
 ) -> dict:
     env_cache = build_env_cache_for_tree(tree)
+    q_bounds = build_q_bounds_entry(
+        float(getattr(tree, "q_min", 0.0)),
+        float(getattr(tree, "q_max", 0.0)),
+        source="export",
+    )
 
     return {
         "nodes": [
@@ -796,6 +901,8 @@ def tree_export_to_dict(
         "root_id": tree.root_id,
         "selected_action": tree.selected_action,
         "num_simulations": tree.num_simulations,
+        "q_min": q_bounds["q_min"],
+        "q_max": q_bounds["q_max"],
         "c_puct": c_puct,
         "q_scale": q_scale,
         "use_parent_value_for_unvisited_q": use_parent_value_for_unvisited_q,
@@ -804,6 +911,7 @@ def tree_export_to_dict(
         "highlighted_node_ids": [],
         "highlighted_edge_keys": [],
         "reuse_edges": [],
+        "search_step_q_bounds": {search_step: q_bounds},
     }
 
 
@@ -877,6 +985,7 @@ def build_full_game_tree_dict(
     highlighted_node_ids: set[str] = set()
     highlighted_edge_keys: list[dict[str, str]] = []
     reuse_edges: list[dict[str, str]] = []
+    search_step_q_bounds: dict[int, dict[str, float | str]] = {}
     root_id = 0
     previous_path_target: str | None = None
 
@@ -889,6 +998,9 @@ def build_full_game_tree_dict(
             search_step=step_index,
             is_reuse_root=step_index > 0,
         )
+        step_q_bounds = step_tree.get("search_step_q_bounds", {}).get(step_index)
+        if isinstance(step_q_bounds, dict):
+            search_step_q_bounds[step_index] = step_q_bounds
         step_tree = offset_tree_dict(step_tree, len(combined_nodes))
 
         if step_index == 0:
@@ -955,6 +1067,7 @@ def build_full_game_tree_dict(
         "num_frames": playback.num_frames,
         "tree_reuse_hits": playback.tree_reuse_hits,
         "tree_reuse_misses": playback.tree_reuse_misses,
+        "search_step_q_bounds": search_step_q_bounds,
     }
 
 
@@ -1379,9 +1492,9 @@ def build_cytoscape_elements(
                     "visit_count": node["visit_count"],
                     "mean_value": node["mean_value"],
                     "value_sum": node["value_sum"],
-                            "attack": node["attack"],
-                            "cumulative_attack": node.get("cumulative_attack", 0),
-                            "attack_color": _node_color(node["attack"], node["node_type"]),
+                    "attack": node["attack"],
+                    "cumulative_attack": node.get("cumulative_attack", 0),
+                    "attack_color": _node_color(node["attack"], node["node_type"]),
                     "is_terminal": node["is_terminal"],
                     "move_number": node["move_number"],
                     "edge_from_parent": node["edge_from_parent"],
@@ -1736,7 +1849,9 @@ def resolve_best_child_target(tree_dict: dict, node_id_str: str) -> str | None:
             tree_dict.get("q_scale"),
         )
         if action_stats:
-            best_action = max(action_stats, key=lambda row: (row["visits"], row["puct"]))
+            best_action = max(
+                action_stats, key=lambda row: (row["visits"], row["puct"])
+            )
             return str(best_action["target_node_id"])
 
     if node.get("node_type") == "chance" and node.get("possible_chance_outcomes"):

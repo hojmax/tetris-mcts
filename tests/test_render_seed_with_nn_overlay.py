@@ -162,8 +162,12 @@ def test_overlay_frame_can_hide_live_drop_ghost() -> None:
     ghost = env.get_ghost_piece()
     assert ghost is not None
 
-    with_ghost = _capture_frame(env, placement_number=0, attack=0, show_ghost_piece=True)
-    without_ghost = _capture_frame(env, placement_number=0, attack=0, show_ghost_piece=False)
+    with_ghost = _capture_frame(
+        env, placement_number=0, attack=0, show_ghost_piece=True
+    )
+    without_ghost = _capture_frame(
+        env, placement_number=0, attack=0, show_ghost_piece=False
+    )
 
     ghost_x, ghost_y = ghost.get_cells()[0]
     pixel_x = LEFT_SIDEBAR + int(ghost_x) * CELL_SIZE + CELL_SIZE // 2

@@ -248,7 +248,9 @@ def main(args: ScriptArgs) -> None:
         nn_value_weight=float(config.nn_value_weight),
         first_frame_nn=round(frame_values[0], 6),
         last_frame_nn=round(frame_values[-1], 6),
-        final_frame_nn=round(final_frame_value, 6) if final_frame_value is not None else None,
+        final_frame_nn=round(final_frame_value, 6)
+        if final_frame_value is not None
+        else None,
     )
 
 

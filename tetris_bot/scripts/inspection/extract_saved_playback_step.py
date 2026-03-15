@@ -19,7 +19,7 @@ from typing import Any
 import structlog
 from simple_parsing import parse
 
-from tetris_bot.constants import NUM_ACTIONS, PROJECT_ROOT
+from tetris_bot.constants import NUM_ACTIONS
 from tetris_bot.scripts.inspection.tree_playback_artifact import (
     load_tree_playback_artifact,
 )
@@ -120,9 +120,7 @@ def collapse_step_to_selected_path(step: dict[str, Any]) -> dict[str, Any]:
 
 
 def default_output_path(saved_playback: Path, step_index: int) -> Path:
-    return saved_playback.with_name(
-        f"{saved_playback.stem}.step_{step_index:03d}.json"
-    )
+    return saved_playback.with_name(f"{saved_playback.stem}.step_{step_index:03d}.json")
 
 
 def build_step_slice_payload(
@@ -157,7 +155,9 @@ def build_step_slice_payload(
         "steps": sliced_steps,
         "total_attack": sum(int(move["attack"]) for move in sliced_replay_moves),
         "num_moves": sum(
-            1 for move in sliced_replay_moves if int(move["action"]) != HOLD_ACTION_INDEX
+            1
+            for move in sliced_replay_moves
+            if int(move["action"]) != HOLD_ACTION_INDEX
         ),
         "num_frames": len(sliced_replay_moves),
         "tree_reuse_hits": 0,
