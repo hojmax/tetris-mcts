@@ -1307,6 +1307,142 @@ def build_cytoscape_elements(
     return elements
 
 
+def _find_tree_node(tree_dict: dict, node_id: int) -> dict | None:
+    if node_id < 0:
+        return None
+    nodes = tree_dict.get("nodes", [])
+    if node_id >= len(nodes):
+        return None
+    node = nodes[node_id]
+    if int(node["id"]) != node_id:
+        return None
+    return node
+
+
+def _virtual_action_node_data(tree_dict: dict, node_id_str: str) -> dict | None:
+    parts = node_id_str.split("_")
+    if len(parts) != 3:
+        return None
+    parent_id = int(parts[1])
+    action_idx = int(parts[2])
+    parent = _find_tree_node(tree_dict, parent_id)
+    if parent is None or parent.get("node_type") != "decision":
+        return None
+
+    c_puct = tree_dict.get("c_puct", 1.0)
+    q_scale = tree_dict.get("q_scale")
+    action_stats = build_decision_action_stats(parent, tree_dict, c_puct, q_scale)
+    stats_by_action = {row["action"]: row for row in action_stats}
+    action_row = stats_by_action.get(action_idx)
+    if action_row is None:
+        return None
+
+    return {
+        "id": node_id_str,
+        "label": f"a{action_idx}\nP:{action_row['prior']:.2f}\nU:{action_row['u']:.2f}",
+        "node_type": "virtual",
+        "visit_count": 0,
+        "mean_value": 0.0,
+        "value_sum": 0.0,
+        "attack": "?",
+        "attack_color": _node_color(0, "chance"),
+        "is_terminal": False,
+        "move_number": parent["move_number"],
+        "edge_from_parent": action_idx,
+        "parent_id": parent_id,
+        "prior": action_row["prior"],
+        "u_value": action_row["u"],
+        "search_step": parent.get("search_step", 0),
+    }
+
+
+def _virtual_chance_node_data(tree_dict: dict, node_id_str: str) -> dict | None:
+    parts = node_id_str.split("_")
+    if len(parts) != 3:
+        return None
+    parent_id = int(parts[1])
+    outcome_idx = int(parts[2])
+    parent = _find_tree_node(tree_dict, parent_id)
+    if parent is None or parent.get("node_type") != "chance":
+        return None
+
+    return {
+        "id": node_id_str,
+        "label": f"{format_chance_outcome(outcome_idx)}\n(unvisited)",
+        "node_type": "virtual_decision",
+        "visit_count": 0,
+        "mean_value": 0.0,
+        "value_sum": 0.0,
+        "attack": 0,
+        "attack_color": _node_color(0, "decision"),
+        "is_terminal": False,
+        "move_number": parent["move_number"],
+        "edge_from_parent": outcome_idx,
+        "parent_id": parent_id,
+        "search_step": parent.get("search_step", 0),
+    }
+
+
+def resolve_node_data_from_tree(tree_dict: dict, node_id_str: str) -> dict | None:
+    if node_id_str.startswith("v_") and not node_id_str.startswith("vp_"):
+        return _virtual_action_node_data(tree_dict, node_id_str)
+    if node_id_str.startswith("vp_"):
+        return _virtual_chance_node_data(tree_dict, node_id_str)
+    if not node_id_str.isdigit():
+        return None
+    node = _find_tree_node(tree_dict, int(node_id_str))
+    if node is None:
+        return None
+    return {
+        "id": str(node["id"]),
+        "edge_from_parent": node.get("edge_from_parent"),
+        "parent_id": node.get("parent_id"),
+    }
+
+
+def siblings_for_parent(tree_dict: dict, parent_id: int) -> list[str]:
+    parent = _find_tree_node(tree_dict, parent_id)
+    if parent is None:
+        return []
+
+    siblings: list[str] = []
+    for child_id in parent.get("children", []):
+        child = _find_tree_node(tree_dict, child_id)
+        if child is not None:
+            siblings.append(str(child["id"]))
+
+    if parent["node_type"] == "decision":
+        visited_actions = {
+            _find_tree_node(tree_dict, child_id).get("edge_from_parent")
+            for child_id in parent.get("children", [])
+            if _find_tree_node(tree_dict, child_id) is not None
+        }
+        for action_idx in parent.get("valid_actions", []):
+            if action_idx not in visited_actions:
+                siblings.append(f"v_{parent_id}_{action_idx}")
+    else:
+        visited_outcomes = {
+            _find_tree_node(tree_dict, child_id).get("edge_from_parent")
+            for child_id in parent.get("children", [])
+            if _find_tree_node(tree_dict, child_id) is not None
+        }
+        for outcome_idx in parent.get("possible_chance_outcomes", []):
+            if outcome_idx not in visited_outcomes:
+                siblings.append(f"vp_{parent_id}_{outcome_idx}")
+
+    def get_edge(sid: str) -> int:
+        if sid.startswith("v_") or sid.startswith("vp_"):
+            return int(sid.split("_")[2])
+        if sid.isdigit():
+            node = _find_tree_node(tree_dict, int(sid))
+            if node is not None and node.get("edge_from_parent") is not None:
+                return int(node["edge_from_parent"])
+        return 0
+
+    siblings.sort(key=get_edge)
+    return siblings
+
+
 if SAVED_PLAYBACK_DEFAULTS is not None:
     _env_cache.clear()
     _env_cache.update(SAVED_PLAYBACK_DEFAULTS["env_cache"])
@@ -2138,9 +2274,8 @@ def run_mcts(
     Input("cytoscape-tree", "tapNodeData"),
     Input("selected-node-store", "data"),
     State("tree-store", "data"),
-    State("cytoscape-tree", "elements"),
 )
-def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
+def display_node_details(tap_node_data, selected_node_id, tree_dict):
     """Display details for clicked node or keyboard-navigated node."""
     if tree_dict is None:
         return "Click a node to see details", "", ""
@@ -2151,12 +2286,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict, elements):
 
     # Get node data based on trigger source
     if triggered_id == "selected-node-store" and selected_node_id:
-        # Keyboard navigation - find node data from elements
-        node_data = None
-        for elem in elements:
-            if "data" in elem and str(elem["data"].get("id", "")) == selected_node_id:
-                node_data = elem["data"]
-                break
+        node_data = resolve_node_data_from_tree(tree_dict, str(selected_node_id))
         if node_data is None:
             return "Node not found", "", ""
     elif tap_node_data is not None:
@@ -2443,13 +2573,37 @@ clientside_callback(
 # Pan the Cytoscape view to center on the selected node
 clientside_callback(
     """
-    function(selectedNodeId) {
-        if (!selectedNodeId) return window.dash_clientside.no_update;
+    function(selectedNodeId, rootClicks, treeData) {
         var cyEl = document.getElementById('cytoscape-tree');
         if (!cyEl || !cyEl._cyreg || !cyEl._cyreg.cy) return window.dash_clientside.no_update;
         var cy = cyEl._cyreg.cy;
+
+        var ctx = window.dash_clientside.callback_context;
+        var trigger = ctx.triggered.length ? ctx.triggered[0].prop_id : '';
+
+        if (trigger === 'nav-root-button.n_clicks') {
+            if (!rootClicks || !treeData) return window.dash_clientside.no_update;
+            var rootId = String(treeData.root_id);
+            var root = cy.getElementById(rootId);
+            if (root.length > 0) {
+                cy.stop();
+                cy.batch(function() {
+                    cy.nodes(':selected').unselect();
+                    root.select();
+                });
+                cy.fit(root, 120);
+                cy.center(root);
+            }
+            return window.dash_clientside.no_update;
+        }
+
+        if (!selectedNodeId) return window.dash_clientside.no_update;
         var node = cy.getElementById(selectedNodeId);
         if (node.length > 0) {
+            cy.batch(function() {
+                cy.nodes(':selected').unselect();
+                node.select();
+            });
             cy.animate({center: {eles: node}, duration: 200});
         }
         return window.dash_clientside.no_update;
@@ -2457,6 +2611,8 @@ clientside_callback(
     """,
     Output("keyboard-target", "title"),  # dummy output (pan)
     Input("selected-node-store", "data"),
+    Input("nav-root-button", "n_clicks"),
+    State("tree-store", "data"),
 )
 
 # Manage navigation history: push previous node on forward nav, pop on back click
@@ -2515,9 +2671,8 @@ def navigate_to_root(_, tree_dict):
     Output("siblings-store", "data"),
     Input("cytoscape-tree", "tapNodeData"),
     State("tree-store", "data"),
-    State("cytoscape-tree", "elements"),
 )
-def update_selection_info(node_data, tree_dict, elements):
+def update_selection_info(node_data, tree_dict):
     """Track selected node and its siblings for keyboard navigation."""
     if node_data is None or tree_dict is None:
         return None, []
@@ -2531,36 +2686,9 @@ def update_selection_info(node_data, tree_dict, elements):
         if nid < len(tree_dict["nodes"]):
             parent_id = tree_dict["nodes"][nid].get("parent_id")
 
-    siblings = []
-
     if parent_id is not None:
-        # Find all siblings from elements (includes both visited and virtual nodes)
-        for elem in elements:
-            if "data" not in elem:
-                continue
-            elem_id = str(elem["data"].get("id", ""))
-            elem_parent = elem["data"].get("parent_id")
-            # Check if this is a sibling (same parent, is a node not an edge)
-            if elem_parent == parent_id and "source" not in elem["data"]:
-                siblings.append(elem_id)
-
-    # Sort siblings by edge_from_parent for consistent ordering
-    def get_edge(sid):
-        # Check elements for edge info
-        for elem in elements:
-            if "data" in elem and str(elem["data"].get("id", "")) == sid:
-                edge = elem["data"].get("edge_from_parent")
-                if edge is not None:
-                    return edge
-        if sid.startswith("v_"):
-            return int(sid.split("_")[2])
-        elif sid.startswith("vp_"):
-            return int(sid.split("_")[2])
-        return 0
-
-    siblings.sort(key=get_edge)
-
-    return node_id, siblings
+        return node_id, siblings_for_parent(tree_dict, int(parent_id))
+    return node_id, []
 
 
 @callback(
@@ -2568,11 +2696,10 @@ def update_selection_info(node_data, tree_dict, elements):
     Input("keyboard-event", "data"),
     State("selected-node-store", "data"),
     State("siblings-store", "data"),
-    State("cytoscape-tree", "elements"),
     State("tree-store", "data"),
     prevent_initial_call=True,
 )
-def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_dict):
+def navigate_siblings(keyboard_event, selected_node, siblings, tree_dict):
     """Navigate the tree with arrow keys: left/right = siblings, up = parent, down = best child."""
     if not keyboard_event or not keyboard_event.get("key"):
         return dash.no_update
@@ -2617,9 +2744,6 @@ def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_di
         )
         return str(best)
 
-    # Build full siblings list including virtual nodes from elements
-    all_siblings = list(siblings) if siblings else []
-
     # Extract parent_id from current selection
     parent_id = None
     if selected_node.startswith("v_"):
@@ -2631,34 +2755,11 @@ def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_di
         if nid < len(tree_dict["nodes"]):
             parent_id = tree_dict["nodes"][nid].get("parent_id")
 
-    # Add virtual siblings from elements
-    if parent_id is not None:
-        for elem in elements:
-            if "data" not in elem:
-                continue
-            elem_id = str(elem["data"].get("id", ""))
-            elem_parent = elem["data"].get("parent_id")
-            if elem_parent == parent_id and elem_id not in all_siblings:
-                all_siblings.append(elem_id)
-
+    all_siblings = (
+        siblings_for_parent(tree_dict, int(parent_id)) if parent_id is not None else []
+    )
     if not all_siblings:
         return dash.no_update
-
-    # Sort by edge_from_parent
-    def get_edge(sid):
-        # Check elements for edge info
-        for elem in elements:
-            if "data" in elem and str(elem["data"].get("id", "")) == sid:
-                edge = elem["data"].get("edge_from_parent")
-                if edge is not None:
-                    return edge
-        if sid.startswith("v_"):
-            return int(sid.split("_")[2])
-        elif sid.startswith("vp_"):
-            return int(sid.split("_")[2])
-        return 0
-
-    all_siblings.sort(key=get_edge)
 
     if selected_node not in all_siblings:
         return dash.no_update
@@ -2671,31 +2772,6 @@ def navigate_siblings(keyboard_event, selected_node, siblings, elements, tree_di
         new_idx = (current_idx + 1) % len(all_siblings)
 
     return all_siblings[new_idx]
-
-
-@callback(
-    Output("cytoscape-tree", "stylesheet"),
-    Input("selected-node-store", "data"),
-    Input("cytoscape-tree", "tapNodeData"),
-)
-def update_highlight_stylesheet(selected_node_id, tap_node_data):
-    """Update stylesheet to highlight the selected node."""
-    # Start with base stylesheet
-    styles = list(stylesheet)  # Copy the base stylesheet
-
-    # Add highlight rule for selected node
-    if selected_node_id:
-        styles.append(
-            {
-                "selector": f'node[id = "{selected_node_id}"]',
-                "style": {
-                    "border-width": 3,
-                    "border-color": "#ffff00",
-                },
-            }
-        )
-
-    return styles
 
 
 @callback(

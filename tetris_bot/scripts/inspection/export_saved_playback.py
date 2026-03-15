@@ -13,18 +13,18 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_core.tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
+from tetris_core.tetris_core import MCTSAgent, TetrisEnv
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
-    CHECKPOINT_DIRNAME,
-    INCUMBENT_ONNX_FILENAME,
 )
 from tetris_bot.scripts.inspection.tree_playback_artifact import (
     save_tree_playback_artifact,
 )
 from tetris_bot.scripts.utils.run_search_config import (
+    build_mcts_config,
     default_checkpoint_path,
+    default_model_path,
     load_effective_self_play_config,
 )
 
@@ -42,11 +42,7 @@ class ScriptArgs:
 
 
 def resolve_model_path(args: ScriptArgs) -> Path:
-    return (
-        args.model_path
-        if args.model_path is not None
-        else args.run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
-    )
+    return args.model_path if args.model_path is not None else default_model_path(args.run_dir)
 
 
 def resolve_output_path(args: ScriptArgs) -> Path:
@@ -58,37 +54,6 @@ def resolve_output_path(args: ScriptArgs) -> Path:
         / "eval_trees"
         / f"seed{args.seed}_full_game_playback.json"
     )
-
-
-def build_mcts_config(run_dir: Path, checkpoint_path: Path | None) -> MCTSConfig:
-    config_data = load_effective_self_play_config(run_dir, checkpoint_path)
-
-    config = MCTSConfig()
-    config.num_simulations = int(config_data["num_simulations"])
-    config.c_puct = float(config_data["c_puct"])
-    config.temperature = float(config_data["temperature"])
-    config.dirichlet_alpha = float(config_data["dirichlet_alpha"])
-    config.dirichlet_epsilon = float(config_data["dirichlet_epsilon"])
-    config.visit_sampling_epsilon = float(config_data.get("visit_sampling_epsilon", 0.0))
-    config.max_placements = int(config_data["max_placements"])
-    config.q_scale = (
-        float(config_data["q_scale"])
-        if config_data.get("use_tanh_q_normalization", True)
-        and config_data.get("q_scale") is not None
-        else None
-    )
-    config.reuse_tree = bool(config_data.get("reuse_tree", True))
-    config.nn_value_weight = float(config_data.get("nn_value_weight", config.nn_value_weight))
-    config.death_penalty = float(config_data.get("death_penalty", config.death_penalty))
-    config.overhang_penalty_weight = float(
-        config_data.get("overhang_penalty_weight", config.overhang_penalty_weight)
-    )
-    mcts_seed = config_data.get("mcts_seed")
-    config.seed = int(mcts_seed) if mcts_seed is not None else None
-    config.track_value_history = True
-    return config
-
-
 def main(args: ScriptArgs) -> None:
     run_dir = args.run_dir.resolve()
     model_path = resolve_model_path(args).resolve()
@@ -104,7 +69,7 @@ def main(args: ScriptArgs) -> None:
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
 
-    config = build_mcts_config(run_dir, checkpoint_path)
+    config = build_mcts_config(run_dir, checkpoint_path, track_value_history=True)
     agent = MCTSAgent(config)
     if not agent.load_model(str(model_path)):
         raise RuntimeError(f"Failed to load model: {model_path}")

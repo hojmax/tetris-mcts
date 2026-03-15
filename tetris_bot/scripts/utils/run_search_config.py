@@ -7,7 +7,13 @@ from typing import Any
 
 import torch
 
-from tetris_bot.constants import CHECKPOINT_DIRNAME, CONFIG_FILENAME, LATEST_CHECKPOINT_FILENAME
+from tetris_core.tetris_core import MCTSConfig
+from tetris_bot.constants import (
+    CHECKPOINT_DIRNAME,
+    CONFIG_FILENAME,
+    INCUMBENT_ONNX_FILENAME,
+    LATEST_CHECKPOINT_FILENAME,
+)
 
 
 def load_run_config(run_dir: Path) -> dict[str, Any]:
@@ -31,6 +37,10 @@ def load_self_play_config(run_dir: Path) -> dict[str, Any]:
 
 def default_checkpoint_path(run_dir: Path) -> Path:
     return run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
+
+
+def default_model_path(run_dir: Path) -> Path:
+    return run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
 
 
 def load_checkpoint_state(checkpoint_path: Path) -> dict[str, Any]:
@@ -120,3 +130,37 @@ def load_effective_self_play_config(
 
     checkpoint_state = load_checkpoint_state(resolved_checkpoint_path)
     return apply_checkpoint_search_overrides(self_play_config, checkpoint_state)
+
+
+def build_mcts_config(
+    run_dir: Path,
+    checkpoint_path: Path | None = None,
+    *,
+    track_value_history: bool = False,
+) -> MCTSConfig:
+    config_data = load_effective_self_play_config(run_dir, checkpoint_path)
+
+    config = MCTSConfig()
+    config.num_simulations = int(config_data["num_simulations"])
+    config.c_puct = float(config_data["c_puct"])
+    config.temperature = float(config_data["temperature"])
+    config.dirichlet_alpha = float(config_data["dirichlet_alpha"])
+    config.dirichlet_epsilon = float(config_data["dirichlet_epsilon"])
+    config.visit_sampling_epsilon = float(config_data.get("visit_sampling_epsilon", 0.0))
+    config.max_placements = int(config_data["max_placements"])
+    config.q_scale = (
+        float(config_data["q_scale"])
+        if config_data.get("use_tanh_q_normalization", True)
+        and config_data.get("q_scale") is not None
+        else None
+    )
+    config.reuse_tree = bool(config_data.get("reuse_tree", True))
+    config.nn_value_weight = float(config_data.get("nn_value_weight", config.nn_value_weight))
+    config.death_penalty = float(config_data.get("death_penalty", config.death_penalty))
+    config.overhang_penalty_weight = float(
+        config_data.get("overhang_penalty_weight", config.overhang_penalty_weight)
+    )
+    mcts_seed = config_data.get("mcts_seed")
+    config.seed = int(mcts_seed) if mcts_seed is not None else None
+    config.track_value_history = track_value_history
+    return config

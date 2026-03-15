@@ -7,223 +7,260 @@ import numpy as np
 import onnxruntime as ort
 from simple_parsing import parse
 
-from tetris_bot.ml.network import AUX_FEATURES
-
-# Piece name -> index mapping (matches constants.rs / config.py PIECE_NAMES)
-PIECE_INDEX = {"I": 0, "O": 1, "T": 2, "S": 3, "Z": 4, "J": 5, "L": 6}
-NUM_PIECE_TYPES = 7
-BOARD_HEIGHT = 20
-BOARD_WIDTH = 10
-MAX_PLACEMENTS = 100
-COMBO_NORMALIZATION_MAX = 4.0
-
-# ── State from MCTS visualizer (node 3, chance node) ──
-CURRENT_PIECE = "J"
-HOLD_PIECE = "L"
-QUEUE = ["I", "Z", "O", "S", "O"]
-PLACEMENT_COUNT = 2
-HOLD_AVAILABLE = True  # hold not used this turn
-COMBO = 0
-BACK_TO_BACK = False
-NEXT_HIDDEN_PIECE_PROBS = [1.0 / NUM_PIECE_TYPES] * NUM_PIECE_TYPES
-
-# Board: T-piece rotation 1, placed in bottom-left corner
-# x.
-# xx
-# x.
-BOARD = np.zeros((BOARD_HEIGHT, BOARD_WIDTH), dtype=np.float32)
-BOARD[17, 0] = 1.0  # row 17, col 0
-BOARD[18, 0] = 1.0  # row 18, col 0
-BOARD[18, 1] = 1.0  # row 18, col 1
-BOARD[19, 0] = 1.0  # row 19, col 0
-COLUMN_HEIGHTS = np.array(
-    [3.0 / 8.0, 2.0 / 8.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    dtype=np.float32,
+from tetris_core.tetris_core import (
+    TetrisEnv,
+    debug_encode_state,
+    debug_get_action_mask,
+    debug_predict_masked_from_tensors,
 )
-MAX_COLUMN_HEIGHT = 3.0 / 20.0
-ROW_FILL_COUNTS = np.array([0.0, 0.1, 0.2, 0.1], dtype=np.float32)
-TOTAL_BLOCKS = 4.0 / 60.0
-BUMPINESS = 5.0 / 200.0
-HOLES = 0.0
-OVERHANG_FIELDS = 1.0 / 25.0
+from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, PIECE_NAMES, QUEUE_SIZE
 
-EXPECTED_VALUE = 0.567
+# Hardcoded trajectory states from the checkpoint-correct
+# `training_runs/v3` seed-35 playback (`nn_value_weight=1.0`).
+
+
+@dataclass(frozen=True)
+class HardcodedState:
+    label: str
+    seed: int
+    action_prefix: tuple[int, ...]
+    max_placements: int
+    expected_viz_nn_value: float
+    expected_current_piece: str
+    expected_hold_piece: str | None
+    expected_hold_used: bool
+    expected_queue: tuple[str, ...]
+    expected_board_rows: tuple[str, ...]
+
+
+HARD_CODED_STATES = [
+    HardcodedState(
+        label="seed35_placement0",
+        seed=35,
+        action_prefix=(),
+        max_placements=50,
+        expected_viz_nn_value=13.410019874572754,
+        expected_current_piece="I",
+        expected_hold_piece=None,
+        expected_hold_used=False,
+        expected_queue=("T", "J", "S", "O", "L"),
+        expected_board_rows=(
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+        ),
+    ),
+    HardcodedState(
+        label="seed35_placement1",
+        seed=35,
+        action_prefix=(349,),
+        max_placements=50,
+        expected_viz_nn_value=13.740720748901367,
+        expected_current_piece="T",
+        expected_hold_piece=None,
+        expected_hold_used=False,
+        expected_queue=("J", "S", "O", "L", "Z"),
+        expected_board_rows=(
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            "..........",
+            ".1........",
+            ".1........",
+            ".1........",
+            ".1........",
+        ),
+    ),
+]
 
 
 @dataclass
 class ScriptArgs:
-    model_path: Path  # Path to ONNX model
+    model_path: Path = (
+        Path(__file__).parent.parent.parent.parent
+        / "training_runs/v3/checkpoints/incumbent.onnx"
+    )
+    state: str = "all"  # One of: all, seed35_placement0, seed35_placement1
 
 
-def encode_board(board: np.ndarray) -> np.ndarray:
-    return board.reshape(1, 1, BOARD_HEIGHT, BOARD_WIDTH).astype(np.float32)
+def piece_name(piece: object | None) -> str | None:
+    if piece is None:
+        return None
+    return PIECE_NAMES[piece.piece_type]
 
 
-def encode_aux(
-    current_piece: str,
-    hold_piece: str | None,
-    hold_available: bool,
-    queue: list[str],
-    placement_count: int,
-    combo: int,
-    back_to_back: bool,
-    next_hidden_piece_probs: list[float],
-    column_heights: np.ndarray,
-    max_column_height: float,
-    row_fill_counts: np.ndarray,
-    total_blocks: float,
-    bumpiness: float,
-    holes: float,
-    overhang_fields: float,
-) -> np.ndarray:
-    if len(next_hidden_piece_probs) != NUM_PIECE_TYPES:
+def board_rows_from_env(env: TetrisEnv) -> list[str]:
+    return [
+        "".join("1" if int(cell) != 0 else "." for cell in row)
+        for row in env.get_board()
+    ]
+
+
+def build_env(state: HardcodedState) -> TetrisEnv:
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, state.seed)
+    for action in state.action_prefix:
+        attack = env.execute_action_index(action)
+        if attack is None:
+            raise RuntimeError(
+                f"Failed to replay action {action} for state {state.label}"
+            )
+    return env
+
+
+def validate_state(state: HardcodedState, env: TetrisEnv) -> None:
+    current_piece = piece_name(env.get_current_piece())
+    hold_piece = piece_name(env.get_hold_piece())
+    queue = tuple(PIECE_NAMES[piece] for piece in env.get_queue(QUEUE_SIZE))
+    board_rows = tuple(board_rows_from_env(env))
+    hold_used = env.is_hold_used()
+
+    if current_piece != state.expected_current_piece:
         raise ValueError(
-            f"next_hidden_piece_probs must have length {NUM_PIECE_TYPES}, got {len(next_hidden_piece_probs)}"
+            f"{state.label}: current piece mismatch {current_piece} != {state.expected_current_piece}"
+        )
+    if hold_piece != state.expected_hold_piece:
+        raise ValueError(
+            f"{state.label}: hold piece mismatch {hold_piece} != {state.expected_hold_piece}"
+        )
+    if queue != state.expected_queue:
+        raise ValueError(
+            f"{state.label}: queue mismatch {queue} != {state.expected_queue}"
+        )
+    if board_rows != state.expected_board_rows:
+        raise ValueError(f"{state.label}: board rows do not match hardcoded state")
+    if hold_used != state.expected_hold_used:
+        raise ValueError(
+            f"{state.label}: hold_used mismatch {hold_used} != {state.expected_hold_used}"
+        )
+    if env.placement_count != len(state.action_prefix):
+        raise ValueError(
+            f"{state.label}: placement_count mismatch {env.placement_count} != {len(state.action_prefix)}"
         )
 
-    aux = np.zeros(AUX_FEATURES, dtype=np.float32)
-    idx = 0
 
-    # Current piece: one-hot (7)
-    aux[idx + PIECE_INDEX[current_piece]] = 1.0
-    idx += NUM_PIECE_TYPES
+def iter_selected_states(name: str) -> list[HardcodedState]:
+    if name == "all":
+        return HARD_CODED_STATES
+    for state in HARD_CODED_STATES:
+        if state.label == name:
+            return [state]
+    valid = ", ".join(["all", *[state.label for state in HARD_CODED_STATES]])
+    raise ValueError(f"Unknown state '{name}'. Expected one of: {valid}")
 
-    # Hold piece: one-hot (8) — 7 pieces + empty slot
-    if hold_piece is not None:
-        aux[idx + PIECE_INDEX[hold_piece]] = 1.0
-    else:
-        aux[idx + NUM_PIECE_TYPES] = 1.0  # empty marker
-    idx += NUM_PIECE_TYPES + 1
 
-    # Hold available: binary (1)
-    aux[idx] = 1.0 if hold_available else 0.0
-    idx += 1
-
-    # Queue: 5 slots x 7 one-hot = 35
-    for slot, piece_name in enumerate(queue):
-        aux[idx + slot * NUM_PIECE_TYPES + PIECE_INDEX[piece_name]] = 1.0
-    idx += 5 * NUM_PIECE_TYPES
-
-    # Placement count: normalized
-    aux[idx] = placement_count / MAX_PLACEMENTS
-    idx += 1
-
-    # Combo: normalized with uncapped linear scaling.
-    aux[idx] = combo / COMBO_NORMALIZATION_MAX
-    idx += 1
-
-    # Back-to-back: binary
-    aux[idx] = 1.0 if back_to_back else 0.0
-    idx += 1
-
-    # Next hidden piece distribution: 7 probabilities
-    aux[idx : idx + NUM_PIECE_TYPES] = np.asarray(
-        next_hidden_piece_probs,
-        dtype=np.float32,
-    )
-    idx += NUM_PIECE_TYPES
-
-    aux[idx : idx + BOARD_WIDTH] = column_heights.astype(np.float32)
-    idx += BOARD_WIDTH
-
-    aux[idx] = max_column_height
-    idx += 1
-
-    aux[idx : idx + row_fill_counts.size] = row_fill_counts.astype(np.float32)
-    idx += row_fill_counts.size
-
-    aux[idx] = total_blocks
-    idx += 1
-
-    aux[idx] = bumpiness
-    idx += 1
-
-    aux[idx] = holes
-    idx += 1
-
-    aux[idx] = overhang_fields
-    idx += 1
-
-    assert idx == AUX_FEATURES
-    return aux.reshape(1, AUX_FEATURES)
+def print_aux_summary(aux_tensor: np.ndarray) -> None:
+    aux = aux_tensor[0]
+    print(f"Encoded placement count: {aux[51]:.6f}")
+    print(f"Encoded combo:           {aux[52]:.6f}")
+    print(f"Encoded back-to-back:    {aux[53]:.6f}")
+    print(f"Encoded hidden dist:     {aux[54:61].tolist()}")
+    print(f"Encoded column heights:  {aux[61:71].tolist()}")
+    print(f"Encoded max height:      {aux[71]:.6f}")
+    print(f"Encoded row fills:       {aux[72:76].tolist()}")
+    print(f"Encoded total blocks:    {aux[76]:.6f}")
+    print(f"Encoded bumpiness:       {aux[77]:.6f}")
+    print(f"Encoded holes:           {aux[78]:.6f}")
+    print(f"Encoded overhang:        {aux[79]:.6f}")
 
 
 def main(args: ScriptArgs) -> None:
-    board_tensor = encode_board(BOARD)
-    aux_tensor = encode_aux(
-        CURRENT_PIECE,
-        HOLD_PIECE,
-        HOLD_AVAILABLE,
-        QUEUE,
-        PLACEMENT_COUNT,
-        COMBO,
-        BACK_TO_BACK,
-        NEXT_HIDDEN_PIECE_PROBS,
-        COLUMN_HEIGHTS,
-        MAX_COLUMN_HEIGHT,
-        ROW_FILL_COUNTS,
-        TOTAL_BLOCKS,
-        BUMPINESS,
-        HOLES,
-        OVERHANG_FIELDS,
-    )
-
-    print(f"Board tensor shape: {board_tensor.shape}")
-    print(f"Aux tensor shape:   {aux_tensor.shape}")
-    print(f"Board sum (filled cells): {board_tensor.sum():.0f}")
-    print()
-
-    # Decode aux for verification
-    aux = aux_tensor[0]
-    current_idx = np.argmax(aux[0:7])
-    hold_slice = aux[7:15]
-    hold_idx = np.argmax(hold_slice)
-    hold_name = list(PIECE_INDEX.keys())[hold_idx] if hold_idx < 7 else "empty"
-    print(f"Encoded current piece: {list(PIECE_INDEX.keys())[current_idx]}")
-    print(f"Encoded hold piece:    {hold_name}")
-    print(f"Encoded hold avail:    {aux[15]}")
-    queue_names = []
-    for s in range(5):
-        q_idx = np.argmax(aux[16 + s * 7 : 16 + (s + 1) * 7])
-        queue_names.append(list(PIECE_INDEX.keys())[q_idx])
-    print(f"Encoded queue:         {queue_names}")
-    print(
-        f"Encoded placement count: {aux[51]} (raw {PLACEMENT_COUNT}/{MAX_PLACEMENTS})"
-    )
-    print(f"Encoded combo:         {aux[52]} (raw {COMBO})")
-    print(f"Encoded back-to-back:  {aux[53]}")
-    print(f"Encoded hidden dist:   {aux[54:61].tolist()}")
-    print(f"Encoded column heights:{aux[61:71].tolist()}")
-    print(f"Encoded max height:    {aux[71]:.4f}")
-    print(f"Encoded row fills:     {aux[72:76].tolist()}")
-    print(f"Encoded total blocks:  {aux[76]:.4f}")
-    print(f"Encoded bumpiness:     {aux[77]:.4f}")
-    print(f"Encoded holes:         {aux[78]:.4f}")
-    print(f"Encoded overhang:      {aux[79]:.4f}")
-    print()
-
-    # Load ONNX and run inference
     session = ort.InferenceSession(str(args.model_path))
     input_names = [inp.name for inp in session.get_inputs()]
     print(f"ONNX input names: {input_names}")
+    print()
 
-    outputs = session.run(
-        None,
-        {input_names[0]: board_tensor, input_names[1]: aux_tensor},
-    )
-    policy_logits = np.asarray(outputs[0], dtype=np.float32)[0]
-    value = float(np.asarray(outputs[1], dtype=np.float32)[0, 0])
+    for state in iter_selected_states(args.state):
+        env = build_env(state)
+        validate_state(state, env)
 
-    print(f"\nNN value estimate: {value:.6f}")
-    print(f"Expected value:    {EXPECTED_VALUE:.6f}")
-    print(f"Difference:        {abs(value - EXPECTED_VALUE):.6f}")
-    print(f"Match: {'YES' if abs(value - EXPECTED_VALUE) < 0.001 else 'NO'}")
+        board_flat, aux_flat = debug_encode_state(env, state.max_placements)
+        board_tensor = np.asarray(board_flat, dtype=np.float32).reshape(
+            1, 1, BOARD_HEIGHT, BOARD_WIDTH
+        )
+        aux_tensor = np.asarray(aux_flat, dtype=np.float32).reshape(1, -1)
 
-    # Show top-5 policy actions
-    top5 = np.argsort(policy_logits)[-5:][::-1]
-    print("\nTop 5 raw logits:")
-    for i, idx in enumerate(top5):
-        print(f"  action {idx}: {policy_logits[idx]:.4f}")
+        outputs = session.run(
+            None,
+            {input_names[0]: board_tensor, input_names[1]: aux_tensor},
+        )
+        policy_logits = np.asarray(outputs[0], dtype=np.float32)[0]
+        ort_value = float(np.asarray(outputs[1], dtype=np.float32)[0, 0])
+        rust_policy, rust_value = debug_predict_masked_from_tensors(
+            str(args.model_path),
+            board_tensor.reshape(-1).astype(np.float32).tolist(),
+            aux_tensor.reshape(-1).astype(np.float32).tolist(),
+            debug_get_action_mask(env),
+        )
+        rust_policy_logits = np.asarray(rust_policy, dtype=np.float32)
+        top5 = np.argsort(policy_logits)[-5:][::-1]
+        rust_top5 = np.argsort(rust_policy_logits)[-5:][::-1]
+
+        print(f"=== {state.label} ===")
+        print(f"Seed:                   {state.seed}")
+        print(f"Action prefix:          {list(state.action_prefix)}")
+        print(f"Placement count:        {env.placement_count}")
+        print(f"Current piece:          {piece_name(env.get_current_piece())}")
+        print(f"Hold piece:             {piece_name(env.get_hold_piece())}")
+        print(f"Hold used:              {env.is_hold_used()}")
+        print(
+            "Queue:                  "
+            f"{[PIECE_NAMES[piece] for piece in env.get_queue(QUEUE_SIZE)]}"
+        )
+        print(f"Board sum:              {int(board_tensor.sum())}")
+        print("Board rows:")
+        for row in board_rows_from_env(env):
+            print(f"  {row}")
+        print_aux_summary(aux_tensor)
+        print()
+        print(f"Rust NN value:          {rust_value:.6f}")
+        print(f"ORT NN value:           {ort_value:.6f}")
+        print(f"Expected viz NN value:  {state.expected_viz_nn_value:.6f}")
+        print(
+            f"Rust difference:        {abs(rust_value - state.expected_viz_nn_value):.6f}"
+        )
+        print(
+            "Rust match:             "
+            f"{'YES' if abs(rust_value - state.expected_viz_nn_value) < 0.001 else 'NO'}"
+        )
+        print(f"ORT drift vs Rust:      {abs(ort_value - rust_value):.6f}")
+        print("Top 5 ORT raw logits:")
+        for action_idx in top5:
+            print(f"  action {int(action_idx)}: {policy_logits[int(action_idx)]:.6f}")
+        print("Top 5 Rust masked probs:")
+        for action_idx in rust_top5:
+            print(
+                f"  action {int(action_idx)}: {rust_policy_logits[int(action_idx)]:.6f}"
+            )
+        print()
 
 
 if __name__ == "__main__":
