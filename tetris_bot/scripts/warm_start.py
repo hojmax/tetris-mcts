@@ -29,7 +29,15 @@ from tetris_bot.ml.artifacts import (
     assert_rust_inference_artifacts,
     copy_model_artifact_bundle,
 )
-from tetris_bot.ml.config import NetworkConfig, TrainingConfig, load_training_config_json
+from tetris_bot.ml.config import (
+    NetworkConfig,
+    OptimizerConfig,
+    ReplayConfig,
+    RunConfig,
+    SelfPlayConfig,
+    TrainingConfig,
+    load_training_config_json,
+)
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.trainer import Trainer
@@ -417,16 +425,13 @@ def build_output_config(
     source_run_dir: Path,
     output_run_dir: Path | None,
 ) -> TrainingConfig:
-    config = copy.deepcopy(source_config)
-    config.network = NetworkConfig()
-    config.self_play.nn_value_weight = config.self_play.nn_value_weight_cap
-    config.self_play.death_penalty = 0.0
-    config.self_play.overhang_penalty_weight = 0.0
-    config.self_play.bootstrap_without_network = False
-    config.run.run_name = None
-    config.run.run_dir = None
-    config.run.checkpoint_dir = None
-    config.run.data_dir = None
+    config = TrainingConfig(
+        network=NetworkConfig(),
+        optimizer=OptimizerConfig(),
+        self_play=SelfPlayConfig(bootstrap_without_network=False),
+        replay=ReplayConfig(),
+        run=RunConfig(),
+    )
 
     return setup_run_directory(
         config,
