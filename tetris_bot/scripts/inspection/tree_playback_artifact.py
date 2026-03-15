@@ -73,6 +73,38 @@ def _serialize_tree_node(node: object) -> dict[str, Any]:
     }
 
 
+def _saved_tree_q_bounds(saved_tree: dict[str, Any]) -> dict[str, float | str] | None:
+    q_min = saved_tree.get("q_min")
+    q_max = saved_tree.get("q_max")
+    if q_min is not None and q_max is not None:
+        return {
+            "q_min": float(q_min),
+            "q_max": float(q_max),
+            "source": "export",
+        }
+
+    root_id = int(saved_tree["root_id"])
+    root_node = next(
+        (
+            node
+            for node in saved_tree["nodes"]
+            if int(node["id"]) == root_id
+        ),
+        None,
+    )
+    if root_node is None:
+        return None
+
+    value_history = [float(value) for value in root_node.get("value_history", [])]
+    if not value_history:
+        return None
+    return {
+        "q_min": min(value_history),
+        "q_max": max(value_history),
+        "source": "root_value_history",
+    }
+
+
 def save_tree_playback_artifact(
     playback: object,
     output_path: Path,
@@ -120,6 +152,8 @@ def save_tree_playback_artifact(
                     "num_simulations": int(step.tree.num_simulations),
                     "selected_action": int(step.tree.selected_action),
                     "policy": [float(prob) for prob in step.tree.policy],
+                    "q_min": float(step.tree.q_min),
+                    "q_max": float(step.tree.q_max),
                 },
             }
             for step in playback.steps
@@ -259,11 +293,15 @@ def build_tree_dict_from_saved_playback(
     highlighted_node_ids: set[str] = set()
     highlighted_edge_keys: list[dict[str, str]] = []
     reuse_edges: list[dict[str, str]] = []
+    search_step_q_bounds: dict[int, dict[str, float | str]] = {}
     root_id = 0
     previous_path_target: str | None = None
     replay_prefix_index = 0
 
     for step_index, step in enumerate(payload["steps"]):
+        q_bounds = _saved_tree_q_bounds(step["tree"])
+        if q_bounds is not None:
+            search_step_q_bounds[step_index] = q_bounds
         step_root_env = env.clone_state()
         step_nodes, step_env_cache = _reconstruct_step_tree(
             step["tree"],
@@ -382,5 +420,6 @@ def build_tree_dict_from_saved_playback(
         "num_frames": int(payload["num_frames"]),
         "tree_reuse_hits": int(payload["tree_reuse_hits"]),
         "tree_reuse_misses": int(payload["tree_reuse_misses"]),
+        "search_step_q_bounds": search_step_q_bounds,
     }
     return tree_dict, combined_env_cache
