@@ -11,7 +11,12 @@ from tetris_bot.ml.config import (
     TrainingConfig,
     load_training_config_json,
 )
-from tetris_bot.scripts.warm_start import build_output_config, compute_training_steps
+from tetris_bot.scripts.warm_start import (
+    build_output_config,
+    compute_training_steps,
+    optimized_worker_env_cache_path,
+    resolve_eval_num_workers,
+)
 
 
 def test_load_training_config_json_fills_missing_network_defaults(
@@ -103,3 +108,41 @@ def test_build_output_config_creates_resume_ready_incumbent_start(
 
 def test_compute_training_steps_rounds_up_epochs() -> None:
     assert compute_training_steps(900, batch_size=1024, epochs=20.0) == 18
+
+
+def test_resolve_eval_num_workers_uses_machine_optimize_cache(
+    tmp_path: Path,
+) -> None:
+    cache_path = optimized_worker_env_cache_path(tmp_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("TETRIS_OPT_NUM_WORKERS=12\n")
+
+    resolution = resolve_eval_num_workers(
+        0,
+        default_workers=6,
+        cache_dir=tmp_path,
+    )
+
+    assert resolution.num_workers == 12
+    assert resolution.source == "optimize_cache"
+    assert resolution.cache_path == str(cache_path)
+
+
+def test_resolve_eval_num_workers_prefers_environment_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    cache_path = optimized_worker_env_cache_path(tmp_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("TETRIS_OPT_NUM_WORKERS=12\n")
+    monkeypatch.setenv("TETRIS_OPT_NUM_WORKERS", "10")
+
+    resolution = resolve_eval_num_workers(
+        0,
+        default_workers=6,
+        cache_dir=tmp_path,
+    )
+
+    assert resolution.num_workers == 10
+    assert resolution.source == "environment"
+    assert resolution.cache_path is None

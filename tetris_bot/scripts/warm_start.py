@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from simple_parsing import parse
 
 from tetris_core.tetris_core import MCTSConfig, evaluate_model
 from tetris_bot.constants import (
+    BENCHMARKS_DIR,
     CONFIG_FILENAME,
     INCUMBENT_ONNX_FILENAME,
     LATEST_METADATA_FILENAME,
@@ -33,6 +35,10 @@ from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.weights import export_metadata, save_checkpoint
 from tetris_bot.run_setup import config_to_json, setup_run_directory
+from tetris_bot.scripts.inspection.optimize_machine import (
+    machine_profile,
+    machine_type_fingerprint,
+)
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
     OfflineDatasetSetup,
@@ -47,6 +53,8 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
 )
 
 logger = structlog.get_logger()
+_OPTIMIZE_CACHE_DIR = BENCHMARKS_DIR / "profiles" / "optimize_cache"
+_OPTIMIZED_WORKERS_ENV_VAR = "TETRIS_OPT_NUM_WORKERS"
 
 
 @dataclass
@@ -55,14 +63,15 @@ class ScriptArgs:
     output_run_dir: Path | None = None
     device: str = "auto"
     seed: int = 123
-    epochs: float = 20.0
+    epochs_per_round: float = 2.0
+    early_stopping_patience: int = 3
+    max_rounds: int = 0
     max_examples: int = 0
     train_fraction: float = 0.9
     batch_size: int | None = None
     learning_rate: float | None = None
     weight_decay: float | None = None
     grad_clip_norm: float | None = None
-    eval_interval: int = 0
     eval_examples: int = 32_768
     eval_batch_size: int = 2_048
     preload_to_gpu: bool = True
@@ -79,9 +88,34 @@ class ScriptArgs:
     wandb_tags: list[str] = field(default_factory=lambda: ["offline", "warm-start"])
 
 
+@dataclass(frozen=True)
+class EvalWorkerResolution:
+    num_workers: int
+    source: str
+    cache_path: str | None = None
+
+
+@dataclass(frozen=True)
+class WarmStartTrainingResult:
+    best_state_dict: dict[str, torch.Tensor]
+    best_record: dict[str, float | int | bool | str]
+    history: list[dict[str, float | int | bool | str]]
+    total_steps: int
+    steps_per_round: int
+    rounds_completed: int
+    stop_reason: str
+    stopped_after_non_improving_rounds: int
+
+
 def validate_args(args: ScriptArgs) -> None:
-    if args.epochs <= 0:
-        raise ValueError(f"epochs must be > 0 (got {args.epochs})")
+    if args.epochs_per_round <= 0:
+        raise ValueError(f"epochs_per_round must be > 0 (got {args.epochs_per_round})")
+    if args.early_stopping_patience <= 0:
+        raise ValueError(
+            f"early_stopping_patience must be > 0 (got {args.early_stopping_patience})"
+        )
+    if args.max_rounds < 0:
+        raise ValueError(f"max_rounds must be >= 0 (got {args.max_rounds})")
     if args.max_examples < 0:
         raise ValueError(f"max_examples must be >= 0 (got {args.max_examples})")
     if not 0.0 < args.train_fraction < 1.0:
@@ -102,16 +136,16 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError(
             f"grad_clip_norm must be > 0 when set (got {args.grad_clip_norm})"
         )
-    if args.eval_interval < 0:
-        raise ValueError(f"eval_interval must be >= 0 (got {args.eval_interval})")
     if args.eval_examples <= 0:
         raise ValueError(f"eval_examples must be > 0 (got {args.eval_examples})")
     if args.eval_batch_size <= 0:
         raise ValueError(f"eval_batch_size must be > 0 (got {args.eval_batch_size})")
     if args.num_eval_games <= 0:
         raise ValueError(f"num_eval_games must be > 0 (got {args.num_eval_games})")
-    if args.eval_num_workers < 0:
-        raise ValueError(f"eval_num_workers must be >= 0 (got {args.eval_num_workers})")
+    if args.eval_num_workers < 0 or args.eval_num_workers == 1:
+        raise ValueError(
+            f"eval_num_workers must be 0 (auto) or >= 2 (got {args.eval_num_workers})"
+        )
     if args.eval_num_simulations is not None and args.eval_num_simulations <= 0:
         raise ValueError(
             "eval_num_simulations must be > 0 when set "
@@ -169,6 +203,81 @@ def compute_training_steps(
     if epochs <= 0:
         raise ValueError(f"epochs must be > 0 (got {epochs})")
     return max(1, math.ceil((train_examples * epochs) / batch_size))
+
+
+def optimized_worker_env_cache_path(
+    cache_dir: Path = _OPTIMIZE_CACHE_DIR,
+) -> Path:
+    fingerprint = machine_type_fingerprint(machine_profile())
+    return cache_dir / f"{fingerprint}.env"
+
+
+def parse_positive_int(value: str, *, label: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise ValueError(f"{label} must be an integer (got {value!r})") from error
+
+    if parsed <= 0:
+        raise ValueError(f"{label} must be > 0 (got {parsed})")
+    return parsed
+
+
+def load_optimized_worker_override_from_environment() -> int | None:
+    raw_value = os.getenv(_OPTIMIZED_WORKERS_ENV_VAR)
+    if raw_value is None or raw_value.strip() == "":
+        return None
+    return parse_positive_int(raw_value, label=_OPTIMIZED_WORKERS_ENV_VAR)
+
+
+def load_optimized_worker_override_from_cache(
+    cache_dir: Path = _OPTIMIZE_CACHE_DIR,
+) -> tuple[int | None, Path]:
+    env_cache_path = optimized_worker_env_cache_path(cache_dir)
+    if not env_cache_path.exists():
+        return None, env_cache_path
+
+    for raw_line in env_cache_path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key == _OPTIMIZED_WORKERS_ENV_VAR:
+            return (
+                parse_positive_int(value.strip(), label=f"{env_cache_path}:{key}"),
+                env_cache_path,
+            )
+    return None, env_cache_path
+
+
+def resolve_eval_num_workers(
+    requested_workers: int,
+    *,
+    default_workers: int,
+    cache_dir: Path = _OPTIMIZE_CACHE_DIR,
+) -> EvalWorkerResolution:
+    if requested_workers > 0:
+        return EvalWorkerResolution(num_workers=requested_workers, source="cli")
+
+    environment_override = load_optimized_worker_override_from_environment()
+    if environment_override is not None:
+        return EvalWorkerResolution(
+            num_workers=environment_override,
+            source="environment",
+        )
+
+    cached_override, cache_path = load_optimized_worker_override_from_cache(cache_dir)
+    if cached_override is not None:
+        return EvalWorkerResolution(
+            num_workers=cached_override,
+            source="optimize_cache",
+            cache_path=str(cache_path),
+        )
+
+    return EvalWorkerResolution(
+        num_workers=max(2, default_workers),
+        source="config",
+    )
 
 
 def setup_offline_dataset(
@@ -334,15 +443,14 @@ def train_warm_start_model(
     learning_rate: float,
     weight_decay: float,
     grad_clip_norm: float,
-    num_steps: int,
-    eval_interval: int,
+    epochs_per_round: float,
+    early_stopping_patience: int,
+    max_rounds: int,
     eval_batch_size: int,
     use_huber_value_loss: bool,
     value_loss_window: int,
     seed: int,
-) -> tuple[
-    dict[str, torch.Tensor], dict[str, float | int], list[dict[str, float | int]]
-]:
+) -> WarmStartTrainingResult:
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=learning_rate,
@@ -350,15 +458,24 @@ def train_warm_start_model(
     )
     loss_balancer = RunningLossBalancer(value_loss_window)
     current_value_loss_weight = 1.0
-    history: list[dict[str, float | int]] = []
-    best_record: dict[str, float | int] | None = None
+    history: list[dict[str, float | int | bool | str]] = []
+    best_record: dict[str, float | int | bool | str] | None = None
     best_state_dict = clone_model_state_dict(model)
     rng = np.random.default_rng(seed)
-    log_interval = max(1, num_steps // 20)
+    steps_per_round = compute_training_steps(
+        len(dataset_setup.train_local_indices),
+        batch_size=batch_size,
+        epochs=epochs_per_round,
+    )
+    log_interval = max(1, steps_per_round // 10)
     start_time = time.perf_counter()
+    total_steps = 0
+    rounds_completed = 0
+    non_improving_rounds = 0
+    stop_reason = "patience_exhausted"
 
-    def record_eval(step: int, epochs_seen: float) -> None:
-        nonlocal best_record, best_state_dict
+    def record_eval(round_index: int, step: int, epochs_seen: float) -> None:
+        nonlocal best_record, best_state_dict, non_improving_rounds
         train_metrics = evaluate_offline_losses(
             model,
             source=dataset_setup.source,
@@ -377,7 +494,30 @@ def train_warm_start_model(
             value_loss_weight=current_value_loss_weight,
             use_huber_value_loss=use_huber_value_loss,
         )
+        improved = best_record is None or float(val_metrics["total_loss"]) < float(
+            best_record["val_total_loss"]
+        )
+        if improved:
+            best_record = {
+                "round_index": round_index,
+                "step": step,
+                "epochs_seen": epochs_seen,
+                "value_loss_weight": current_value_loss_weight,
+                "train_total_loss": train_metrics["total_loss"],
+                "train_policy_loss": train_metrics["policy_loss"],
+                "train_value_loss": train_metrics["value_loss"],
+                "val_total_loss": val_metrics["total_loss"],
+                "val_policy_loss": val_metrics["policy_loss"],
+                "val_value_loss": val_metrics["value_loss"],
+                "improved": True,
+                "non_improving_rounds": 0,
+            }
+            best_state_dict = clone_model_state_dict(model)
+            non_improving_rounds = 0
+        else:
+            non_improving_rounds += 1
         record = {
+            "round_index": round_index,
             "step": step,
             "epochs_seen": epochs_seen,
             "value_loss_weight": current_value_loss_weight,
@@ -387,10 +527,13 @@ def train_warm_start_model(
             "val_total_loss": val_metrics["total_loss"],
             "val_policy_loss": val_metrics["policy_loss"],
             "val_value_loss": val_metrics["value_loss"],
+            "improved": improved,
+            "non_improving_rounds": non_improving_rounds,
         }
         history.append(record)
         logger.info(
             "Warm-start offline eval",
+            round_index=round_index,
             step=step,
             epochs_seen=epochs_seen,
             train_total_loss=record["train_total_loss"],
@@ -400,10 +543,14 @@ def train_warm_start_model(
             train_value_loss=record["train_value_loss"],
             val_value_loss=record["val_value_loss"],
             value_loss_weight=current_value_loss_weight,
+            improved=improved,
+            non_improving_rounds=non_improving_rounds,
+            early_stopping_patience=early_stopping_patience,
         )
         log_wandb(
             {
                 "offline_step": step,
+                "warm_start/eval_round_index": round_index,
                 "warm_start/eval_epochs_seen": epochs_seen,
                 "warm_start/value_loss_weight": current_value_loss_weight,
                 "warm_start/eval_train_total_loss": record["train_total_loss"],
@@ -412,88 +559,125 @@ def train_warm_start_model(
                 "warm_start/eval_val_total_loss": record["val_total_loss"],
                 "warm_start/eval_val_policy_loss": record["val_policy_loss"],
                 "warm_start/eval_val_value_loss": record["val_value_loss"],
+                "warm_start/eval_improved": improved,
+                "warm_start/eval_non_improving_rounds": non_improving_rounds,
             }
         )
-        if best_record is None or float(record["val_total_loss"]) < float(
-            best_record["val_total_loss"]
-        ):
-            best_record = dict(record)
-            best_state_dict = clone_model_state_dict(model)
 
-    record_eval(step=0, epochs_seen=0.0)
+    while max_rounds == 0 or rounds_completed < max_rounds:
+        round_index = rounds_completed + 1
+        for round_step in range(1, steps_per_round + 1):
+            positions = rng.integers(
+                0, len(dataset_setup.train_local_indices), size=batch_size
+            )
+            batch_indices = dataset_setup.train_local_indices[positions]
+            boards, aux, policy_targets, value_targets, action_masks = (
+                build_torch_batch(
+                    dataset_setup.source,
+                    batch_indices,
+                    device,
+                )
+            )
 
-    for step in range(1, num_steps + 1):
-        positions = rng.integers(
-            0, len(dataset_setup.train_local_indices), size=batch_size
-        )
-        batch_indices = dataset_setup.train_local_indices[positions]
-        boards, aux, policy_targets, value_targets, action_masks = build_torch_batch(
-            dataset_setup.source,
-            batch_indices,
-            device,
-        )
-
-        model.train()
-        optimizer.zero_grad(set_to_none=True)
-        total_loss, policy_loss, value_loss = compute_loss(
-            model=model,
-            boards=boards,
-            aux_features=aux,
-            policy_targets=policy_targets,
-            value_targets=value_targets,
-            action_masks=action_masks,
-            value_loss_weight=current_value_loss_weight,
-            use_huber_value_loss=use_huber_value_loss,
-        )
-        total_loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
-        optimizer.step()
-
-        policy_loss_scalar = policy_loss.item()
-        value_loss_scalar = value_loss.item()
-        loss_balancer.append(policy_loss_scalar, value_loss_scalar)
-        if loss_balancer.has_history():
-            current_value_loss_weight = loss_balancer.value_loss_weight()
-
-        if step % log_interval == 0 or step == num_steps:
-            elapsed_sec = time.perf_counter() - start_time
-            epochs_seen = (step * batch_size) / len(dataset_setup.train_local_indices)
-            logger.info(
-                "Warm-start offline train",
-                step=step,
-                num_steps=num_steps,
-                epochs_seen=epochs_seen,
-                total_loss=total_loss.item(),
-                policy_loss=policy_loss_scalar,
-                value_loss=value_loss_scalar,
+            model.train()
+            optimizer.zero_grad(set_to_none=True)
+            total_loss, policy_loss, value_loss = compute_loss(
+                model=model,
+                boards=boards,
+                aux_features=aux,
+                policy_targets=policy_targets,
+                value_targets=value_targets,
+                action_masks=action_masks,
                 value_loss_weight=current_value_loss_weight,
-                grad_norm=float(grad_norm.item()),
-                learning_rate=optimizer.param_groups[0]["lr"],
-                elapsed_sec=elapsed_sec,
+                use_huber_value_loss=use_huber_value_loss,
             )
-            log_wandb(
-                {
-                    "offline_step": step,
-                    "warm_start/train_epochs_seen": epochs_seen,
-                    "warm_start/train_batch_total_loss": total_loss.item(),
-                    "warm_start/train_batch_policy_loss": policy_loss_scalar,
-                    "warm_start/train_batch_value_loss": value_loss_scalar,
-                    "warm_start/value_loss_weight": current_value_loss_weight,
-                    "warm_start/grad_norm": float(grad_norm.item()),
-                    "warm_start/learning_rate": optimizer.param_groups[0]["lr"],
-                    "warm_start/elapsed_sec": elapsed_sec,
-                    "warm_start/progress_fraction": step / num_steps,
-                }
+            total_loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                model.parameters(), grad_clip_norm
             )
+            optimizer.step()
 
-        if step % eval_interval == 0 or step == num_steps:
-            epochs_seen = (step * batch_size) / len(dataset_setup.train_local_indices)
-            record_eval(step=step, epochs_seen=epochs_seen)
+            total_steps += 1
+            policy_loss_scalar = policy_loss.item()
+            value_loss_scalar = value_loss.item()
+            loss_balancer.append(policy_loss_scalar, value_loss_scalar)
+            if loss_balancer.has_history():
+                current_value_loss_weight = loss_balancer.value_loss_weight()
+
+            if round_step % log_interval == 0 or round_step == steps_per_round:
+                elapsed_sec = time.perf_counter() - start_time
+                epochs_seen = (total_steps * batch_size) / len(
+                    dataset_setup.train_local_indices
+                )
+                logger.info(
+                    "Warm-start offline train",
+                    round_index=round_index,
+                    round_step=round_step,
+                    steps_per_round=steps_per_round,
+                    step=total_steps,
+                    epochs_seen=epochs_seen,
+                    total_loss=total_loss.item(),
+                    policy_loss=policy_loss_scalar,
+                    value_loss=value_loss_scalar,
+                    value_loss_weight=current_value_loss_weight,
+                    grad_norm=float(grad_norm.item()),
+                    learning_rate=optimizer.param_groups[0]["lr"],
+                    elapsed_sec=elapsed_sec,
+                )
+                log_wandb(
+                    {
+                        "offline_step": total_steps,
+                        "warm_start/train_round_index": round_index,
+                        "warm_start/train_round_step": round_step,
+                        "warm_start/train_epochs_seen": epochs_seen,
+                        "warm_start/train_batch_total_loss": total_loss.item(),
+                        "warm_start/train_batch_policy_loss": policy_loss_scalar,
+                        "warm_start/train_batch_value_loss": value_loss_scalar,
+                        "warm_start/value_loss_weight": current_value_loss_weight,
+                        "warm_start/grad_norm": float(grad_norm.item()),
+                        "warm_start/learning_rate": optimizer.param_groups[0]["lr"],
+                        "warm_start/elapsed_sec": elapsed_sec,
+                        "warm_start/train_round_progress_fraction": (
+                            round_step / steps_per_round
+                        ),
+                    }
+                )
+
+        rounds_completed = round_index
+        epochs_seen = (total_steps * batch_size) / len(
+            dataset_setup.train_local_indices
+        )
+        record_eval(round_index=round_index, step=total_steps, epochs_seen=epochs_seen)
+        if non_improving_rounds >= early_stopping_patience:
+            break
+    else:
+        stop_reason = "max_rounds_reached"
 
     if best_record is None:
         raise RuntimeError("Warm-start offline training never produced an evaluation")
 
-    return best_state_dict, best_record, history
+    logger.info(
+        "Warm-start offline training complete",
+        rounds_completed=rounds_completed,
+        total_steps=total_steps,
+        steps_per_round=steps_per_round,
+        stop_reason=stop_reason,
+        stopped_after_non_improving_rounds=non_improving_rounds,
+        best_round_index=best_record["round_index"],
+        best_step=best_record["step"],
+        best_val_total_loss=best_record["val_total_loss"],
+    )
+
+    return WarmStartTrainingResult(
+        best_state_dict=best_state_dict,
+        best_record=best_record,
+        history=history,
+        total_steps=total_steps,
+        steps_per_round=steps_per_round,
+        rounds_completed=rounds_completed,
+        stop_reason=stop_reason,
+        stopped_after_non_improving_rounds=non_improving_rounds,
+    )
 
 
 def save_summary(path: Path, payload: dict) -> None:
@@ -553,6 +737,10 @@ def main(args: ScriptArgs) -> None:
         if args.grad_clip_norm is not None
         else output_config.optimizer.grad_clip_norm
     )
+    eval_worker_resolution = resolve_eval_num_workers(
+        args.eval_num_workers,
+        default_workers=output_config.self_play.num_workers,
+    )
     resolved_wandb_run_name = (
         args.wandb_run_name
         if args.wandb_run_name is not None
@@ -565,14 +753,15 @@ def main(args: ScriptArgs) -> None:
         "output_run_dir": str(output_config.run.run_dir),
         "device": device_str,
         "seed": args.seed,
-        "epochs": args.epochs,
+        "epochs_per_round": args.epochs_per_round,
+        "early_stopping_patience": args.early_stopping_patience,
+        "max_rounds": args.max_rounds,
         "max_examples": args.max_examples,
         "train_fraction": args.train_fraction,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
         "grad_clip_norm": grad_clip_norm,
-        "eval_interval": args.eval_interval,
         "eval_examples": args.eval_examples,
         "eval_batch_size": args.eval_batch_size,
         "preload_to_gpu": args.preload_to_gpu,
@@ -580,7 +769,8 @@ def main(args: ScriptArgs) -> None:
         "preload_mode": preload_mode,
         "num_eval_games": args.num_eval_games,
         "eval_seed_start": args.eval_seed_start,
-        "eval_num_workers": args.eval_num_workers,
+        "eval_num_workers": eval_worker_resolution.num_workers,
+        "eval_num_workers_source": eval_worker_resolution.source,
         "eval_num_simulations": args.eval_num_simulations,
         "eval_max_placements": args.eval_max_placements,
         "mcts_seed": args.mcts_seed,
@@ -604,12 +794,17 @@ def main(args: ScriptArgs) -> None:
         source_run_dir=str(source_run_dir),
         output_run_dir=str(output_config.run.run_dir),
         device=device_str,
-        epochs=args.epochs,
+        epochs_per_round=args.epochs_per_round,
+        early_stopping_patience=args.early_stopping_patience,
+        max_rounds=args.max_rounds,
         batch_size=batch_size,
         learning_rate=learning_rate,
         weight_decay=weight_decay,
         grad_clip_norm=grad_clip_norm,
         preload_mode=preload_mode,
+        eval_num_workers=eval_worker_resolution.num_workers,
+        eval_num_workers_source=eval_worker_resolution.source,
+        eval_num_workers_cache_path=eval_worker_resolution.cache_path,
         wandb_project=args.wandb_project,
         wandb_run_name=resolved_wandb_run_name,
     )
@@ -647,18 +842,7 @@ def main(args: ScriptArgs) -> None:
                     "dataset/preload_mode": preload_mode,
                 }
             )
-            num_steps = compute_training_steps(
-                len(dataset_setup.train_local_indices),
-                batch_size=batch_size,
-                epochs=args.epochs,
-            )
-            eval_interval = (
-                args.eval_interval
-                if args.eval_interval > 0
-                else max(1, num_steps // 10)
-            )
-
-            best_state_dict, best_record, offline_history = train_warm_start_model(
+            training_result = train_warm_start_model(
                 model,
                 dataset_setup=dataset_setup,
                 device=device,
@@ -666,8 +850,9 @@ def main(args: ScriptArgs) -> None:
                 learning_rate=learning_rate,
                 weight_decay=weight_decay,
                 grad_clip_norm=grad_clip_norm,
-                num_steps=num_steps,
-                eval_interval=eval_interval,
+                epochs_per_round=args.epochs_per_round,
+                early_stopping_patience=args.early_stopping_patience,
+                max_rounds=args.max_rounds,
                 eval_batch_size=args.eval_batch_size,
                 use_huber_value_loss=output_config.optimizer.use_huber_value_loss,
                 value_loss_window=output_config.optimizer.value_loss_weight_window,
@@ -676,7 +861,7 @@ def main(args: ScriptArgs) -> None:
         finally:
             npz.close()
 
-        model.load_state_dict(best_state_dict)
+        model.load_state_dict(training_result.best_state_dict)
         model.eval()
 
         output_training_data_path = output_config.run.data_dir / TRAINING_DATA_FILENAME
@@ -709,12 +894,7 @@ def main(args: ScriptArgs) -> None:
         assert_rust_inference_artifacts(parallel_onnx_path)
 
         eval_config = copy.deepcopy(output_config.self_play)
-        eval_num_workers = max(
-            2,
-            args.eval_num_workers
-            if args.eval_num_workers > 0
-            else eval_config.num_workers,
-        )
+        eval_num_workers = eval_worker_resolution.num_workers
         eval_num_simulations = (
             args.eval_num_simulations
             if args.eval_num_simulations is not None
@@ -785,7 +965,7 @@ def main(args: ScriptArgs) -> None:
         }
         log_wandb(
             {
-                "offline_step": num_steps,
+                "offline_step": training_result.total_steps,
                 "final_eval/num_games": eval_metrics["num_games"],
                 "final_eval/avg_attack": eval_metrics["avg_attack"],
                 "final_eval/avg_lines": eval_metrics["avg_lines"],
@@ -805,6 +985,7 @@ def main(args: ScriptArgs) -> None:
                 "final_eval/seed_start": args.eval_seed_start,
                 "final_eval/mcts_seed": resolved_mcts_seed,
                 "final_eval/num_workers": eval_num_workers,
+                "final_eval/num_workers_source": eval_worker_resolution.source,
                 "final_eval/num_simulations": eval_num_simulations,
                 "final_eval/max_placements": eval_max_placements,
             }
@@ -833,7 +1014,7 @@ def main(args: ScriptArgs) -> None:
             step=0,
             eval_metrics={
                 "warm_start_eval": eval_metrics,
-                "offline_best": best_record,
+                "offline_best": training_result.best_record,
             },
             config=json.loads(config_to_json(output_config)),
         )
@@ -844,8 +1025,16 @@ def main(args: ScriptArgs) -> None:
             "source_training_data_path": str(source_training_data_path),
             "copied_training_data_path": str(output_training_data_path),
             "device": device_str,
-            "epochs": args.epochs,
-            "num_steps": num_steps,
+            "epochs_per_round": args.epochs_per_round,
+            "early_stopping_patience": args.early_stopping_patience,
+            "max_rounds": args.max_rounds,
+            "steps_per_round": training_result.steps_per_round,
+            "num_steps": training_result.total_steps,
+            "rounds_completed": training_result.rounds_completed,
+            "stop_reason": training_result.stop_reason,
+            "stopped_after_non_improving_rounds": (
+                training_result.stopped_after_non_improving_rounds
+            ),
             "seed": args.seed,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
@@ -863,13 +1052,14 @@ def main(args: ScriptArgs) -> None:
                 "val_eval_examples": len(dataset_setup.val_eval_local_indices),
                 "preload_seconds": dataset_setup.preload_sec,
             },
-            "offline_best": best_record,
-            "offline_history": offline_history,
+            "offline_best": training_result.best_record,
+            "offline_history": training_result.history,
             "final_eval": {
                 **eval_metrics,
                 "seed_start": args.eval_seed_start,
                 "mcts_seed": resolved_mcts_seed,
                 "num_workers": eval_num_workers,
+                "num_workers_source": eval_worker_resolution.source,
                 "num_simulations": eval_num_simulations,
                 "max_placements": eval_max_placements,
             },
@@ -886,11 +1076,22 @@ def main(args: ScriptArgs) -> None:
         )
         log_wandb(
             {
-                "offline_step": num_steps,
-                "warm_start/best_step": best_record["step"],
-                "warm_start/best_epochs_seen": best_record["epochs_seen"],
-                "warm_start/best_train_total_loss": best_record["train_total_loss"],
-                "warm_start/best_val_total_loss": best_record["val_total_loss"],
+                "offline_step": training_result.total_steps,
+                "warm_start/best_round_index": training_result.best_record[
+                    "round_index"
+                ],
+                "warm_start/best_step": training_result.best_record["step"],
+                "warm_start/best_epochs_seen": training_result.best_record[
+                    "epochs_seen"
+                ],
+                "warm_start/best_train_total_loss": training_result.best_record[
+                    "train_total_loss"
+                ],
+                "warm_start/best_val_total_loss": training_result.best_record[
+                    "val_total_loss"
+                ],
+                "warm_start/rounds_completed": training_result.rounds_completed,
+                "warm_start/stop_reason": training_result.stop_reason,
             }
         )
 
@@ -900,6 +1101,9 @@ def main(args: ScriptArgs) -> None:
             incumbent_onnx=str(incumbent_onnx_path),
             avg_attack=eval_metrics["avg_attack"],
             num_eval_games=eval_metrics["num_games"],
+            rounds_completed=training_result.rounds_completed,
+            stop_reason=training_result.stop_reason,
+            best_round_index=training_result.best_record["round_index"],
         )
     finally:
         wandb.finish()
