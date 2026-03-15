@@ -35,6 +35,7 @@ from typing import Any
 import zipfile
 
 import numpy as np
+import numpy.typing as npt
 from numpy.lib import format as npformat
 import pytest
 import tetris_core.tetris_core as tetris_core
@@ -98,6 +99,9 @@ REQUIRED_KEYS = (
     "game_numbers",
     "game_total_attacks",
 )
+
+type StateRowValue = npt.NDArray[Any] | np.generic
+type StateRow = dict[str, StateRowValue]
 
 
 @dataclass
@@ -530,7 +534,7 @@ def _collect_state_row(
     placement_count: int,
     max_placements: int,
     chosen_action: int,
-) -> dict[str, np.ndarray]:
+) -> StateRow:
     board = np.asarray(env.get_board(), dtype=np.uint8)
     current_piece = np.zeros(NUM_PIECE_TYPES, dtype=np.float32)
     current_piece[env.get_current_piece().piece_type] = 1.0
@@ -581,9 +585,7 @@ def _collect_state_row(
     }
 
 
-def _stack_rows(
-    rows: list[dict[str, np.ndarray]], attacks: list[int]
-) -> dict[str, np.ndarray]:
+def _stack_rows(rows: list[StateRow], attacks: list[int]) -> dict[str, np.ndarray]:
     values = np.zeros(len(attacks), dtype=np.float32)
     cumulative = 0.0
     for i in range(len(attacks) - 1, -1, -1):
@@ -603,7 +605,7 @@ def _stack_rows(
 
 def _build_synthetic_game_data(max_placements: int = 100) -> dict[str, np.ndarray]:
     env = tetris_core.TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, 123)
-    rows: list[dict[str, np.ndarray]] = []
+    rows: list[StateRow] = []
     attacks: list[int] = []
     move_number = 0
     placement_count = 0

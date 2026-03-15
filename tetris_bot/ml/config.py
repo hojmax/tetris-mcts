@@ -4,6 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
+
+
+class ModelKwargs(TypedDict):
+    architecture: str
+    trunk_channels: int
+    num_conv_residual_blocks: int
+    reduction_channels: int
+    fc_hidden: int
+    aux_hidden: int
+    num_fusion_blocks: int
+    conv_kernel_size: int
+    conv_padding: int
 
 
 @dataclass
@@ -20,7 +33,7 @@ class NetworkConfig:
     conv_kernel_size: int = 3
     conv_padding: int = 1
 
-    def to_model_kwargs(self) -> dict[str, int | str]:
+    def to_model_kwargs(self) -> ModelKwargs:
         return {
             "architecture": self.architecture,
             "trunk_channels": self.trunk_channels,
