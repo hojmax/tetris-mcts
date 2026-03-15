@@ -11,12 +11,27 @@ class NetworkConfig:
     """Neural network architecture hyperparameters."""
 
     architecture: str = "gated_fusion"  # 'gated_fusion' (default) or 'simple_aux_mlp'
-    trunk_channels: int = 4
-    num_conv_residual_blocks: int = 1
-    reduction_channels: int = 8
+    trunk_channels: int = 8
+    num_conv_residual_blocks: int = 2
+    reduction_channels: int = 16
     fc_hidden: int = 128
+    aux_hidden: int = 64
+    num_fusion_blocks: int = 1
     conv_kernel_size: int = 3
     conv_padding: int = 1
+
+    def to_model_kwargs(self) -> dict[str, int | str]:
+        return {
+            "architecture": self.architecture,
+            "trunk_channels": self.trunk_channels,
+            "num_conv_residual_blocks": self.num_conv_residual_blocks,
+            "reduction_channels": self.reduction_channels,
+            "fc_hidden": self.fc_hidden,
+            "aux_hidden": self.aux_hidden,
+            "num_fusion_blocks": self.num_fusion_blocks,
+            "conv_kernel_size": self.conv_kernel_size,
+            "conv_padding": self.conv_padding,
+        }
 
 
 @dataclass

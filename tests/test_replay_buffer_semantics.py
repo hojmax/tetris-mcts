@@ -471,6 +471,41 @@ def _resolved_attack_for_transition(
     )
 
 
+def _expected_next_combo_feature(
+    data: dict[str, np.ndarray] | np.lib.npyio.NpzFile,
+    index: int,
+    action_idx: int,
+    env_after: Any,
+) -> float:
+    if action_idx == HOLD_ACTION_INDEX:
+        return float(data["combos"][index])
+
+    result = env_after.get_last_attack_result()
+    if result is None:
+        return 0.0
+
+    current_combo = int(round(float(data["combos"][index]) * COMBO_NORMALIZATION_MAX))
+    return float(current_combo + 1) / COMBO_NORMALIZATION_MAX
+
+
+def _expected_next_back_to_back(
+    data: dict[str, np.ndarray] | np.lib.npyio.NpzFile,
+    index: int,
+    action_idx: int,
+    env_after: Any,
+) -> bool:
+    if action_idx == HOLD_ACTION_INDEX:
+        return bool(data["back_to_back"][index])
+
+    result = env_after.get_last_attack_result()
+    if result is None:
+        return bool(data["back_to_back"][index])
+
+    return bool(result.is_perfect_clear) or bool(result.is_tspin) or int(
+        result.lines_cleared
+    ) == 4
+
+
 def _collect_state_row(
     env: Any,
     *,
@@ -714,11 +749,8 @@ def _transition_matches(
         data["placement_counts"][next_index] - data["placement_counts"][index]
     )
     expected_step = 1.0 / float(max_placements)
-    current_back_to_back = bool(data["back_to_back"][index])
     next_combo_feature = float(data["combos"][next_index])
     next_back_to_back = bool(data["back_to_back"][next_index])
-
-    result = env_after.get_last_attack_result()
 
     if action_idx == HOLD_ACTION_INDEX:
         if not bool(data["hold_available"][index]):
@@ -729,9 +761,18 @@ def _transition_matches(
             return False
         if next_hold_piece != current_piece:
             return False
-        if not _approx_equal(next_combo_feature, float(data["combos"][index]), atol=1e-6):
+        if not _approx_equal(
+            next_combo_feature,
+            _expected_next_combo_feature(data, index, action_idx, env_after),
+            atol=1e-6,
+        ):
             return False
-        if next_back_to_back != current_back_to_back:
+        if next_back_to_back != _expected_next_back_to_back(
+            data,
+            index,
+            action_idx,
+            env_after,
+        ):
             return False
 
         if hold_piece is None:
@@ -757,16 +798,18 @@ def _transition_matches(
     if next_queue[:-1] != queue[1:]:
         return False
 
-    if result is None:
-        expected_next_combo_feature = 0.0
-        expected_next_back_to_back = current_back_to_back
-    else:
-        expected_next_combo_feature = float(result.combo) / COMBO_NORMALIZATION_MAX
-        expected_next_back_to_back = bool(result.back_to_back_active)
-
-    if not _approx_equal(next_combo_feature, expected_next_combo_feature, atol=1e-6):
+    if not _approx_equal(
+        next_combo_feature,
+        _expected_next_combo_feature(data, index, action_idx, env_after),
+        atol=1e-6,
+    ):
         return False
-    if next_back_to_back != expected_next_back_to_back:
+    if next_back_to_back != _expected_next_back_to_back(
+        data,
+        index,
+        action_idx,
+        env_after,
+    ):
         return False
 
     revealed_piece = next_queue[-1]

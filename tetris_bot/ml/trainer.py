@@ -78,15 +78,7 @@ class Trainer:
 
         # Create model
         if model is None:
-            model = TetrisNet(
-                architecture=config.network.architecture,
-                trunk_channels=config.network.trunk_channels,
-                num_conv_residual_blocks=config.network.num_conv_residual_blocks,
-                reduction_channels=config.network.reduction_channels,
-                fc_hidden=config.network.fc_hidden,
-                conv_kernel_size=config.network.conv_kernel_size,
-                conv_padding=config.network.conv_padding,
-            )
+            model = TetrisNet(**config.network.to_model_kwargs())
         self.model = model.to(self.device)
 
         # Create optimizer

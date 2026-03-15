@@ -41,14 +41,9 @@ class BenchmarkArgs:
 
 
 def export_model(fc_hidden: int, label: str, output_dir: Path) -> Path:
-    model = TetrisNet(
-        trunk_channels=_DEFAULT_NETWORK.trunk_channels,
-        num_conv_residual_blocks=_DEFAULT_NETWORK.num_conv_residual_blocks,
-        reduction_channels=_DEFAULT_NETWORK.reduction_channels,
-        fc_hidden=fc_hidden,
-        conv_kernel_size=_DEFAULT_NETWORK.conv_kernel_size,
-        conv_padding=_DEFAULT_NETWORK.conv_padding,
-    )
+    model_kwargs = _DEFAULT_NETWORK.to_model_kwargs()
+    model_kwargs["fc_hidden"] = fc_hidden
+    model = TetrisNet(**model_kwargs)
     model.eval()
 
     total_params = sum(p.numel() for p in model.parameters())
