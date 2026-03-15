@@ -276,7 +276,7 @@ OPT_BACKEND_STRATEGY ?= staged
 OPT_PRIMARY_BACKEND ?= tract
 OPTIMIZE_ARGS ?= --skip_build --backends tract
 OPT_CACHE_DIR ?= benchmarks/profiles/optimize_cache
-optimize: ensure-rust $(INSTALL_MARKER)
+optimize: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/inspection/optimize_machine.py $(if $(MODEL_OPTIMIZE),--model_path $(MODEL_OPTIMIZE),) --num_games $(OPT_GAMES) --simulations $(OPT_SIMS) --num_repeats $(OPT_REPEATS) --worker_search $(OPT_WORKER_SEARCH) --max_worker_evals_per_combo $(OPT_MAX_WORKER_EVALS) --backend_strategy $(OPT_BACKEND_STRATEGY) --primary_backend $(OPT_PRIMARY_BACKEND) $(OPTIMIZE_ARGS)
 
 # Build and train using machine-optimized settings when available.
