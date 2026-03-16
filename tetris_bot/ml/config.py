@@ -183,7 +183,15 @@ class RunConfig:
     run_name: str | None = None
 
     # Intervals (seconds)
-    model_sync_interval_seconds: float = 120  # Seconds between ONNX exports
+    model_sync_interval_seconds: float = (
+        120  # Base seconds between candidate model exports/queues
+    )
+    model_sync_failure_backoff_seconds: float = (
+        120  # Extra seconds added after each failed candidate promotion
+    )
+    model_sync_max_interval_seconds: float = (
+        0.0  # Hard cap for adaptive candidate export interval (0 disables cap)
+    )
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
     log_interval_seconds: float = 10  # Seconds between logging
     save_interval_seconds: float = (

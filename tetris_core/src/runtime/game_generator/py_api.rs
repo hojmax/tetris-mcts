@@ -356,6 +356,12 @@ impl GameGenerator {
         Self::load_atomic_f32(&self.incumbent_overhang_penalty_weight)
     }
 
+    /// Return whether a candidate is pending or currently being evaluated.
+    pub fn candidate_gate_busy(&self) -> bool {
+        self.pending_candidate.read().unwrap().is_some()
+            || self.evaluating_candidate.read().unwrap().is_some()
+    }
+
     /// Queue a candidate model for evaluator-worker gating.
     ///
     /// If another candidate is already pending, it is dropped in favor of this one.

@@ -157,7 +157,7 @@ Ownership split:
 - Training: `batch_size=1024`, `learning_rate=5e-4` with decay to `1e-4`, `weight_decay=1e-4`.
 - Workers/buffer: `num_workers=7`, replay ring buffer size `2_000_000`.
 - Bootstrap: starts no-network, typically `bootstrap_num_simulations=4000` until first promotion.
-- Candidate gate: deterministic fixed-seed eval window (default 20 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average. Fixed-seed eval trajectories are not added to the replay buffer.
+- Candidate gate: deterministic fixed-seed eval window (default 20 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average. Fixed-seed eval trajectories are not added to the replay buffer. Candidate export timing now uses `run.model_sync_interval_seconds` as the base interval, adds `run.model_sync_failure_backoff_seconds` after each failed promotion (optionally capped by `run.model_sync_max_interval_seconds`), measures the cooldown from eval start, and suppresses exports while a candidate is pending/evaluating so long evals do not churn throwaway ONNX bundles.
 - NN value scaling: `nn_value_weight=0.01` default with promotion-based ramp and cap.
 - Q normalization: min-max mode on by default (`use_tanh_q_normalization=false`, so `q_scale=None` in rollout config).
 

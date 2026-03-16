@@ -253,6 +253,75 @@ def restore_trainer_from_checkpoint(
         incumbent_eval_avg_attack=restored_incumbent_eval_avg_attack,
     )
 
+    candidate_gate_current_interval = state.get(
+        "candidate_gate_current_interval_seconds"
+    )
+    if candidate_gate_current_interval is not None:
+        restored_candidate_gate_current_interval = float(candidate_gate_current_interval)
+        if (
+            not math.isfinite(restored_candidate_gate_current_interval)
+            or restored_candidate_gate_current_interval <= 0.0
+        ):
+            raise ValueError(
+                "Checkpoint candidate_gate_current_interval_seconds must be "
+                f"finite and > 0 (got {restored_candidate_gate_current_interval})"
+            )
+        trainer.initial_candidate_gate_interval_seconds = (
+            restored_candidate_gate_current_interval
+        )
+
+    candidate_gate_failed_promotion_streak = state.get(
+        "candidate_gate_failed_promotion_streak"
+    )
+    if candidate_gate_failed_promotion_streak is not None:
+        restored_candidate_gate_failed_promotion_streak = int(
+            candidate_gate_failed_promotion_streak
+        )
+        if restored_candidate_gate_failed_promotion_streak < 0:
+            raise ValueError(
+                "Checkpoint candidate_gate_failed_promotion_streak must be >= 0 "
+                f"(got {restored_candidate_gate_failed_promotion_streak})"
+            )
+        trainer.initial_candidate_gate_failed_promotion_streak = (
+            restored_candidate_gate_failed_promotion_streak
+        )
+
+    candidate_gate_next_export_delay = state.get(
+        "candidate_gate_next_export_delay_seconds"
+    )
+    if candidate_gate_next_export_delay is not None:
+        restored_candidate_gate_next_export_delay = float(
+            candidate_gate_next_export_delay
+        )
+        if (
+            not math.isfinite(restored_candidate_gate_next_export_delay)
+            or restored_candidate_gate_next_export_delay < 0.0
+        ):
+            raise ValueError(
+                "Checkpoint candidate_gate_next_export_delay_seconds must be "
+                f"finite and >= 0 (got {restored_candidate_gate_next_export_delay})"
+            )
+        trainer.initial_candidate_gate_next_export_delay_seconds = (
+            restored_candidate_gate_next_export_delay
+        )
+
+    if (
+        candidate_gate_current_interval is not None
+        or candidate_gate_failed_promotion_streak is not None
+        or candidate_gate_next_export_delay is not None
+    ):
+        logger.info(
+            "Restored candidate gate schedule from checkpoint",
+            checkpoint=str(checkpoint),
+            current_interval_seconds=trainer.initial_candidate_gate_interval_seconds,
+            failed_promotion_streak=(
+                trainer.initial_candidate_gate_failed_promotion_streak
+            ),
+            next_export_delay_seconds=(
+                trainer.initial_candidate_gate_next_export_delay_seconds
+            ),
+        )
+
     if start_with_network and incumbent_model_path is not None:
         trainer.initial_incumbent_model_path = incumbent_model_path
         logger.info(

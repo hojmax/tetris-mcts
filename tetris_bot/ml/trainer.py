@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 import signal
 import tempfile
@@ -59,6 +60,33 @@ def roll_interval_deadline(deadline_s: float, interval_s: float, now_s: float) -
     return deadline_s + elapsed_intervals * interval_s
 
 
+@dataclass
+class CandidateGateSchedule:
+    current_interval_seconds: float
+    failed_promotion_streak: int
+    next_export_time_s: float
+
+
+def _candidate_gate_interval_seconds(
+    *,
+    base_interval_seconds: float,
+    failure_backoff_seconds: float,
+    failed_promotion_streak: int,
+    max_interval_seconds: float | None,
+) -> float:
+    if failed_promotion_streak < 0:
+        raise ValueError(
+            "failed_promotion_streak must be >= 0 "
+            f"(got {failed_promotion_streak})"
+        )
+    interval_seconds = (
+        base_interval_seconds + failure_backoff_seconds * failed_promotion_streak
+    )
+    if max_interval_seconds is not None:
+        interval_seconds = min(interval_seconds, max_interval_seconds)
+    return interval_seconds
+
+
 class Trainer:
     """Main training class."""
 
@@ -106,10 +134,340 @@ class Trainer:
         self._async_checkpoint_saver: AsyncCheckpointSaver | None = None
         self.initial_incumbent_model_path: Path | None = None
         self.initial_incumbent_eval_avg_attack: float = 0.0
+        self.initial_candidate_gate_interval_seconds: float | None = None
+        self.initial_candidate_gate_failed_promotion_streak: int = 0
+        self.initial_candidate_gate_next_export_delay_seconds: float | None = None
 
         # Create directories
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         config.run.data_dir.mkdir(parents=True, exist_ok=True)
+
+    def _candidate_gate_timing_config(self) -> tuple[float, float, float | None]:
+        base_interval_seconds = self.config.run.model_sync_interval_seconds
+        failure_backoff_seconds = self.config.run.model_sync_failure_backoff_seconds
+        max_interval_seconds = self.config.run.model_sync_max_interval_seconds
+        if base_interval_seconds <= 0.0:
+            raise ValueError(
+                "config.run.model_sync_interval_seconds must be > 0 "
+                f"(got {base_interval_seconds})"
+            )
+        if failure_backoff_seconds < 0.0:
+            raise ValueError(
+                "config.run.model_sync_failure_backoff_seconds must be >= 0 "
+                f"(got {failure_backoff_seconds})"
+            )
+        if max_interval_seconds < 0.0:
+            raise ValueError(
+                "config.run.model_sync_max_interval_seconds must be >= 0 "
+                f"(got {max_interval_seconds})"
+            )
+        if 0.0 < max_interval_seconds < base_interval_seconds:
+            raise ValueError(
+                "config.run.model_sync_max_interval_seconds must be 0 or >= "
+                "config.run.model_sync_interval_seconds "
+                f"(got max={max_interval_seconds}, base={base_interval_seconds})"
+            )
+        resolved_max_interval_seconds = (
+            max_interval_seconds if max_interval_seconds > 0.0 else None
+        )
+        return (
+            base_interval_seconds,
+            failure_backoff_seconds,
+            resolved_max_interval_seconds,
+        )
+
+    def _initialize_candidate_gate_schedule(
+        self,
+        *,
+        now_s: float,
+    ) -> CandidateGateSchedule:
+        (
+            base_interval_seconds,
+            failure_backoff_seconds,
+            max_interval_seconds,
+        ) = self._candidate_gate_timing_config()
+        failed_promotion_streak = self.initial_candidate_gate_failed_promotion_streak
+        restored_interval_seconds = self.initial_candidate_gate_interval_seconds
+        if restored_interval_seconds is None:
+            current_interval_seconds = _candidate_gate_interval_seconds(
+                base_interval_seconds=base_interval_seconds,
+                failure_backoff_seconds=failure_backoff_seconds,
+                failed_promotion_streak=failed_promotion_streak,
+                max_interval_seconds=max_interval_seconds,
+            )
+        else:
+            current_interval_seconds = restored_interval_seconds
+        next_export_delay_seconds = self.initial_candidate_gate_next_export_delay_seconds
+        next_export_time_s = (
+            now_s + current_interval_seconds
+            if next_export_delay_seconds is None
+            else now_s + next_export_delay_seconds
+        )
+        return CandidateGateSchedule(
+            current_interval_seconds=current_interval_seconds,
+            failed_promotion_streak=failed_promotion_streak,
+            next_export_time_s=next_export_time_s,
+        )
+
+    def _candidate_gate_checkpoint_state(
+        self,
+        candidate_gate_schedule: CandidateGateSchedule | None,
+        *,
+        now_s: float,
+    ) -> dict[str, object]:
+        if candidate_gate_schedule is None:
+            return {}
+        next_export_delay_seconds = max(
+            0.0, candidate_gate_schedule.next_export_time_s - now_s
+        )
+        return {
+            "candidate_gate_current_interval_seconds": (
+                candidate_gate_schedule.current_interval_seconds
+            ),
+            "candidate_gate_failed_promotion_streak": (
+                candidate_gate_schedule.failed_promotion_streak
+            ),
+            "candidate_gate_next_export_delay_seconds": next_export_delay_seconds,
+        }
+
+    def _update_candidate_gate_schedule_from_eval(
+        self,
+        candidate_gate_schedule: CandidateGateSchedule,
+        *,
+        evaluation_seconds: float,
+        promoted: bool,
+        now_s: float,
+    ) -> None:
+        if evaluation_seconds < 0.0:
+            raise ValueError(
+                "evaluation_seconds must be >= 0 "
+                f"(got {evaluation_seconds})"
+            )
+        (
+            base_interval_seconds,
+            failure_backoff_seconds,
+            max_interval_seconds,
+        ) = self._candidate_gate_timing_config()
+        failed_promotion_streak = (
+            0
+            if promoted
+            else candidate_gate_schedule.failed_promotion_streak + 1
+        )
+        candidate_gate_schedule.failed_promotion_streak = failed_promotion_streak
+        candidate_gate_schedule.current_interval_seconds = (
+            _candidate_gate_interval_seconds(
+                base_interval_seconds=base_interval_seconds,
+                failure_backoff_seconds=failure_backoff_seconds,
+                failed_promotion_streak=failed_promotion_streak,
+                max_interval_seconds=max_interval_seconds,
+            )
+        )
+        evaluation_start_time_s = now_s - evaluation_seconds
+        candidate_gate_schedule.next_export_time_s = (
+            evaluation_start_time_s + candidate_gate_schedule.current_interval_seconds
+        )
+
+    def _defer_candidate_gate_export(
+        self,
+        candidate_gate_schedule: CandidateGateSchedule,
+        *,
+        now_s: float,
+    ) -> None:
+        candidate_gate_schedule.next_export_time_s = (
+            now_s + candidate_gate_schedule.current_interval_seconds
+        )
+
+    def _drain_model_eval_events(
+        self,
+        generator: GameGenerator,
+        *,
+        log_to_wandb: bool,
+        now_s: float,
+        interval_anchor_s: float,
+        candidate_gate_schedule: CandidateGateSchedule,
+    ) -> None:
+        for event in generator.drain_model_eval_events():
+            promoted = bool(event["promoted"])
+            evaluation_seconds = float(event["evaluation_seconds"])
+            self._update_candidate_gate_schedule_from_eval(
+                candidate_gate_schedule,
+                evaluation_seconds=evaluation_seconds,
+                promoted=promoted,
+                now_s=now_s,
+            )
+            next_candidate_export_delay_seconds = max(
+                0.0, candidate_gate_schedule.next_export_time_s - now_s
+            )
+            candidate_nn_value_weight = float(event["candidate_nn_value_weight"])
+            incumbent_nn_value_weight = float(event["incumbent_nn_value_weight"])
+            promoted_nn_value_weight = float(event["promoted_nn_value_weight"])
+            promoted_death_penalty = float(event["promoted_death_penalty"])
+            promoted_overhang_penalty_weight = float(
+                event["promoted_overhang_penalty_weight"]
+            )
+            per_game_prediction_metrics = event["per_game_prediction_metrics"]
+            prediction_metric_rows = [
+                row for row in per_game_prediction_metrics if int(row[4]) > 0
+            ]
+            candidate_trajectory_predicted_total_attack_variance = (
+                sum(float(row[1]) for row in prediction_metric_rows)
+                / len(prediction_metric_rows)
+                if prediction_metric_rows
+                else 0.0
+            )
+            candidate_trajectory_predicted_total_attack_std = (
+                sum(float(row[2]) for row in prediction_metric_rows)
+                / len(prediction_metric_rows)
+                if prediction_metric_rows
+                else 0.0
+            )
+            candidate_trajectory_predicted_total_attack_rmse = (
+                sum(float(row[3]) for row in prediction_metric_rows)
+                / len(prediction_metric_rows)
+                if prediction_metric_rows
+                else 0.0
+            )
+            logger.info(
+                "Model evaluation decision",
+                trainer_step=self.step,
+                candidate_step=int(event["candidate_step"]),
+                candidate_games=int(event["candidate_games"]),
+                candidate_avg_attack=event["candidate_avg_attack"],
+                candidate_attack_variance=event["candidate_attack_variance"],
+                candidate_nn_value_weight=candidate_nn_value_weight,
+                incumbent_step=int(event["incumbent_step"]),
+                incumbent_uses_network=bool(event["incumbent_uses_network"]),
+                incumbent_avg_attack=event["incumbent_avg_attack"],
+                incumbent_nn_value_weight=incumbent_nn_value_weight,
+                candidate_trajectory_predicted_total_attack_variance=(
+                    candidate_trajectory_predicted_total_attack_variance
+                ),
+                candidate_trajectory_predicted_total_attack_std=(
+                    candidate_trajectory_predicted_total_attack_std
+                ),
+                candidate_trajectory_predicted_total_attack_rmse=(
+                    candidate_trajectory_predicted_total_attack_rmse
+                ),
+                promoted_nn_value_weight=promoted_nn_value_weight,
+                promoted_death_penalty=promoted_death_penalty,
+                promoted_overhang_penalty_weight=promoted_overhang_penalty_weight,
+                promoted=promoted,
+                auto_promoted=bool(event["auto_promoted"]),
+                evaluation_seconds=evaluation_seconds,
+                candidate_gate_failed_promotion_streak=(
+                    candidate_gate_schedule.failed_promotion_streak
+                ),
+                candidate_gate_interval_seconds=(
+                    candidate_gate_schedule.current_interval_seconds
+                ),
+                next_candidate_export_delay_seconds=(
+                    next_candidate_export_delay_seconds
+                ),
+            )
+            worst_tree_path = event.get("worst_game_tree_path")
+            if worst_tree_path:
+                logger.info(
+                    "Saved worst candidate eval tree playback",
+                    candidate_step=event["candidate_step"],
+                    path=worst_tree_path,
+                )
+            if not log_to_wandb:
+                continue
+
+            wall_time_hours = (now_s - interval_anchor_s) / 3600.0
+            wandb_data: dict[str, object] = {
+                "trainer_step": self.step,
+                "wall_time_hours": wall_time_hours,
+                "model_gate/candidate_step": event["candidate_step"],
+                "model_gate/candidate_games": event["candidate_games"],
+                "model_gate/candidate_avg_attack": event["candidate_avg_attack"],
+                "model_gate_time/candidate_avg_attack": event["candidate_avg_attack"],
+                "model_gate/candidate_attack_variance": event[
+                    "candidate_attack_variance"
+                ],
+                "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
+                "model_gate/incumbent_step": event["incumbent_step"],
+                "model_gate/incumbent_uses_network": event[
+                    "incumbent_uses_network"
+                ],
+                "model_gate/incumbent_avg_attack": event["incumbent_avg_attack"],
+                "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
+                "model_gate/candidate_trajectory_predicted_total_attack_variance": (
+                    candidate_trajectory_predicted_total_attack_variance
+                ),
+                "model_gate/candidate_trajectory_predicted_total_attack_std": (
+                    candidate_trajectory_predicted_total_attack_std
+                ),
+                "model_gate/candidate_trajectory_predicted_total_attack_rmse": (
+                    candidate_trajectory_predicted_total_attack_rmse
+                ),
+                "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
+                "model_gate/promoted_death_penalty": promoted_death_penalty,
+                "model_gate/promoted_overhang_penalty_weight": (
+                    promoted_overhang_penalty_weight
+                ),
+                "model_gate/promoted": event["promoted"],
+                "model_gate/auto_promoted": event["auto_promoted"],
+                "model_gate/evaluation_seconds": evaluation_seconds,
+                "model_gate/failed_promotion_streak": (
+                    candidate_gate_schedule.failed_promotion_streak
+                ),
+                "model_gate/current_export_interval_seconds": (
+                    candidate_gate_schedule.current_interval_seconds
+                ),
+                "model_gate/next_export_delay_seconds": (
+                    next_candidate_export_delay_seconds
+                ),
+            }
+
+            per_game_results = event["per_game_results"]
+            if per_game_results:
+                num_games = len(per_game_results)
+                total_attack = sum(r[1] for r in per_game_results)
+                total_lines = sum(r[2] for r in per_game_results)
+                total_moves = sum(r[3] for r in per_game_results)
+                wandb_data["eval/num_games"] = num_games
+                wandb_data["eval/avg_attack"] = total_attack / num_games
+                wandb_data["eval/max_attack"] = max(r[1] for r in per_game_results)
+                wandb_data["eval/avg_lines"] = total_lines / num_games
+                wandb_data["eval/max_lines"] = max(r[2] for r in per_game_results)
+                wandb_data["eval/avg_moves"] = total_moves / num_games
+                wandb_data["eval/attack_per_piece"] = (
+                    total_attack / total_moves if total_moves > 0 else 0.0
+                )
+                wandb_data["eval/lines_per_piece"] = (
+                    total_lines / total_moves if total_moves > 0 else 0.0
+                )
+                if prediction_metric_rows:
+                    wandb_data["eval/trajectory_predicted_total_attack_variance"] = (
+                        candidate_trajectory_predicted_total_attack_variance
+                    )
+                    wandb_data["eval/trajectory_predicted_total_attack_std"] = (
+                        candidate_trajectory_predicted_total_attack_std
+                    )
+                    wandb_data["eval/trajectory_predicted_total_attack_rmse"] = (
+                        candidate_trajectory_predicted_total_attack_rmse
+                    )
+                wandb_data["eval/nn_value_weight"] = promoted_nn_value_weight
+
+            best_replay = event.get("best_game_replay")
+            worst_replay = event.get("worst_game_replay")
+            if best_replay is not None:
+                frames = render_replay(best_replay)
+                video, _ = self._create_wandb_gif_video(
+                    frames, attack=best_replay.total_attack
+                )
+                if video is not None:
+                    wandb_data["eval/best_trajectory"] = video
+            if worst_replay is not None:
+                frames = render_replay(worst_replay)
+                video, _ = self._create_wandb_gif_video(
+                    frames, attack=worst_replay.total_attack
+                )
+                if video is not None:
+                    wandb_data["eval/worst_trajectory"] = video
+
+            wandb.log(wandb_data)
 
     def _create_scheduler(self):
         if self.config.optimizer.lr_schedule == "linear":
@@ -782,6 +1140,7 @@ class Trainer:
         export_model: TetrisNet,
         log_to_wandb: bool,
         interrupted: bool,
+        candidate_gate_schedule: CandidateGateSchedule | None = None,
     ) -> BaseException | None:
         if interrupted:
             logger.info(
@@ -819,23 +1178,30 @@ class Trainer:
                     incumbent_model_artifact,
                     incumbent_model_source_path,
                 ) = self._persist_incumbent_model_artifacts(generator)
+                extra_checkpoint_state = {
+                    "incumbent_uses_network": generator.incumbent_uses_network(),
+                    "incumbent_model_step": generator.incumbent_model_step(),
+                    "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
+                    "incumbent_death_penalty": generator.incumbent_death_penalty(),
+                    "incumbent_overhang_penalty_weight": (
+                        generator.incumbent_overhang_penalty_weight()
+                    ),
+                    "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
+                    "incumbent_model_source_path": incumbent_model_source_path,
+                    "incumbent_model_artifact": (
+                        incumbent_model_artifact.name
+                        if incumbent_model_artifact is not None
+                        else None
+                    ),
+                }
+                extra_checkpoint_state.update(
+                    self._candidate_gate_checkpoint_state(
+                        candidate_gate_schedule,
+                        now_s=time.perf_counter(),
+                    )
+                )
                 final_saved_paths = self.save(
-                    extra_checkpoint_state={
-                        "incumbent_uses_network": generator.incumbent_uses_network(),
-                        "incumbent_model_step": generator.incumbent_model_step(),
-                        "incumbent_nn_value_weight": generator.incumbent_nn_value_weight(),
-                        "incumbent_death_penalty": generator.incumbent_death_penalty(),
-                        "incumbent_overhang_penalty_weight": (
-                            generator.incumbent_overhang_penalty_weight()
-                        ),
-                        "incumbent_eval_avg_attack": generator.incumbent_eval_avg_attack(),
-                        "incumbent_model_source_path": incumbent_model_source_path,
-                        "incumbent_model_artifact": (
-                            incumbent_model_artifact.name
-                            if incumbent_model_artifact is not None
-                            else None
-                        ),
-                    }
+                    extra_checkpoint_state=extra_checkpoint_state
                 )
                 if log_to_wandb:
                     self._log_final_wandb_model_artifact(final_saved_paths)
@@ -851,9 +1217,10 @@ class Trainer:
 
         The Rust GameGenerator runs in a background thread, continuously
         generating games into a shared in-memory buffer. Python samples
-        directly from the buffer via generator.sample_batch(). At regular
-        wall-clock intervals, a new ONNX model is exported for the
-        generator to pick up.
+        directly from the buffer via generator.sample_batch(). Candidate
+        ONNX exports are gated by an adaptive wall-clock schedule so failed
+        promotions back off future evaluations instead of exporting models
+        continuously while the evaluator is busy.
 
         Args:
             log_to_wandb: Whether to log metrics to Weights & Biases
@@ -959,6 +1326,15 @@ class Trainer:
             nn_value_weight_promotion_multiplier=self.config.self_play.nn_value_weight_promotion_multiplier,
             nn_value_weight_promotion_max_delta=self.config.self_play.nn_value_weight_promotion_max_delta,
             nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
+            candidate_gate_base_interval_seconds=(
+                self.config.run.model_sync_interval_seconds
+            ),
+            candidate_gate_failure_backoff_seconds=(
+                self.config.run.model_sync_failure_backoff_seconds
+            ),
+            candidate_gate_max_interval_seconds=(
+                self.config.run.model_sync_max_interval_seconds
+            ),
         )
 
         # Wait for minimum buffer size
@@ -1026,8 +1402,16 @@ class Trainer:
         throughput_window_start_steps = 0
         next_log_time_s = interval_anchor_s + self.config.run.log_interval_seconds
         next_replay_sync_time_s = interval_anchor_s
-        next_model_sync_time_s = (
-            interval_anchor_s + self.config.run.model_sync_interval_seconds
+        candidate_gate_schedule = self._initialize_candidate_gate_schedule(
+            now_s=interval_anchor_s
+        )
+        logger.info(
+            "Initialized candidate gate schedule",
+            current_interval_seconds=candidate_gate_schedule.current_interval_seconds,
+            failed_promotion_streak=candidate_gate_schedule.failed_promotion_streak,
+            next_export_delay_seconds=max(
+                0.0, candidate_gate_schedule.next_export_time_s - interval_anchor_s
+            ),
         )
         next_checkpoint_time_s = (
             interval_anchor_s + self.config.run.checkpoint_interval_seconds
@@ -1109,182 +1493,15 @@ class Trainer:
                 if step_metrics:
                     latest_train_metrics = step_metrics
 
-                # Log metrics + drain eval events (at log-tick frequency)
+                self._drain_model_eval_events(
+                    generator,
+                    log_to_wandb=log_to_wandb,
+                    now_s=post_step_time,
+                    interval_anchor_s=interval_anchor_s,
+                    candidate_gate_schedule=candidate_gate_schedule,
+                )
+
                 if post_step_time >= next_log_time_s:
-                    for event in generator.drain_model_eval_events():
-                        promoted = bool(event["promoted"])
-                        candidate_nn_value_weight = float(
-                            event["candidate_nn_value_weight"]
-                        )
-                        incumbent_nn_value_weight = float(
-                            event["incumbent_nn_value_weight"]
-                        )
-                        promoted_nn_value_weight = float(
-                            event["promoted_nn_value_weight"]
-                        )
-                        promoted_death_penalty = float(event["promoted_death_penalty"])
-                        promoted_overhang_penalty_weight = float(
-                            event["promoted_overhang_penalty_weight"]
-                        )
-                        per_game_prediction_metrics = event[
-                            "per_game_prediction_metrics"
-                        ]
-                        prediction_metric_rows = [
-                            row
-                            for row in per_game_prediction_metrics
-                            if int(row[4]) > 0
-                        ]
-                        candidate_trajectory_predicted_total_attack_variance = (
-                            sum(float(row[1]) for row in prediction_metric_rows)
-                            / len(prediction_metric_rows)
-                            if prediction_metric_rows
-                            else 0.0
-                        )
-                        candidate_trajectory_predicted_total_attack_std = (
-                            sum(float(row[2]) for row in prediction_metric_rows)
-                            / len(prediction_metric_rows)
-                            if prediction_metric_rows
-                            else 0.0
-                        )
-                        candidate_trajectory_predicted_total_attack_rmse = (
-                            sum(float(row[3]) for row in prediction_metric_rows)
-                            / len(prediction_metric_rows)
-                            if prediction_metric_rows
-                            else 0.0
-                        )
-                        logger.info(
-                            "Model evaluation decision",
-                            trainer_step=self.step,
-                            candidate_step=int(event["candidate_step"]),
-                            candidate_games=int(event["candidate_games"]),
-                            candidate_avg_attack=event["candidate_avg_attack"],
-                            candidate_attack_variance=event[
-                                "candidate_attack_variance"
-                            ],
-                            candidate_nn_value_weight=candidate_nn_value_weight,
-                            incumbent_step=int(event["incumbent_step"]),
-                            incumbent_uses_network=bool(
-                                event["incumbent_uses_network"]
-                            ),
-                            incumbent_avg_attack=event["incumbent_avg_attack"],
-                            incumbent_nn_value_weight=incumbent_nn_value_weight,
-                            candidate_trajectory_predicted_total_attack_variance=candidate_trajectory_predicted_total_attack_variance,
-                            candidate_trajectory_predicted_total_attack_std=candidate_trajectory_predicted_total_attack_std,
-                            candidate_trajectory_predicted_total_attack_rmse=candidate_trajectory_predicted_total_attack_rmse,
-                            promoted_nn_value_weight=promoted_nn_value_weight,
-                            promoted_death_penalty=promoted_death_penalty,
-                            promoted_overhang_penalty_weight=promoted_overhang_penalty_weight,
-                            promoted=promoted,
-                            auto_promoted=bool(event["auto_promoted"]),
-                            evaluation_seconds=event["evaluation_seconds"],
-                        )
-                        worst_tree_path = event.get("worst_game_tree_path")
-                        if worst_tree_path:
-                            logger.info(
-                                "Saved worst candidate eval tree playback",
-                                candidate_step=event["candidate_step"],
-                                path=worst_tree_path,
-                            )
-                        if log_to_wandb:
-                            wall_time_hours = (
-                                post_step_time - interval_anchor_s
-                            ) / 3600.0
-                            wandb_data: dict[str, object] = {
-                                "trainer_step": self.step,
-                                "wall_time_hours": wall_time_hours,
-                                "model_gate/candidate_step": event["candidate_step"],
-                                "model_gate/candidate_games": event["candidate_games"],
-                                "model_gate/candidate_avg_attack": event[
-                                    "candidate_avg_attack"
-                                ],
-                                "model_gate_time/candidate_avg_attack": event[
-                                    "candidate_avg_attack"
-                                ],
-                                "model_gate/candidate_attack_variance": event[
-                                    "candidate_attack_variance"
-                                ],
-                                "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
-                                "model_gate/incumbent_step": event["incumbent_step"],
-                                "model_gate/incumbent_uses_network": event[
-                                    "incumbent_uses_network"
-                                ],
-                                "model_gate/incumbent_avg_attack": event[
-                                    "incumbent_avg_attack"
-                                ],
-                                "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
-                                "model_gate/candidate_trajectory_predicted_total_attack_variance": candidate_trajectory_predicted_total_attack_variance,
-                                "model_gate/candidate_trajectory_predicted_total_attack_std": candidate_trajectory_predicted_total_attack_std,
-                                "model_gate/candidate_trajectory_predicted_total_attack_rmse": candidate_trajectory_predicted_total_attack_rmse,
-                                "model_gate/promoted_nn_value_weight": promoted_nn_value_weight,
-                                "model_gate/promoted_death_penalty": promoted_death_penalty,
-                                "model_gate/promoted_overhang_penalty_weight": promoted_overhang_penalty_weight,
-                                "model_gate/promoted": event["promoted"],
-                                "model_gate/auto_promoted": event["auto_promoted"],
-                                "model_gate/evaluation_seconds": event[
-                                    "evaluation_seconds"
-                                ],
-                            }
-
-                            # Compute eval/* metrics from per-game results
-                            per_game_results = event["per_game_results"]
-                            if per_game_results:
-                                num_games = len(per_game_results)
-                                total_attack = sum(r[1] for r in per_game_results)
-                                total_lines = sum(r[2] for r in per_game_results)
-                                total_moves = sum(r[3] for r in per_game_results)
-                                wandb_data["eval/num_games"] = num_games
-                                wandb_data["eval/avg_attack"] = total_attack / num_games
-                                wandb_data["eval/max_attack"] = max(
-                                    r[1] for r in per_game_results
-                                )
-                                wandb_data["eval/avg_lines"] = total_lines / num_games
-                                wandb_data["eval/max_lines"] = max(
-                                    r[2] for r in per_game_results
-                                )
-                                wandb_data["eval/avg_moves"] = total_moves / num_games
-                                wandb_data["eval/attack_per_piece"] = (
-                                    total_attack / total_moves
-                                    if total_moves > 0
-                                    else 0.0
-                                )
-                                wandb_data["eval/lines_per_piece"] = (
-                                    total_lines / total_moves
-                                    if total_moves > 0
-                                    else 0.0
-                                )
-                                if prediction_metric_rows:
-                                    wandb_data[
-                                        "eval/trajectory_predicted_total_attack_variance"
-                                    ] = candidate_trajectory_predicted_total_attack_variance
-                                    wandb_data[
-                                        "eval/trajectory_predicted_total_attack_std"
-                                    ] = candidate_trajectory_predicted_total_attack_std
-                                    wandb_data[
-                                        "eval/trajectory_predicted_total_attack_rmse"
-                                    ] = candidate_trajectory_predicted_total_attack_rmse
-                                wandb_data["eval/nn_value_weight"] = (
-                                    promoted_nn_value_weight
-                                )
-
-                            # Render best/worst trajectory GIFs
-                            best_replay = event.get("best_game_replay")
-                            worst_replay = event.get("worst_game_replay")
-                            if best_replay is not None:
-                                frames = render_replay(best_replay)
-                                video, _ = self._create_wandb_gif_video(
-                                    frames, attack=best_replay.total_attack
-                                )
-                                if video is not None:
-                                    wandb_data["eval/best_trajectory"] = video
-                            if worst_replay is not None:
-                                frames = render_replay(worst_replay)
-                                video, _ = self._create_wandb_gif_video(
-                                    frames, attack=worst_replay.total_attack
-                                )
-                                if video is not None:
-                                    wandb_data["eval/worst_trajectory"] = video
-
-                            wandb.log(wandb_data)
 
                     if latest_train_metrics is None:
                         raise RuntimeError(
@@ -1414,7 +1631,11 @@ class Trainer:
                     )
 
                 # Export updated model for generator
-                if post_step_time >= next_model_sync_time_s:
+                gate_busy = generator.candidate_gate_busy()
+                if (
+                    not gate_busy
+                    and post_step_time >= candidate_gate_schedule.next_export_time_s
+                ):
                     candidate_onnx_path = (
                         candidate_model_dir / f"candidate_step_{self.step}.onnx"
                     )
@@ -1451,20 +1672,40 @@ class Trainer:
                         onnx_export_ms=onnx_export_ms,
                         incumbent_nn_value_weight=incumbent_nn_value_weight,
                         candidate_nn_value_weight=candidate_nn_value_weight,
+                        candidate_gate_failed_promotion_streak=(
+                            candidate_gate_schedule.failed_promotion_streak
+                        ),
+                        candidate_gate_interval_seconds=(
+                            candidate_gate_schedule.current_interval_seconds
+                        ),
                     )
+                    if not queued:
+                        self._defer_candidate_gate_export(
+                            candidate_gate_schedule,
+                            now_s=time.perf_counter(),
+                        )
                     if log_to_wandb:
+                        next_candidate_export_delay_seconds = max(
+                            0.0,
+                            candidate_gate_schedule.next_export_time_s
+                            - time.perf_counter(),
+                        )
                         wandb.log(
                             {
                                 "trainer_step": self.step,
                                 "timing/onnx_export_ms": onnx_export_ms,
                                 "model_gate/queued_candidate_nn_value_weight": candidate_nn_value_weight,
+                                "model_gate/failed_promotion_streak": (
+                                    candidate_gate_schedule.failed_promotion_streak
+                                ),
+                                "model_gate/current_export_interval_seconds": (
+                                    candidate_gate_schedule.current_interval_seconds
+                                ),
+                                "model_gate/next_export_delay_seconds": (
+                                    next_candidate_export_delay_seconds
+                                ),
                             }
                         )
-                    next_model_sync_time_s = roll_interval_deadline(
-                        next_model_sync_time_s,
-                        self.config.run.model_sync_interval_seconds,
-                        time.perf_counter(),
-                    )
 
                 # Queue checkpoint/export work on the background saver.
                 if post_step_time >= next_checkpoint_time_s:
@@ -1496,7 +1737,11 @@ class Trainer:
                                 if incumbent_model_artifact is not None
                                 else None
                             ),
-                        },
+                        }
+                        | self._candidate_gate_checkpoint_state(
+                            candidate_gate_schedule,
+                            now_s=time.perf_counter(),
+                        ),
                     )
                     self._async_checkpoint_saver.submit(
                         snapshot=checkpoint_snapshot,
@@ -1521,6 +1766,7 @@ class Trainer:
                 export_model=export_model,
                 log_to_wandb=log_to_wandb,
                 interrupted=interrupted,
+                candidate_gate_schedule=candidate_gate_schedule,
             )
 
         if pending_error is not None:
