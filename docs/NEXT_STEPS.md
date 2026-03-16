@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] I need to somehow decide the optimal trunk size. Like I could try a smaller and a larger one, trained locally on the replay buffer, and then run both and see what the concrete speed difference is.
 - [ ] Maybe I can simplify code now and drop all the bootstrapping logic, and just pretrain the network on the replay buffer from earlier experiment as warm start. But kind of wack to have unreproducable training run. Like does the method actually work without bootstrapping now? Could we get rid of the penalties and stuff? Once everything is fixed we should try, is kind of ugly. Why would this be necessary. Could of course just be compute multiplier.
 - [ ] Look at game that ends really early, and understand exactly why that happened. I would never expect it to look like higher reward to screw up the game board.
 - [ ] New Metric: Is past attack + future attack roughly stable? Maybe we log per game variance in this estimate.
@@ -27,6 +28,7 @@
 
 # Confusions
 
+- [ ] Why are some of the games still ending early? Like 10 moves or something?
 - [ ] How come the model is not even that much better even when doing tree reuse
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
 
