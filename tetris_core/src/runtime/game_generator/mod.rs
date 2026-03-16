@@ -11,7 +11,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ use crate::search::{
     GameResult, GameTreeStats, MCTSAgent, MCTSConfig, TrainingExample, NUM_ACTIONS,
 };
 
-use crate::replay::npz::{read_examples_from_npz, write_examples_slices_to_npz};
+use crate::replay::npz::{read_examples_from_npz, write_examples_to_npz};
 use crate::replay::{GameReplay, ReplayMove};
 
 mod py_api;
@@ -34,7 +34,7 @@ mod tests;
 
 use shared::{
     CandidateModelRequest, IncumbentState, LastGameInfo, ModelEvalEvent, SharedBuffer,
-    WorkerContext, WorkerSettings, WorkerSharedState,
+    SnapshotPersister, WorkerContext, WorkerSettings, WorkerSharedState,
 };
 
 #[pyclass]
@@ -53,6 +53,8 @@ pub struct GameGenerator {
     save_interval_seconds: f64,
     /// Number of worker threads
     num_workers: usize,
+    /// Background snapshot writer for replay buffer persistence.
+    snapshot_persister: Option<Arc<SnapshotPersister>>,
     /// Fixed seeds used by the evaluator worker for candidate games.
     candidate_eval_seeds: Arc<[u64]>,
     /// Number of simulations per move before the first promoted NN model.

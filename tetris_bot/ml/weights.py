@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 import io
 import json
 import logging
+from queue import Empty, Queue
 import struct
+from threading import Lock, Thread
 import warnings
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -31,6 +35,76 @@ from tetris_bot.ml.network import (
 logger = structlog.get_logger()
 
 
+@dataclass(frozen=True)
+class CheckpointSnapshot:
+    step: int
+    model_state_dict: dict[str, Any]
+    optimizer_state_dict: dict[str, Any] | None
+    scheduler_state_dict: dict[str, Any] | None
+    extra_state: dict[str, object]
+
+
+@dataclass(frozen=True)
+class CheckpointSaveRequest:
+    snapshot: CheckpointSnapshot
+    model_kwargs: dict[str, Any]
+    eval_metrics: dict[str, Any] | None
+    export_for_rust: bool
+
+
+def _clone_state_value_to_cpu(value: Any) -> Any:
+    if isinstance(value, torch.Tensor):
+        return value.detach().to(device="cpu", copy=True)
+    if isinstance(value, dict):
+        return type(value)(
+            (key, _clone_state_value_to_cpu(item)) for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return [_clone_state_value_to_cpu(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_state_value_to_cpu(item) for item in value)
+    return value
+
+
+def capture_checkpoint_snapshot(
+    model: TetrisNet,
+    optimizer: torch.optim.Optimizer | None,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
+    step: int,
+    extra_checkpoint_state: dict[str, object] | None = None,
+) -> CheckpointSnapshot:
+    return CheckpointSnapshot(
+        step=step,
+        model_state_dict=_clone_state_value_to_cpu(model.state_dict()),
+        optimizer_state_dict=(
+            _clone_state_value_to_cpu(optimizer.state_dict())
+            if optimizer is not None
+            else None
+        ),
+        scheduler_state_dict=(
+            _clone_state_value_to_cpu(scheduler.state_dict())
+            if scheduler is not None
+            else None
+        ),
+        extra_state=dict(extra_checkpoint_state or {}),
+    )
+
+
+def save_checkpoint_snapshot(
+    snapshot: CheckpointSnapshot, filepath: str | Path
+) -> None:
+    state = {
+        "model_state_dict": snapshot.model_state_dict,
+        "step": snapshot.step,
+        **snapshot.extra_state,
+    }
+    if snapshot.optimizer_state_dict is not None:
+        state["optimizer_state_dict"] = snapshot.optimizer_state_dict
+    if snapshot.scheduler_state_dict is not None:
+        state["scheduler_state_dict"] = snapshot.scheduler_state_dict
+    torch.save(state, filepath)
+
+
 def save_checkpoint(
     model: TetrisNet,
     optimizer: torch.optim.Optimizer | None,
@@ -39,17 +113,20 @@ def save_checkpoint(
     filepath: str | Path,
     **extra_state,
 ) -> None:
-    state = {
-        "model_state_dict": model.state_dict(),
-        "step": step,
-        **extra_state,
-    }
-    if optimizer is not None:
-        state["optimizer_state_dict"] = optimizer.state_dict()
-    if scheduler is not None:
-        state["scheduler_state_dict"] = scheduler.state_dict()
-
-    torch.save(state, filepath)
+    save_checkpoint_snapshot(
+        CheckpointSnapshot(
+            step=step,
+            model_state_dict=model.state_dict(),
+            optimizer_state_dict=(
+                optimizer.state_dict() if optimizer is not None else None
+            ),
+            scheduler_state_dict=(
+                scheduler.state_dict() if scheduler is not None else None
+            ),
+            extra_state=extra_state,
+        ),
+        filepath,
+    )
 
 
 def load_checkpoint(
@@ -213,6 +290,39 @@ class WeightManager:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    def _export_rust_artifacts_from_model(
+        self,
+        model: TetrisNet,
+        *,
+        onnx_path: Path,
+    ) -> None:
+        onnx_export_ok = export_onnx(model, onnx_path)
+        if not onnx_export_ok:
+            raise RuntimeError(
+                "ONNX export failed due to missing dependencies while saving checkpoint"
+            )
+
+        split_export_ok = export_split_models(model, onnx_path)
+        if not split_export_ok:
+            raise RuntimeError(
+                "Split-model export failed due to missing dependencies while saving checkpoint"
+            )
+
+    def _finalize_latest_links(
+        self,
+        *,
+        checkpoint_path: Path,
+        metadata_path: Path,
+        paths: dict[str, Path],
+    ) -> dict[str, Path]:
+        paths["metadata"] = metadata_path
+        latest_path = self.checkpoint_dir / LATEST_CHECKPOINT_FILENAME
+        if latest_path.exists():
+            latest_path.unlink()
+        latest_path.symlink_to(checkpoint_path.name)
+        paths["latest"] = latest_path
+        return paths
+
     def save(
         self,
         model: TetrisNet,
@@ -223,9 +333,7 @@ class WeightManager:
         export_for_rust: bool = True,
         extra_checkpoint_state: dict[str, object] | None = None,
     ) -> dict[str, Path]:
-        paths = {}
-
-        # Save PyTorch checkpoint
+        paths: dict[str, Path] = {}
         ckpt_path = self.checkpoint_dir / f"{CHECKPOINT_FILENAME_PREFIX}_{step}.pt"
         save_checkpoint(
             model,
@@ -238,35 +346,46 @@ class WeightManager:
         paths["checkpoint"] = ckpt_path
 
         if export_for_rust:
-            # Export ONNX (full model — used as watch sentinel for hot-swap)
             onnx_path = self.checkpoint_dir / LATEST_ONNX_FILENAME
-            onnx_export_ok = export_onnx(model, onnx_path)
-            if not onnx_export_ok:
-                raise RuntimeError(
-                    "ONNX export failed due to missing dependencies while saving checkpoint"
-                )
+            self._export_rust_artifacts_from_model(model, onnx_path=onnx_path)
             paths["onnx"] = onnx_path
 
-            # Export split models for cached inference
-            split_export_ok = export_split_models(model, onnx_path)
-            if not split_export_ok:
-                raise RuntimeError(
-                    "Split-model export failed due to missing dependencies while saving checkpoint"
-                )
-
-        # Save metadata
         meta_path = self.checkpoint_dir / LATEST_METADATA_FILENAME
         export_metadata(meta_path, step, eval_metrics)
-        paths["metadata"] = meta_path
+        return self._finalize_latest_links(
+            checkpoint_path=ckpt_path,
+            metadata_path=meta_path,
+            paths=paths,
+        )
 
-        # Update symlink to latest checkpoint
-        latest_path = self.checkpoint_dir / LATEST_CHECKPOINT_FILENAME
-        if latest_path.exists():
-            latest_path.unlink()
-        latest_path.symlink_to(ckpt_path.name)
-        paths["latest"] = latest_path
+    def save_snapshot(
+        self,
+        snapshot: CheckpointSnapshot,
+        model_kwargs: dict[str, Any],
+        eval_metrics: dict[str, Any] | None = None,
+        export_for_rust: bool = True,
+    ) -> dict[str, Path]:
+        paths: dict[str, Path] = {}
+        ckpt_path = (
+            self.checkpoint_dir / f"{CHECKPOINT_FILENAME_PREFIX}_{snapshot.step}.pt"
+        )
+        save_checkpoint_snapshot(snapshot, ckpt_path)
+        paths["checkpoint"] = ckpt_path
 
-        return paths
+        if export_for_rust:
+            snapshot_model = TetrisNet(**model_kwargs)
+            snapshot_model.load_state_dict(snapshot.model_state_dict)
+            onnx_path = self.checkpoint_dir / LATEST_ONNX_FILENAME
+            self._export_rust_artifacts_from_model(snapshot_model, onnx_path=onnx_path)
+            paths["onnx"] = onnx_path
+
+        meta_path = self.checkpoint_dir / LATEST_METADATA_FILENAME
+        export_metadata(meta_path, snapshot.step, eval_metrics)
+        return self._finalize_latest_links(
+            checkpoint_path=ckpt_path,
+            metadata_path=meta_path,
+            paths=paths,
+        )
 
     def load_latest(
         self,
@@ -287,3 +406,73 @@ class WeightManager:
         )
         checkpoints.sort(key=lambda p: int(p.stem.split("_")[1]))
         return checkpoints
+
+
+class AsyncCheckpointSaver:
+    def __init__(self, weight_manager: WeightManager):
+        self.weight_manager = weight_manager
+        self._requests: Queue[CheckpointSaveRequest | None] = Queue()
+        self._completed: Queue[tuple[int, dict[str, Path]]] = Queue()
+        self._error_lock = Lock()
+        self._error: BaseException | None = None
+        self._worker = Thread(
+            target=self._worker_loop,
+            name="async-checkpoint-saver",
+            daemon=True,
+        )
+        self._worker.start()
+
+    def submit(
+        self,
+        *,
+        snapshot: CheckpointSnapshot,
+        model_kwargs: dict[str, Any],
+        eval_metrics: dict[str, Any] | None = None,
+        export_for_rust: bool = True,
+    ) -> None:
+        self.raise_if_failed()
+        self._requests.put(
+            CheckpointSaveRequest(
+                snapshot=snapshot,
+                model_kwargs=model_kwargs,
+                eval_metrics=eval_metrics,
+                export_for_rust=export_for_rust,
+            )
+        )
+
+    def drain_completed(self) -> list[tuple[int, dict[str, Path]]]:
+        completed: list[tuple[int, dict[str, Path]]] = []
+        while True:
+            try:
+                completed.append(self._completed.get_nowait())
+            except Empty:
+                return completed
+
+    def raise_if_failed(self) -> None:
+        with self._error_lock:
+            error = self._error
+        if error is not None:
+            raise RuntimeError("Asynchronous checkpoint save failed") from error
+
+    def shutdown(self) -> None:
+        self._requests.put(None)
+        self._worker.join()
+        self.raise_if_failed()
+
+    def _worker_loop(self) -> None:
+        while True:
+            request = self._requests.get()
+            if request is None:
+                return
+            try:
+                paths = self.weight_manager.save_snapshot(
+                    request.snapshot,
+                    request.model_kwargs,
+                    eval_metrics=request.eval_metrics,
+                    export_for_rust=request.export_for_rust,
+                )
+                self._completed.put((request.snapshot.step, paths))
+            except BaseException as error:
+                with self._error_lock:
+                    if self._error is None:
+                        self._error = error

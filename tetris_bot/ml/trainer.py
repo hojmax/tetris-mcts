@@ -25,7 +25,9 @@ from tetris_bot.constants import (
 from tetris_bot.ml.config import TrainingConfig
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import (
+    AsyncCheckpointSaver,
     WeightManager,
+    capture_checkpoint_snapshot,
     export_onnx,
     export_split_models,
     split_model_paths,
@@ -101,6 +103,7 @@ class Trainer:
         )
         self._cached_value_loss_weight: float = 1.0
         self._pending_eval_gif_paths: list[Path] = []
+        self._async_checkpoint_saver: AsyncCheckpointSaver | None = None
         self.initial_incumbent_model_path: Path | None = None
         self.initial_incumbent_eval_avg_attack: float = 0.0
 
@@ -658,6 +661,33 @@ class Trainer:
         )
         return paths
 
+    def _drain_async_checkpoint_saver(self) -> None:
+        saver = self._async_checkpoint_saver
+        if saver is None:
+            return
+        saver.raise_if_failed()
+        for saved_step, paths in saver.drain_completed():
+            logger.info(
+                "Saved checkpoint asynchronously",
+                step=saved_step,
+                checkpoint=str(paths["checkpoint"]),
+                onnx=str(paths.get("onnx")) if "onnx" in paths else None,
+            )
+
+    def _shutdown_async_checkpoint_saver(self) -> None:
+        saver = self._async_checkpoint_saver
+        self._async_checkpoint_saver = None
+        if saver is None:
+            return
+        saver.shutdown()
+        for saved_step, paths in saver.drain_completed():
+            logger.info(
+                "Saved checkpoint asynchronously",
+                step=saved_step,
+                checkpoint=str(paths["checkpoint"]),
+                onnx=str(paths.get("onnx")) if "onnx" in paths else None,
+            )
+
     def _log_final_wandb_model_artifact(self, saved_paths: dict[str, Path]) -> None:
         if wandb.run is None:
             logger.warning(
@@ -772,6 +802,13 @@ class Trainer:
             except BaseException as error:
                 stop_error = error
                 logger.exception("Failed to stop game generator cleanly")
+
+            try:
+                self._shutdown_async_checkpoint_saver()
+            except BaseException as error:
+                if stop_error is None:
+                    stop_error = error
+                logger.exception("Failed to finalize async checkpoint saver")
 
             # Restore uncompiled model for final save + ONNX export
             self.model = export_model
@@ -944,6 +981,7 @@ class Trainer:
             start_step=start_step,
             config=str(self.config),
         )
+        self._async_checkpoint_saver = AsyncCheckpointSaver(self.weight_manager)
         use_device_replay_mirror = self._use_device_replay_mirror()
         staged_batch_size = (
             self.config.optimizer.batch_size * self.config.replay.prefetch_batches
@@ -1001,6 +1039,7 @@ class Trainer:
 
         try:
             while self.step < num_steps:
+                self._drain_async_checkpoint_saver()
                 pre_step_time = time.perf_counter()
 
                 if use_device_replay_mirror:
@@ -1427,15 +1466,21 @@ class Trainer:
                         time.perf_counter(),
                     )
 
-                # Checkpoint (swap to uncompiled model for ONNX export in save)
+                # Queue checkpoint/export work on the background saver.
                 if post_step_time >= next_checkpoint_time_s:
-                    train_model = self.model
-                    self.model = export_model
+                    if self._async_checkpoint_saver is None:
+                        raise RuntimeError(
+                            "Async checkpoint saver is unavailable during training"
+                        )
                     (
                         incumbent_model_artifact,
                         incumbent_model_source_path,
                     ) = self._persist_incumbent_model_artifacts(generator)
-                    self.save(
+                    checkpoint_snapshot = capture_checkpoint_snapshot(
+                        model=export_model,
+                        optimizer=self.optimizer,
+                        scheduler=self.scheduler,
+                        step=self.step,
                         extra_checkpoint_state={
                             "incumbent_uses_network": generator.incumbent_uses_network(),
                             "incumbent_model_step": generator.incumbent_model_step(),
@@ -1451,9 +1496,13 @@ class Trainer:
                                 if incumbent_model_artifact is not None
                                 else None
                             ),
-                        }
+                        },
                     )
-                    self.model = train_model
+                    self._async_checkpoint_saver.submit(
+                        snapshot=checkpoint_snapshot,
+                        model_kwargs=dict(self.config.network.to_model_kwargs()),
+                    )
+                    logger.info("Queued async checkpoint save", step=self.step)
                     next_checkpoint_time_s = roll_interval_deadline(
                         next_checkpoint_time_s,
                         self.config.run.checkpoint_interval_seconds,

@@ -94,6 +94,38 @@ fn test_shared_buffer_logical_indices_follow_fifo_window() {
     assert_eq!(move_numbers, vec![2, 3]);
 }
 
+#[test]
+fn test_snapshot_persister_writes_buffer_snapshot() {
+    let buffer = SharedBuffer::new(4);
+    buffer.add_examples(vec![make_example(1), make_example(2), make_example(3)]);
+    let snapshot_path = unique_temp_path("snapshot").with_extension("npz");
+    let persister = SnapshotPersister::new();
+
+    assert!(persister.submit_buffer_snapshot(&buffer, &snapshot_path));
+    persister.shutdown();
+
+    let loaded = read_examples_from_npz(&snapshot_path).expect("snapshot should load");
+    let move_numbers: Vec<u32> = loaded.iter().map(|example| example.move_number).collect();
+    assert_eq!(move_numbers, vec![1, 2, 3]);
+}
+
+#[test]
+fn test_snapshot_persister_shutdown_flushes_latest_pending_snapshot() {
+    let snapshot_path = unique_temp_path("latest_snapshot").with_extension("npz");
+    let persister = SnapshotPersister::new();
+
+    persister.submit_snapshot(
+        snapshot_path.clone(),
+        vec![make_example(1), make_example(2)],
+    );
+    persister.submit_snapshot(snapshot_path.clone(), vec![make_example(7)]);
+    persister.shutdown();
+
+    let loaded = read_examples_from_npz(&snapshot_path).expect("snapshot should load");
+    let move_numbers: Vec<u32> = loaded.iter().map(|example| example.move_number).collect();
+    assert_eq!(move_numbers, vec![7]);
+}
+
 fn make_game_result(
     total_attack: u32,
     total_lines: u32,
@@ -391,6 +423,7 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
         true,
         0.0,
         1.0,
+        true,
     )
     .expect("generator should construct");
 

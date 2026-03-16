@@ -226,22 +226,21 @@ impl GameGenerator {
     }
 
     pub(super) fn persist_snapshot_if_due(
-        training_data_path: &Path,
+        settings: &WorkerSettings,
         buffer: &SharedBuffer,
-        save_interval_seconds: f64,
         next_snapshot_deadline: &mut Option<Instant>,
     ) {
-        if save_interval_seconds <= 0.0 {
+        if settings.save_interval_seconds <= 0.0 {
             return;
         }
-        let interval = Duration::from_secs_f64(save_interval_seconds);
+        let interval = Duration::from_secs_f64(settings.save_interval_seconds);
         let now = Instant::now();
         let deadline = *next_snapshot_deadline.get_or_insert_with(|| now + interval);
         if now < deadline {
             return;
         }
 
-        Self::persist_buffer_snapshot(training_data_path, buffer);
+        Self::persist_buffer_snapshot(settings, buffer);
 
         let mut next_deadline = deadline + interval;
         while next_deadline <= now {
@@ -278,7 +277,7 @@ impl GameGenerator {
             thread::sleep(Duration::from_millis(500));
         }
 
-        // Only worker 0 handles disk saves to avoid race conditions
+        // Only worker 0 submits periodic replay snapshots to the background writer.
         let is_save_worker = worker_id == 0;
         let mut next_snapshot_deadline = if settings.save_interval_seconds > 0.0 {
             Some(Instant::now() + Duration::from_secs_f64(settings.save_interval_seconds))
@@ -340,9 +339,8 @@ impl GameGenerator {
 
                     if is_save_worker {
                         Self::persist_snapshot_if_due(
-                            &settings.training_data_path,
+                            &settings,
                             shared.buffer.as_ref(),
-                            settings.save_interval_seconds,
                             &mut next_snapshot_deadline,
                         );
                     }
@@ -366,9 +364,8 @@ impl GameGenerator {
                         Self::commit_game_results_batch(to_commit, &shared);
                     }
                     Self::persist_snapshot_if_due(
-                        &settings.training_data_path,
+                        &settings,
                         shared.buffer.as_ref(),
-                        settings.save_interval_seconds,
                         &mut next_snapshot_deadline,
                     );
                 }
@@ -378,13 +375,6 @@ impl GameGenerator {
         if !pending_results.is_empty() {
             let to_commit = std::mem::take(&mut pending_results);
             Self::commit_game_results_batch(to_commit, &shared);
-        }
-
-        // Final save on shutdown (only worker 0)
-        if is_save_worker && shared.buffer.len() > 0 {
-            let n = shared.buffer.len();
-            let _ = shared.buffer.persist_to_npz(&settings.training_data_path);
-            eprintln!("[GameGenerator] Saved {} examples to disk", n);
         }
 
         eprintln!("[GameGenerator] Worker {} exiting", worker_id);
@@ -1010,10 +1000,10 @@ impl GameGenerator {
         committed_games
     }
 
-    pub(super) fn persist_buffer_snapshot(training_data_path: &Path, buffer: &SharedBuffer) {
-        if let Err(error) = buffer.persist_to_npz(training_data_path) {
-            eprintln!("[GameGenerator] Failed to write NPZ: {}", error);
-        }
+    pub(super) fn persist_buffer_snapshot(settings: &WorkerSettings, buffer: &SharedBuffer) {
+        settings
+            .snapshot_persister
+            .submit_buffer_snapshot(buffer, &settings.training_data_path);
     }
 
     pub(super) fn model_artifact_paths(model_path: &Path) -> [PathBuf; 7] {

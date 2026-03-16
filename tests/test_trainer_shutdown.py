@@ -104,6 +104,11 @@ def test_shutdown_after_training_stops_generator_and_finishes_wandb(
         "_persist_incumbent_model_artifacts",
         lambda _generator: (None, "/tmp/bootstrap.onnx"),
     )
+    monkeypatch.setattr(
+        trainer,
+        "_shutdown_async_checkpoint_saver",
+        lambda: calls.append("flush_async"),
+    )
 
     def fake_save(
         *,
@@ -141,7 +146,7 @@ def test_shutdown_after_training_stops_generator_and_finishes_wandb(
     )
 
     assert stop_error is None
-    assert calls == ["stop", "save", "artifact", "finish", "cleanup"]
+    assert calls == ["stop", "flush_async", "save", "artifact", "finish", "cleanup"]
     assert saved_state["extra_checkpoint_state"] == {
         "incumbent_uses_network": False,
         "incumbent_model_step": 56,

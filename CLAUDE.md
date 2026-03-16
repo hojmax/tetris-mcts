@@ -229,6 +229,8 @@ If you see `ModuleNotFoundError: No module named 'tetris_core.tetris_core'`, the
 
 - `training_data.npz` is for resume/inspection and includes policy/value targets plus per-state diagnostics.
 - Large replay snapshots can exceed 4 GiB in `policy_targets.npy`; NPZ writing must keep ZIP64 enabled and snapshot writes should be atomic (`.tmp` then replace).
+- Periodic replay snapshot saves are now asynchronous: worker `0` clones the current FIFO replay window and hands it to a background writer thread, so generation no longer blocks on the NPZ write itself. The tradeoff is temporary extra RAM roughly proportional to the retained replay window while a snapshot is in flight. Final shutdown save now happens after all workers join, so the saved `training_data.npz` includes every worker's last committed games.
+- Periodic trainer checkpoints are now also asynchronous: the training loop snapshots model/optimizer/scheduler state to CPU and a background Python worker writes the `.pt` plus `latest.onnx`/split-model artifacts, so the old 3-hour checkpoint/export pause no longer blocks train steps. This still incurs a synchronous CPU snapshot copy at checkpoint time, and the 120-second candidate model export path remains synchronous for now.
 - Final WandB model artifact upload includes `training_data.npz` whenever the file exists; no extra Python-side NPZ integrity gate is applied at upload time.
 - Resumed runs create a new `vN` directory and initialize from the source run checkpoint.
 - Promotion state (incumbent model + `nn_value_weight`) is treated as an atomic runtime state.

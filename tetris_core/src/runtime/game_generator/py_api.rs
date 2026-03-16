@@ -46,10 +46,11 @@ impl GameGenerator {
         Ok(())
     }
 
-    fn worker_settings(&self) -> WorkerSettings {
+    fn worker_settings(&self, snapshot_persister: Arc<SnapshotPersister>) -> WorkerSettings {
         WorkerSettings {
             bootstrap_model_path: self.bootstrap_model_path.clone(),
             training_data_path: self.training_data_path.clone(),
+            snapshot_persister,
             config: self.config.clone(),
             max_placements: self.max_placements,
             add_noise: self.add_noise,
@@ -138,6 +139,7 @@ impl GameGenerator {
             add_noise,
             save_interval_seconds,
             num_workers,
+            snapshot_persister: None,
             candidate_eval_seeds: Arc::from(candidate_eval_seeds),
             non_network_num_simulations,
             bootstrap_use_min_max_q_normalization,
@@ -234,8 +236,10 @@ impl GameGenerator {
 
         // Set running flag
         self.running.store(true, Ordering::SeqCst);
+        let snapshot_persister = SnapshotPersister::new();
+        self.snapshot_persister = Some(Arc::clone(&snapshot_persister));
         let evaluator_worker_id = self.num_workers - 1;
-        let worker_settings = self.worker_settings();
+        let worker_settings = self.worker_settings(snapshot_persister);
         let worker_shared_state = self.worker_shared_state();
 
         // Spawn worker threads
@@ -263,6 +267,9 @@ impl GameGenerator {
     /// abort shutdown promptly instead of blocking on a long join.
     pub fn stop(&mut self, py: Python<'_>) -> PyResult<()> {
         if !self.running.load(Ordering::SeqCst) {
+            if let Some(snapshot_persister) = self.snapshot_persister.take() {
+                snapshot_persister.shutdown();
+            }
             return Ok(());
         }
 
@@ -282,6 +289,19 @@ impl GameGenerator {
             }
             py.check_signals()?;
             thread::sleep(Duration::from_millis(10));
+        }
+
+        if let Some(snapshot_persister) = self.snapshot_persister.take() {
+            let saved_examples = self.buffer.len();
+            if saved_examples > 0
+                && snapshot_persister
+                    .submit_buffer_snapshot(self.buffer.as_ref(), &self.training_data_path)
+            {
+                snapshot_persister.shutdown();
+                eprintln!("[GameGenerator] Saved {} examples to disk", saved_examples);
+            } else {
+                snapshot_persister.shutdown();
+            }
         }
 
         self.cleanup_queued_candidate_artifacts();

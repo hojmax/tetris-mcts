@@ -217,6 +217,7 @@ pub(super) struct WorkerSharedState {
 pub(super) struct WorkerSettings {
     pub(super) bootstrap_model_path: PathBuf,
     pub(super) training_data_path: PathBuf,
+    pub(super) snapshot_persister: Arc<SnapshotPersister>,
     pub(super) config: MCTSConfig,
     pub(super) max_placements: u32,
     pub(super) add_noise: bool,
@@ -250,6 +251,173 @@ pub(super) struct SharedBufferState {
     pub(super) end_index: u64,
 }
 
+fn snapshot_tmp_path(filepath: &Path) -> PathBuf {
+    let tmp_extension = filepath
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!("{ext}.tmp"))
+        .unwrap_or_else(|| "tmp".to_string());
+    filepath.with_extension(tmp_extension)
+}
+
+fn replace_snapshot_file(
+    filepath: &Path,
+    write_snapshot: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let tmp_path = snapshot_tmp_path(filepath);
+    if let Err(error) = fs::remove_file(&tmp_path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            return Err(format!(
+                "Failed to remove stale temp snapshot {}: {}",
+                tmp_path.display(),
+                error
+            ));
+        }
+    }
+
+    if let Err(error) = write_snapshot(&tmp_path) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(error);
+    }
+
+    if let Err(rename_error) = fs::rename(&tmp_path, filepath) {
+        if filepath.exists() {
+            if let Err(remove_error) = fs::remove_file(filepath) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(format!(
+                    "Failed to replace snapshot {} (rename error: {}; remove old file error: {})",
+                    filepath.display(),
+                    rename_error,
+                    remove_error
+                ));
+            }
+            if let Err(second_rename_error) = fs::rename(&tmp_path, filepath) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(format!(
+                    "Failed to move temp snapshot {} into place: {}",
+                    tmp_path.display(),
+                    second_rename_error
+                ));
+            }
+        } else {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(format!(
+                "Failed to move temp snapshot {} into place: {}",
+                tmp_path.display(),
+                rename_error
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+struct SnapshotRequest {
+    filepath: PathBuf,
+    examples: Vec<TrainingExample>,
+}
+
+struct SnapshotPersisterState {
+    pending: Option<SnapshotRequest>,
+    active: bool,
+    shutdown_requested: bool,
+}
+
+pub(super) struct SnapshotPersister {
+    state: Mutex<SnapshotPersisterState>,
+    ready: Condvar,
+    idle: Condvar,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl SnapshotPersister {
+    pub(super) fn new() -> Arc<Self> {
+        let persister = Arc::new(Self {
+            state: Mutex::new(SnapshotPersisterState {
+                pending: None,
+                active: false,
+                shutdown_requested: false,
+            }),
+            ready: Condvar::new(),
+            idle: Condvar::new(),
+            worker: Mutex::new(None),
+        });
+        let worker_persister = Arc::clone(&persister);
+        let handle = thread::spawn(move || worker_persister.worker_loop());
+        *persister.worker.lock().unwrap() = Some(handle);
+        persister
+    }
+
+    pub(super) fn submit_snapshot(&self, filepath: PathBuf, examples: Vec<TrainingExample>) {
+        if examples.is_empty() {
+            return;
+        }
+        let mut state = self.state.lock().unwrap();
+        state.pending = Some(SnapshotRequest { filepath, examples });
+        self.ready.notify_one();
+    }
+
+    pub(super) fn submit_buffer_snapshot(&self, buffer: &SharedBuffer, filepath: &Path) -> bool {
+        let Some((_, _, examples)) = buffer.logical_window_snapshot() else {
+            return false;
+        };
+        self.submit_snapshot(filepath.to_path_buf(), examples);
+        true
+    }
+
+    pub(super) fn flush(&self) {
+        let mut state = self.state.lock().unwrap();
+        while state.active || state.pending.is_some() {
+            state = self.idle.wait(state).unwrap();
+        }
+    }
+
+    pub(super) fn shutdown(&self) {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.shutdown_requested = true;
+            self.ready.notify_one();
+        }
+        self.flush();
+        if let Some(handle) = self.worker.lock().unwrap().take() {
+            let _ = handle.join();
+        }
+    }
+
+    fn worker_loop(self: Arc<Self>) {
+        loop {
+            let request = {
+                let mut state = self.state.lock().unwrap();
+                while state.pending.is_none() && !state.shutdown_requested {
+                    state = self.ready.wait(state).unwrap();
+                }
+                if state.pending.is_none() && state.shutdown_requested {
+                    self.idle.notify_all();
+                    return;
+                }
+                state.active = true;
+                state.pending.take().expect("pending snapshot should exist")
+            };
+
+            if let Err(error) = replace_snapshot_file(&request.filepath, |tmp_path| {
+                write_examples_to_npz(tmp_path, &request.examples)
+            }) {
+                eprintln!(
+                    "[GameGenerator] Failed to write replay snapshot {}: {}",
+                    request.filepath.display(),
+                    error
+                );
+            }
+
+            let mut state = self.state.lock().unwrap();
+            state.active = false;
+            if state.pending.is_none() {
+                self.idle.notify_all();
+            }
+        }
+    }
+}
+
 impl SharedBuffer {
     pub(super) fn new(max_size: usize) -> Self {
         SharedBuffer {
@@ -278,67 +446,6 @@ impl SharedBuffer {
     /// Get current buffer size.
     pub(super) fn len(&self) -> usize {
         self.state.read().unwrap().examples.len()
-    }
-
-    /// Stream buffer contents directly to an NPZ file under read lock.
-    ///
-    /// Holds the read lock for the duration of the write so that the snapshot is
-    /// consistent. Workers calling `add_examples` will block until the save completes
-    /// (typically 10-30 seconds), so snapshots should stay relatively infrequent.
-    pub(super) fn persist_to_npz(&self, filepath: &Path) -> Result<(), String> {
-        let state = self.state.read().unwrap();
-        let (slice_a, slice_b) = state.examples.as_slices();
-        let tmp_extension = filepath
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| format!("{ext}.tmp"))
-            .unwrap_or_else(|| "tmp".to_string());
-        let tmp_path = filepath.with_extension(tmp_extension);
-        if let Err(error) = fs::remove_file(&tmp_path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                return Err(format!(
-                    "Failed to remove stale temp snapshot {}: {}",
-                    tmp_path.display(),
-                    error
-                ));
-            }
-        }
-
-        if let Err(error) = write_examples_slices_to_npz(&tmp_path, slice_a, slice_b) {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(error);
-        }
-
-        if let Err(rename_error) = fs::rename(&tmp_path, filepath) {
-            if filepath.exists() {
-                if let Err(remove_error) = fs::remove_file(filepath) {
-                    let _ = fs::remove_file(&tmp_path);
-                    return Err(format!(
-                        "Failed to replace snapshot {} (rename error: {}; remove old file error: {})",
-                        filepath.display(),
-                        rename_error,
-                        remove_error
-                    ));
-                }
-                if let Err(second_rename_error) = fs::rename(&tmp_path, filepath) {
-                    let _ = fs::remove_file(&tmp_path);
-                    return Err(format!(
-                        "Failed to move temp snapshot {} into place: {}",
-                        tmp_path.display(),
-                        second_rename_error
-                    ));
-                }
-            } else {
-                let _ = fs::remove_file(&tmp_path);
-                return Err(format!(
-                    "Failed to move temp snapshot {} into place: {}",
-                    tmp_path.display(),
-                    rename_error
-                ));
-            }
-        }
-
-        Ok(())
     }
 
     /// Return the logical one-past-end index in replay index space.
