@@ -164,7 +164,7 @@ def test_warm_start_selection_metric_weights_value_loss_by_quarter() -> None:
 
 
 def test_has_better_validation_metric_uses_fixed_selection_metric() -> None:
-    best_record = {
+    best_record: dict[str, float | int | bool | str] = {
         "val_selection_metric": 4.0,
         "val_policy_loss": 1.5,
         "val_value_loss": 10.0,

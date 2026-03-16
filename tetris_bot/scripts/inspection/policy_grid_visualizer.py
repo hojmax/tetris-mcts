@@ -744,7 +744,7 @@ app.layout = html.Div(
                         ),
                         dcc.Dropdown(
                             id="piece-dropdown",
-                            options=PIECE_SELECTOR_OPTIONS,
+                            options=PIECE_SELECTOR_OPTIONS,  # type: ignore[arg-type]
                             value=2,
                             clearable=False,
                         ),

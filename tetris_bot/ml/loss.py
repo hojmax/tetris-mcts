@@ -63,8 +63,8 @@ class RunningLossBalancer:
         }
 
     def load_state_dict(self, state: dict[str, object]) -> None:
-        policy_losses = [float(value) for value in state.get("policy_losses", [])]
-        value_losses = [float(value) for value in state.get("value_losses", [])]
+        policy_losses = [float(v) for v in (state.get("policy_losses") or [])]  # type: ignore[union-attr]
+        value_losses = [float(v) for v in (state.get("value_losses") or [])]  # type: ignore[union-attr]
         if len(policy_losses) != len(value_losses):
             raise ValueError(
                 "RunningLossBalancer state must have matching policy/value histories"

@@ -862,7 +862,7 @@ def train_warm_start_model(
         optimizer_state_dict=copy.deepcopy(optimizer.state_dict()),
         loss_balancer_state=loss_balancer.state_dict(),
         current_value_loss_weight=current_value_loss_weight,
-        rng_state=copy.deepcopy(rng.bit_generator.state),
+        rng_state=dict(copy.deepcopy(rng.bit_generator.state)),
         total_steps=total_steps,
         steps_per_round=steps_per_round,
         rounds_completed=rounds_completed,

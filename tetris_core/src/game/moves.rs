@@ -45,7 +45,7 @@ const ROT_STATES: usize = 4;
 const X_STRIDE: usize = Y_STATES * ROT_STATES;
 const Y_STRIDE: usize = ROT_STATES;
 const NUM_STATE_INDICES: usize = X_STATES * Y_STATES * ROT_STATES; // 1,664
-const VISITED_WORDS: usize = (NUM_STATE_INDICES + 63) / 64; // 26
+const VISITED_WORDS: usize = NUM_STATE_INDICES.div_ceil(64); // 26
 
 /// A possible placement for a piece, including the move sequence to reach it
 #[pyclass]
@@ -714,10 +714,7 @@ pub fn find_all_placement_params(
                 | ((packed_cells[2] as u64) << 16)
                 | packed_cells[3] as u64;
 
-            if seen_cells[..seen_cells_len]
-                .iter()
-                .any(|&existing_key| existing_key == cell_key)
-            {
+            if seen_cells[..seen_cells_len].contains(&cell_key) {
                 continue;
             }
             debug_assert!(
