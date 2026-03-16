@@ -27,9 +27,9 @@ class NetworkConfig:
     """Neural network architecture hyperparameters."""
 
     architecture: str = "gated_fusion"  # 'gated_fusion' (default) or 'simple_aux_mlp'
-    trunk_channels: int = 16
-    num_conv_residual_blocks: int = 3
-    reduction_channels: int = 32
+    trunk_channels: int = 8
+    num_conv_residual_blocks: int = 2
+    reduction_channels: int = 16
     fc_hidden: int = 128
     aux_hidden: int = 64
     num_fusion_blocks: int = 1
