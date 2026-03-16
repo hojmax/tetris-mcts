@@ -187,7 +187,7 @@ class RunConfig:
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
     log_interval_seconds: float = 10  # Seconds between logging
     save_interval_seconds: float = (
-        0  # Seconds between replay snapshot saves (0 to disable)
+        10800  # Seconds between replay snapshot saves (0 to disable)
     )
 
     # Paths (set automatically by setup_run_directory)
