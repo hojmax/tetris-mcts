@@ -143,6 +143,9 @@ class SelfPlayConfig:
     bootstrap_num_simulations: int = (  # Simulations per move before first promoted NN model
         4000
     )
+    save_eval_trees: bool = (  # If True, persist worst-case candidate eval game trees to disk (can use ~250 MB per evaluation)
+        False
+    )
 
 
 @dataclass

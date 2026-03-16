@@ -903,6 +903,7 @@ class Trainer:
             bootstrap_use_min_max_q_normalization=self.config.self_play.bootstrap_use_min_max_q_normalization,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
             nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
+            save_eval_trees=self.config.self_play.save_eval_trees,
         )
         generator.start()
         logger.info(

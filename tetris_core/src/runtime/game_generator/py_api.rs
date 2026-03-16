@@ -59,6 +59,7 @@ impl GameGenerator {
             non_network_num_simulations: self.non_network_num_simulations,
             bootstrap_use_min_max_q_normalization: self.bootstrap_use_min_max_q_normalization,
             nn_value_weight_cap: self.nn_value_weight_cap,
+            save_eval_trees: self.save_eval_trees,
         }
     }
 
@@ -89,7 +90,7 @@ impl GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=0.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=0.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0, save_eval_trees=true))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -106,6 +107,7 @@ impl GameGenerator {
         bootstrap_use_min_max_q_normalization: bool,
         initial_incumbent_eval_avg_attack: f32,
         nn_value_weight_cap: f32,
+        save_eval_trees: bool,
     ) -> PyResult<Self> {
         let candidate_eval_seeds = candidate_eval_seeds.ok_or_else(|| {
             Self::invalid_generator_arg("candidate_eval_seeds must be provided explicitly")
@@ -160,6 +162,7 @@ impl GameGenerator {
             incumbent_eval_avg_attack: Arc::new(AtomicU32::new(
                 initial_incumbent_eval_avg_attack.to_bits(),
             )),
+            save_eval_trees,
             thread_handles: Vec::new(),
         })
     }

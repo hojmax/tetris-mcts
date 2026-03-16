@@ -93,6 +93,8 @@ pub struct GameGenerator {
     nn_value_weight_cap: f32,
     /// Average attack from the evaluation that promoted the current incumbent.
     incumbent_eval_avg_attack: Arc<AtomicU32>,
+    /// Whether to persist worst-case eval game trees to disk.
+    save_eval_trees: bool,
     /// Thread handles (for joining on stop)
     thread_handles: Vec<JoinHandle<()>>,
 }

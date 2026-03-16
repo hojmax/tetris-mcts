@@ -715,22 +715,26 @@ impl GameGenerator {
             incumbent_nn_value_weight_before
         };
         let evaluation_seconds = eval_start.elapsed().as_secs_f32();
-        let worst_game_tree_path = worst_idx.and_then(|idx| {
-            let worst = &candidate_results[idx];
-            Self::persist_worst_candidate_eval_tree(
-                &candidate_agent,
-                &candidate_rollout_config,
-                &settings.training_data_path,
-                &candidate,
-                worst.seed,
-                &worst.replay_moves,
-                worst.game_result.total_attack,
-                settings.max_placements,
-                promoted,
-                candidate_avg_attack,
-                evaluation_seconds,
-            )
-        });
+        let worst_game_tree_path = if settings.save_eval_trees {
+            worst_idx.and_then(|idx| {
+                let worst = &candidate_results[idx];
+                Self::persist_worst_candidate_eval_tree(
+                    &candidate_agent,
+                    &candidate_rollout_config,
+                    &settings.training_data_path,
+                    &candidate,
+                    worst.seed,
+                    &worst.replay_moves,
+                    worst.game_result.total_attack,
+                    settings.max_placements,
+                    promoted,
+                    candidate_avg_attack,
+                    evaluation_seconds,
+                )
+            })
+        } else {
+            None
+        };
 
         if promoted {
             let previous_incumbent_path = shared.incumbent.model_path.read().unwrap().clone();
