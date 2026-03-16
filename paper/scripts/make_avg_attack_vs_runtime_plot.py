@@ -22,7 +22,7 @@ MARKER_SEQUENCE = ("o", "s", "D", "^", "h")
 class PlotPoint:
     simulations: int
     runtime_ms: float
-    bridge: float
+    avg_attack: float
 
 
 @dataclass(frozen=True)
@@ -34,45 +34,44 @@ class Curve:
 
 @dataclass
 class PlotArgs:
-    output_path: Path = PROJECT_ROOT / "paper" / "plots" / "bridge_vs_runtime_dummy.pdf"
+    output_path: Path = PROJECT_ROOT / "paper" / "plots" / "avg_attack_vs_runtime.pdf"
     width_inches: float = 9.8
     height_inches: float = 5.8
 
 
-def build_dummy_curves() -> list[Curve]:
-    """Dummy fronts for layout prototyping only."""
+def build_curves() -> list[Curve]:
     return [
         Curve(
             name="Baseline",
             color="#4C78A8",
             points=[
-                PlotPoint(simulations=64, runtime_ms=5_500, bridge=0.32),
-                PlotPoint(simulations=128, runtime_ms=10_000, bridge=0.40),
-                PlotPoint(simulations=256, runtime_ms=19_000, bridge=0.49),
-                PlotPoint(simulations=512, runtime_ms=36_000, bridge=0.56),
-                PlotPoint(simulations=1_024, runtime_ms=68_000, bridge=0.63),
+                PlotPoint(simulations=64, runtime_ms=5_500, avg_attack=5.2),
+                PlotPoint(simulations=128, runtime_ms=10_000, avg_attack=6.1),
+                PlotPoint(simulations=256, runtime_ms=19_000, avg_attack=6.9),
+                PlotPoint(simulations=512, runtime_ms=36_000, avg_attack=7.5),
+                PlotPoint(simulations=1_024, runtime_ms=68_000, avg_attack=7.9),
             ],
         ),
         Curve(
-            name="Bridge-Tuned",
+            name="Variant A",
             color="#F58518",
             points=[
-                PlotPoint(simulations=64, runtime_ms=4_800, bridge=0.37),
-                PlotPoint(simulations=128, runtime_ms=8_800, bridge=0.45),
-                PlotPoint(simulations=256, runtime_ms=16_500, bridge=0.53),
-                PlotPoint(simulations=512, runtime_ms=31_000, bridge=0.61),
-                PlotPoint(simulations=1_024, runtime_ms=59_000, bridge=0.68),
+                PlotPoint(simulations=64, runtime_ms=4_800, avg_attack=5.8),
+                PlotPoint(simulations=128, runtime_ms=8_800, avg_attack=6.6),
+                PlotPoint(simulations=256, runtime_ms=16_500, avg_attack=7.3),
+                PlotPoint(simulations=512, runtime_ms=31_000, avg_attack=8.0),
+                PlotPoint(simulations=1_024, runtime_ms=59_000, avg_attack=8.4),
             ],
         ),
         Curve(
-            name="Search-Heavy",
+            name="Variant B",
             color="#54A24B",
             points=[
-                PlotPoint(simulations=64, runtime_ms=7_200, bridge=0.42),
-                PlotPoint(simulations=128, runtime_ms=13_500, bridge=0.50),
-                PlotPoint(simulations=256, runtime_ms=25_000, bridge=0.59),
-                PlotPoint(simulations=512, runtime_ms=47_000, bridge=0.67),
-                PlotPoint(simulations=1_024, runtime_ms=84_000, bridge=0.75),
+                PlotPoint(simulations=64, runtime_ms=7_200, avg_attack=6.3),
+                PlotPoint(simulations=128, runtime_ms=13_500, avg_attack=7.1),
+                PlotPoint(simulations=256, runtime_ms=25_000, avg_attack=7.9),
+                PlotPoint(simulations=512, runtime_ms=47_000, avg_attack=8.7),
+                PlotPoint(simulations=1_024, runtime_ms=84_000, avg_attack=9.4),
             ],
         ),
     ]
@@ -85,7 +84,7 @@ def format_runtime_ms(value: float, _position: float) -> str:
 
 
 def write_plot(output_path: Path, *, width_inches: float, height_inches: float) -> None:
-    curves = build_dummy_curves()
+    curves = build_curves()
     simulations = sorted(
         {point.simulations for curve in curves for point in curve.points}
     )
@@ -103,11 +102,11 @@ def write_plot(output_path: Path, *, width_inches: float, height_inches: float) 
 
     for curve_index, curve in enumerate(curves):
         runtimes = [point.runtime_ms for point in curve.points]
-        bridges = [point.bridge for point in curve.points]
+        avg_attacks = [point.avg_attack for point in curve.points]
         color = f"C{curve_index}"
         ax.plot(
             runtimes,
-            bridges,
+            avg_attacks,
             color=color,
             linewidth=1.8,
             label=curve.name,
@@ -115,7 +114,7 @@ def write_plot(output_path: Path, *, width_inches: float, height_inches: float) 
         for point in curve.points:
             ax.scatter(
                 point.runtime_ms,
-                point.bridge,
+                point.avg_attack,
                 s=55,
                 marker=marker_map[point.simulations],
                 color=color,
@@ -125,8 +124,7 @@ def write_plot(output_path: Path, *, width_inches: float, height_inches: float) 
     ax.grid(True, alpha=0.3)
     ax.xaxis.set_major_formatter(FuncFormatter(format_runtime_ms))
     ax.set_xlabel("Whole-game runtime (ms, lower is better)")
-    ax.set_ylabel("Bridge")
-    ax.set_title("Bridge vs. runtime")
+    ax.set_ylabel("Avg. attack")
 
     front_handles = [
         Line2D(
@@ -170,7 +168,7 @@ def write_plot(output_path: Path, *, width_inches: float, height_inches: float) 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
-    logger.info("Wrote dummy bridge/runtime plot", path=output_path)
+    logger.info("Wrote avg attack/runtime plot", path=output_path)
 
 
 def main() -> None:
