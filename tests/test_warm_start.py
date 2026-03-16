@@ -82,17 +82,37 @@ def test_build_output_config_creates_resume_ready_incumbent_start(
     tmp_path: Path,
 ) -> None:
     source_config = TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
+        network=NetworkConfig(
+            trunk_channels=12,
+            num_conv_residual_blocks=4,
+            reduction_channels=24,
+            fc_hidden=160,
+            aux_hidden=40,
+            num_fusion_blocks=2,
+        ),
+        optimizer=OptimizerConfig(
+            batch_size=2048,
+            learning_rate=1e-3,
+            weight_decay=2e-4,
+        ),
         self_play=SelfPlayConfig(
             nn_value_weight=0.01,
             nn_value_weight_cap=1.0,
             death_penalty=5.0,
             overhang_penalty_weight=5.0,
             bootstrap_without_network=True,
+            num_simulations=3000,
+            num_workers=11,
         ),
-        replay=ReplayConfig(),
-        run=RunConfig(run_name="v3"),
+        replay=ReplayConfig(buffer_size=123_456),
+        run=RunConfig(
+            project_name="custom-project",
+            run_name="v3",
+            model_sync_interval_seconds=30.0,
+            checkpoint_interval_seconds=90.0,
+            log_interval_seconds=12.0,
+            save_interval_seconds=45.0,
+        ),
     )
     output_run_dir = tmp_path / "training_runs" / "v4"
 
@@ -106,12 +126,31 @@ def test_build_output_config_creates_resume_ready_incumbent_start(
     assert output_config.self_play.death_penalty == 0.0
     assert output_config.self_play.overhang_penalty_weight == 0.0
     assert output_config.self_play.bootstrap_without_network is False
+    assert output_config.self_play.num_simulations == 3000
+    assert output_config.self_play.num_workers == 11
+    assert output_config.network.trunk_channels == 12
+    assert output_config.network.num_conv_residual_blocks == 4
+    assert output_config.network.reduction_channels == 24
+    assert output_config.network.fc_hidden == 160
+    assert output_config.network.aux_hidden == 40
+    assert output_config.network.num_fusion_blocks == 2
+    assert output_config.optimizer.batch_size == 2048
+    assert output_config.optimizer.learning_rate == 1e-3
+    assert output_config.optimizer.weight_decay == 2e-4
+    assert output_config.replay.buffer_size == 123_456
+    assert output_config.run.project_name == "custom-project"
+    assert output_config.run.model_sync_interval_seconds == 30.0
+    assert output_config.run.checkpoint_interval_seconds == 90.0
+    assert output_config.run.log_interval_seconds == 12.0
+    assert output_config.run.save_interval_seconds == 45.0
     assert output_config.run.run_name == "v4"
     assert output_config.run.run_dir == output_run_dir
     assert output_config.run.checkpoint_dir == output_run_dir / "checkpoints"
     assert output_config.run.data_dir == output_run_dir
 
     saved_config = json.loads((output_run_dir / CONFIG_FILENAME).read_text())
+    assert saved_config["network"]["trunk_channels"] == 12
+    assert saved_config["optimizer"]["batch_size"] == 2048
     assert saved_config["self_play"]["nn_value_weight"] == 1.0
     assert saved_config["self_play"]["death_penalty"] == 0.0
     assert saved_config["self_play"]["overhang_penalty_weight"] == 0.0

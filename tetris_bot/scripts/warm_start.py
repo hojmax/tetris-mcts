@@ -31,20 +31,12 @@ from tetris_bot.ml.artifacts import (
     assert_rust_inference_artifacts,
     copy_model_artifact_bundle,
 )
-from tetris_bot.ml.config import (
-    NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
-    TrainingConfig,
-    load_training_config_json,
-)
+from tetris_bot.ml.config import TrainingConfig, load_training_config_json
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.weights import export_metadata, save_checkpoint
-from tetris_bot.run_setup import config_to_json, setup_run_directory
+from tetris_bot.run_setup import config_to_json, save_config, setup_run_directory
 from tetris_bot.scripts.inspection.optimize_machine import (
     machine_profile,
     machine_type_fingerprint,
@@ -134,6 +126,18 @@ class WarmStartOfflineResumeState:
     non_improving_rounds: int
     current_value_loss_weight: float
     rng_state: dict[str, object]
+
+
+@dataclass(frozen=True)
+class WarmStartRunResult:
+    output_run_dir: Path
+    checkpoint_dir: Path
+    latest_checkpoint_path: Path
+    latest_onnx_path: Path
+    incumbent_onnx_path: Path
+    parallel_onnx_path: Path
+    summary_path: Path
+    summary: dict[str, object]
 
 
 def validate_args(args: ScriptArgs) -> None:
@@ -562,13 +566,15 @@ def build_output_config(
     source_run_dir: Path,
     output_run_dir: Path | None,
 ) -> TrainingConfig:
-    config = TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(bootstrap_without_network=False),
-        replay=ReplayConfig(),
-        run=RunConfig(),
-    )
+    config = copy.deepcopy(source_config)
+    config.self_play.nn_value_weight = 1.0
+    config.self_play.death_penalty = 0.0
+    config.self_play.overhang_penalty_weight = 0.0
+    config.self_play.bootstrap_without_network = False
+    config.run.run_name = None
+    config.run.run_dir = None
+    config.run.checkpoint_dir = None
+    config.run.data_dir = None
 
     return setup_run_directory(
         config,
@@ -881,7 +887,11 @@ def log_wandb(payload: dict[str, object]) -> None:
         wandb.log(payload)
 
 
-def main(args: ScriptArgs) -> None:
+def run_warm_start(
+    args: ScriptArgs,
+    *,
+    output_config: TrainingConfig | None = None,
+) -> WarmStartRunResult:
     validate_args(args)
 
     source_run_dir = args.source_run_dir.resolve()
@@ -896,16 +906,27 @@ def main(args: ScriptArgs) -> None:
     source_config_path = source_run_dir / CONFIG_FILENAME
     source_training_data_path = source_run_dir / TRAINING_DATA_FILENAME
     source_config = load_training_config_json(source_config_path)
-    output_config = build_output_config(
-        source_config,
-        source_run_dir=source_run_dir,
-        output_run_dir=output_run_dir,
+    resolved_output_config = (
+        build_output_config(
+            source_config,
+            source_run_dir=source_run_dir,
+            output_run_dir=output_run_dir,
+        )
+        if output_config is None
+        else copy.deepcopy(output_config)
     )
 
-    if output_config.run.run_dir is None or output_config.run.checkpoint_dir is None:
+    if (
+        resolved_output_config.run.run_dir is None
+        or resolved_output_config.run.checkpoint_dir is None
+    ):
         raise RuntimeError("Output run directory was not set by setup_run_directory")
-    if output_config.run.data_dir is None:
+    if resolved_output_config.run.data_dir is None:
         raise RuntimeError("Output data directory was not set by setup_run_directory")
+    save_config(
+        resolved_output_config,
+        resolved_output_config.run.run_dir / CONFIG_FILENAME,
+    )
 
     device_str = pick_device(args.device)
     device = torch.device(device_str)
@@ -916,31 +937,34 @@ def main(args: ScriptArgs) -> None:
     batch_size = (
         args.batch_size
         if args.batch_size is not None
-        else output_config.optimizer.batch_size
+        else resolved_output_config.optimizer.batch_size
     )
     learning_rate = (
         args.learning_rate
         if args.learning_rate is not None
-        else output_config.optimizer.learning_rate
+        else resolved_output_config.optimizer.learning_rate
     )
     weight_decay = (
         args.weight_decay
         if args.weight_decay is not None
-        else output_config.optimizer.weight_decay
+        else resolved_output_config.optimizer.weight_decay
     )
     grad_clip_norm = (
         args.grad_clip_norm
         if args.grad_clip_norm is not None
-        else output_config.optimizer.grad_clip_norm
+        else resolved_output_config.optimizer.grad_clip_norm
     )
     eval_worker_resolution = resolve_eval_num_workers(
         args.eval_num_workers,
-        default_workers=output_config.self_play.num_workers,
+        default_workers=resolved_output_config.self_play.num_workers,
     )
     resolved_wandb_run_name = (
         args.wandb_run_name
         if args.wandb_run_name is not None
-        else f"warm-start-{source_run_dir.name}-to-{output_config.run.run_dir.name}"
+        else (
+            f"warm-start-{source_run_dir.name}-to-"
+            f"{resolved_output_config.run.run_dir.name}"
+        )
     )
     wandb_config = {
         "source_run_dir": str(source_run_dir),
@@ -952,7 +976,7 @@ def main(args: ScriptArgs) -> None:
             if source_offline_resume_checkpoint is not None
             else None
         ),
-        "output_run_dir": str(output_config.run.run_dir),
+        "output_run_dir": str(resolved_output_config.run.run_dir),
         "device": device_str,
         "seed": args.seed,
         "epochs_per_round": args.epochs_per_round,
@@ -977,7 +1001,7 @@ def main(args: ScriptArgs) -> None:
         "eval_max_placements": args.eval_max_placements,
         "mcts_seed": args.mcts_seed,
         "wandb_tags": args.wandb_tags,
-        "output_config": json.loads(config_to_json(output_config)),
+        "output_config": json.loads(config_to_json(resolved_output_config)),
     }
     wandb.init(
         project=args.wandb_project,
@@ -994,7 +1018,7 @@ def main(args: ScriptArgs) -> None:
     logger.info(
         "Starting warm start",
         source_run_dir=str(source_run_dir),
-        output_run_dir=str(output_config.run.run_dir),
+        output_run_dir=str(resolved_output_config.run.run_dir),
         device=device_str,
         resume_from_source_offline_state=args.resume_from_source_offline_state,
         source_offline_resume_checkpoint=(
@@ -1019,7 +1043,7 @@ def main(args: ScriptArgs) -> None:
 
     torch.manual_seed(args.seed)
     torch.set_float32_matmul_precision("high")
-    model = TetrisNet(**output_config.network.to_model_kwargs()).to(device)
+    model = TetrisNet(**resolved_output_config.network.to_model_kwargs()).to(device)
 
     try:
         npz = np.load(source_training_data_path, mmap_mode="r")
@@ -1063,14 +1087,16 @@ def main(args: ScriptArgs) -> None:
                 early_stopping_patience=args.early_stopping_patience,
                 max_rounds=args.max_rounds,
                 eval_batch_size=args.eval_batch_size,
-                value_loss_window=output_config.optimizer.value_loss_weight_window,
+                value_loss_window=(
+                    resolved_output_config.optimizer.value_loss_weight_window
+                ),
                 seed=args.seed,
             )
         finally:
             npz.close()
 
         offline_resume_checkpoint = offline_resume_checkpoint_path(
-            output_config.run.run_dir
+            resolved_output_config.run.run_dir
         )
         save_offline_resume_checkpoint(
             offline_resume_checkpoint,
@@ -1097,36 +1123,46 @@ def main(args: ScriptArgs) -> None:
         model.load_state_dict(training_result.best_state_dict)
         model.eval()
 
-        output_training_data_path = output_config.run.data_dir / TRAINING_DATA_FILENAME
+        output_training_data_path = (
+            resolved_output_config.run.data_dir / TRAINING_DATA_FILENAME
+        )
         shutil.copy2(source_training_data_path, output_training_data_path)
 
-        trainer = Trainer(output_config, model=model, device=device_str)
+        trainer = Trainer(resolved_output_config, model=model, device=device_str)
         trainer.step = 0
         initial_checkpoint_state = {
             "incumbent_uses_network": True,
             "incumbent_model_step": 0,
-            "incumbent_nn_value_weight": output_config.self_play.nn_value_weight,
-            "incumbent_death_penalty": output_config.self_play.death_penalty,
+            "incumbent_nn_value_weight": (
+                resolved_output_config.self_play.nn_value_weight
+            ),
+            "incumbent_death_penalty": resolved_output_config.self_play.death_penalty,
             "incumbent_overhang_penalty_weight": (
-                output_config.self_play.overhang_penalty_weight
+                resolved_output_config.self_play.overhang_penalty_weight
             ),
             "incumbent_eval_avg_attack": 0.0,
             "incumbent_model_source_path": str(
-                output_config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
+                resolved_output_config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
             ),
             "incumbent_model_artifact": INCUMBENT_ONNX_FILENAME,
         }
         saved_paths = trainer.save(extra_checkpoint_state=initial_checkpoint_state)
 
-        latest_onnx_path = output_config.run.checkpoint_dir / LATEST_ONNX_FILENAME
-        incumbent_onnx_path = output_config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
-        parallel_onnx_path = output_config.run.checkpoint_dir / PARALLEL_ONNX_FILENAME
+        latest_onnx_path = (
+            resolved_output_config.run.checkpoint_dir / LATEST_ONNX_FILENAME
+        )
+        incumbent_onnx_path = (
+            resolved_output_config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
+        )
+        parallel_onnx_path = (
+            resolved_output_config.run.checkpoint_dir / PARALLEL_ONNX_FILENAME
+        )
         copy_model_artifact_bundle(latest_onnx_path, incumbent_onnx_path)
         copy_model_artifact_bundle(latest_onnx_path, parallel_onnx_path)
         assert_rust_inference_artifacts(incumbent_onnx_path)
         assert_rust_inference_artifacts(parallel_onnx_path)
 
-        eval_config = copy.deepcopy(output_config.self_play)
+        eval_config = copy.deepcopy(resolved_output_config.self_play)
         eval_num_workers = eval_worker_resolution.num_workers
         eval_num_simulations = (
             args.eval_num_simulations
@@ -1156,10 +1192,10 @@ def main(args: ScriptArgs) -> None:
         mcts_config.use_parent_value_for_unvisited_q = (
             eval_config.use_parent_value_for_unvisited_q
         )
-        mcts_config.nn_value_weight = output_config.self_play.nn_value_weight
-        mcts_config.death_penalty = output_config.self_play.death_penalty
+        mcts_config.nn_value_weight = resolved_output_config.self_play.nn_value_weight
+        mcts_config.death_penalty = resolved_output_config.self_play.death_penalty
         mcts_config.overhang_penalty_weight = (
-            output_config.self_play.overhang_penalty_weight
+            resolved_output_config.self_play.overhang_penalty_weight
         )
         mcts_config.seed = resolved_mcts_seed
 
@@ -1176,9 +1212,11 @@ def main(args: ScriptArgs) -> None:
             num_simulations=eval_num_simulations,
             max_placements=eval_max_placements,
             mcts_seed=resolved_mcts_seed,
-            nn_value_weight=output_config.self_play.nn_value_weight,
-            death_penalty=output_config.self_play.death_penalty,
-            overhang_penalty_weight=output_config.self_play.overhang_penalty_weight,
+            nn_value_weight=resolved_output_config.self_play.nn_value_weight,
+            death_penalty=resolved_output_config.self_play.death_penalty,
+            overhang_penalty_weight=(
+                resolved_output_config.self_play.overhang_penalty_weight
+            ),
         )
         eval_result = evaluate_model(
             model_path=str(incumbent_onnx_path),
@@ -1247,23 +1285,25 @@ def main(args: ScriptArgs) -> None:
             filepath=checkpoint_path,
             incumbent_uses_network=True,
             incumbent_model_step=0,
-            incumbent_nn_value_weight=output_config.self_play.nn_value_weight,
-            incumbent_death_penalty=output_config.self_play.death_penalty,
+            incumbent_nn_value_weight=(
+                resolved_output_config.self_play.nn_value_weight
+            ),
+            incumbent_death_penalty=(resolved_output_config.self_play.death_penalty),
             incumbent_overhang_penalty_weight=(
-                output_config.self_play.overhang_penalty_weight
+                resolved_output_config.self_play.overhang_penalty_weight
             ),
             incumbent_eval_avg_attack=eval_metrics["avg_attack"],
             incumbent_model_source_path=str(incumbent_onnx_path),
             incumbent_model_artifact=INCUMBENT_ONNX_FILENAME,
         )
         export_metadata(
-            output_config.run.checkpoint_dir / LATEST_METADATA_FILENAME,
+            resolved_output_config.run.checkpoint_dir / LATEST_METADATA_FILENAME,
             step=0,
             eval_metrics={
                 "warm_start_eval": eval_metrics,
                 "offline_best": training_result.best_record,
             },
-            config=json.loads(config_to_json(output_config)),
+            config=json.loads(config_to_json(resolved_output_config)),
         )
 
         summary = {
@@ -1274,7 +1314,7 @@ def main(args: ScriptArgs) -> None:
                 if source_offline_resume_checkpoint is not None
                 else None
             ),
-            "output_run_dir": str(output_config.run.run_dir),
+            "output_run_dir": str(resolved_output_config.run.run_dir),
             "source_training_data_path": str(source_training_data_path),
             "copied_training_data_path": str(output_training_data_path),
             "device": device_str,
@@ -1324,10 +1364,10 @@ def main(args: ScriptArgs) -> None:
                 "parallel_onnx": str(parallel_onnx_path),
             },
         }
-        save_summary(
-            output_config.run.run_dir / "analysis" / "warm_start_summary.json",
-            summary,
+        summary_path = (
+            resolved_output_config.run.run_dir / "analysis" / "warm_start_summary.json"
         )
+        save_summary(summary_path, summary)
         log_wandb(
             {
                 "offline_step": training_result.total_steps,
@@ -1354,7 +1394,7 @@ def main(args: ScriptArgs) -> None:
 
         logger.info(
             "Warm start complete",
-            output_run_dir=str(output_config.run.run_dir),
+            output_run_dir=str(resolved_output_config.run.run_dir),
             incumbent_onnx=str(incumbent_onnx_path),
             avg_attack=eval_metrics["avg_attack"],
             num_eval_games=eval_metrics["num_games"],
@@ -1362,8 +1402,22 @@ def main(args: ScriptArgs) -> None:
             stop_reason=training_result.stop_reason,
             best_round_index=training_result.best_record["round_index"],
         )
+        return WarmStartRunResult(
+            output_run_dir=resolved_output_config.run.run_dir,
+            checkpoint_dir=resolved_output_config.run.checkpoint_dir,
+            latest_checkpoint_path=checkpoint_path,
+            latest_onnx_path=latest_onnx_path,
+            incumbent_onnx_path=incumbent_onnx_path,
+            parallel_onnx_path=parallel_onnx_path,
+            summary_path=summary_path,
+            summary=summary,
+        )
     finally:
         wandb.finish()
+
+
+def main(args: ScriptArgs) -> None:
+    run_warm_start(args)
 
 
 if __name__ == "__main__":
