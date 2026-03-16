@@ -1,4 +1,4 @@
-.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz viz-policy-grid train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling compare-offline-spatial-policy sweep-mcts-config warm-start download-wandb-training-data
+.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz viz-policy-grid train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling compare-offline-spatial-policy compare-warm-start-trunk-sizes sweep-mcts-config warm-start download-wandb-training-data
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -244,6 +244,11 @@ compare-offline-network-scaling: $(RELEASE_MARKER)
 # Usage: make compare-offline-spatial-policy ARGS="--data_path training_runs/v32/training_data.npz"
 compare-offline-spatial-policy: $(INSTALL_MARKER)
 	PYTHONPATH=$(CURDIR) $(PYTHON) tetris_bot/scripts/ablations/compare_offline_spatial_policy.py $(ARGS)
+
+# Compare several warm-started trunk sizes from one replay snapshot, then benchmark attack and throughput.
+# Usage: make compare-warm-start-trunk-sizes ARGS="--source_run_dir training_runs/v32"
+compare-warm-start-trunk-sizes: $(RELEASE_MARKER)
+	PYTHONPATH=$(CURDIR) $(PYTHON) tetris_bot/scripts/ablations/compare_warm_start_trunk_sizes.py $(ARGS)
 
 # Build a new sibling run dir by offline-training on another run's replay snapshot.
 # Usage: make warm-start ARGS="--source_run_dir training_runs/v3"
