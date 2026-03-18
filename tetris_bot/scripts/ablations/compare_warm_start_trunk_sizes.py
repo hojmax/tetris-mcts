@@ -647,7 +647,6 @@ def main(args: ScriptArgs) -> None:
             variant=variant,
         )
         variant_output_config = build_output_config(
-            source_config,
             source_run_dir=source_run_dir,
             output_run_dir=variant_output_dir,
         )

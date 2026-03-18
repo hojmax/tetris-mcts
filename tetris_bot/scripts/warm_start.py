@@ -31,7 +31,7 @@ from tetris_bot.ml.artifacts import (
     assert_rust_inference_artifacts,
     copy_model_artifact_bundle,
 )
-from tetris_bot.ml.config import TrainingConfig, load_training_config_json
+from tetris_bot.ml.config import TrainingConfig, default_training_config
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.trainer import Trainer
@@ -65,8 +65,8 @@ class ScriptArgs:
     resume_from_source_offline_state: bool = False
     device: str = "auto"
     seed: int = 123
-    epochs_per_round: float = 2.0
-    early_stopping_patience: int = 10
+    epochs_per_round: float = 4.0
+    early_stopping_patience: int = 5
     max_rounds: int = 0
     max_examples: int = 0
     batch_size: int | None = None
@@ -201,10 +201,6 @@ def validate_args(args: ScriptArgs) -> None:
         raise NotADirectoryError(
             f"Source run directory is not a directory: {source_run_dir}"
         )
-
-    config_path = source_run_dir / CONFIG_FILENAME
-    if not config_path.exists():
-        raise FileNotFoundError(f"Source config not found: {config_path}")
 
     training_data_path = source_run_dir / TRAINING_DATA_FILENAME
     if not training_data_path.exists():
@@ -548,12 +544,16 @@ def evaluate_offline_losses(
 
 
 def build_output_config(
-    source_config: TrainingConfig,
-    *,
     source_run_dir: Path,
     output_run_dir: Path | None,
+    *,
+    base_config: TrainingConfig | None = None,
 ) -> TrainingConfig:
-    config = copy.deepcopy(source_config)
+    config = (
+        copy.deepcopy(base_config)
+        if base_config is not None
+        else default_training_config()
+    )
     config.self_play.nn_value_weight = 1.0
     config.self_play.death_penalty = 0.0
     config.self_play.overhang_penalty_weight = 0.0
@@ -864,10 +864,8 @@ def run_warm_start(
     )
     source_config_path = source_run_dir / CONFIG_FILENAME
     source_training_data_path = source_run_dir / TRAINING_DATA_FILENAME
-    source_config = load_training_config_json(source_config_path)
     resolved_output_config = (
         build_output_config(
-            source_config,
             source_run_dir=source_run_dir,
             output_run_dir=output_run_dir,
         )

@@ -215,6 +215,16 @@ class TrainingConfig:
     run: RunConfig
 
 
+def default_training_config() -> TrainingConfig:
+    return TrainingConfig(
+        network=NetworkConfig(),
+        optimizer=OptimizerConfig(),
+        self_play=SelfPlayConfig(),
+        replay=ReplayConfig(),
+        run=RunConfig(),
+    )
+
+
 _ConfigSectionT = TypeVar(
     "_ConfigSectionT",
     NetworkConfig,

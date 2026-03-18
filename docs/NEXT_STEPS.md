@@ -1,5 +1,9 @@
 # Next Steps
 
+- [ ] Produce pareto frontier plot.
+  - [ ] Start by generating for just single model. Like make script for getting the data.
+- [ ] Try out spatial policy.
+
 - [ ] We let the current run keep going until plateues, then we try to train some larger trunk models and see what the speed difference is.
 - [ ] I need to somehow decide the optimal trunk size. Like I could try a smaller and a larger one, trained locally on the replay buffer, and then run both and see what the concrete speed difference is.
 - [ ] Maybe I can simplify code now and drop all the bootstrapping logic, and just pretrain the network on the replay buffer from earlier experiment as warm start. But kind of wack to have unreproducable training run. Like does the method actually work without bootstrapping now? Could we get rid of the penalties and stuff? Once everything is fixed we should try, is kind of ugly. Why would this be necessary. Could of course just be compute multiplier.
