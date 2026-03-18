@@ -713,3 +713,80 @@ def test_mcts_tree_cache_parity_matches_uncached_search(tmp_path: Path) -> None:
     )
 
     _assert_tree_exports_equal(cached_tree, uncached_tree)
+
+
+def test_direct_inference_cache_matches_uncached(tmp_path: Path) -> None:
+    model = TetrisNet(
+        trunk_channels=8,
+        num_conv_residual_blocks=2,
+        reduction_channels=16,
+        fc_hidden=128,
+        aux_hidden=64,
+        num_fusion_blocks=1,
+        architecture="gated_fusion",
+        conv_kernel_size=3,
+        conv_padding=1,
+    )
+    model.eval()
+
+    onnx_path = tmp_path / "direct_inference_cache_parity.onnx"
+    assert export_onnx(model, onnx_path)
+    assert export_split_models(model, onnx_path)
+
+    env = tetris_core.TetrisEnv.with_seed(10, 20, 20260318)
+    for step_idx in range(6):
+        action_mask = tetris_core.debug_get_action_mask(env)
+        valid_actions = [idx for idx, is_valid in enumerate(action_mask) if is_valid]
+        assert valid_actions, "Expected at least one valid action while building test state"
+        chosen_action = valid_actions[min(step_idx, len(valid_actions) - 1)]
+        assert env.execute_action_index(chosen_action) is not None
+
+    config = tetris_core.MCTSConfig()
+    config.max_placements = 100
+
+    cached_agent = tetris_core.MCTSAgent(config)
+    assert cached_agent.load_model(str(onnx_path))
+    assert cached_agent.set_board_cache_enabled(True)
+
+    cached_policy_first, cached_value_first = cached_agent.predict_with_valid_actions(
+        env.clone_state(), max_placements=100
+    )
+    first_stats = cached_agent.get_and_reset_cache_stats()
+    assert first_stats is not None
+    first_hits, first_misses, first_cache_size = first_stats
+    assert first_hits == 0
+    assert first_misses == 1
+    assert first_cache_size > 0
+
+    cached_policy_second, cached_value_second = cached_agent.predict_with_valid_actions(
+        env.clone_state(), max_placements=100
+    )
+    second_stats = cached_agent.get_and_reset_cache_stats()
+    assert second_stats is not None
+    second_hits, second_misses, second_cache_size = second_stats
+    assert second_hits == 1
+    assert second_misses == 0
+    assert second_cache_size > 0
+
+    uncached_agent = tetris_core.MCTSAgent(config)
+    assert uncached_agent.load_model(str(onnx_path))
+    assert uncached_agent.set_board_cache_enabled(False)
+    uncached_policy, uncached_value = uncached_agent.predict_with_valid_actions(
+        env.clone_state(), max_placements=100
+    )
+    uncached_stats = uncached_agent.get_and_reset_cache_stats()
+    assert uncached_stats is not None
+    uncached_hits, uncached_misses, uncached_cache_size = uncached_stats
+    assert uncached_hits == 0
+    assert uncached_misses == 0
+    assert uncached_cache_size == 0
+
+    np.testing.assert_allclose(
+        np.asarray(cached_policy_first, dtype=np.float32),
+        np.asarray(cached_policy_second, dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        np.asarray(cached_policy_first, dtype=np.float32),
+        np.asarray(uncached_policy, dtype=np.float32),
+    )
+    assert cached_value_first == cached_value_second == uncached_value

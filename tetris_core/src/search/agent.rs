@@ -2,6 +2,7 @@
 //!
 //! The main agent that runs MCTS search and self-play.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::game::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
@@ -179,6 +180,26 @@ impl MCTSAgent {
         self.nn
             .as_ref()
             .map(crate::inference::TetrisNN::get_and_reset_cache_stats)
+    }
+
+    /// Run one direct NN evaluation on an environment using the same
+    /// valid-action path the Rust search uses for leaf evaluation.
+    ///
+    /// Returns:
+    ///     Tuple of (policy over valid actions, raw value)
+    #[pyo3(signature = (env, max_placements=100))]
+    pub fn predict_with_valid_actions(
+        &self,
+        env: &TetrisEnv,
+        max_placements: usize,
+    ) -> PyResult<(Vec<f32>, f32)> {
+        let Some(nn) = self.nn.as_ref() else {
+            return Err(PyValueError::new_err("No model loaded"));
+        };
+
+        let valid_actions = env.get_cached_valid_action_indices_arc();
+        nn.predict_with_valid_actions(env, valid_actions.as_slice(), max_placements)
+            .map_err(|e| PyValueError::new_err(format!("Failed to run inference: {e}")))
     }
 
     /// Play a full game using MCTS with the loaded model
