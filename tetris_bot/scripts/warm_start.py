@@ -43,13 +43,11 @@ from tetris_bot.scripts.inspection.optimize_machine import (
 )
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
-    OfflineDatasetSetup,
     build_tensor_dataset,
     build_torch_batch,
     ensure_required_keys,
     get_preload_mode,
     pick_device,
-    select_subset,
     tensor_dataset_bytes,
     validate_shapes,
 )
@@ -71,7 +69,6 @@ class ScriptArgs:
     early_stopping_patience: int = 20
     max_rounds: int = 0
     max_examples: int = 0
-    train_fraction: float = 0.9
     batch_size: int | None = None
     learning_rate: float | None = None
     weight_decay: float | None = None
@@ -97,6 +94,16 @@ class EvalWorkerResolution:
     num_workers: int
     source: str
     cache_path: str | None = None
+
+
+@dataclass(frozen=True)
+class WarmStartDatasetSetup:
+    source: OfflineDataSource
+    train_local_indices: np.ndarray
+    eval_local_indices: np.ndarray
+    total_examples: int
+    num_selected: int
+    preload_sec: float
 
 
 @dataclass(frozen=True)
@@ -151,10 +158,6 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError(f"max_rounds must be >= 0 (got {args.max_rounds})")
     if args.max_examples < 0:
         raise ValueError(f"max_examples must be >= 0 (got {args.max_examples})")
-    if not 0.0 < args.train_fraction < 1.0:
-        raise ValueError(
-            f"train_fraction must be in (0, 1) (got {args.train_fraction})"
-        )
     if args.batch_size is not None and args.batch_size <= 0:
         raise ValueError(f"batch_size must be > 0 (got {args.batch_size})")
     if args.learning_rate is not None and args.learning_rate <= 0.0:
@@ -418,7 +421,7 @@ def warm_start_selection_metric(policy_loss: float, value_loss: float) -> float:
     return policy_loss + (value_loss / 4.0)
 
 
-def has_better_validation_metric(
+def has_better_eval_metric(
     candidate_metrics: dict[str, float],
     best_record: dict[str, float | int | bool | str] | None,
 ) -> bool:
@@ -428,7 +431,7 @@ def has_better_validation_metric(
     )
     if best_record is None:
         return True
-    return candidate_selection_metric < float(best_record["val_selection_metric"])
+    return candidate_selection_metric < float(best_record["eval_selection_metric"])
 
 
 def setup_offline_dataset(
@@ -436,11 +439,10 @@ def setup_offline_dataset(
     *,
     seed: int,
     max_examples: int,
-    train_fraction: float,
     eval_examples: int,
     preload_mode: str,
     device: torch.device,
-) -> OfflineDatasetSetup:
+) -> WarmStartDatasetSetup:
     ensure_required_keys(npz)
     total_examples = validate_shapes(npz)
     selected_global_indices = np.arange(total_examples, dtype=np.int64)
@@ -451,14 +453,13 @@ def setup_offline_dataset(
         selected_global_indices = selected_global_indices[:max_examples]
 
     num_selected = len(selected_global_indices)
-    split_point = int(num_selected * train_fraction)
-    if split_point <= 0 or split_point >= num_selected:
+    if eval_examples >= num_selected:
         raise ValueError(
-            "Invalid train/val split; adjust max_examples or train_fraction"
+            "eval_examples must be smaller than the selected dataset size "
+            f"(got eval_examples={eval_examples}, used_examples={num_selected})"
         )
-
-    train_local_indices = np.arange(split_point, dtype=np.int64)
-    val_local_indices = np.arange(split_point, num_selected, dtype=np.int64)
+    eval_local_indices = np.arange(eval_examples, dtype=np.int64)
+    train_local_indices = np.arange(eval_examples, num_selected, dtype=np.int64)
 
     preload_start = time.perf_counter()
     tensor_data = None
@@ -476,25 +477,13 @@ def setup_offline_dataset(
         selected_global_indices=selected_global_indices,
         tensor_data=tensor_data,
     )
-    train_eval_local_indices = select_subset(
-        train_local_indices,
-        max_examples=eval_examples,
-        seed=seed + 1,
-    )
-    val_eval_local_indices = select_subset(
-        val_local_indices,
-        max_examples=eval_examples,
-        seed=seed + 2,
-    )
 
     logger.info(
         "Warm-start dataset split",
         total_examples=total_examples,
         used_examples=num_selected,
         train_examples=len(train_local_indices),
-        val_examples=len(val_local_indices),
-        train_eval_examples=len(train_eval_local_indices),
-        val_eval_examples=len(val_eval_local_indices),
+        eval_examples=len(eval_local_indices),
         preload_mode=preload_mode,
         preload_seconds=preload_sec,
         preload_bytes=(
@@ -502,12 +491,10 @@ def setup_offline_dataset(
         ),
     )
 
-    return OfflineDatasetSetup(
+    return WarmStartDatasetSetup(
         source=source,
         train_local_indices=train_local_indices,
-        val_local_indices=val_local_indices,
-        train_eval_local_indices=train_eval_local_indices,
-        val_eval_local_indices=val_eval_local_indices,
+        eval_local_indices=eval_local_indices,
         total_examples=total_examples,
         num_selected=num_selected,
         preload_sec=preload_sec,
@@ -652,50 +639,34 @@ def train_warm_start_model(
             non_improving_rounds=non_improving_rounds,
             best_round_index=best_record.get("round_index"),
             best_step=best_record.get("step"),
-            best_val_selection_metric=best_record.get("val_selection_metric"),
+            best_eval_selection_metric=best_record.get("eval_selection_metric"),
         )
 
     def record_eval(round_index: int, step: int, epochs_seen: float) -> None:
         nonlocal best_record, best_state_dict, non_improving_rounds
-        train_metrics = evaluate_offline_losses(
+        eval_metrics = evaluate_offline_losses(
             model,
             source=dataset_setup.source,
-            local_indices=dataset_setup.train_eval_local_indices,
+            local_indices=dataset_setup.eval_local_indices,
             device=device,
             eval_batch_size=eval_batch_size,
             value_loss_weight=current_value_loss_weight,
         )
-        val_metrics = evaluate_offline_losses(
-            model,
-            source=dataset_setup.source,
-            local_indices=dataset_setup.val_eval_local_indices,
-            device=device,
-            eval_batch_size=eval_batch_size,
-            value_loss_weight=current_value_loss_weight,
+        eval_selection_metric = warm_start_selection_metric(
+            eval_metrics["policy_loss"],
+            eval_metrics["value_loss"],
         )
-        train_selection_metric = warm_start_selection_metric(
-            train_metrics["policy_loss"],
-            train_metrics["value_loss"],
-        )
-        val_selection_metric = warm_start_selection_metric(
-            val_metrics["policy_loss"],
-            val_metrics["value_loss"],
-        )
-        improved = has_better_validation_metric(val_metrics, best_record)
+        improved = has_better_eval_metric(eval_metrics, best_record)
         if improved:
             best_record = {
                 "round_index": round_index,
                 "step": step,
                 "epochs_seen": epochs_seen,
                 "value_loss_weight": current_value_loss_weight,
-                "train_selection_metric": train_selection_metric,
-                "train_total_loss": train_metrics["total_loss"],
-                "train_policy_loss": train_metrics["policy_loss"],
-                "train_value_loss": train_metrics["value_loss"],
-                "val_selection_metric": val_selection_metric,
-                "val_total_loss": val_metrics["total_loss"],
-                "val_policy_loss": val_metrics["policy_loss"],
-                "val_value_loss": val_metrics["value_loss"],
+                "eval_selection_metric": eval_selection_metric,
+                "eval_total_loss": eval_metrics["total_loss"],
+                "eval_policy_loss": eval_metrics["policy_loss"],
+                "eval_value_loss": eval_metrics["value_loss"],
                 "improved": True,
                 "non_improving_rounds": 0,
             }
@@ -708,14 +679,10 @@ def train_warm_start_model(
             "step": step,
             "epochs_seen": epochs_seen,
             "value_loss_weight": current_value_loss_weight,
-            "train_selection_metric": train_selection_metric,
-            "train_total_loss": train_metrics["total_loss"],
-            "train_policy_loss": train_metrics["policy_loss"],
-            "train_value_loss": train_metrics["value_loss"],
-            "val_selection_metric": val_selection_metric,
-            "val_total_loss": val_metrics["total_loss"],
-            "val_policy_loss": val_metrics["policy_loss"],
-            "val_value_loss": val_metrics["value_loss"],
+            "eval_selection_metric": eval_selection_metric,
+            "eval_total_loss": eval_metrics["total_loss"],
+            "eval_policy_loss": eval_metrics["policy_loss"],
+            "eval_value_loss": eval_metrics["value_loss"],
             "improved": improved,
             "non_improving_rounds": non_improving_rounds,
         }
@@ -725,14 +692,10 @@ def train_warm_start_model(
             round_index=round_index,
             step=step,
             epochs_seen=epochs_seen,
-            train_selection_metric=train_selection_metric,
-            val_selection_metric=val_selection_metric,
-            train_total_loss=record["train_total_loss"],
-            val_total_loss=record["val_total_loss"],
-            train_policy_loss=record["train_policy_loss"],
-            val_policy_loss=record["val_policy_loss"],
-            train_value_loss=record["train_value_loss"],
-            val_value_loss=record["val_value_loss"],
+            eval_selection_metric=eval_selection_metric,
+            eval_total_loss=record["eval_total_loss"],
+            eval_policy_loss=record["eval_policy_loss"],
+            eval_value_loss=record["eval_value_loss"],
             value_loss_weight=current_value_loss_weight,
             improved=improved,
             non_improving_rounds=non_improving_rounds,
@@ -743,15 +706,11 @@ def train_warm_start_model(
                 "offline_step": step,
                 "warm_start/eval_round_index": round_index,
                 "warm_start/eval_epochs_seen": epochs_seen,
-                "warm_start/eval_train_selection_metric": train_selection_metric,
-                "warm_start/eval_val_selection_metric": val_selection_metric,
+                "warm_start/eval_selection_metric": eval_selection_metric,
                 "warm_start/value_loss_weight": current_value_loss_weight,
-                "warm_start/eval_train_total_loss": record["train_total_loss"],
-                "warm_start/eval_train_policy_loss": record["train_policy_loss"],
-                "warm_start/eval_train_value_loss": record["train_value_loss"],
-                "warm_start/eval_val_total_loss": record["val_total_loss"],
-                "warm_start/eval_val_policy_loss": record["val_policy_loss"],
-                "warm_start/eval_val_value_loss": record["val_value_loss"],
+                "warm_start/eval_total_loss": record["eval_total_loss"],
+                "warm_start/eval_policy_loss": record["eval_policy_loss"],
+                "warm_start/eval_value_loss": record["eval_value_loss"],
                 "warm_start/eval_improved": improved,
                 "warm_start/eval_non_improving_rounds": non_improving_rounds,
             }
@@ -858,7 +817,7 @@ def train_warm_start_model(
         stopped_after_non_improving_rounds=non_improving_rounds,
         best_round_index=best_record["round_index"],
         best_step=best_record["step"],
-        best_val_selection_metric=best_record["val_selection_metric"],
+        best_eval_selection_metric=best_record["eval_selection_metric"],
     )
 
     return WarmStartTrainingResult(
@@ -983,7 +942,6 @@ def run_warm_start(
         "early_stopping_patience": args.early_stopping_patience,
         "max_rounds": args.max_rounds,
         "max_examples": args.max_examples,
-        "train_fraction": args.train_fraction,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "weight_decay": weight_decay,
@@ -1052,7 +1010,6 @@ def run_warm_start(
                 npz,
                 seed=args.seed,
                 max_examples=args.max_examples,
-                train_fraction=args.train_fraction,
                 eval_examples=args.eval_examples,
                 preload_mode=preload_mode,
                 device=device,
@@ -1063,13 +1020,7 @@ def run_warm_start(
                     "dataset/total_examples": dataset_setup.total_examples,
                     "dataset/used_examples": dataset_setup.num_selected,
                     "dataset/train_examples": len(dataset_setup.train_local_indices),
-                    "dataset/val_examples": len(dataset_setup.val_local_indices),
-                    "dataset/train_eval_examples": len(
-                        dataset_setup.train_eval_local_indices
-                    ),
-                    "dataset/val_eval_examples": len(
-                        dataset_setup.val_eval_local_indices
-                    ),
+                    "dataset/eval_examples": len(dataset_setup.eval_local_indices),
                     "dataset/preload_seconds": dataset_setup.preload_sec,
                     "dataset/preload_mode": preload_mode,
                 }
@@ -1333,16 +1284,13 @@ def run_warm_start(
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "grad_clip_norm": grad_clip_norm,
-            "train_fraction": args.train_fraction,
             "max_examples": args.max_examples,
             "preload_mode": preload_mode,
             "offline_dataset": {
                 "total_examples": dataset_setup.total_examples,
                 "used_examples": dataset_setup.num_selected,
                 "train_examples": len(dataset_setup.train_local_indices),
-                "val_examples": len(dataset_setup.val_local_indices),
-                "train_eval_examples": len(dataset_setup.train_eval_local_indices),
-                "val_eval_examples": len(dataset_setup.val_eval_local_indices),
+                "eval_examples": len(dataset_setup.eval_local_indices),
                 "preload_seconds": dataset_setup.preload_sec,
             },
             "offline_best": training_result.best_record,
@@ -1378,14 +1326,11 @@ def run_warm_start(
                 "warm_start/best_epochs_seen": training_result.best_record[
                     "epochs_seen"
                 ],
-                "warm_start/best_val_selection_metric": training_result.best_record[
-                    "val_selection_metric"
+                "warm_start/best_eval_selection_metric": training_result.best_record[
+                    "eval_selection_metric"
                 ],
-                "warm_start/best_train_total_loss": training_result.best_record[
-                    "train_total_loss"
-                ],
-                "warm_start/best_val_total_loss": training_result.best_record[
-                    "val_total_loss"
+                "warm_start/best_eval_total_loss": training_result.best_record[
+                    "eval_total_loss"
                 ],
                 "warm_start/rounds_completed": training_result.rounds_completed,
                 "warm_start/stop_reason": training_result.stop_reason,

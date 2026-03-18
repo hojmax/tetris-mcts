@@ -14,5 +14,8 @@ outputs/
 .DS_store
 tetris_bot/scripts/training_data_scripting.npz
 benchmarks/network_size_models/
+benchmarks/split_inference_config_compare/
+benchmarks/split_inference_config_compare_32_4_64/
+benchmarks/split_inference_config_compare_fc_hidden_256/
 benchmarks/profiles/optimize_latest.*
 tetris_core/dist/

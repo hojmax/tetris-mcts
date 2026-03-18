@@ -45,7 +45,6 @@ class ScriptArgs:
     early_stopping_patience: int = 20
     max_rounds: int = 0
     max_examples: int = 0
-    train_fraction: float = 0.9
     batch_size: int | None = None
     learning_rate: float | None = None
     weight_decay: float | None = None
@@ -197,10 +196,6 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError(f"max_rounds must be >= 0 (got {args.max_rounds})")
     if args.max_examples < 0:
         raise ValueError(f"max_examples must be >= 0 (got {args.max_examples})")
-    if not 0.0 < args.train_fraction < 1.0:
-        raise ValueError(
-            f"train_fraction must be in (0, 1) (got {args.train_fraction})"
-        )
     if args.batch_size is not None and args.batch_size <= 0:
         raise ValueError(f"batch_size must be > 0 (got {args.batch_size})")
     if args.learning_rate is not None and args.learning_rate <= 0.0:
@@ -436,7 +431,6 @@ def make_warm_start_args(
         early_stopping_patience=args.early_stopping_patience,
         max_rounds=args.max_rounds,
         max_examples=args.max_examples,
-        train_fraction=args.train_fraction,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,

@@ -4,144 +4,18 @@
 #set par(justify: true, leading: 0.65em)
 #show figure.caption: set text(size: 10pt)
 
-#let panel(title, body) = block(
-  width: 100%,
-  inset: 10pt,
-  radius: 8pt,
-  stroke: (paint: rgb("#8592a0"), thickness: 0.8pt),
-  fill: rgb("#fbfcfe"),
-)[
-  #set par(justify: false)
-  #set text(size: 9pt)
-  #strong(title)\
-  #body
-]
-
-#let node(
-  title,
-  body,
-  fill: rgb("#f7fafc"),
-  stroke: rgb("#4c667d"),
-) = block(
-  width: 100%,
-  inset: 8pt,
-  radius: 6pt,
-  stroke: (paint: stroke, thickness: 0.8pt),
-  fill: fill,
-)[
-  #set par(justify: false)
-  #set text(size: 8.5pt)
-  #strong(title)\
-  #body
-]
-
-#let down = align(center)[
-  #text(size: 10pt, fill: rgb("#4c667d"))[v]
-]
-
 = Network Architecture
 
-The default model in `tetris_bot/ml/network.py` is the `gated_fusion` policy/value network. It splits the input into a board tensor, piece/game features, and board-stat features so Rust can cache the expensive board path while still conditioning the heads on the current piece context.
+Figure @fig:network-architecture shows the default `gated_fusion` network used by the current system. The board occupancy tensor flows through the cached convolutional backbone, engineered board statistics are injected at `board_proj`, and the piece/game context modulates the cached board embedding before the policy and value heads.
 
 #figure(
-  grid(
-    columns: (0.72fr, 1.28fr),
-    column-gutter: 14pt,
-
-    panel(
-      [Input Feature Groups],
-      [
-        *Board occupancy:* `20 x 10 = 200` binary cells\
-        *Piece/game aux:* `61` features\
-        `7` current piece, `8` hold state, `1` hold flag, `35` queue, `1` placement count, `1` combo, `1` back-to-back, `7` hidden-piece distribution\
-        *Board stats:* `19` features\
-        `10` column heights, `1` max height, `4` bottom-row fill counts, `1` total blocks, `1` bumpiness, `1` holes, `1` overhang fields\
-        *Total model input:* `280` features
-      ],
-    ),
-
-    panel(
-      [Default `gated_fusion` Path],
-      [
-        #grid(
-          columns: (1fr, 1fr),
-          column-gutter: 8pt,
-          row-gutter: 6pt,
-
-          node(
-            [Board tensor],
-            [`20 x 10` binary occupancy],
-            fill: rgb("#edf4ff"),
-            stroke: rgb("#4f81c7"),
-          ),
-          node(
-            [Piece/game aux],
-            [`61` uncached features],
-            fill: rgb("#fff2e8"),
-            stroke: rgb("#d0874b"),
-          ),
-
-          down,
-          down,
-
-          node(
-            [Board path],
-            [
-              `conv_initial -> residual blocks -> conv_reduce -> flatten`\
-              `concat(flattened conv, 19 board stats)`\
-              `board_proj -> board_h`
-            ],
-            fill: rgb("#edf4ff"),
-            stroke: rgb("#4f81c7"),
-          ),
-          node(
-            [Aux path],
-            [
-              `aux_fc -> LayerNorm -> SiLU = aux_h`\
-              `gate = sigmoid(gate_fc(aux_h))`\
-              `aux_proj(aux_h)`
-            ],
-            fill: rgb("#fff2e8"),
-            stroke: rgb("#d0874b"),
-          ),
-
-          grid.cell(colspan: 2)[#down],
-
-          grid.cell(colspan: 2)[
-            #node(
-              [Fusion],
-              [
-                `fused = board_h * (1 + gate) + aux_proj(aux_h)`\
-                `LayerNorm -> SiLU -> residual fusion blocks`
-              ],
-              fill: rgb("#eef8ef"),
-              stroke: rgb("#5a9466"),
-            )
-          ],
-
-          grid.cell(colspan: 2)[#down],
-
-          grid.cell(colspan: 2)[
-            #node(
-              [Heads],
-              [
-                `policy_fc -> policy_head -> 735 logits`\
-                `value_fc -> value_head -> 1 scalar`
-              ],
-              fill: rgb("#f6eefc"),
-              stroke: rgb("#8d68b3"),
-            )
-          ],
-        )
-      ],
-    ),
-  ),
+  image("../plots/network_architecture.pdf", width: 100%),
   caption: [
-    Input feature split and the default `gated_fusion` architecture. The board path produces a cached `board_h` embedding from the board tensor plus the 19 board-stat features, while the 61 piece/game features modulate that embedding before the policy and value heads.
+    Default `gated_fusion` architecture. Inputs are split into a `1 x 20 x 10` board tensor, `19` custom board-stat features, and `61` piece/game features. The custom board stats are column heights, max height, bottom-row fill counts, total blocks, bumpiness, holes, and overhang fields. The piece/game features are current piece, hold piece, hold availability, next queue, placement count, combo, back-to-back state, and hidden-piece distribution. The board path produces a cached `board_h` embedding, the aux path generates the gate and additive bias, and the fused representation feeds the `735`-logit policy head and scalar value head. The runtime split model is `conv.onnx + fc.bin + heads.onnx`, with `board_h` cached by board state.
   ],
 ) <fig:network-architecture>
 
-Figure @fig:network-architecture summarizes the current model implementation. The repo also includes a simpler `simple_aux_mlp` baseline that keeps the same split-model interface but ignores the board tensor for prediction and uses a one-hidden-layer MLP over the `80` auxiliary features.
+The repo also includes a simpler `simple_aux_mlp` baseline that preserves the same split-model contract but ignores the board tensor for prediction and operates on the `80` auxiliary features directly.
 
 = Runtime and Average Attack
 
@@ -154,4 +28,4 @@ This figure compares average attack against whole-game runtime for several confi
   ],
 ) <fig:runtime-attack>
 
-Figure @fig:runtime-attack is generated by `paper/build.sh`, which rebuilds the plot PDF and then compiles this Typst document into `paper/paper.pdf`.
+Figure @fig:runtime-attack is generated by `paper/build.sh`, which regenerates the architecture diagram and runtime plot before compiling this Typst document into `paper/paper.pdf`.

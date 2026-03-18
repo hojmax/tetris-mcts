@@ -5,6 +5,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PAPER_ROOT="$REPO_ROOT/paper"
 
 echo "Generating paper plots..."
+uv run python "$PAPER_ROOT/scripts/make_network_architecture_diagram.py" \
+  --output_pdf_path "$PAPER_ROOT/plots/network_architecture.pdf" \
+  --output_png_path "$PAPER_ROOT/plots/network_architecture.png"
 uv run python "$PAPER_ROOT/scripts/make_avg_attack_vs_runtime_plot.py" \
   --output_path "$PAPER_ROOT/plots/avg_attack_vs_runtime.pdf"
 
