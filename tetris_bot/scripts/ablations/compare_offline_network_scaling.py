@@ -156,6 +156,22 @@ def build_variants(args: ScriptArgs) -> list[ScalingVariant]:
     return variants
 
 
+def get_final_train_batches_per_sec(result: dict) -> float:
+    final = result["final"]
+    train_batches_per_sec = final.get("train_batches_per_sec")
+    if train_batches_per_sec is not None:
+        return float(train_batches_per_sec)
+
+    wall_batches_per_sec = final.get("wall_batches_per_sec")
+    if wall_batches_per_sec is not None:
+        return float(wall_batches_per_sec)
+
+    elapsed_sec = final.get("elapsed_sec", result["elapsed_sec"])
+    if elapsed_sec <= 0:
+        return 0.0
+    return float(final["step"]) / float(elapsed_sec)
+
+
 def stride2_output_hw(kernel_size: int, padding: int) -> tuple[int, int]:
     reduced_h = (BOARD_HEIGHT + 2 * padding - kernel_size) // 2 + 1
     reduced_w = (BOARD_WIDTH + 2 * padding - kernel_size) // 2 + 1
@@ -367,6 +383,7 @@ def main(args: ScriptArgs) -> None:
         for result in results:
             prefix = result["variant"].wandb_prefix
             final = result["final"]
+            final_train_batches_per_sec = get_final_train_batches_per_sec(result)
             comparison_log[f"comparison/final_val_total_loss/{prefix}"] = final[
                 "val_total_loss"
             ]
@@ -382,11 +399,11 @@ def main(args: ScriptArgs) -> None:
             comparison_log[f"comparison/final_elapsed_sec/{prefix}"] = result[
                 "elapsed_sec"
             ]
-            comparison_log[f"comparison/final_train_batches_per_sec/{prefix}"] = final[
-                "train_batches_per_sec"
-            ]
+            comparison_log[f"comparison/final_train_batches_per_sec/{prefix}"] = (
+                final_train_batches_per_sec
+            )
             comparison_log[f"comparison/final_train_examples_per_sec/{prefix}"] = (
-                final["train_batches_per_sec"] * args.batch_size
+                final_train_batches_per_sec * args.batch_size
             )
             comparison_log[f"comparison/num_parameters/{prefix}"] = result[
                 "num_parameters"
@@ -396,7 +413,7 @@ def main(args: ScriptArgs) -> None:
             ].effective
 
         default_final = default["final"]
-        default_batches_per_sec = default_final["train_batches_per_sec"]
+        default_batches_per_sec = get_final_train_batches_per_sec(default)
         default_val_total_loss = default_final["val_total_loss"]
 
         for result in results:
@@ -404,11 +421,12 @@ def main(args: ScriptArgs) -> None:
             if prefix == "default":
                 continue
             final = result["final"]
+            final_train_batches_per_sec = get_final_train_batches_per_sec(result)
             comparison_log[f"comparison/val_total_loss_delta_vs_default/{prefix}"] = (
                 final["val_total_loss"] - default_val_total_loss
             )
             comparison_log[f"comparison/train_speedup_vs_default/{prefix}"] = (
-                final["train_batches_per_sec"] / default_batches_per_sec
+                final_train_batches_per_sec / default_batches_per_sec
                 if default_batches_per_sec > 0
                 else 0.0
             )
@@ -426,9 +444,9 @@ def main(args: ScriptArgs) -> None:
             run.summary[f"{prefix}_final_val_total_loss"] = result["final"][
                 "val_total_loss"
             ]
-            run.summary[f"{prefix}_final_train_batches_per_sec"] = result["final"][
-                "train_batches_per_sec"
-            ]
+            run.summary[f"{prefix}_final_train_batches_per_sec"] = (
+                get_final_train_batches_per_sec(result)
+            )
             run.summary[f"{prefix}_num_parameters"] = result["num_parameters"]
             run.summary[f"{prefix}_effective_flops"] = result["flops"].effective
 

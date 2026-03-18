@@ -11,6 +11,8 @@ Short-term operational memory for this repo. Read this file at the start of ever
 
 ## Notes
 
+- 2026-03-18: `compare_offline_network_scaling.py` used `result["final"]["train_batches_per_sec"]`, but `train_offline_model()` only logged throughput to W&B and did not persist it in `history` rows. The fix was to store throughput fields (`train_batches_per_sec`, `train_examples_per_sec`, `wall_batches_per_sec`, etc.) in `record_eval()` rows and add a fallback helper in the scaling script that derives throughput from stored wall-time fields when older result shapes are encountered.
+- 2026-03-18: `uv run tetris_bot/scripts/ablations/compare_offline_network_scaling.py --help` works from the repo root in this checkout. If a remote box reports `Failed to spawn ... No such file or directory (os error 2)`, the likely cause is that the current working directory is not the repo root or that checkout does not contain the script yet. The repo also has a safer entrypoint: `make compare-offline-network-scaling ARGS="--data_path ..."` .
 - 2026-03-14: User requested a persistent repo memory system. Future sessions should read this file first and record learnings here liberally.
 - 2026-03-14: `AGENTS.md` is a symlink to `CLAUDE.md` in this repo, so repo-level agent instruction edits land in `CLAUDE.md`.
 - 2026-03-14: Useful test direction: keep a small replay-buffer NPZ fixture in git (around 10k states) and run practical consistency checks against it, not just synthetic/unit-level buffer checks.

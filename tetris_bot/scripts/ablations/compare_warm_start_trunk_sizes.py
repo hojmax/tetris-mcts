@@ -67,7 +67,6 @@ class ScriptArgs:
     )
     benchmark_num_games: int = 20
     benchmark_repeats: int = 3
-    benchmark_warmup_games: int = 4
     benchmark_seed_start: int = 1000
     benchmark_num_workers: int = 0
     benchmark_num_simulations: int | None = None
@@ -242,10 +241,6 @@ def validate_args(args: ScriptArgs) -> None:
     if args.benchmark_repeats <= 0:
         raise ValueError(
             f"benchmark_repeats must be > 0 (got {args.benchmark_repeats})"
-        )
-    if args.benchmark_warmup_games < 0:
-        raise ValueError(
-            f"benchmark_warmup_games must be >= 0 (got {args.benchmark_warmup_games})"
         )
     if args.benchmark_num_workers < 0 or args.benchmark_num_workers == 1:
         raise ValueError(
@@ -719,27 +714,6 @@ def main(args: ScriptArgs) -> None:
         benchmark_repeats=args.benchmark_repeats,
     )
 
-    if args.benchmark_warmup_games > 0:
-        warmup_seed_start = max(
-            0, args.benchmark_seed_start - args.benchmark_warmup_games
-        )
-        warmup_seeds = list(
-            range(warmup_seed_start, warmup_seed_start + args.benchmark_warmup_games)
-        )
-        for variant_record in variant_records:
-            logger.info(
-                "Warming benchmark model",
-                variant=variant_record.label,
-                warmup_games=args.benchmark_warmup_games,
-            )
-            benchmark_once(
-                model_path=Path(variant_record.incumbent_onnx_path),
-                seeds=warmup_seeds,
-                config=benchmark_config,
-                max_placements=benchmark_max_placements,
-                num_workers=benchmark_num_workers,
-            )
-
     benchmark_rows: list[BenchmarkRow] = []
     for repeat_index in range(args.benchmark_repeats):
         seed_start = args.benchmark_seed_start + (
@@ -872,7 +846,6 @@ def main(args: ScriptArgs) -> None:
         "benchmark": {
             "num_games": args.benchmark_num_games,
             "repeats": args.benchmark_repeats,
-            "warmup_games": args.benchmark_warmup_games,
             "seed_start": args.benchmark_seed_start,
             "num_workers": benchmark_num_workers,
             "num_workers_source": benchmark_num_workers_source,

@@ -1081,6 +1081,15 @@ def train_offline_model(
             "elapsed_sec": elapsed_sec,
             "eval_seconds": eval_seconds,
             "eval_examples_per_sec": eval_examples_per_sec,
+            "train_batches_per_sec": train_batches_per_sec,
+            "train_examples_per_sec": (
+                train_examples_seen / train_compute_seconds_total
+                if train_compute_seconds_total > 0
+                else 0.0
+            ),
+            "wall_batches_per_sec": wall_batches_per_sec,
+            "train_examples_seen": train_examples_seen,
+            "epochs_seen": epochs_seen,
             "train_total_loss": train_metrics["total_loss"],
             "train_policy_loss": train_metrics["policy_loss"],
             "train_value_loss": train_metrics["value_loss"],
