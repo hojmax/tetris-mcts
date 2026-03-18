@@ -66,7 +66,7 @@ class ScriptArgs:
     device: str = "auto"
     seed: int = 123
     epochs_per_round: float = 2.0
-    early_stopping_patience: int = 20
+    early_stopping_patience: int = 10
     max_rounds: int = 0
     max_examples: int = 0
     batch_size: int | None = None
