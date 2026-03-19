@@ -15,89 +15,31 @@ We adapt [AlphaZero](alphazero.pdf) (Silver et al., 2017) for single-player stoc
 
 ## 1. Neural Network Architecture
 
-### Input Representation
+The detailed and current architecture write-up now lives in [NETWORK_ARCHITECTURE.md](./NETWORK_ARCHITECTURE.md).
 
-| Component         | Shape      | Encoding                                  |
-| ----------------- | ---------- | ----------------------------------------- |
-| Board state       | 20 × 10    | Binary (1 = filled, 0 = empty)            |
-| Current piece     | 7          | One-hot encoded                           |
-| Hold piece        | 8          | One-hot (7 pieces + empty)                |
-| Hold available    | 1          | Binary (can use hold this turn)           |
-| Next queue        | 5 × 7 = 35 | One-hot encoded per slot                  |
-| Placement count   | 1          | Normalized: count / max_placements        |
-| Combo             | 1          | Normalized: combo / 12 (uncapped)         |
-| Back-to-back      | 1          | Binary (1 = active)                       |
-| Hidden piece dist | 7          | Probability distribution from 7-bag state |
-| Column heights    | 10         | Normalized: height / 20 per column        |
-| Max column height | 1          | Normalized: max height / 20               |
-| Min column height | 1          | Normalized: min height / 20               |
-| Row fill counts   | 20         | Normalized: fill / 10 per row             |
-| Total blocks      | 1          | Normalized: count / 200                   |
-| Bumpiness         | 1          | Normalized: Σ(Δh²) / 3600                 |
-| Holes             | 1          | Normalized: sealed cavities / 190         |
-| Overhang fields   | 1          | Normalized: empty-below-filled / 190      |
-| **Total**         | **297**    | **(200 board + 97 auxiliary)**            |
+Short version of the current implementation:
 
-### Network Structure
+- The current input contract is `280` total features:
+  - `board`: `1 x 20 x 10`
+  - `aux_features`: `80 = 61 piece/game + 19 board stats`
+- The default model is `gated_fusion`, not the older flat board-plus-aux MLP described in previous versions of this document.
+- The default hyperparameters are:
+  - `trunk_channels=16`
+  - `num_conv_residual_blocks=3`
+  - `reduction_channels=32`
+  - `fc_hidden=128`
+  - `aux_hidden=64`
+  - `num_fusion_blocks=1`
+- The current conv path uses `GroupNorm + SiLU` and residual conv blocks.
+- The current fusion/head path uses `LayerNorm + SiLU`.
+- The policy head emits `735` raw logits (`734` placements + `1` hold action), and invalid actions are masked outside the network.
+- Rust runtime inference uses split exports:
+  - `*.conv.onnx`
+  - `*.heads.onnx`
+  - `*.fc.bin`
+- Rust caches the intermediate `board_h` embedding by board occupancy so repeated searches on the same board do not re-run the conv trunk.
 
-```
-Input Board (20x10x1)
-    │
-    ├──► Conv2D(1, 4, kernel=3x3, padding=1) + BatchNorm2d + ReLU
-    │        │
-    │        ▼
-    │    Conv2D(4, 8, kernel=3x3, padding=1) + BatchNorm2d + ReLU
-    │        │
-    │        ▼
-    │    Flatten → 20*10*8 = 1,600
-    │
-Auxiliary Input (97 features)
-    │
-    └──► Concat with flattened board features
-              │
-              ▼
-         FC(1652, 128) + LayerNorm + ReLU
-              │
-              ├──────────────────┐
-              ▼                  ▼
-         Policy Head        Value Head
-         FC(128, 735)       FC(128, 1)
-         Softmax            (linear)
-              │                  │
-              ▼                  ▼
-         π(a|s)              V(s) = predicted attack
-```
-
-- **BatchNorm2d** after conv layers: stabilizes training, normalizes across batch
-- **LayerNorm** after FC: ensures both heads receive well-scaled features
-
-### Output Space
-
-- **Policy head**: 735 outputs (734 valid piece placements + hold)
-  - Each output corresponds to a unique (x, y, rotation) position
-  - Invalid moves are masked before softmax
-- **Value head**: 1 output (linear, no activation)
-  - Predicts cumulative attack from current state to end of game
-  - MSE loss against actual cumulative attack values
-
-### Move Indexing
-
-Create a lookup table mapping action index (0-733) to (x, y, rotation):
-
-```python
-# Generate all 734 valid positions (from count_reachable_states.py)
-ACTION_TO_PLACEMENT = []  # List of (x, y, rotation) tuples
-PLACEMENT_TO_ACTION = {}  # Dict mapping (x, y, rot) -> index
-
-# Iterate through all positions, check if valid for ANY piece
-for rot in range(4):
-    for y in range(-3, 20):
-        for x in range(-3, 10):
-            if any_piece_fits(x, y, rot):
-                idx = len(ACTION_TO_PLACEMENT)
-                ACTION_TO_PLACEMENT.append((x, y, rot))
-                PLACEMENT_TO_ACTION[(x, y, rot)] = idx
-```
+For exact feature offsets, tensor shapes, connection equations, split-export details, and the `simple_aux_mlp` baseline, use [NETWORK_ARCHITECTURE.md](./NETWORK_ARCHITECTURE.md).
 
 ---
 
@@ -586,95 +528,29 @@ def train():
 
 ### ONNX Export and Inference
 
-The implementation uses **tract-onnx** for fast CPU inference in Rust:
+The current implementation does not use a single monolithic ONNX model for normal Rust inference. Instead it exports:
 
-**Python: Export ONNX Model** (`weights.py`)
+- full ONNX for general interchange/debugging
+- split runtime artifacts for fast cached inference:
+  - `*.conv.onnx`
+  - `*.heads.onnx`
+  - `*.fc.bin`
 
-```python
-def export_onnx(model: TetrisNet, path: Path) -> None:
-    """Export PyTorch model to ONNX for Rust inference."""
-    model.eval()
-    dummy_board = torch.zeros(1, 1, 20, 10)
-    dummy_aux = torch.zeros(1, 97)  # 97 auxiliary features
+Current behavior:
 
-    torch.onnx.export(
-        model,
-        (dummy_board, dummy_aux),
-        path,
-        input_names=["board", "aux"],
-        output_names=["policy_logits", "value"],
-        dynamic_axes={
-            "board": {0: "batch_size"},
-            "aux": {0: "batch_size"},
-        },
-    )
-```
+- Python training defines the full `TetrisNet`.
+- `ConvBackbone` is exported as `conv.onnx`.
+- `HeadsModel` is exported as `heads.onnx`.
+- The `board_proj` linear layer is exported separately as raw weights/bias in `fc.bin`.
+- Rust loads those split artifacts and caches the intermediate `board_h` embedding by packed board occupancy.
+- On a cache miss, Rust runs `conv.onnx`, concatenates the resulting conv features with the 19 board-stat features, applies the `board_proj` weights from `fc.bin`, and stores the resulting `board_h`.
+- On every inference call, Rust encodes the 61 piece/game aux features, runs `heads.onnx`, and applies softmax only over valid actions.
 
-**Rust: Load and Run ONNX** (`nn.rs`)
+Backend notes:
 
-```rust
-use tract_onnx::prelude::*;
-
-pub struct TetrisNN {
-    model: Arc<TypedRunnableModel<TypedModel>>,
-}
-
-impl TetrisNN {
-    /// Load ONNX model from file
-    pub fn load<P: AsRef<Path>>(path: P) -> TractResult<Self> {
-        let model = tract_onnx::onnx()
-            .model_for_path(path)?
-            .into_optimized()?
-            .into_runnable()?;
-
-        Ok(TetrisNN {
-            model: Arc::new(model),
-        })
-    }
-
-    /// Run inference with action mask applied
-    pub fn predict_masked(
-        &self,
-        env: &TetrisEnv,
-        move_number: usize,
-        action_mask: &[bool],
-    ) -> TractResult<(Vec<f32>, f32)> {
-        // Encode state to tensors
-        let (board_vec, aux_vec) = encode_state(env, move_number);
-
-        // Create tract tensors
-        let board = tract_ndarray::Array4::from_shape_vec(
-            (1, 1, BOARD_HEIGHT, BOARD_WIDTH),
-            board_vec,
-        )?.into_tensor();
-
-        let aux = tract_ndarray::Array2::from_shape_vec(
-            (1, AUX_FEATURES),
-            aux_vec,
-        )?.into_tensor();
-
-        // Run inference
-        let result = self.model.run(tvec!(board, aux))?;
-
-        // Extract outputs
-        let policy_logits = result[0].to_array_view::<f32>()?;
-        let value = result[1].to_array_view::<f32>()?[[0]];
-
-        // Apply softmax with masking
-        let policy = apply_mask_and_softmax(policy_logits.as_slice().unwrap(), action_mask);
-
-        Ok((policy, value))
-    }
-}
-```
-
-**Why tract-onnx?**
-
-- Fast CPU inference with SIMD optimizations
-- Small dependency footprint (no Python runtime needed)
-- Supports all operations used by TetrisNet (Conv2d, BatchNorm, LayerNorm, Linear)
-- Model optimization at load time
-- Thread-safe (can share across workers)
+- `tract` is the default runtime backend.
+- ONNX Runtime is also supported when the crate is built with feature `nn-ort`.
+- The detailed architecture and split-runtime contract are documented in [NETWORK_ARCHITECTURE.md](./NETWORK_ARCHITECTURE.md).
 
 ---
 

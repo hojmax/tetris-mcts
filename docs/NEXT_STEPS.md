@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Pruning rotations of pieces in the search tree that are identical. Like for the o piece, no rotation needs to be considered in the search tree.
 - [ ] Produce pareto frontier plot.
   - [ ] Start by generating for just single model. Like make script for getting the data.
 - [ ] Try out spatial policy.
