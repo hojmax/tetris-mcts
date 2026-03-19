@@ -16,9 +16,12 @@ from tetris_bot.ml.config import (
 )
 from tetris_bot.ml.loss import RunningLossBalancer
 from tetris_bot.ml.network import TetrisNet
+from tetris_bot.run_setup import config_to_json
 from tetris_bot.scripts.warm_start import (
     build_output_config,
+    build_wandb_config,
     compute_training_steps,
+    EvalWorkerResolution,
     has_better_eval_metric,
     load_offline_resume_checkpoint,
     offline_resume_checkpoint_path,
@@ -169,6 +172,43 @@ def test_validate_args_does_not_require_source_config_when_npz_exists(
             preload_to_gpu=False,
         )
     )
+
+
+def test_build_wandb_config_includes_full_resolved_training_config(
+    tmp_path: Path,
+) -> None:
+    source_run_dir = tmp_path / "training_runs" / "v5"
+    output_run_dir = tmp_path / "training_runs" / "v6"
+    resolved_output_config = build_output_config(
+        source_run_dir=source_run_dir,
+        output_run_dir=output_run_dir,
+    )
+    args = ScriptArgs(
+        source_run_dir=source_run_dir,
+        output_run_dir=output_run_dir,
+        preload_to_gpu=False,
+    )
+    eval_worker_resolution = EvalWorkerResolution(num_workers=8, source="config")
+
+    wandb_config = build_wandb_config(
+        args=args,
+        source_run_dir=source_run_dir,
+        source_config_path=source_run_dir / CONFIG_FILENAME,
+        source_training_data_path=source_run_dir / "training_data.npz",
+        source_offline_resume_checkpoint=None,
+        resolved_output_config=resolved_output_config,
+        device_str="cpu",
+        preload_mode="none",
+        batch_size=resolved_output_config.optimizer.batch_size,
+        learning_rate=resolved_output_config.optimizer.learning_rate,
+        weight_decay=resolved_output_config.optimizer.weight_decay,
+        grad_clip_norm=resolved_output_config.optimizer.grad_clip_norm,
+        eval_worker_resolution=eval_worker_resolution,
+    )
+
+    serialized_output_config = json.loads(config_to_json(resolved_output_config))
+    assert wandb_config["output_config"] == serialized_output_config
+    assert wandb_config["training_config"] == serialized_output_config
 
 
 def test_compute_training_steps_rounds_up_epochs() -> None:

@@ -846,6 +846,62 @@ def log_wandb(payload: dict[str, object]) -> None:
         wandb.log(payload)
 
 
+def build_wandb_config(
+    *,
+    args: ScriptArgs,
+    source_run_dir: Path,
+    source_config_path: Path,
+    source_training_data_path: Path,
+    source_offline_resume_checkpoint: Path | None,
+    resolved_output_config: TrainingConfig,
+    device_str: str,
+    preload_mode: str,
+    batch_size: int,
+    learning_rate: float,
+    weight_decay: float,
+    grad_clip_norm: float,
+    eval_worker_resolution: EvalWorkerResolution,
+) -> dict[str, object]:
+    serialized_output_config = json.loads(config_to_json(resolved_output_config))
+    return {
+        "source_run_dir": str(source_run_dir),
+        "source_config_path": str(source_config_path),
+        "source_training_data_path": str(source_training_data_path),
+        "resume_from_source_offline_state": args.resume_from_source_offline_state,
+        "source_offline_resume_checkpoint": (
+            str(source_offline_resume_checkpoint)
+            if source_offline_resume_checkpoint is not None
+            else None
+        ),
+        "output_run_dir": str(resolved_output_config.run.run_dir),
+        "device": device_str,
+        "seed": args.seed,
+        "epochs_per_round": args.epochs_per_round,
+        "early_stopping_patience": args.early_stopping_patience,
+        "max_rounds": args.max_rounds,
+        "max_examples": args.max_examples,
+        "batch_size": batch_size,
+        "learning_rate": learning_rate,
+        "weight_decay": weight_decay,
+        "grad_clip_norm": grad_clip_norm,
+        "eval_examples": args.eval_examples,
+        "eval_batch_size": args.eval_batch_size,
+        "preload_to_gpu": args.preload_to_gpu,
+        "preload_to_ram": args.preload_to_ram,
+        "preload_mode": preload_mode,
+        "num_eval_games": args.num_eval_games,
+        "eval_seed_start": args.eval_seed_start,
+        "eval_num_workers": eval_worker_resolution.num_workers,
+        "eval_num_workers_source": eval_worker_resolution.source,
+        "eval_num_simulations": args.eval_num_simulations,
+        "eval_max_placements": args.eval_max_placements,
+        "mcts_seed": args.mcts_seed,
+        "wandb_tags": args.wandb_tags,
+        "output_config": serialized_output_config,
+        "training_config": serialized_output_config,
+    }
+
+
 def run_warm_start(
     args: ScriptArgs,
     *,
@@ -923,42 +979,21 @@ def run_warm_start(
             f"{resolved_output_config.run.run_dir.name}"
         )
     )
-    wandb_config = {
-        "source_run_dir": str(source_run_dir),
-        "source_config_path": str(source_config_path),
-        "source_training_data_path": str(source_training_data_path),
-        "resume_from_source_offline_state": args.resume_from_source_offline_state,
-        "source_offline_resume_checkpoint": (
-            str(source_offline_resume_checkpoint)
-            if source_offline_resume_checkpoint is not None
-            else None
-        ),
-        "output_run_dir": str(resolved_output_config.run.run_dir),
-        "device": device_str,
-        "seed": args.seed,
-        "epochs_per_round": args.epochs_per_round,
-        "early_stopping_patience": args.early_stopping_patience,
-        "max_rounds": args.max_rounds,
-        "max_examples": args.max_examples,
-        "batch_size": batch_size,
-        "learning_rate": learning_rate,
-        "weight_decay": weight_decay,
-        "grad_clip_norm": grad_clip_norm,
-        "eval_examples": args.eval_examples,
-        "eval_batch_size": args.eval_batch_size,
-        "preload_to_gpu": args.preload_to_gpu,
-        "preload_to_ram": args.preload_to_ram,
-        "preload_mode": preload_mode,
-        "num_eval_games": args.num_eval_games,
-        "eval_seed_start": args.eval_seed_start,
-        "eval_num_workers": eval_worker_resolution.num_workers,
-        "eval_num_workers_source": eval_worker_resolution.source,
-        "eval_num_simulations": args.eval_num_simulations,
-        "eval_max_placements": args.eval_max_placements,
-        "mcts_seed": args.mcts_seed,
-        "wandb_tags": args.wandb_tags,
-        "output_config": json.loads(config_to_json(resolved_output_config)),
-    }
+    wandb_config = build_wandb_config(
+        args=args,
+        source_run_dir=source_run_dir,
+        source_config_path=source_config_path,
+        source_training_data_path=source_training_data_path,
+        source_offline_resume_checkpoint=source_offline_resume_checkpoint,
+        resolved_output_config=resolved_output_config,
+        device_str=device_str,
+        preload_mode=preload_mode,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        grad_clip_norm=grad_clip_norm,
+        eval_worker_resolution=eval_worker_resolution,
+    )
     wandb.init(
         project=args.wandb_project,
         entity=args.wandb_entity,
