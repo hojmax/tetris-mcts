@@ -720,7 +720,7 @@ def build_torch_batch_from_npz(
     global_indices: np.ndarray,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    boards_np = data["boards"][global_indices].astype(np.float32, copy=False)
+    boards_np = data["boards"][global_indices]
     aux_np = build_aux_batch_from_npz(data, global_indices)
     policy_targets_np = data["policy_targets"][global_indices].astype(
         np.float32, copy=False
@@ -729,7 +729,7 @@ def build_torch_batch_from_npz(
         np.float32, copy=False
     )
     action_masks_np = data["action_masks"][global_indices].astype(
-        np.float32, copy=False
+        np.bool_, copy=False
     )
 
     boards = torch.from_numpy(boards_np).unsqueeze(1).to(device, non_blocking=True)
@@ -746,7 +746,7 @@ def build_tensor_dataset(
     mode: str,
     train_device: torch.device,
 ) -> OfflineTensorDataset:
-    boards_np = data["boards"][selected_global_indices].astype(np.float32, copy=False)
+    boards_np = data["boards"][selected_global_indices]
     aux_np = build_aux_batch_from_npz(data, selected_global_indices).astype(
         np.float32, copy=False
     )
@@ -757,7 +757,7 @@ def build_tensor_dataset(
         np.float32, copy=False
     )
     action_masks_np = data["action_masks"][selected_global_indices].astype(
-        np.float32, copy=False
+        np.bool_, copy=False
     )
 
     boards = torch.from_numpy(boards_np).unsqueeze(1)
