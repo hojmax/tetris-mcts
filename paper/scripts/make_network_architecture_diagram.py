@@ -109,14 +109,14 @@ class DiagramArgs:
     output_pdf_path: Path = PROJECT_ROOT / "paper" / "plots" / "network_architecture.pdf"
     output_png_path: Path = PROJECT_ROOT / "paper" / "plots" / "network_architecture.png"
     width_inches: float = 8.6
-    height_inches: float = 12.2
+    height_inches: float = 15.0
     dpi: int = 220
 
 
 def create_figure(*, width_inches: float, height_inches: float) -> tuple[Figure, Axes]:
     fig, ax = plt.subplots(figsize=(width_inches, height_inches))
     ax.set_xlim(0, 9.2)
-    ax.set_ylim(-1.15, 15.1)
+    ax.set_ylim(-2.0, 21.5)
     ax.axis("off")
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
@@ -124,10 +124,15 @@ def create_figure(*, width_inches: float, height_inches: float) -> tuple[Figure,
 
 
 def draw_board_input(ax: Axes, palette: DiagramPalette) -> None:
+    board_x = 3.7
+    board_y = 16.80
+    board_w = 1.42
+    board_h = 2.35
+
     outer = FancyBboxPatch(
-        (3.7, 10.55),
-        1.42,
-        2.35,
+        (board_x, board_y),
+        board_w,
+        board_h,
         boxstyle="round,pad=0.02,rounding_size=0.08",
         linewidth=1.8,
         edgecolor=palette.board_edge,
@@ -136,8 +141,8 @@ def draw_board_input(ax: Axes, palette: DiagramPalette) -> None:
     )
     ax.add_patch(outer)
 
-    cell_w = 1.42 / 10.0
-    cell_h = 2.35 / 20.0
+    cell_w = board_w / 10.0
+    cell_h = board_h / 20.0
     filled_cells = {
         row_index * 10 + col_index
         for row_index, row in enumerate(TETRIS_BOARD_ROWS)
@@ -146,8 +151,8 @@ def draw_board_input(ax: Axes, palette: DiagramPalette) -> None:
     }
     for row in range(20):
         for col in range(10):
-            y = 10.55 + (19 - row) * cell_h
-            x = 3.7 + col * cell_w
+            y = board_y + (19 - row) * cell_h
+            x = board_x + col * cell_w
             flat_index = row * 10 + col
             cell_color = palette.filled_cell if flat_index in filled_cells else "white"
             cell = Rectangle(
@@ -162,8 +167,8 @@ def draw_board_input(ax: Axes, palette: DiagramPalette) -> None:
             ax.add_patch(cell)
 
     ax.text(
-        4.41,
-        13.12,
+        board_x + board_w / 2.0,
+        board_y + board_h + 0.22,
         "Input Tetris Board",
         ha="center",
         va="bottom",
@@ -357,9 +362,13 @@ def draw_arrow(
 def draw_architecture(ax: Axes) -> None:
     palette = DiagramPalette()
 
+    # Spine center x
+    cx = 4.30
+
+    # --- Title ---
     ax.text(
         0.45,
-        14.75,
+        21.1,
         "Gated Fusion Network",
         fontsize=15.0,
         fontweight="bold",
@@ -369,111 +378,75 @@ def draw_architecture(ax: Axes) -> None:
         zorder=20,
     )
 
-    draw_list_box(
-        ax,
-        ListBoxSpec(
-            x=0.45,
-            y=8.0,
-            width=2.75,
-            height=2.75,
-            face_color=palette.aux_fill,
-            edge_color=palette.aux_edge,
-            title="Piece/Game Features (61)",
-            lines=[
-                "Current piece (7 one-hot)",
-                "Hold piece (8 incl. empty)",
-                "Hold available (1)",
-                "Next queue (35 = 5 x 7)",
-                "Placement count (1)",
-                "Combo (1)",
-                "Back-to-back (1)",
-                "Hidden-piece distribution (7)",
-            ],
-            title_size=10.7,
-            line_size=7.55,
-        ),
-        palette,
-    )
-
+    # ===== Board input (y=16.80..19.15, title ~19.4) =====
     draw_board_input(ax, palette)
 
-    draw_list_box(
-        ax,
-        ListBoxSpec(
-            x=5.55,
-            y=2.15,
-            width=3.0,
-            height=2.55,
-            face_color=palette.aux_fill,
-            edge_color=palette.aux_edge,
-            title="Custom Board Stats (19)",
-            lines=[
-                "Column heights (10)",
-                "Max column height (1)",
-                "Bottom-row fill counts (4)",
-                "Total blocks (1)",
-                "Bumpiness (1)",
-                "Holes (1)",
-                "Overhang fields (1)",
-            ],
-            title_size=10.7,
-            line_size=7.55,
-        ),
-        palette,
-    )
-
+    # ===== Conv Stem volume block =====
+    # Block body: y=14.90..15.68, top layer top ~16.22, title ~16.30
+    # subtitle ~14.72
     draw_volume_block(
         ax,
         BlockSpec(
             x=3.83,
-            y=8.85,
+            y=14.90,
             width=0.94,
             height=0.78,
             depth=4,
             face_color=palette.conv_fill,
             edge_color=palette.conv_edge,
             title="Conv Stem",
-            subtitle="16 x 20 x 10",
+            subtitle="16 × 20 × 10",
         ),
         palette,
     )
+
+    # ===== Residual Trunk volume block =====
+    # Block body: y=12.00..12.92, top ~13.40, title ~13.48
+    # subtitle ~11.82
     draw_volume_block(
         ax,
         BlockSpec(
             x=3.55,
-            y=7.1,
+            y=12.00,
             width=1.34,
             height=0.92,
             depth=4,
             face_color=palette.conv_fill,
             edge_color=palette.conv_edge,
             title="Residual Trunk",
-            subtitle="3x blocks, 16 x 20 x 10",
+            subtitle="3× blocks, 16 × 20 × 10",
         ),
         palette,
     )
+
+    # ===== Stride-2 Reduce volume block =====
+    # Block body: y=9.30..9.92, top ~10.28, title ~10.36
+    # subtitle ~9.12
     draw_volume_block(
         ax,
         BlockSpec(
             x=3.72,
-            y=5.45,
+            y=9.30,
             width=1.08,
             height=0.62,
             depth=3,
             face_color=palette.conv_fill,
             edge_color=palette.conv_edge,
             title="Stride-2 Reduce",
-            subtitle="32 x 10 x 5",
+            subtitle="32 × 10 × 5",
         ),
         palette,
     )
+
+    # ===== Flatten box =====
+    # y=7.60..8.30
     draw_box(
         ax,
         BoxSpec(
-            x=3.92,
-            y=4.0,
-            width=0.82,
-            height=0.64,
+            x=3.82,
+            y=7.60,
+            width=1.0,
+            height=0.70,
             face_color=palette.conv_fill,
             edge_color=palette.conv_edge,
             title="Flatten",
@@ -483,132 +456,250 @@ def draw_architecture(ax: Axes) -> None:
         ),
         palette,
     )
+
+    # ===== Concat box =====
+    # y=5.95..6.75
     draw_box(
         ax,
         BoxSpec(
-            x=0.55,
-            y=1.35,
-            width=2.18,
-            height=1.5,
-            face_color=palette.aux_fill,
-            edge_color=palette.aux_edge,
-            title="Aux Encoder + Gates",
-            subtitle="aux_fc: 61 -> 64\nLayerNorm + SiLU -> aux_h\n gate_fc: 64 -> 128\naux_proj: 64 -> 128",
-            title_size=10.1,
-            subtitle_size=7.55,
-        ),
-        palette,
-    )
-    draw_box(
-        ax,
-        BoxSpec(
-            x=3.6,
-            y=2.75,
-            width=1.48,
-            height=0.7,
+            x=3.40,
+            y=5.95,
+            width=1.80,
+            height=0.80,
             face_color=palette.note_fill,
             edge_color=palette.note_edge,
             title="Concat",
-            subtitle="flatten + 19 board stats",
+            subtitle="flatten ++ 19 board stats",
             title_size=10.0,
             subtitle_size=7.7,
         ),
         palette,
     )
+
+    # ===== Board Projection box =====
+    # y=4.00..5.20
     draw_box(
         ax,
         BoxSpec(
-            x=3.02,
-            y=1.55,
-            width=2.56,
-            height=0.92,
+            x=2.90,
+            y=4.00,
+            width=2.80,
+            height=1.20,
             face_color="#d7efff",
             edge_color=palette.conv_edge,
-            title="board_proj",
-            subtitle="Linear(1600 + 19 -> 128)\ncached board_h embedding",
+            title="Board Projection",
+            subtitle="Linear(1619 → 128)\ncached board embedding",
             title_size=10.2,
             subtitle_size=7.75,
         ),
         palette,
     )
+
+    # ===== Gated Fusion box (green) =====
+    # y=2.20..3.55
     draw_box(
         ax,
         BoxSpec(
-            x=2.95,
-            y=0.25,
-            width=2.7,
-            height=1.02,
+            x=2.70,
+            y=2.20,
+            width=3.20,
+            height=1.35,
             face_color=palette.fusion_fill,
             edge_color=palette.fusion_edge,
             title="Gated Fusion",
-            subtitle="fused = board_h * (1 + gate)\n        + aux_proj(aux_h)\n1 residual fusion MLP -> 128-d features",
+            subtitle="fused = board_h × (1 + gate)\n        + aux_proj(aux_h)\n1 residual fusion MLP → 128-d",
             title_size=10.2,
             subtitle_size=7.55,
         ),
         palette,
     )
+
+    # ===== Policy Head (centered under left half of fusion) =====
+    head_gap = 0.25
+    head_w = 2.0
+    head_h = 0.82
+    head_y = 0.15
+    policy_x = cx - head_gap / 2 - head_w
+    value_x = cx + head_gap / 2
+
     draw_box(
         ax,
         BoxSpec(
-            x=2.05,
-            y=-0.9,
-            width=1.9,
-            height=0.78,
+            x=policy_x,
+            y=head_y,
+            width=head_w,
+            height=head_h,
             face_color=palette.head_fill,
             edge_color=palette.head_edge,
             title="Policy Head",
-            subtitle="128 -> 256 -> 735 logits",
+            subtitle="128 → 256 → 735 logits",
             title_size=10.0,
             subtitle_size=7.7,
         ),
         palette,
     )
+
+    # ===== Value Head (centered under right half of fusion) =====
     draw_box(
         ax,
         BoxSpec(
-            x=4.65,
-            y=-0.9,
-            width=1.9,
-            height=0.78,
+            x=value_x,
+            y=head_y,
+            width=head_w,
+            height=head_h,
             face_color=palette.head_fill,
             edge_color=palette.head_edge,
             title="Value Head",
-            subtitle="128 -> 64 -> 1 scalar",
+            subtitle="128 → 64 → 1 scalar",
             title_size=10.0,
             subtitle_size=7.7,
         ),
         palette,
     )
 
-    draw_arrow(ax, start_x=4.41, start_y=10.48, end_x=4.41, end_y=9.62, palette=palette)
-    draw_arrow(ax, start_x=4.41, start_y=8.72, end_x=4.41, end_y=8.08, palette=palette)
-    draw_arrow(ax, start_x=4.41, start_y=7.02, end_x=4.28, end_y=6.16, palette=palette)
-    draw_arrow(ax, start_x=4.28, start_y=5.38, end_x=4.28, end_y=4.72, palette=palette)
-    draw_arrow(ax, start_x=4.28, start_y=3.98, end_x=4.28, end_y=3.48, palette=palette)
-    draw_arrow(ax, start_x=4.28, start_y=2.72, end_x=4.28, end_y=2.48, palette=palette)
-    draw_arrow(ax, start_x=4.28, start_y=1.52, end_x=4.28, end_y=1.3, palette=palette)
-    draw_arrow(ax, start_x=4.3, start_y=0.24, end_x=3.0, end_y=0.02, palette=palette)
-    draw_arrow(ax, start_x=4.3, start_y=0.24, end_x=5.6, end_y=0.02, palette=palette)
+    # ===== Side boxes =====
 
+    # --- Piece/Game Features (left side, spanning conv stem to stride-2 area) ---
+    draw_list_box(
+        ax,
+        ListBoxSpec(
+            x=0.10,
+            y=12.30,
+            width=3.10,
+            height=3.30,
+            face_color=palette.aux_fill,
+            edge_color=palette.aux_edge,
+            title="Auxiliary Features (61)",
+            lines=[
+                "Current piece (7 one-hot)",
+                "Hold piece (8 incl. empty)",
+                "Hold available (1)",
+                "Next queue (35 = 5 × 7)",
+                "Placement count (1)",
+                "Combo (1)",
+                "Back-to-back (1)",
+                "Hidden-piece distribution (7)",
+            ],
+            title_size=10.5,
+            line_size=7.7,
+        ),
+        palette,
+    )
+
+    # --- Handcrafted Board Features (right side, near Flatten/Concat) ---
+    draw_list_box(
+        ax,
+        ListBoxSpec(
+            x=5.80,
+            y=7.20,
+            width=3.20,
+            height=2.75,
+            face_color=palette.aux_fill,
+            edge_color=palette.aux_edge,
+            title="Handcrafted Board Features (19)",
+            lines=[
+                "Column heights (10)",
+                "Max column height (1)",
+                "Bottom-row fill counts (4)",
+                "Total blocks (1)",
+                "Bumpiness (1)",
+                "Holes (1)",
+                "Overhang fields (1)",
+            ],
+            title_size=10.0,
+            line_size=7.7,
+        ),
+        palette,
+    )
+
+    # --- Aux Encoder + Gates (left side, below features) ---
+    draw_box(
+        ax,
+        BoxSpec(
+            x=0.10,
+            y=2.80,
+            width=2.50,
+            height=1.65,
+            face_color=palette.aux_fill,
+            edge_color=palette.aux_edge,
+            title="Aux Encoder + Gates",
+            subtitle="aux_fc: 61 → 64\nLayerNorm + SiLU → aux_h\ngate_fc: 64 → 128\naux_proj: 64 → 128",
+            title_size=10.1,
+            subtitle_size=7.55,
+        ),
+        palette,
+    )
+
+    # ===== Arrows: central spine =====
+    # Volume block geometry reference:
+    #   Conv Stem:  front y=14.90, topmost top-polygon=16.22, title baseline~16.32
+    #     subtitle top ~14.72
+    #   Res Trunk:  front y=12.00, topmost top-polygon=13.40, title baseline~13.50
+    #     subtitle top ~11.82
+    #   Stride-2:   front y=9.30, topmost top-polygon=9.98, title baseline~10.08
+    #     subtitle top ~9.12
+
+    # Board bottom (16.80) -> Conv Stem topmost polygon (16.22)
+    draw_arrow(ax, start_x=cx, start_y=16.75, end_x=cx, end_y=16.26, palette=palette)
+    # Conv Stem front bottom (14.90) -> Residual Trunk topmost polygon (13.40)
+    # Short arrows: stop above title, start below subtitle
+    draw_arrow(ax, start_x=cx, start_y=14.62, end_x=cx, end_y=13.58, palette=palette)
+    # Residual Trunk front bottom (12.00) -> Stride-2 topmost polygon (9.98)
+    draw_arrow(ax, start_x=cx, start_y=11.72, end_x=cx, end_y=10.16, palette=palette)
+    # Stride-2 front bottom (9.30) -> Flatten top (8.30)
+    draw_arrow(ax, start_x=cx, start_y=9.02, end_x=cx, end_y=8.33, palette=palette)
+    # Flatten bottom (7.60) -> Concat top (6.75)
+    draw_arrow(ax, start_x=cx, start_y=7.57, end_x=cx, end_y=6.78, palette=palette)
+    # Concat bottom (5.95) -> Board Projection top (5.20)
+    draw_arrow(ax, start_x=cx, start_y=5.92, end_x=cx, end_y=5.23, palette=palette)
+    # Board Projection bottom (4.00) -> Gated Fusion top (3.55)
+    draw_arrow(ax, start_x=cx, start_y=3.97, end_x=cx, end_y=3.58, palette=palette)
+
+    # Gated Fusion bottom (2.20) -> Policy Head top
+    policy_cx = policy_x + head_w / 2
+    value_cx = value_x + head_w / 2
     draw_arrow(
         ax,
-        start_x=1.82,
-        start_y=8.0,
-        end_x=1.82,
-        end_y=2.85,
+        start_x=cx - 0.35,
+        start_y=2.17,
+        end_x=policy_cx,
+        end_y=head_y + head_h + 0.03,
         palette=palette,
     )
-    draw_arrow(ax, start_x=7.25, start_y=2.15, end_x=5.08, end_y=3.08, palette=palette)
-    draw_arrow(ax, start_x=2.73, start_y=1.95, end_x=2.95, end_y=0.92, palette=palette)
+    # Gated Fusion bottom (2.20) -> Value Head top
+    draw_arrow(
+        ax,
+        start_x=cx + 0.35,
+        start_y=2.17,
+        end_x=value_cx,
+        end_y=head_y + head_h + 0.03,
+        palette=palette,
+    )
 
-    ax.text(
-        5.35,
-        1.02,
+    # ===== Side arrows =====
+    # Auxiliary Features -> Aux Encoder
+    draw_arrow(
+        ax,
+        start_x=1.65,
+        start_y=12.30,
+        end_x=1.65,
+        end_y=4.45,
+        palette=palette,
+    )
+    # Handcrafted Board Features -> Concat
+    draw_arrow(ax, start_x=7.4, start_y=7.20, end_x=5.20, end_y=6.40, palette=palette)
+    # Aux Encoder -> Gated Fusion
+    draw_arrow(ax, start_x=2.60, start_y=3.45, end_x=2.70, end_y=2.95, palette=palette)
+    # Board Projection -> Gated Fusion (short annotated connector for board_h)
+    ax.annotate(
         "board_h",
+        xy=(5.70, 3.58),
+        xytext=(5.70, 3.97),
         fontsize=8.3,
         color=palette.text_muted,
-        ha="left",
-        va="center",
+        ha="center",
+        va="bottom",
+        arrowprops={"arrowstyle": "-|>", "color": palette.arrow, "lw": 1.4},
         zorder=20,
     )
 

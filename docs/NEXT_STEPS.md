@@ -1,5 +1,14 @@
 # Next Steps
 
+- [ ] Ah we make a new fresh repo, copy data over, and simple arcitecture. Then we make a script that saves rust network, and evaluate its speed from rust. Then we fix the cache rate at 95% and say that estimated speed is: latency = avg_trunk_ms x 0.05 + avg_head_ms
+  - And then we want to find the architecture that is pareto optimal in terms of latency vs. final_loss.
+  - Not quite sure how important value vs. policy loss is? How would I test this?
+    - One thing would be take a well trained network, and then try adding noise to the respective policy and value, and with the noisy estimates calculate the held-out loss. Then you can make two graphs, one is held-out policy loss on x-axis, and then avg. attack on y-axis. The other plot is held-out value loss on x-axis vs. avg. attack on y-axis.
+    - What would we conclude from this? I guess we would want some notion of marginal utility of change in loss in the two? I guess we will also have to extrapolate to some degree probably, since the model will probably be improving outside the range of what I trained the marginal utility curves on. So say we had some extrapolated curve, and value loss said for 0.1 change in loss, I get +0.05 in avg. attak, and policy was for 0.1 change in loss I get +0.01 in attack, Then I guess you would scale the loss like: policy_loss + normalized_value_loss * 5, i.e. the value loss gets to dominate 5 times as much in the loss.
+    - I would imagine we would fit a sigmoid here on both, as they would start of with noise not being useful, then sharp increase, then plateu at maximal performance. Then for the marginal improvement we can simply use the derivative of the sigmoid.
+    - We want to baseline this training method against just training 1:1 like we do right now.
+- [ ] Implment new architecture, and then run warm start
+- [ ] Allow an agent to iterate on the architecture by itself, so just give it a replay buffer and a fresh repo, and the idea is for it to get as low of a loss as possible, whilst being amenable to caching.
 - [ ] Produce pareto frontier plot.
   - [ ] Start by generating for just single model. Like make script for getting the data.
 - [ ] Try out spatial policy.
@@ -7,14 +16,12 @@
 - [ ] We let the current run keep going until plateues, then we try to train some larger trunk models and see what the speed difference is.
 - [ ] I need to somehow decide the optimal trunk size. Like I could try a smaller and a larger one, trained locally on the replay buffer, and then run both and see what the concrete speed difference is.
 - [ ] Maybe I can simplify code now and drop all the bootstrapping logic, and just pretrain the network on the replay buffer from earlier experiment as warm start. But kind of wack to have unreproducable training run. Like does the method actually work without bootstrapping now? Could we get rid of the penalties and stuff? Once everything is fixed we should try, is kind of ugly. Why would this be necessary. Could of course just be compute multiplier.
-- [ ] Look at game that ends really early, and understand exactly why that happened. I would never expect it to look like higher reward to screw up the game board.
-- [ ] New Metric: Is past attack + future attack roughly stable? Maybe we log per game variance in this estimate.
 - [ ] Why is the GPU going cold repeatedly like 50% of the time?
 - [ ] Why don't the final moves look full optimal? Like just clean out the board in the last 5 moves? Surely that is highest attack possible? Instead it does random nonsense.
 - [ ] Why don't we always have 50 piece episodes??????
 - [ ] One thing we could do is to make the amount of resources allocated to evaluating candidates configurable, and then spend alot on it every time we have upgrade, and then less and less each time they fail to upgrade. So we evaluate frequently when we are seeing big changes, and rarely when we are seeing small changes.
 
-- [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actiosn are always masked out.
+- [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actions are always masked out.
 - [ ] Speed up data generation
 - [ ] Multi machine RL environment generation?
 - [ ] Replay buffer should grow gradually?
@@ -33,6 +40,7 @@
 
 # Confusions
 
+- [ ] Why was the lower loss warm started network not better than it was?
 - [ ] Why are some of the games still ending early?
 - [ ] How come the model is not even that much better even when doing tree reuse
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
