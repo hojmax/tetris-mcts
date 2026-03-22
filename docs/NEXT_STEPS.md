@@ -122,6 +122,10 @@ In progress: 🟨
 
 ### tetris_core/src/game/env/placement.rs ✅
 
+### tetris_core/src/game/env/pymethods.rs 🟨
+
+- Kind of weird that step just does nothing if the action is not 1 through 7? Maybe should raise?
+
 ## Python Code
 
 ### tetris_bot/config.py ✅
