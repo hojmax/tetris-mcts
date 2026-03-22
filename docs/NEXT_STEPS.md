@@ -107,11 +107,20 @@ In progress: 🟨
 
 - Is Y_MAX_EXCLUSIVE not just board height from others consts? Same with X_MAX_EXCLUSIVE being board width?
 
-### tetris_core/src/game/env/global_cache.rs
+### tetris_core/src/game/env/global_cache.rs ✅
 
 - Why not raise instead of returning None in build_board_key?
 - Why is rotation part of key in build_placement_lookup_key?
 
+### tetris_core/src/game/env/lock_delay.rs ✅
+
+### tetris_core/src/game/env/movement.rs ✅
+
+### tetris_core/src/game/env/piece_management.rs ✅
+
+- Lets combine the shared logic for spawn_piece_internal and spawn_piece_from_type
+
+### tetris_core/src/game/env/placement.rs ✅
 
 ## Python Code
 
