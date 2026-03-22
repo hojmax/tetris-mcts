@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from tetris_bot.constants import PROJECT_ROOT
 matplotlib.use("Agg")
 
 logger = structlog.get_logger()
-MARKER_SEQUENCE = ("o", "s", "D", "^", "h")
+MARKER_SEQUENCE = ("o", "s", "D", "^", "v", "P", "X", "*", "<", ">")
 
 
 @dataclass(frozen=True)
@@ -28,53 +29,64 @@ class PlotPoint:
 @dataclass(frozen=True)
 class Curve:
     name: str
-    color: str
+    color: str | None
     points: list[PlotPoint]
+    sort_order: int
 
 
 @dataclass
 class PlotArgs:
+    results_root: Path = PROJECT_ROOT / "paper" / "results" / "avg_attack_vs_runtime"
     output_path: Path = PROJECT_ROOT / "paper" / "plots" / "avg_attack_vs_runtime.pdf"
     width_inches: float = 9.8
     height_inches: float = 5.8
 
 
-def build_curves() -> list[Curve]:
-    return [
-        Curve(
-            name="Baseline",
-            color="#4C78A8",
-            points=[
-                PlotPoint(simulations=64, runtime_ms=5_500, avg_attack=5.2),
-                PlotPoint(simulations=128, runtime_ms=10_000, avg_attack=6.1),
-                PlotPoint(simulations=256, runtime_ms=19_000, avg_attack=6.9),
-                PlotPoint(simulations=512, runtime_ms=36_000, avg_attack=7.5),
-                PlotPoint(simulations=1_024, runtime_ms=68_000, avg_attack=7.9),
-            ],
-        ),
-        Curve(
-            name="Variant A",
-            color="#F58518",
-            points=[
-                PlotPoint(simulations=64, runtime_ms=4_800, avg_attack=5.8),
-                PlotPoint(simulations=128, runtime_ms=8_800, avg_attack=6.6),
-                PlotPoint(simulations=256, runtime_ms=16_500, avg_attack=7.3),
-                PlotPoint(simulations=512, runtime_ms=31_000, avg_attack=8.0),
-                PlotPoint(simulations=1_024, runtime_ms=59_000, avg_attack=8.4),
-            ],
-        ),
-        Curve(
-            name="Variant B",
-            color="#54A24B",
-            points=[
-                PlotPoint(simulations=64, runtime_ms=7_200, avg_attack=6.3),
-                PlotPoint(simulations=128, runtime_ms=13_500, avg_attack=7.1),
-                PlotPoint(simulations=256, runtime_ms=25_000, avg_attack=7.9),
-                PlotPoint(simulations=512, runtime_ms=47_000, avg_attack=8.7),
-                PlotPoint(simulations=1_024, runtime_ms=84_000, avg_attack=9.4),
-            ],
-        ),
-    ]
+def load_curves(results_root: Path) -> list[Curve]:
+    summary_paths = sorted(results_root.glob("*/summary.json"))
+    if not summary_paths:
+        raise FileNotFoundError(
+            f"No runtime/attack result summaries found under {results_root}. "
+            "Run paper/scripts/benchmark_avg_attack_vs_runtime.py first."
+        )
+
+    curves: list[Curve] = []
+    for summary_path in summary_paths:
+        payload = json.loads(summary_path.read_text())
+        points_payload = payload["points"]
+        if not isinstance(points_payload, list) or not points_payload:
+            raise ValueError(f"summary file has no points: {summary_path}")
+        points = [
+            PlotPoint(
+                simulations=int(point["simulations"]),
+                runtime_ms=float(point["avg_runtime_ms"]),
+                avg_attack=float(point["avg_attack"]),
+            )
+            for point in sorted(points_payload, key=lambda point: int(point["simulations"]))
+        ]
+        plot_config = payload.get("plot", {})
+        if not isinstance(plot_config, dict):
+            raise ValueError(f"plot config must be an object: {summary_path}")
+        curves.append(
+            Curve(
+                name=str(payload["label"]),
+                color=(
+                    str(plot_config["color"])
+                    if plot_config.get("color") is not None
+                    else None
+                ),
+                points=points,
+                sort_order=int(plot_config.get("sort_order", 0)),
+            )
+        )
+
+    ordered_curves = sorted(curves, key=lambda curve: (curve.sort_order, curve.name))
+    logger.info(
+        "Loaded runtime/attack plot data",
+        results_root=str(results_root),
+        curves=[curve.name for curve in ordered_curves],
+    )
+    return ordered_curves
 
 
 def format_runtime_ms(value: float, _position: float) -> str:
@@ -83,8 +95,14 @@ def format_runtime_ms(value: float, _position: float) -> str:
     return f"{value:.0f}"
 
 
-def write_plot(output_path: Path, *, width_inches: float, height_inches: float) -> None:
-    curves = build_curves()
+def write_plot(
+    results_root: Path,
+    output_path: Path,
+    *,
+    width_inches: float,
+    height_inches: float,
+) -> None:
+    curves = load_curves(results_root)
     simulations = sorted(
         {point.simulations for curve in curves for point in curve.points}
     )
@@ -103,7 +121,7 @@ def write_plot(output_path: Path, *, width_inches: float, height_inches: float) 
     for curve_index, curve in enumerate(curves):
         runtimes = [point.runtime_ms for point in curve.points]
         avg_attacks = [point.avg_attack for point in curve.points]
-        color = f"C{curve_index}"
+        color = curve.color or f"C{curve_index}"
         ax.plot(
             runtimes,
             avg_attacks,
@@ -130,7 +148,7 @@ def write_plot(output_path: Path, *, width_inches: float, height_inches: float) 
         Line2D(
             [0],
             [0],
-            color=f"C{curve_index}",
+            color=curve.color or f"C{curve_index}",
             linewidth=1.8,
             label=curve.name,
         )
@@ -168,12 +186,17 @@ def write_plot(output_path: Path, *, width_inches: float, height_inches: float) 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, bbox_inches="tight")
     plt.close(fig)
-    logger.info("Wrote avg attack/runtime plot", path=output_path)
+    logger.info(
+        "Wrote avg attack/runtime plot",
+        path=output_path,
+        results_root=results_root,
+    )
 
 
 def main() -> None:
     args = parse(PlotArgs)
     write_plot(
+        args.results_root,
         args.output_path,
         width_inches=args.width_inches,
         height_inches=args.height_inches,

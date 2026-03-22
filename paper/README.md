@@ -34,6 +34,14 @@ Only regenerate the plot PDF:
 uv run python paper/scripts/make_avg_attack_vs_runtime_plot.py
 ```
 
+Generate one runtime-vs-attack result entry from a training run:
+
+```bash
+uv run python paper/scripts/benchmark_avg_attack_vs_runtime.py \
+  --run_dir training_runs/vN \
+  --label "vN incumbent"
+```
+
 Only regenerate the architecture diagram:
 
 ```bash
@@ -50,6 +58,7 @@ typst watch --root paper paper/typst/main.typ paper/paper.pdf
 
 - `paper/build.sh`: builds plots, then compiles Typst
 - `paper/plots/network_architecture.pdf`: generated architecture diagram
+- `paper/results/avg_attack_vs_runtime/<entry>/summary.json`: benchmarked runtime/attack curves that feed the plot
 - `paper/paper.pdf`: compiled paper output
 - `paper/scripts/`: Python plot generators
 - `paper/plots/`: generated figures
