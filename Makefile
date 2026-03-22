@@ -250,6 +250,11 @@ compare-offline-spatial-policy: $(INSTALL_MARKER)
 compare-warm-start-trunk-sizes: $(RELEASE_MARKER)
 	PYTHONPATH=$(CURDIR) $(PYTHON) tetris_bot/scripts/ablations/compare_warm_start_trunk_sizes.py $(ARGS)
 
+# Measure marginal utility of policy vs value loss by perturbing heads with noise and running games.
+# Usage: make loss-sensitivity ARGS="--run_dir training_runs/v32"
+loss-sensitivity: $(RELEASE_MARKER)
+	$(PYTHON) tetris_bot/scripts/ablations/loss_sensitivity_analysis.py $(ARGS)
+
 # Build a new sibling run dir by offline-training on another run's replay snapshot.
 # Usage: make warm-start ARGS="--source_run_dir training_runs/v3"
 warm-start: $(RELEASE_MARKER)
