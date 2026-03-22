@@ -13,6 +13,8 @@
     - The noise-to-loss approximation trick assumes that value estimate is unbiased, which we know is true and can verify. I am not sure if the same is true for the probability distribution? I guess cross entropy is a proper scoring rule, such that I would expect probabilities to be unbiased (actually we could also check this, compare estimate to the train buffer).
     -
 
+- [ ] Maybe just ask an agent team for like a full rewrite from scratch to make everything clean? altough all the reading I have been doing may have been for naught then.
+
 - [ ] Implment new architecture, and then run warm start
 - [ ] Allow an agent to iterate on the architecture by itself, so just give it a replay buffer and a fresh repo, and the idea is for it to get as low of a loss as possible, whilst being amenable to caching.
 - [ ] Produce pareto frontier plot.
@@ -100,6 +102,16 @@ In progress: 🟨
 ### tetris_core/src/runtime/mod.rs ✅
 
 ### tetris_core/src/runtime/game_generator/py_api.rs ✅
+
+### tetris_core/src/game/action_space.rs ✅
+
+- Is Y_MAX_EXCLUSIVE not just board height from others consts? Same with X_MAX_EXCLUSIVE being board width?
+
+### tetris_core/src/game/env/global_cache.rs
+
+- Why not raise instead of returning None in build_board_key?
+- Why is rotation part of key in build_placement_lookup_key?
+
 
 ## Python Code
 
