@@ -1284,6 +1284,10 @@ class Trainer:
             nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
             save_eval_trees=self.config.self_play.save_eval_trees,
         )
+        logger.info(
+            "Starting game generator replay preload if training data exists",
+            training_data_path=str(training_data_path),
+        )
         generator.start()
         logger.info(
             "Started background game generator",
