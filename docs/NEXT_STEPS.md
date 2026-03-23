@@ -53,6 +53,7 @@
 
 # Confusions
 
+- [ ] Why is episode length not 50/50? I guess random piece placements?? Still confused, mysterious answer.
 - [ ] Why was the lower loss warm started network not better than it was?
 - [ ] Why are some of the games still ending early?
 - [ ] How come the model is not even that much better even when doing tree reuse
