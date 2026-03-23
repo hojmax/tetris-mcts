@@ -714,36 +714,14 @@ class Trainer:
         generator: GameGenerator,
         mirror: CircularReplayMirror | None = None,
     ) -> CircularReplayMirror | None:
-        result = generator.replay_buffer_snapshot()
-        if result is None:
-            return None
-        (
-            start_index,
-            boards,
-            aux,
-            policy_targets,
-            value_targets,
-            overhang_fields,
-            masks,
-        ) = result
-        device_batch = self._to_training_device(
-            self._build_training_batch(
-                (boards, aux, policy_targets, value_targets, overhang_fields, masks)
-            )
-        )
         if mirror is None:
             mirror = CircularReplayMirror(self.config.replay.buffer_size, self.device)
         mirror.count = 0
         mirror.write_pos = 0
-        self._write_to_mirror(mirror, device_batch)
-        mirror.logical_end = int(start_index) + device_batch.size
-        logger.info(
-            "Loaded replay mirror snapshot",
-            start_index=int(start_index),
-            examples=mirror.count,
-            device=str(self.device),
-        )
-        return mirror
+        mirror.logical_end = 0
+        # Bootstrap from bounded replay deltas so a resumed full buffer does not
+        # stage the entire replay window on the training device at once.
+        return self._refresh_replay_mirror(generator, mirror)
 
     def _refresh_replay_mirror(
         self,
@@ -786,12 +764,13 @@ class Trainer:
                 )
                 return self._load_replay_mirror(generator, mirror)
             if window_start > mirror.logical_end:
-                logger.info(
-                    "Replay mirror fully evicted; rebasing",
-                    mirror_logical_end=mirror.logical_end,
-                    window_start_index=window_start,
-                    window_end_index=window_end,
-                )
+                if mirror.count > 0:
+                    logger.info(
+                        "Replay mirror fully evicted; rebasing",
+                        mirror_logical_end=mirror.logical_end,
+                        window_start_index=window_start,
+                        window_end_index=window_end,
+                    )
                 mirror.count = 0
                 mirror.write_pos = 0
                 mirror.logical_end = window_start
@@ -810,7 +789,7 @@ class Trainer:
             if mirror.logical_end >= window_end:
                 if delta_examples_total > 0:
                     logger.info(
-                        "Updated replay mirror incrementally",
+                        "Synchronized replay mirror from deltas",
                         added_examples=delta_examples_total,
                         delta_gb=(delta_bytes_total / (1024.0 * 1024.0 * 1024.0)),
                         mirror_logical_end=mirror.logical_end,
