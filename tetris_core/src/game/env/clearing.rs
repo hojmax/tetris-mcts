@@ -4,10 +4,7 @@
 
 use crate::game::constants::T_PIECE;
 use crate::game::piece::{get_cells, Piece};
-use crate::game::scoring::{
-    calculate_attack, combo_attack, determine_clear_type, AttackResult, BACK_TO_BACK_BONUS,
-    PERFECT_CLEAR_ATTACK,
-};
+use crate::game::scoring::{calculate_attack_breakdown, determine_clear_type, AttackResult};
 
 use super::TetrisEnv;
 
@@ -147,28 +144,25 @@ impl TetrisEnv {
 
         let clear_type = determine_clear_type(num_lines, is_tspin, is_mini);
         let is_pc = self.is_perfect_clear();
-        let (attack_value, new_b2b) =
-            calculate_attack(clear_type, self.combo, self.back_to_back, is_pc);
+        let attack_breakdown =
+            calculate_attack_breakdown(clear_type, self.combo, self.back_to_back, is_pc);
 
         let mut result = AttackResult::new();
         result.lines_cleared = num_lines;
-        result.base_attack = clear_type.base_attack();
-        result.combo_attack = combo_attack(self.combo);
-        result.back_to_back_attack = if self.back_to_back && clear_type.is_difficult() {
-            BACK_TO_BACK_BONUS
-        } else {
-            0
-        };
-        result.perfect_clear_attack = if is_pc { PERFECT_CLEAR_ATTACK } else { 0 };
-        result.total_attack = attack_value;
+        result.base_attack = attack_breakdown.base_attack;
+        result.combo_attack = attack_breakdown.combo_attack;
+        result.back_to_back_attack = attack_breakdown.back_to_back_attack;
+        result.perfect_clear_attack = attack_breakdown.perfect_clear_attack;
+        result.total_attack = attack_breakdown.total_attack;
         result.combo = self.combo + 1;
-        result.back_to_back_active = new_b2b;
+        result.back_to_back_active = attack_breakdown.back_to_back_active;
         result.is_tspin = is_tspin;
+        result.is_mini_tspin = is_mini;
         result.is_perfect_clear = is_pc;
 
-        self.attack += attack_value;
+        self.attack += attack_breakdown.total_attack;
         self.combo += 1;
-        self.back_to_back = new_b2b;
+        self.back_to_back = attack_breakdown.back_to_back_active;
         self.last_attack_result = Some(result);
         self.lines_cleared += num_lines;
     }

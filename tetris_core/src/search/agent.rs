@@ -572,7 +572,7 @@ impl MCTSAgent {
                 if attack_result.is_tspin {
                     match lines {
                         1 => {
-                            if attack_result.base_attack == 0 {
+                            if attack_result.is_mini_tspin {
                                 stats.tspin_minis += 1;
                             } else {
                                 stats.tspin_singles += 1;

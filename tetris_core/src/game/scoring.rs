@@ -1,11 +1,11 @@
 //! Attack Scoring System
 //!
-//! Implements Jstris-style attack scoring with:
+//! Implements attack scoring with:
 //! - Line clear attacks (single, double, triple, tetris)
 //! - T-spin bonuses (mini, single, double, triple)
 //! - Combo system
 //! - Back-to-back bonus for consecutive difficult clears
-//! - Perfect clear bonus
+//! - Perfect clear override (flat 10 lines, B2B state follows the underlying clear)
 
 use pyo3::prelude::*;
 
@@ -79,6 +79,16 @@ pub const PERFECT_CLEAR_ATTACK: u32 = 10;
 /// Back-to-back bonus attack value
 pub const BACK_TO_BACK_BONUS: u32 = 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AttackBreakdown {
+    pub base_attack: u32,
+    pub combo_attack: u32,
+    pub back_to_back_attack: u32,
+    pub perfect_clear_attack: u32,
+    pub total_attack: u32,
+    pub back_to_back_active: bool,
+}
+
 /// Result of a line clear operation with full attack calculation
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -86,7 +96,7 @@ pub struct AttackResult {
     /// Number of lines cleared
     #[pyo3(get)]
     pub lines_cleared: u32,
-    /// Base attack from clear type
+    /// Attack contributed by the clear type after any perfect-clear override
     #[pyo3(get)]
     pub base_attack: u32,
     /// Combo bonus attack
@@ -95,7 +105,7 @@ pub struct AttackResult {
     /// Back-to-back bonus (if applicable)
     #[pyo3(get)]
     pub back_to_back_attack: u32,
-    /// Perfect clear bonus (if applicable)
+    /// Perfect-clear attack contribution (if applicable)
     #[pyo3(get)]
     pub perfect_clear_attack: u32,
     /// Total attack (lines sent)
@@ -110,6 +120,9 @@ pub struct AttackResult {
     /// Whether this was a T-spin
     #[pyo3(get)]
     pub is_tspin: bool,
+    /// Whether this was a mini T-spin
+    #[pyo3(get)]
+    pub is_mini_tspin: bool,
     /// Whether this was a perfect clear
     #[pyo3(get)]
     pub is_perfect_clear: bool,
@@ -127,6 +140,7 @@ impl AttackResult {
             combo: 0,
             back_to_back_active: false,
             is_tspin: false,
+            is_mini_tspin: false,
             is_perfect_clear: false,
         }
     }
@@ -139,40 +153,57 @@ impl Default for AttackResult {
 }
 
 /// Calculate the total attack for a line clear
+pub fn calculate_attack_breakdown(
+    clear_type: ClearType,
+    combo: u32,
+    back_to_back_active: bool,
+    is_perfect_clear: bool,
+) -> AttackBreakdown {
+    if is_perfect_clear {
+        return AttackBreakdown {
+            base_attack: 0,
+            combo_attack: 0,
+            back_to_back_attack: 0,
+            perfect_clear_attack: PERFECT_CLEAR_ATTACK,
+            total_attack: PERFECT_CLEAR_ATTACK,
+            back_to_back_active: clear_type.is_difficult(),
+        };
+    }
+
+    let base_attack = clear_type.base_attack();
+    let combo_attack = combo_attack(combo);
+    let back_to_back_attack = if back_to_back_active && clear_type.is_difficult() {
+        BACK_TO_BACK_BONUS
+    } else {
+        0
+    };
+
+    let total_attack = base_attack + combo_attack + back_to_back_attack;
+    let next_back_to_back = if clear_type == ClearType::None {
+        back_to_back_active
+    } else {
+        clear_type.is_difficult()
+    };
+
+    AttackBreakdown {
+        base_attack,
+        combo_attack,
+        back_to_back_attack,
+        perfect_clear_attack: 0,
+        total_attack,
+        back_to_back_active: next_back_to_back,
+    }
+}
+
 pub fn calculate_attack(
     clear_type: ClearType,
     combo: u32,
     back_to_back_active: bool,
     is_perfect_clear: bool,
 ) -> (u32, bool) {
-    let base = clear_type.base_attack();
-    let combo_bonus = combo_attack(combo);
-    let is_b2b_eligible = clear_type.is_difficult() || is_perfect_clear;
-
-    let b2b_bonus = if back_to_back_active && is_b2b_eligible {
-        BACK_TO_BACK_BONUS
-    } else {
-        0
-    };
-
-    let pc_bonus = if is_perfect_clear {
-        PERFECT_CLEAR_ATTACK
-    } else {
-        0
-    };
-
-    let total = base + combo_bonus + b2b_bonus + pc_bonus;
-
-    // Update back-to-back status
-    let new_b2b = if clear_type == ClearType::None {
-        back_to_back_active // No clear, keep current status
-    } else if is_b2b_eligible {
-        true
-    } else {
-        false // Easy clear (single/double/triple), break B2B
-    };
-
-    (total, new_b2b)
+    let breakdown =
+        calculate_attack_breakdown(clear_type, combo, back_to_back_active, is_perfect_clear);
+    (breakdown.total_attack, breakdown.back_to_back_active)
 }
 
 /// Determine the clear type based on lines cleared and T-spin status
@@ -330,29 +361,40 @@ mod tests {
 
     #[test]
     fn test_calculate_attack_perfect_clear() {
-        // Tetris + perfect clear - 4 + 10 = 14 attack, activates B2B
+        // Perfect clears are a flat 10 attack and B2B follows the underlying clear type.
         let (attack, b2b) = calculate_attack(ClearType::Tetris, 0, false, true);
-        assert_eq!(attack, 14);
-        assert!(b2b);
-
-        // Single + perfect clear - 0 + 10 = 10 attack, activates B2B
-        let (attack, b2b) = calculate_attack(ClearType::Single, 0, false, true);
         assert_eq!(attack, 10);
         assert!(b2b);
 
-        // Double + perfect clear with B2B active - 1 + 1 (B2B) + 10 = 12 attack
+        // Easy perfect clears break B2B even though they still send 10.
+        let (attack, b2b) = calculate_attack(ClearType::Single, 0, false, true);
+        assert_eq!(attack, 10);
+        assert!(!b2b);
+
+        // Existing B2B does not add extra attack on a perfect clear.
         let (attack, b2b) = calculate_attack(ClearType::Double, 0, true, true);
-        assert_eq!(attack, 12);
-        assert!(b2b);
+        assert_eq!(attack, 10);
+        assert!(!b2b);
     }
 
     #[test]
     fn test_calculate_attack_combined() {
-        // Tetris with B2B, combo 5, perfect clear
-        // 4 (base) + 1 (B2B) + 2 (combo) + 10 (PC) = 17
+        // Perfect clear overrides combo and B2B attack bonuses as well.
         let (attack, b2b) = calculate_attack(ClearType::Tetris, 5, true, true);
-        assert_eq!(attack, 17);
+        assert_eq!(attack, 10);
         assert!(b2b);
+    }
+
+    #[test]
+    fn test_calculate_attack_breakdown_perfect_clear_override() {
+        let breakdown = calculate_attack_breakdown(ClearType::TSpinDouble, 7, true, true);
+
+        assert_eq!(breakdown.base_attack, 0);
+        assert_eq!(breakdown.combo_attack, 0);
+        assert_eq!(breakdown.back_to_back_attack, 0);
+        assert_eq!(breakdown.perfect_clear_attack, 10);
+        assert_eq!(breakdown.total_attack, 10);
+        assert!(breakdown.back_to_back_active);
     }
 
     #[test]
@@ -383,5 +425,6 @@ mod tests {
         assert_eq!(result.total_attack, 0);
         assert_eq!(result.combo, 0);
         assert!(!result.back_to_back_active);
+        assert!(!result.is_mini_tspin);
     }
 }

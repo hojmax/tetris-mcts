@@ -878,6 +878,8 @@ mod tests {
                 env.board[y * env.width + x] = 1;
             }
         }
+        // Keep one block above the clear so this is not a perfect clear.
+        env.board[15 * env.width] = 1;
         env.sync_board_stats();
         env.clear_lines_internal(false, false);
 
@@ -929,11 +931,14 @@ mod tests {
         for x in 0..10 {
             env.board[19 * env.width + x] = 1;
         }
+        // Keep one block above the clear so this is not a perfect clear.
+        env.board[18 * env.width] = 1;
         env.sync_board_stats();
         env.clear_lines_internal(true, false); // T-spin single
 
         let result = env.last_attack_result.as_ref().unwrap();
         assert!(result.is_tspin);
+        assert!(!result.is_mini_tspin);
         assert!(result.base_attack > 0); // T-spin single has attack
     }
 
@@ -950,6 +955,84 @@ mod tests {
 
         let result = env.last_attack_result.as_ref().unwrap();
         assert!(result.is_tspin);
+        assert!(result.is_mini_tspin);
+    }
+
+    #[test]
+    fn test_double_perfect_clear_uses_flat_attack_override() {
+        let mut env = TetrisEnv::new(10, 20);
+
+        for y in 18..20 {
+            for x in 0..10 {
+                env.board[y * env.width + x] = 1;
+            }
+        }
+        env.sync_board_stats();
+        env.clear_lines_internal(false, false);
+
+        assert_eq!(env.attack, 10);
+        assert!(!env.back_to_back);
+
+        let result = env.last_attack_result.as_ref().unwrap();
+        assert_eq!(result.lines_cleared, 2);
+        assert_eq!(result.base_attack, 0);
+        assert_eq!(result.combo_attack, 0);
+        assert_eq!(result.back_to_back_attack, 0);
+        assert_eq!(result.perfect_clear_attack, 10);
+        assert_eq!(result.total_attack, 10);
+        assert!(result.is_perfect_clear);
+    }
+
+    #[test]
+    fn test_double_perfect_clear_with_existing_b2b_breaks_chain_without_bonus() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.back_to_back = true;
+
+        for y in 18..20 {
+            for x in 0..10 {
+                env.board[y * env.width + x] = 1;
+            }
+        }
+        env.sync_board_stats();
+        env.clear_lines_internal(false, false);
+
+        assert_eq!(env.attack, 10);
+        assert!(!env.back_to_back);
+
+        let result = env.last_attack_result.as_ref().unwrap();
+        assert_eq!(result.lines_cleared, 2);
+        assert_eq!(result.base_attack, 0);
+        assert_eq!(result.combo_attack, 0);
+        assert_eq!(result.back_to_back_attack, 0);
+        assert_eq!(result.perfect_clear_attack, 10);
+        assert_eq!(result.total_attack, 10);
+        assert!(result.is_perfect_clear);
+    }
+
+    #[test]
+    fn test_tetris_perfect_clear_preserves_b2b_without_bonus() {
+        let mut env = TetrisEnv::new(10, 20);
+        env.back_to_back = true;
+
+        for y in 16..20 {
+            for x in 0..10 {
+                env.board[y * env.width + x] = 1;
+            }
+        }
+        env.sync_board_stats();
+        env.clear_lines_internal(false, false);
+
+        assert_eq!(env.attack, 10);
+        assert!(env.back_to_back);
+
+        let result = env.last_attack_result.as_ref().unwrap();
+        assert_eq!(result.lines_cleared, 4);
+        assert_eq!(result.base_attack, 0);
+        assert_eq!(result.combo_attack, 0);
+        assert_eq!(result.back_to_back_attack, 0);
+        assert_eq!(result.perfect_clear_attack, 10);
+        assert_eq!(result.total_attack, 10);
+        assert!(result.is_perfect_clear);
     }
 
     // ==================== Movement Tests ====================
