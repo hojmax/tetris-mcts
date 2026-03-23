@@ -76,8 +76,7 @@ def _candidate_gate_interval_seconds(
 ) -> float:
     if failed_promotion_streak < 0:
         raise ValueError(
-            "failed_promotion_streak must be >= 0 "
-            f"(got {failed_promotion_streak})"
+            f"failed_promotion_streak must be >= 0 (got {failed_promotion_streak})"
         )
     interval_seconds = (
         base_interval_seconds + failure_backoff_seconds * failed_promotion_streak
@@ -197,7 +196,9 @@ class Trainer:
             )
         else:
             current_interval_seconds = restored_interval_seconds
-        next_export_delay_seconds = self.initial_candidate_gate_next_export_delay_seconds
+        next_export_delay_seconds = (
+            self.initial_candidate_gate_next_export_delay_seconds
+        )
         next_export_time_s = (
             now_s + current_interval_seconds
             if next_export_delay_seconds is None
@@ -240,8 +241,7 @@ class Trainer:
     ) -> None:
         if evaluation_seconds < 0.0:
             raise ValueError(
-                "evaluation_seconds must be >= 0 "
-                f"(got {evaluation_seconds})"
+                f"evaluation_seconds must be >= 0 (got {evaluation_seconds})"
             )
         (
             base_interval_seconds,
@@ -249,9 +249,7 @@ class Trainer:
             max_interval_seconds,
         ) = self._candidate_gate_timing_config()
         failed_promotion_streak = (
-            0
-            if promoted
-            else candidate_gate_schedule.failed_promotion_streak + 1
+            0 if promoted else candidate_gate_schedule.failed_promotion_streak + 1
         )
         candidate_gate_schedule.failed_promotion_streak = failed_promotion_streak
         candidate_gate_schedule.current_interval_seconds = (
@@ -387,9 +385,7 @@ class Trainer:
                 ],
                 "model_gate/candidate_nn_value_weight": candidate_nn_value_weight,
                 "model_gate/incumbent_step": event["incumbent_step"],
-                "model_gate/incumbent_uses_network": event[
-                    "incumbent_uses_network"
-                ],
+                "model_gate/incumbent_uses_network": event["incumbent_uses_network"],
                 "model_gate/incumbent_avg_attack": event["incumbent_avg_attack"],
                 "model_gate/incumbent_nn_value_weight": incumbent_nn_value_weight,
                 "model_gate/candidate_trajectory_predicted_total_attack_variance": (
@@ -1481,7 +1477,6 @@ class Trainer:
                 )
 
                 if post_step_time >= next_log_time_s:
-
                     if latest_train_metrics is None:
                         raise RuntimeError(
                             "No collected train metrics are available for logging"

@@ -97,7 +97,9 @@ class ScriptArgs:
     # General
     device: str = "auto"
     seed: int = 42
-    output_dir: Path | None = None  # Default: benchmarks/loss_sensitivity/<run_name>_<ts>
+    output_dir: Path | None = (
+        None  # Default: benchmarks/loss_sensitivity/<run_name>_<ts>
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ def weight_rms(module: torch.nn.Module) -> float:
     total = 0.0
     count = 0
     for p in module.parameters():
-        total += (p.data ** 2).sum().item()
+        total += (p.data**2).sum().item()
         count += p.numel()
     return (total / max(count, 1)) ** 0.5
 
@@ -276,9 +278,7 @@ def sigmoid_derivative(x: float, L: float, k: float, x0: float) -> float:
     return L * k * e / (1.0 + e) ** 2
 
 
-def fit_sigmoid(
-    losses: np.ndarray, attacks: np.ndarray
-) -> dict[str, float] | None:
+def fit_sigmoid(losses: np.ndarray, attacks: np.ndarray) -> dict[str, float] | None:
     """Fit sigmoid to (loss, attack) data. Returns params or None on failure."""
     try:
         from scipy.optimize import curve_fit
@@ -594,9 +594,7 @@ def main(args: ScriptArgs) -> None:
 
         # Write outputs
         raw_path = output_dir / "sensitivity_points.json"
-        raw_path.write_text(
-            json.dumps([asdict(p) for p in points], indent=2) + "\n"
-        )
+        raw_path.write_text(json.dumps([asdict(p) for p in points], indent=2) + "\n")
 
         summary = {
             "run_dir": str(run_dir),

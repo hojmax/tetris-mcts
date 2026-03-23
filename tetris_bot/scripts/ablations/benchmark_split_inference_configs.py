@@ -22,7 +22,12 @@ import time
 import structlog
 from simple_parsing import parse
 
-from tetris_core.tetris_core import MCTSAgent, MCTSConfig, TetrisEnv, debug_get_action_mask
+from tetris_core.tetris_core import (
+    MCTSAgent,
+    MCTSConfig,
+    TetrisEnv,
+    debug_get_action_mask,
+)
 from tetris_bot.constants import BENCHMARKS_DIR
 from tetris_bot.ml.config import NetworkConfig, SelfPlayConfig
 from tetris_bot.ml.network import TetrisNet
@@ -154,7 +159,9 @@ def build_state_corpus(args: ScriptArgs) -> list[TetrisEnv]:
         env = TetrisEnv.with_seed(10, 20, seed)
         for step_idx in range(args.states_per_seed):
             action_mask = debug_get_action_mask(env)
-            valid_actions = [idx for idx, is_valid in enumerate(action_mask) if is_valid]
+            valid_actions = [
+                idx for idx, is_valid in enumerate(action_mask) if is_valid
+            ]
             if not valid_actions:
                 break
 
@@ -325,8 +332,12 @@ def main(args: ScriptArgs) -> None:
             )
         )
 
-    cold_results = {result.label: result for result in results if result.mode == "cold_no_cache"}
-    hot_results = {result.label: result for result in results if result.mode == "hot_warm_cache"}
+    cold_results = {
+        result.label: result for result in results if result.mode == "cold_no_cache"
+    }
+    hot_results = {
+        result.label: result for result in results if result.mode == "hot_warm_cache"
+    }
     large_label = exported_variants[0].label
     small_label = exported_variants[1].label
 
@@ -382,12 +393,8 @@ def main(args: ScriptArgs) -> None:
         cold_large_preds_per_sec=(
             f"{cold_results[large_label].predictions_per_sec:.1f}"
         ),
-        hot_small_preds_per_sec=(
-            f"{hot_results[small_label].predictions_per_sec:.1f}"
-        ),
-        hot_large_preds_per_sec=(
-            f"{hot_results[large_label].predictions_per_sec:.1f}"
-        ),
+        hot_small_preds_per_sec=(f"{hot_results[small_label].predictions_per_sec:.1f}"),
+        hot_large_preds_per_sec=(f"{hot_results[large_label].predictions_per_sec:.1f}"),
     )
 
 

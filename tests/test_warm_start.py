@@ -7,11 +7,6 @@ from tetris_bot.constants import CONFIG_FILENAME
 from tetris_bot.ml.config import (
     default_training_config,
     NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
-    TrainingConfig,
     load_training_config_json,
 )
 from tetris_bot.ml.loss import RunningLossBalancer

@@ -257,7 +257,9 @@ def restore_trainer_from_checkpoint(
         "candidate_gate_current_interval_seconds"
     )
     if candidate_gate_current_interval is not None:
-        restored_candidate_gate_current_interval = float(candidate_gate_current_interval)
+        restored_candidate_gate_current_interval = float(
+            candidate_gate_current_interval
+        )
         if (
             not math.isfinite(restored_candidate_gate_current_interval)
             or restored_candidate_gate_current_interval <= 0.0

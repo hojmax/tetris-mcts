@@ -72,9 +72,7 @@ def validate_args(args: ScriptArgs) -> None:
     seen: set[int] = set()
     for simulations in args.simulations:
         if simulations <= 0:
-            raise ValueError(
-                f"simulation budgets must be > 0 (got {simulations})"
-            )
+            raise ValueError(f"simulation budgets must be > 0 (got {simulations})")
         if simulations in seen:
             raise ValueError(f"duplicate simulation budget: {simulations}")
         seen.add(simulations)
@@ -367,7 +365,9 @@ def main() -> None:
     output_dir = args.output_root.resolve() / entry_name
     summary_path = output_dir / "summary.json"
 
-    effective_self_play_config = load_effective_self_play_config(run_dir, checkpoint_path)
+    effective_self_play_config = load_effective_self_play_config(
+        run_dir, checkpoint_path
+    )
     default_workers = int(effective_self_play_config.get("num_workers", 2))
     num_workers, num_workers_source, num_workers_cache_path = resolve_num_workers(
         args.num_workers,

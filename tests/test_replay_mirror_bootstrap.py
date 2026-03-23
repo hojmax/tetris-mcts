@@ -43,7 +43,9 @@ class FakeReplayMirrorGenerator:
 
     def replay_buffer_snapshot(self) -> None:
         self.snapshot_calls += 1
-        raise AssertionError("replay_buffer_snapshot should not be used for mirror load")
+        raise AssertionError(
+            "replay_buffer_snapshot should not be used for mirror load"
+        )
 
     def replay_buffer_delta(
         self,
@@ -103,8 +105,9 @@ def test_load_replay_mirror_bootstraps_from_deltas_without_snapshot(
     trainer = Trainer(_make_config(tmp_path), device="cpu")
     num_examples = 5
     boards = (
-        np.arange(num_examples * BOARD_HEIGHT * BOARD_WIDTH, dtype=np.float32)
-        .reshape(num_examples, BOARD_HEIGHT * BOARD_WIDTH)
+        np.arange(num_examples * BOARD_HEIGHT * BOARD_WIDTH, dtype=np.float32).reshape(
+            num_examples, BOARD_HEIGHT * BOARD_WIDTH
+        )
         % 2
     )
     aux = np.arange(num_examples * AUX_FEATURES, dtype=np.float32).reshape(
@@ -138,9 +141,9 @@ def test_load_replay_mirror_bootstraps_from_deltas_without_snapshot(
     assert mirror.logical_end == 12
     assert torch.equal(
         mirror.boards[:num_examples],
-        torch.from_numpy(boards).reshape(num_examples, 1, BOARD_HEIGHT, BOARD_WIDTH).to(
-            torch.bool
-        ),
+        torch.from_numpy(boards)
+        .reshape(num_examples, 1, BOARD_HEIGHT, BOARD_WIDTH)
+        .to(torch.bool),
     )
     assert torch.equal(mirror.aux[:num_examples], torch.from_numpy(aux))
     assert torch.equal(

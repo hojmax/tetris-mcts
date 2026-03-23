@@ -573,7 +573,7 @@ def build_output_config(
 def train_warm_start_model(
     model: TetrisNet,
     *,
-    dataset_setup: OfflineDatasetSetup,
+    dataset_setup: WarmStartDatasetSetup,
     source_offline_resume_checkpoint: Path | None,
     device: torch.device,
     batch_size: int,

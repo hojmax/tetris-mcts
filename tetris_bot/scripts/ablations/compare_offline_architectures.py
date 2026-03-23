@@ -728,9 +728,7 @@ def build_torch_batch_from_npz(
     value_targets_np = data["value_targets"][global_indices].astype(
         np.float32, copy=False
     )
-    action_masks_np = data["action_masks"][global_indices].astype(
-        np.bool_, copy=False
-    )
+    action_masks_np = data["action_masks"][global_indices].astype(np.bool_, copy=False)
 
     boards = torch.from_numpy(boards_np).unsqueeze(1).to(device, non_blocking=True)
     aux = torch.from_numpy(aux_np).to(device, non_blocking=True)

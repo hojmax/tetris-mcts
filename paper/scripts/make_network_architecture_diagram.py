@@ -106,8 +106,12 @@ class ListBoxSpec(BaseModel):
 
 @dataclass
 class DiagramArgs:
-    output_pdf_path: Path = PROJECT_ROOT / "paper" / "plots" / "network_architecture.pdf"
-    output_png_path: Path = PROJECT_ROOT / "paper" / "plots" / "network_architecture.png"
+    output_pdf_path: Path = (
+        PROJECT_ROOT / "paper" / "plots" / "network_architecture.pdf"
+    )
+    output_png_path: Path = (
+        PROJECT_ROOT / "paper" / "plots" / "network_architecture.png"
+    )
     width_inches: float = 8.6
     height_inches: float = 15.0
     dpi: int = 220

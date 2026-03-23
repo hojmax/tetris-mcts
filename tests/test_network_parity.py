@@ -737,7 +737,9 @@ def test_direct_inference_cache_matches_uncached(tmp_path: Path) -> None:
     for step_idx in range(6):
         action_mask = tetris_core.debug_get_action_mask(env)
         valid_actions = [idx for idx, is_valid in enumerate(action_mask) if is_valid]
-        assert valid_actions, "Expected at least one valid action while building test state"
+        assert valid_actions, (
+            "Expected at least one valid action while building test state"
+        )
         chosen_action = valid_actions[min(step_idx, len(valid_actions) - 1)]
         assert env.execute_action_index(chosen_action) is not None
 

@@ -62,7 +62,9 @@ def load_curves(results_root: Path) -> list[Curve]:
                 runtime_ms=float(point["avg_runtime_ms"]),
                 avg_attack=float(point["avg_attack"]),
             )
-            for point in sorted(points_payload, key=lambda point: int(point["simulations"]))
+            for point in sorted(
+                points_payload, key=lambda point: int(point["simulations"])
+            )
         ]
         plot_config = payload.get("plot", {})
         if not isinstance(plot_config, dict):
@@ -116,7 +118,9 @@ def write_plot(
         for index, simulation in enumerate(simulations)
     }
 
-    fig, ax = plt.subplots(figsize=(width_inches, height_inches), constrained_layout=True)
+    fig, ax = plt.subplots(
+        figsize=(width_inches, height_inches), constrained_layout=True
+    )
 
     for curve_index, curve in enumerate(curves):
         runtimes = [point.runtime_ms for point in curve.points]
