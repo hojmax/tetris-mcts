@@ -35,6 +35,58 @@ from tetris_bot.ml.network import (
 logger = structlog.get_logger()
 
 
+def _optimizer_step_scalar_dtype(*, fused: bool) -> torch.dtype:
+    if fused:
+        return torch.float32
+    return (
+        torch.float64 if torch.get_default_dtype() == torch.float64 else torch.float32
+    )
+
+
+def sanitize_optimizer_state_steps(optimizer: torch.optim.Optimizer) -> int:
+    """Normalize per-parameter optimizer step counters to PyTorch's tensor form."""
+    normalized_steps = 0
+    cpu_device = torch.device("cpu")
+    for group in optimizer.param_groups:
+        fused = bool(group.get("fused", False))
+        capturable = bool(group.get("capturable", False))
+        expected_dtype = _optimizer_step_scalar_dtype(fused=fused)
+        for parameter in group["params"]:
+            state = optimizer.state.get(parameter)
+            if not state or "step" not in state:
+                continue
+            expected_device = parameter.device if capturable or fused else cpu_device
+            step = state["step"]
+            if torch.is_tensor(step):
+                if step.dtype == expected_dtype and step.device == expected_device:
+                    continue
+                state["step"] = step.to(device=expected_device, dtype=expected_dtype)
+            else:
+                state["step"] = torch.tensor(
+                    float(step),
+                    dtype=expected_dtype,
+                    device=expected_device,
+                )
+            normalized_steps += 1
+    return normalized_steps
+
+
+def load_optimizer_state_dict(
+    optimizer: torch.optim.Optimizer,
+    optimizer_state_dict: dict[str, Any],
+    *,
+    source: str | Path | None = None,
+) -> None:
+    optimizer.load_state_dict(optimizer_state_dict)
+    normalized_steps = sanitize_optimizer_state_steps(optimizer)
+    if normalized_steps > 0:
+        logger.warning(
+            "Sanitized optimizer step counters after optimizer restore",
+            source=str(source) if source is not None else None,
+            normalized_steps=normalized_steps,
+        )
+
+
 @dataclass(frozen=True)
 class CheckpointSnapshot:
     step: int
@@ -141,7 +193,11 @@ def load_checkpoint(
         model.load_state_dict(state["model_state_dict"])
 
     if optimizer is not None and "optimizer_state_dict" in state:
-        optimizer.load_state_dict(state["optimizer_state_dict"])
+        load_optimizer_state_dict(
+            optimizer,
+            state["optimizer_state_dict"],
+            source=filepath,
+        )
     if scheduler is not None:
         if "scheduler_state_dict" not in state:
             logger.warning(

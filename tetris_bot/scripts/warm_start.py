@@ -35,7 +35,11 @@ from tetris_bot.ml.config import TrainingConfig, default_training_config
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.trainer import Trainer
-from tetris_bot.ml.weights import export_metadata, save_checkpoint
+from tetris_bot.ml.weights import (
+    export_metadata,
+    load_optimizer_state_dict,
+    save_checkpoint,
+)
 from tetris_bot.run_setup import config_to_json, save_config, setup_run_directory
 from tetris_bot.scripts.inspection.optimize_machine import (
     machine_profile,
@@ -390,7 +394,7 @@ def load_offline_resume_checkpoint(
         raise ValueError(f"Offline resume checkpoint is missing best record: {path}")
 
     model.load_state_dict(model_state_dict)
-    optimizer.load_state_dict(optimizer_state_dict)
+    load_optimizer_state_dict(optimizer, optimizer_state_dict, source=path)
     loss_balancer.load_state_dict(
         state.get(
             "loss_balancer_state",
