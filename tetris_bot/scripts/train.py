@@ -39,6 +39,7 @@ class ScriptArgs:
         Path | None
     ) = Path(__file__).parent.parent.parent / "training_runs" / "v8"
     resume_restore_optimizer_scheduler: bool = True  # If True, restore optimizer and scheduler from checkpoint when using resume_dir; if False, restore optimizer only and rebuild scheduler from current config
+    resume_latest_as_incumbent: bool = False  # If True, resumed runs start self-play from the restored latest checkpoint model instead of the source run's saved incumbent bundle, and recompute the incumbent gate baseline on fixed seeds
     resume_wandb: (  # Resume from WandB run/artifact reference (entity/project/run_id or entity/project/artifact:alias)
         str | None
     ) = None
@@ -93,23 +94,29 @@ def setup_run(
             expected_path=str(source_training_data),
         )
 
-    source_incumbent = source_run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
     resume_incumbent_model_path: Path | None = None
-    if source_incumbent.exists():
-        assert config.run.checkpoint_dir is not None
-        destination_incumbent = config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
-        copy_model_artifact_bundle(source_incumbent, destination_incumbent)
-        resume_incumbent_model_path = destination_incumbent
+    if args.resume_latest_as_incumbent:
         logger.info(
-            "Copied incumbent model artifact bundle for resume",
-            source=str(source_incumbent),
-            destination=str(destination_incumbent),
+            "Configured resumed run to start from checkpoint latest model as incumbent",
+            checkpoint=str(source_checkpoint),
         )
     else:
-        logger.warning(
-            "Resume directory has no incumbent model artifact bundle",
-            expected_path=str(source_incumbent),
-        )
+        source_incumbent = source_run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
+        if source_incumbent.exists():
+            assert config.run.checkpoint_dir is not None
+            destination_incumbent = config.run.checkpoint_dir / INCUMBENT_ONNX_FILENAME
+            copy_model_artifact_bundle(source_incumbent, destination_incumbent)
+            resume_incumbent_model_path = destination_incumbent
+            logger.info(
+                "Copied incumbent model artifact bundle for resume",
+                source=str(source_incumbent),
+                destination=str(destination_incumbent),
+            )
+        else:
+            logger.warning(
+                "Resume directory has no incumbent model artifact bundle",
+                expected_path=str(source_incumbent),
+            )
 
     return config, source_checkpoint, resume_incumbent_model_path
 
@@ -324,11 +331,25 @@ def restore_trainer_from_checkpoint(
             ),
         )
 
-    if start_with_network and incumbent_model_path is not None:
+    if start_with_network and args.resume_latest_as_incumbent:
+        trainer.initial_incumbent_model_path = None
+        trainer.initial_incumbent_eval_avg_attack = 0.0
+        trainer.recompute_initial_incumbent_eval_avg_attack = True
+        logger.info(
+            "Configured resumed run to use checkpoint latest model as starting incumbent",
+            checkpoint=str(checkpoint),
+            incumbent_step=trainer.step,
+        )
+    elif start_with_network and incumbent_model_path is not None:
         trainer.initial_incumbent_model_path = incumbent_model_path
         logger.info(
             "Configured resumed incumbent model artifact for generator startup",
             path=str(incumbent_model_path),
+        )
+    elif args.resume_latest_as_incumbent:
+        logger.warning(
+            "Ignoring resume_latest_as_incumbent because checkpoint starts without a network incumbent",
+            checkpoint=str(checkpoint),
         )
     elif start_with_network:
         logger.warning(

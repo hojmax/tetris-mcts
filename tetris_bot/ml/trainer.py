@@ -48,6 +48,7 @@ from tetris_bot.ml.game_metrics import (
 )
 
 from tetris_core.tetris_core import MCTSConfig, GameGenerator
+from tetris_core.tetris_core import evaluate_model
 
 logger = structlog.get_logger()
 
@@ -137,6 +138,7 @@ class Trainer:
         self.initial_candidate_gate_interval_seconds: float | None = None
         self.initial_candidate_gate_failed_promotion_streak: int = 0
         self.initial_candidate_gate_next_export_delay_seconds: float | None = None
+        self.recompute_initial_incumbent_eval_avg_attack = False
         self._logged_live_optimizer_step_sanitization = False
 
         # Create directories
@@ -415,8 +417,8 @@ class Trainer:
                 ),
                 "model_gate/next_export_delay_seconds": (
                     next_candidate_export_delay_seconds
-                ),
-            }
+            ),
+        }
 
             per_game_results = event["per_game_results"]
             if per_game_results:
@@ -466,6 +468,81 @@ class Trainer:
                     wandb_data["eval/worst_trajectory"] = video
 
             wandb.log(wandb_data)
+
+    def _build_generator_mcts_config(self) -> MCTSConfig:
+        mcts_config = MCTSConfig()
+        mcts_config.num_simulations = self.config.self_play.num_simulations
+        mcts_config.c_puct = self.config.self_play.c_puct
+        mcts_config.temperature = self.config.self_play.temperature
+        mcts_config.dirichlet_alpha = self.config.self_play.dirichlet_alpha
+        mcts_config.dirichlet_epsilon = self.config.self_play.dirichlet_epsilon
+        mcts_config.visit_sampling_epsilon = (
+            self.config.self_play.visit_sampling_epsilon
+        )
+        mcts_config.seed = self.config.self_play.mcts_seed
+        mcts_config.max_placements = self.config.self_play.max_placements
+        mcts_config.death_penalty = self.config.self_play.death_penalty
+        mcts_config.overhang_penalty_weight = (
+            self.config.self_play.overhang_penalty_weight
+        )
+        mcts_config.nn_value_weight = self.config.self_play.nn_value_weight
+        mcts_config.q_scale = (
+            self.config.self_play.q_scale
+            if self.config.self_play.use_tanh_q_normalization
+            else None
+        )
+        mcts_config.use_parent_value_for_unvisited_q = (
+            self.config.self_play.use_parent_value_for_unvisited_q
+        )
+        mcts_config.reuse_tree = self.config.self_play.reuse_tree
+        return mcts_config
+
+    def _effective_starting_incumbent_penalties(self) -> tuple[float, float]:
+        if (
+            self.config.self_play.nn_value_weight
+            >= self.config.self_play.nn_value_weight_cap
+        ):
+            return 0.0, 0.0
+        return (
+            self.config.self_play.death_penalty,
+            self.config.self_play.overhang_penalty_weight,
+        )
+
+    def _evaluate_starting_incumbent_avg_attack(self, model_path: Path) -> float:
+        eval_config = self._build_generator_mcts_config()
+        eval_config.seed = 0
+        eval_config.visit_sampling_epsilon = 0.0
+        (
+            eval_config.death_penalty,
+            eval_config.overhang_penalty_weight,
+        ) = self._effective_starting_incumbent_penalties()
+        eval_seeds = list(range(self.config.self_play.model_promotion_eval_games))
+        eval_workers = max(2, self.config.self_play.num_workers)
+        logger.info(
+            "Evaluating starting incumbent baseline for resumed run",
+            model_path=str(model_path),
+            num_games=len(eval_seeds),
+            num_workers=eval_workers,
+            nn_value_weight=eval_config.nn_value_weight,
+            death_penalty=eval_config.death_penalty,
+            overhang_penalty_weight=eval_config.overhang_penalty_weight,
+        )
+        eval_result = evaluate_model(
+            str(model_path),
+            eval_seeds,
+            eval_config,
+            self.config.self_play.max_placements,
+            eval_workers,
+            False,
+        )
+        logger.info(
+            "Evaluated starting incumbent baseline for resumed run",
+            model_path=str(model_path),
+            avg_attack=eval_result.avg_attack,
+            max_attack=eval_result.max_attack,
+            num_games=eval_result.num_games,
+        )
+        return float(eval_result.avg_attack)
 
     def _create_scheduler(self):
         if self.config.optimizer.lr_schedule == "linear":
@@ -1248,32 +1325,12 @@ class Trainer:
             assert_rust_inference_artifacts(self.initial_incumbent_model_path)
             generator_model_path = self.initial_incumbent_model_path
 
-        # Create MCTS config for generator
-        mcts_config = MCTSConfig()
-        mcts_config.num_simulations = self.config.self_play.num_simulations
-        mcts_config.c_puct = self.config.self_play.c_puct
-        mcts_config.temperature = self.config.self_play.temperature
-        mcts_config.dirichlet_alpha = self.config.self_play.dirichlet_alpha
-        mcts_config.dirichlet_epsilon = self.config.self_play.dirichlet_epsilon
-        mcts_config.visit_sampling_epsilon = (
-            self.config.self_play.visit_sampling_epsilon
-        )
-        mcts_config.seed = self.config.self_play.mcts_seed
-        mcts_config.max_placements = self.config.self_play.max_placements
-        mcts_config.death_penalty = self.config.self_play.death_penalty
-        mcts_config.overhang_penalty_weight = (
-            self.config.self_play.overhang_penalty_weight
-        )
-        mcts_config.nn_value_weight = self.config.self_play.nn_value_weight
-        mcts_config.q_scale = (
-            self.config.self_play.q_scale
-            if self.config.self_play.use_tanh_q_normalization
-            else None
-        )
-        mcts_config.use_parent_value_for_unvisited_q = (
-            self.config.self_play.use_parent_value_for_unvisited_q
-        )
-        mcts_config.reuse_tree = self.config.self_play.reuse_tree
+        mcts_config = self._build_generator_mcts_config()
+        if self.recompute_initial_incumbent_eval_avg_attack:
+            self.initial_incumbent_eval_avg_attack = (
+                self._evaluate_starting_incumbent_avg_attack(generator_model_path)
+            )
+            self.recompute_initial_incumbent_eval_avg_attack = False
 
         # Start background game generator
         training_data_path = self.config.run.data_dir / TRAINING_DATA_FILENAME
