@@ -31,6 +31,7 @@ from tetris_bot.ml.weights import (
     capture_checkpoint_snapshot,
     export_onnx,
     export_split_models,
+    sanitize_optimizer_state_steps,
     split_model_paths,
 )
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss, compute_metrics
@@ -136,6 +137,7 @@ class Trainer:
         self.initial_candidate_gate_interval_seconds: float | None = None
         self.initial_candidate_gate_failed_promotion_streak: int = 0
         self.initial_candidate_gate_next_export_delay_seconds: float | None = None
+        self._logged_live_optimizer_step_sanitization = False
 
         # Create directories
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -845,6 +847,17 @@ class Trainer:
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), self.config.optimizer.grad_clip_norm
         )
+
+        normalized_steps = sanitize_optimizer_state_steps(self.optimizer)
+        if (
+            normalized_steps > 0
+            and not self._logged_live_optimizer_step_sanitization
+        ):
+            logger.warning(
+                "Sanitized live optimizer step counters before optimizer step",
+                normalized_steps=normalized_steps,
+            )
+            self._logged_live_optimizer_step_sanitization = True
 
         self.optimizer.step()
         if self.scheduler:

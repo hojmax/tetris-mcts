@@ -4,6 +4,18 @@ from pathlib import Path
 
 import torch
 
+from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS
+from tetris_bot.ml.config import (
+    NetworkConfig,
+    OptimizerConfig,
+    ReplayConfig,
+    RunConfig,
+    SelfPlayConfig,
+    TrainingConfig,
+)
+from tetris_bot.ml.network import AUX_FEATURES
+from tetris_bot.ml.replay_buffer import TrainingBatch
+from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.weights import (
     load_checkpoint,
     load_optimizer_state_dict,
@@ -13,6 +25,36 @@ from tetris_bot.ml.weights import (
 
 def _make_model() -> torch.nn.Linear:
     return torch.nn.Linear(8, 4)
+
+
+def _make_training_config(tmp_path: Path) -> TrainingConfig:
+    checkpoint_dir = tmp_path / "checkpoints"
+    data_dir = tmp_path / "data"
+    return TrainingConfig(
+        network=NetworkConfig(),
+        optimizer=OptimizerConfig(),
+        self_play=SelfPlayConfig(),
+        replay=ReplayConfig(),
+        run=RunConfig(
+            run_dir=tmp_path,
+            checkpoint_dir=checkpoint_dir,
+            data_dir=data_dir,
+        ),
+    )
+
+
+def _make_training_batch(batch_size: int = 8) -> TrainingBatch:
+    return TrainingBatch(
+        boards=torch.zeros(batch_size, 1, BOARD_HEIGHT, BOARD_WIDTH),
+        aux=torch.zeros(batch_size, AUX_FEATURES),
+        policy_targets=torch.full(
+            (batch_size, NUM_ACTIONS),
+            1.0 / NUM_ACTIONS,
+        ),
+        value_targets=torch.zeros(batch_size),
+        overhang_fields=torch.zeros(batch_size),
+        masks=torch.ones(batch_size, NUM_ACTIONS, dtype=torch.bool),
+    )
 
 
 def _run_step(
@@ -83,3 +125,19 @@ def test_load_optimizer_state_dict_sanitizes_legacy_float_steps() -> None:
     assert torch.is_tensor(
         restored_optimizer.state[first_parameter]["step"]
     )
+
+
+def test_train_step_sanitizes_live_float_optimizer_steps(tmp_path: Path) -> None:
+    trainer = Trainer(_make_training_config(tmp_path), device="cpu")
+    batch = _make_training_batch()
+
+    trainer.train_step(batch, collect_metrics=False)
+
+    first_parameter = next(iter(trainer.optimizer.state))
+    trainer.optimizer.state[first_parameter]["step"] = float(
+        trainer.optimizer.state[first_parameter]["step"]
+    )
+
+    trainer.train_step(batch, collect_metrics=False)
+
+    assert torch.is_tensor(trainer.optimizer.state[first_parameter]["step"])
