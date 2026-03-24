@@ -1,5 +1,12 @@
 # Next Steps
 
+- [ ] Adding in coords into input layer?
+- [ ] Adding in holes map into input layer?
+- [ ] Adding in overhang map into input layer?
+- [ ] sometimes evaluating candidates takes way longer than other times?
+- [ ] the value / policy loss tradeoff experiment
+
+
 - [ ] Ah we make a new fresh repo, copy data over, and simple arcitecture. Then we make a script that saves rust network, and evaluate its speed from rust. Then we fix the cache rate at 95% and say that estimated speed is: latency = avg_trunk_ms x 0.05 + avg_head_ms
   - And then we want to find the architecture that is pareto optimal in terms of latency vs. final_loss.
   - Not quite sure how important value vs. policy loss is? How would I test this?
