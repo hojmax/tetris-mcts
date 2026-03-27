@@ -31,6 +31,7 @@ def test_capture_checkpoint_snapshot_clones_state_to_cpu() -> None:
 
     snapshot = capture_checkpoint_snapshot(
         model=model,
+        ema_model=None,
         optimizer=optimizer,
         scheduler=None,
         step=7,
@@ -84,6 +85,7 @@ def test_async_checkpoint_saver_flushes_completed_requests(tmp_path: Path) -> No
         snapshot=CheckpointSnapshot(
             step=11,
             model_state_dict={},
+            ema_state_dict=None,
             optimizer_state_dict=None,
             scheduler_state_dict=None,
             extra_state={},
@@ -116,6 +118,7 @@ def test_async_checkpoint_saver_propagates_worker_errors() -> None:
         snapshot=CheckpointSnapshot(
             step=13,
             model_state_dict={},
+            ema_state_dict=None,
             optimizer_state_dict=None,
             scheduler_state_dict=None,
             extra_state={},

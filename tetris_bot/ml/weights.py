@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import torch
 import structlog
+from torch import nn
 
 from tetris_bot.constants import (
     BOARD_HEIGHT,
@@ -91,6 +92,7 @@ def load_optimizer_state_dict(
 class CheckpointSnapshot:
     step: int
     model_state_dict: dict[str, Any]
+    ema_state_dict: dict[str, Any] | None
     optimizer_state_dict: dict[str, Any] | None
     scheduler_state_dict: dict[str, Any] | None
     extra_state: dict[str, object]
@@ -119,7 +121,8 @@ def _clone_state_value_to_cpu(value: Any) -> Any:
 
 
 def capture_checkpoint_snapshot(
-    model: TetrisNet,
+    model: nn.Module,
+    ema_model: nn.Module | None,
     optimizer: torch.optim.Optimizer | None,
     scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     step: int,
@@ -128,6 +131,11 @@ def capture_checkpoint_snapshot(
     return CheckpointSnapshot(
         step=step,
         model_state_dict=_clone_state_value_to_cpu(model.state_dict()),
+        ema_state_dict=(
+            _clone_state_value_to_cpu(ema_model.state_dict())
+            if ema_model is not None
+            else None
+        ),
         optimizer_state_dict=(
             _clone_state_value_to_cpu(optimizer.state_dict())
             if optimizer is not None
@@ -150,6 +158,8 @@ def save_checkpoint_snapshot(
         "step": snapshot.step,
         **snapshot.extra_state,
     }
+    if snapshot.ema_state_dict is not None:
+        state["ema_state_dict"] = snapshot.ema_state_dict
     if snapshot.optimizer_state_dict is not None:
         state["optimizer_state_dict"] = snapshot.optimizer_state_dict
     if snapshot.scheduler_state_dict is not None:
@@ -158,7 +168,8 @@ def save_checkpoint_snapshot(
 
 
 def save_checkpoint(
-    model: TetrisNet,
+    model: nn.Module,
+    ema_model: nn.Module | None,
     optimizer: torch.optim.Optimizer | None,
     scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     step: int,
@@ -169,6 +180,7 @@ def save_checkpoint(
         CheckpointSnapshot(
             step=step,
             model_state_dict=model.state_dict(),
+            ema_state_dict=ema_model.state_dict() if ema_model is not None else None,
             optimizer_state_dict=(
                 optimizer.state_dict() if optimizer is not None else None
             ),
@@ -183,7 +195,8 @@ def save_checkpoint(
 
 def load_checkpoint(
     filepath: str | Path,
-    model: TetrisNet | None = None,
+    model: nn.Module | None = None,
+    ema_model: nn.Module | None = None,
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
 ) -> dict:
@@ -191,6 +204,13 @@ def load_checkpoint(
 
     if model is not None:
         model.load_state_dict(state["model_state_dict"])
+    if ema_model is not None:
+        ema_state_dict = state.get("ema_state_dict")
+        if ema_state_dict is None:
+            if model is not None:
+                ema_model.load_state_dict(state["model_state_dict"])
+        else:
+            ema_model.load_state_dict(ema_state_dict)
 
     if optimizer is not None and "optimizer_state_dict" in state:
         load_optimizer_state_dict(
@@ -382,6 +402,7 @@ class WeightManager:
     def save(
         self,
         model: TetrisNet,
+        ema_model: TetrisNet | None,
         optimizer: torch.optim.Optimizer | None,
         scheduler: torch.optim.lr_scheduler.LRScheduler | None,
         step: int,
@@ -393,6 +414,7 @@ class WeightManager:
         ckpt_path = self.checkpoint_dir / f"{CHECKPOINT_FILENAME_PREFIX}_{step}.pt"
         save_checkpoint(
             model,
+            ema_model,
             optimizer,
             scheduler,
             step,
@@ -402,8 +424,12 @@ class WeightManager:
         paths["checkpoint"] = ckpt_path
 
         if export_for_rust:
+            export_source_model = ema_model if ema_model is not None else model
             onnx_path = self.checkpoint_dir / LATEST_ONNX_FILENAME
-            self._export_rust_artifacts_from_model(model, onnx_path=onnx_path)
+            self._export_rust_artifacts_from_model(
+                export_source_model,
+                onnx_path=onnx_path,
+            )
             paths["onnx"] = onnx_path
 
         meta_path = self.checkpoint_dir / LATEST_METADATA_FILENAME
@@ -430,7 +456,12 @@ class WeightManager:
 
         if export_for_rust:
             snapshot_model = TetrisNet(**model_kwargs)
-            snapshot_model.load_state_dict(snapshot.model_state_dict)
+            export_state_dict = (
+                snapshot.ema_state_dict
+                if snapshot.ema_state_dict is not None
+                else snapshot.model_state_dict
+            )
+            snapshot_model.load_state_dict(export_state_dict)
             onnx_path = self.checkpoint_dir / LATEST_ONNX_FILENAME
             self._export_rust_artifacts_from_model(snapshot_model, onnx_path=onnx_path)
             paths["onnx"] = onnx_path
@@ -453,7 +484,12 @@ class WeightManager:
         if not latest_path.exists():
             return None
 
-        state = load_checkpoint(latest_path, model, optimizer, scheduler)
+        state = load_checkpoint(
+            latest_path,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
         return state.get("step", 0)
 
     def get_checkpoints(self) -> list[Path]:

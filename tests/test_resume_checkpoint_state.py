@@ -1,6 +1,8 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import torch
+
 import tetris_bot.ml.trainer as trainer_module
 from tetris_bot.ml.config import (
     NetworkConfig,
@@ -44,6 +46,7 @@ def test_restore_trainer_restores_search_penalties_from_checkpoint(
     checkpoint = tmp_path / "latest.pt"
     save_checkpoint(
         trainer.model,
+        trainer.ema_model,
         trainer.optimizer,
         trainer.scheduler,
         step=123,
@@ -81,6 +84,7 @@ def test_restore_trainer_infers_zero_penalties_for_legacy_cap_checkpoint(
     checkpoint = tmp_path / "legacy.pt"
     save_checkpoint(
         trainer.model,
+        trainer.ema_model,
         trainer.optimizer,
         trainer.scheduler,
         step=456,
@@ -116,6 +120,7 @@ def test_restore_trainer_can_use_latest_checkpoint_model_as_incumbent(
     incumbent_path.write_text("placeholder")
     save_checkpoint(
         trainer.model,
+        trainer.ema_model,
         trainer.optimizer,
         trainer.scheduler,
         step=789,
@@ -195,3 +200,49 @@ def test_evaluate_starting_incumbent_avg_attack_uses_candidate_gate_settings(
     assert captured["max_placements"] == config.self_play.max_placements
     assert captured["num_workers"] == 7
     assert captured["add_noise"] is False
+
+
+def test_restore_trainer_recovers_ema_state_from_checkpoint(tmp_path: Path) -> None:
+    config = _make_config(tmp_path)
+    config.optimizer.ema_decay = 0.5
+    trainer = Trainer(config, device="cpu")
+    checkpoint = tmp_path / "ema.pt"
+    ema_model = trainer.ema_model
+    assert ema_model is not None
+
+    with torch.no_grad():
+        for parameter in trainer.model.parameters():
+            parameter.add_(1.0)
+        for parameter in ema_model.parameters():
+            parameter.sub_(1.0)
+
+    expected_ema_state = {
+        name: tensor.clone() for name, tensor in ema_model.state_dict().items()
+    }
+    save_checkpoint(
+        trainer.model,
+        trainer.ema_model,
+        trainer.optimizer,
+        trainer.scheduler,
+        step=12,
+        filepath=checkpoint,
+        incumbent_uses_network=True,
+        incumbent_nn_value_weight=1.0,
+        incumbent_eval_avg_attack=0.0,
+    )
+
+    restored = Trainer(config, device="cpu")
+    restore_trainer_from_checkpoint(
+        restored,
+        ScriptArgs(training=config, resume_dir=None),
+        config,
+        checkpoint,
+        incumbent_model_path=None,
+    )
+
+    restored_ema_model = restored.ema_model
+    assert restored_ema_model is not None
+    assert all(
+        torch.equal(restored_ema_model.state_dict()[name], expected_ema_state[name])
+        for name in expected_ema_state
+    )

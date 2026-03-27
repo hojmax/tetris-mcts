@@ -6,19 +6,15 @@
 - [ ] sometimes evaluating candidates takes way longer than other times?
 - [ ] the value / policy loss tradeoff experiment
 
-
-- [ ] Ah we make a new fresh repo, copy data over, and simple arcitecture. Then we make a script that saves rust network, and evaluate its speed from rust. Then we fix the cache rate at 95% and say that estimated speed is: latency = avg_trunk_ms x 0.05 + avg_head_ms
-  - And then we want to find the architecture that is pareto optimal in terms of latency vs. final_loss.
-  - Not quite sure how important value vs. policy loss is? How would I test this?
-    - One thing would be take a well trained network, and then try adding noise to the respective policy and value, and with the noisy estimates calculate the held-out loss. Then you can make two graphs, one is held-out policy loss on x-axis, and then avg. attack on y-axis. The other plot is held-out value loss on x-axis vs. avg. attack on y-axis.
-    - What would we conclude from this? I guess we would want some notion of marginal utility of change in loss in the two? I guess we will also have to extrapolate to some degree probably, since the model will probably be improving outside the range of what I trained the marginal utility curves on. So say we had some extrapolated curve, and value loss said for 0.1 change in loss, I get +0.05 in avg. attak, and policy was for 0.1 change in loss I get +0.01 in attack, Then I guess you would scale the loss like: policy_loss + normalized_value_loss \* 5, i.e. the value loss gets to dominate 5 times as much in the loss.
-    - I would imagine we would fit a sigmoid here on both, as they would start of with noise not being useful, then sharp increase, then plateu at maximal performance. Then for the marginal improvement we can simply use the derivative of the sigmoid.
-    - We want to baseline this training method against just training 1:1 like we do right now.
-    - You could even do this during training, like run 20 games with a tiny bit of noise, get loss, and then apprixomate gradient from these 2 data points.
-    - Equation:
-      - pl x (d pl / d vl) + vl x (~pl / ~vl)
-    - The noise-to-loss approximation trick assumes that value estimate is unbiased, which we know is true and can verify. I am not sure if the same is true for the probability distribution? I guess cross entropy is a proper scoring rule, such that I would expect probabilities to be unbiased (actually we could also check this, compare estimate to the train buffer).
-    -
+- Not quite sure how important value vs. policy loss is? How would I test this?
+  - One thing would be take a well trained network, and then try adding noise to the respective policy and value, and with the noisy estimates calculate the held-out loss. Then you can make two graphs, one is held-out policy loss on x-axis, and then avg. attack on y-axis. The other plot is held-out value loss on x-axis vs. avg. attack on y-axis.
+  - What would we conclude from this? I guess we would want some notion of marginal utility of change in loss in the two? I guess we will also have to extrapolate to some degree probably, since the model will probably be improving outside the range of what I trained the marginal utility curves on. So say we had some extrapolated curve, and value loss said for 0.1 change in loss, I get +0.05 in avg. attak, and policy was for 0.1 change in loss I get +0.01 in attack, Then I guess you would scale the loss like: policy_loss + normalized_value_loss \* 5, i.e. the value loss gets to dominate 5 times as much in the loss.
+  - I would imagine we would fit a sigmoid here on both, as they would start of with noise not being useful, then sharp increase, then plateu at maximal performance. Then for the marginal improvement we can simply use the derivative of the sigmoid.
+  - We want to baseline this training method against just training 1:1 like we do right now.
+  - You could even do this during training, like run 20 games with a tiny bit of noise, get loss, and then apprixomate gradient from these 2 data points.
+  - Equation:
+    - pl x (d pl / d vl) + vl x (~pl / ~vl)
+  - The noise-to-loss approximation trick assumes that value estimate is unbiased, which we know is true and can verify. I am not sure if the same is true for the probability distribution? I guess cross entropy is a proper scoring rule, such that I would expect probabilities to be unbiased (actually we could also check this, compare estimate to the train buffer).
 
 - [ ] Maybe just ask an agent team for like a full rewrite from scratch to make everything clean? altough all the reading I have been doing may have been for naught then.
 

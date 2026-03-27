@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -61,7 +62,7 @@ def _run_step(
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     *,
-    compiled_model: torch.nn.Module | None = None,
+    compiled_model: Any | None = None,
 ) -> None:
     active_model = compiled_model if compiled_model is not None else model
     inputs = torch.randn(32, 8)
@@ -81,6 +82,7 @@ def test_load_checkpoint_sanitizes_legacy_float_optimizer_steps(
     checkpoint = tmp_path / "legacy_float_step.pt"
     save_checkpoint(
         model,
+        None,
         optimizer,
         scheduler=None,
         step=3,
@@ -94,7 +96,12 @@ def test_load_checkpoint_sanitizes_legacy_float_optimizer_steps(
 
     restored_model = _make_model()
     restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=1e-3)
-    load_checkpoint(checkpoint, model=restored_model, optimizer=restored_optimizer)
+    load_checkpoint(
+        checkpoint,
+        model=restored_model,
+        ema_model=None,
+        optimizer=restored_optimizer,
+    )
     compiled_model = torch.compile(restored_model, backend="eager")
 
     assert all(
@@ -122,9 +129,7 @@ def test_load_optimizer_state_dict_sanitizes_legacy_float_steps() -> None:
     compiled_model = torch.compile(restored_model, backend="eager")
     _run_step(restored_model, restored_optimizer, compiled_model=compiled_model)
 
-    assert torch.is_tensor(
-        restored_optimizer.state[first_parameter]["step"]
-    )
+    assert torch.is_tensor(restored_optimizer.state[first_parameter]["step"])
 
 
 def test_train_step_sanitizes_live_float_optimizer_steps(tmp_path: Path) -> None:
@@ -141,3 +146,23 @@ def test_train_step_sanitizes_live_float_optimizer_steps(tmp_path: Path) -> None
     trainer.train_step(batch, collect_metrics=False)
 
     assert torch.is_tensor(trainer.optimizer.state[first_parameter]["step"])
+
+
+def test_train_step_updates_ema_weights(tmp_path: Path) -> None:
+    config = _make_training_config(tmp_path)
+    config.optimizer.ema_decay = 0.5
+    trainer = Trainer(config, device="cpu")
+    batch = _make_training_batch()
+
+    ema_model = trainer.ema_model
+    assert ema_model is not None
+    ema_before = {
+        name: tensor.clone() for name, tensor in ema_model.state_dict().items()
+    }
+
+    trainer.train_step(batch, collect_metrics=False)
+
+    ema_after = ema_model.state_dict()
+    assert any(
+        not torch.equal(ema_after[name], ema_before[name]) for name in ema_before
+    )

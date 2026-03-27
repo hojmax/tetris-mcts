@@ -58,7 +58,7 @@ class ValuePredictor:
             conv_kernel_size=config.conv_kernel_size,
             conv_padding=config.conv_padding,
         )
-        load_checkpoint(checkpoint_path, model=model)
+        load_checkpoint(checkpoint_path, model=model, ema_model=None)
         model.eval()
         return model
 

@@ -1267,6 +1267,7 @@ def run_warm_start(
         checkpoint_path = saved_paths["checkpoint"]
         save_checkpoint(
             trainer.model,
+            trainer.ema_model,
             trainer.optimizer,
             trainer.scheduler,
             step=0,

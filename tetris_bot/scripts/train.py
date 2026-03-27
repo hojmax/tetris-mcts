@@ -134,6 +134,7 @@ def restore_trainer_from_checkpoint(
     state = load_checkpoint(
         checkpoint,
         model=trainer.model,
+        ema_model=trainer.ema_model,
         optimizer=trainer.optimizer,
         scheduler=load_scheduler,
     )
@@ -443,7 +444,10 @@ def main(args: ScriptArgs) -> None:
                     f"Init checkpoint does not exist: {args.init_checkpoint}"
                 )
             state = load_checkpoint(
-                args.init_checkpoint, model=trainer.model, optimizer=None
+                args.init_checkpoint,
+                model=trainer.model,
+                ema_model=trainer.ema_model,
+                optimizer=None,
             )
             logger.info(
                 "Initialized model from checkpoint",

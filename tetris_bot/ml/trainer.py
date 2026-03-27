@@ -24,6 +24,7 @@ from tetris_bot.constants import (
     TRAINING_DATA_FILENAME,
 )
 from tetris_bot.ml.config import TrainingConfig
+from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import (
     AsyncCheckpointSaver,
@@ -111,6 +112,19 @@ class Trainer:
         if model is None:
             model = TetrisNet(**config.network.to_model_kwargs())
         self.model = model.to(self.device)
+        if not 0.0 <= self.config.optimizer.ema_decay < 1.0:
+            raise ValueError(
+                "config.optimizer.ema_decay must be in [0, 1) "
+                f"(got {self.config.optimizer.ema_decay})"
+            )
+        self._export_model = self.model
+        self.ema = (
+            ExponentialMovingAverage(
+                self._export_model, self.config.optimizer.ema_decay
+            )
+            if self.config.optimizer.ema_decay > 0.0
+            else None
+        )
 
         # Create optimizer
         self.optimizer = torch.optim.AdamW(
@@ -417,8 +431,8 @@ class Trainer:
                 ),
                 "model_gate/next_export_delay_seconds": (
                     next_candidate_export_delay_seconds
-            ),
-        }
+                ),
+            }
 
             per_game_results = event["per_game_results"]
             if per_game_results:
@@ -926,10 +940,7 @@ class Trainer:
         )
 
         normalized_steps = sanitize_optimizer_state_steps(self.optimizer)
-        if (
-            normalized_steps > 0
-            and not self._logged_live_optimizer_step_sanitization
-        ):
+        if normalized_steps > 0 and not self._logged_live_optimizer_step_sanitization:
             logger.warning(
                 "Sanitized live optimizer step counters before optimizer step",
                 normalized_steps=normalized_steps,
@@ -937,6 +948,8 @@ class Trainer:
             self._logged_live_optimizer_step_sanitization = True
 
         self.optimizer.step()
+        if self.ema is not None:
+            self.ema.update(self._export_model)
         if self.scheduler:
             self.scheduler.step()
 
@@ -1069,7 +1082,8 @@ class Trainer:
     def save(self, extra_checkpoint_state: dict[str, object] | None = None):
         """Save model checkpoint."""
         paths = self.weight_manager.save(
-            self.model,
+            self._export_model,
+            self.ema_model,
             self.optimizer,
             self.scheduler,
             self.step,
@@ -1083,6 +1097,12 @@ class Trainer:
             onnx=str(paths.get("onnx")) if "onnx" in paths else None,
         )
         return paths
+
+    @property
+    def ema_model(self) -> TetrisNet | None:
+        if self.ema is None:
+            return None
+        return cast(TetrisNet, self.ema.model)
 
     def _drain_async_checkpoint_saver(self) -> None:
         saver = self._async_checkpoint_saver
@@ -1306,8 +1326,9 @@ class Trainer:
         candidate_model_dir.mkdir(parents=True, exist_ok=True)
 
         # Export initial model (full ONNX + split models for cached Rust inference)
-        full_export_ok = export_onnx(self.model, onnx_path)
-        split_export_ok = export_split_models(self.model, onnx_path)
+        initial_export_model = self.ema_model or self._export_model
+        full_export_ok = export_onnx(initial_export_model, onnx_path)
+        split_export_ok = export_split_models(initial_export_model, onnx_path)
         if not full_export_ok:
             raise RuntimeError("ONNX export failed due to missing dependencies")
         if not split_export_ok:
@@ -1315,7 +1336,7 @@ class Trainer:
         assert_rust_inference_artifacts(onnx_path)
 
         # Optionally compile model for faster training forward/backward
-        export_model = self.model
+        export_model = self._export_model
         if self.config.optimizer.use_torch_compile:
             logger.info("Compiling model with torch.compile")
             self.model = cast(TetrisNet, torch.compile(self.model))
@@ -1688,9 +1709,14 @@ class Trainer:
                         candidate_model_dir / f"candidate_step_{self.step}.onnx"
                     )
                     onnx_export_start = time.perf_counter()
-                    full_export_ok = export_onnx(export_model, candidate_onnx_path)
+                    candidate_export_model = self.ema_model or export_model
+                    full_export_ok = export_onnx(
+                        candidate_export_model,
+                        candidate_onnx_path,
+                    )
                     split_export_ok = export_split_models(
-                        export_model, candidate_onnx_path
+                        candidate_export_model,
+                        candidate_onnx_path,
                     )
                     if not full_export_ok:
                         raise RuntimeError(
@@ -1767,6 +1793,7 @@ class Trainer:
                     ) = self._persist_incumbent_model_artifacts(generator)
                     checkpoint_snapshot = capture_checkpoint_snapshot(
                         model=export_model,
+                        ema_model=self.ema_model,
                         optimizer=self.optimizer,
                         scheduler=self.scheduler,
                         step=self.step,

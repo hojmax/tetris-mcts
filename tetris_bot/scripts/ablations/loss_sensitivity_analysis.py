@@ -124,7 +124,7 @@ def load_model_from_run(
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     model = TetrisNet(**config.network.to_model_kwargs()).to(device)
-    load_checkpoint(checkpoint_path, model=model)
+    load_checkpoint(checkpoint_path, model=model, ema_model=None)
     model.eval()
     return model
 
