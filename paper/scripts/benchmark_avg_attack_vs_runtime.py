@@ -230,7 +230,7 @@ def evaluate_simulation_budget(
     num_workers: int,
     effective_self_play_config: dict[str, Any],
     mcts_seed: int,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     config = build_eval_config(
         effective_self_play_config,
         simulations=simulations,
@@ -296,8 +296,8 @@ def build_summary_payload(
     num_workers_source: str,
     num_workers_cache_path: str | None,
     effective_self_play_config: dict[str, Any],
-    points: list[dict[str, object]],
-) -> dict[str, object]:
+    points: list[dict[str, Any]],
+) -> dict[str, Any]:
     representative_config = build_eval_config(
         effective_self_play_config,
         simulations=int(points[0]["simulations"]),
@@ -346,7 +346,7 @@ def build_summary_payload(
     }
 
 
-def write_summary(path: Path, payload: dict[str, object]) -> None:
+def write_summary(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -390,7 +390,7 @@ def main() -> None:
         runtime_backend=runtime_backend,
     )
 
-    points: list[dict[str, object]] = []
+    points: list[dict[str, Any]] = []
     for simulations in args.simulations:
         logger.info(
             "Evaluating simulation budget",

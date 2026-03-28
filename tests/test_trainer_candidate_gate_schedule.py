@@ -88,7 +88,7 @@ def test_restore_trainer_from_checkpoint_restores_candidate_gate_state(
 
     monkeypatch.setattr(
         "tetris_bot.scripts.train.load_checkpoint",
-        lambda checkpoint, model, optimizer, scheduler: {
+        lambda checkpoint, model, ema_model, optimizer, scheduler: {
             "step": 77,
             "incumbent_uses_network": False,
             "incumbent_nn_value_weight": 0.3,

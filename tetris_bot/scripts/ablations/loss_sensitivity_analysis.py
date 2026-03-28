@@ -187,7 +187,9 @@ def perturb_module_weights(
     if sigma <= 0:
         return
     for p in module.parameters():
-        noise = torch.randn(p.data.shape, generator=rng, dtype=p.data.dtype, device=p.data.device)
+        noise = torch.randn(
+            p.data.shape, generator=rng, dtype=p.data.dtype, device=p.data.device
+        )
         p.data.add_(noise * sigma)
 
 
