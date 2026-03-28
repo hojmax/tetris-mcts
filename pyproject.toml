@@ -23,6 +23,7 @@ dependencies = [
     "onnxruntime>=1.23.2",
     "rich",
     "pytest",
+    "scipy",
 ]
 
 [tool.pyright]
