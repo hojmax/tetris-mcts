@@ -28,7 +28,8 @@ Training data packs all 80 aux features together; the model splits internally.
 Rust inference encodes board stats separately for the cached board embedding path.
 
 Supported architectures:
-- `gated_fusion` (default): Conv trunk + cached board embedding + aux-conditioned fusion.
+- `gated_fusion` (default): Conv trunk + board-stats encoder + cached board MLP +
+  concat-based aux fusion.
 - `simple_aux_mlp`: One-hidden-layer MLP over all 80 aux features, then linear policy/value
   heads. Board tensor input is ignored for predictions.
 
@@ -199,11 +200,14 @@ class TetrisNet(nn.Module):
         trunk_channels: int,
         num_conv_residual_blocks: int,
         reduction_channels: int,
-        fc_hidden: int,
-        conv_kernel_size: int,
-        conv_padding: int,
+        board_stats_hidden: int = 32,
+        board_proj_hidden: int = 256,
+        fc_hidden: int = 256,
+        conv_kernel_size: int = 3,
+        conv_padding: int = 1,
         architecture: str = NETWORK_ARCH_GATED_FUSION,
         aux_hidden: int = 64,
+        fusion_hidden: int = 256,
         num_fusion_blocks: int = 0,
     ):
         super().__init__()
@@ -216,10 +220,13 @@ class TetrisNet(nn.Module):
                 trunk_channels=trunk_channels,
                 num_conv_residual_blocks=num_conv_residual_blocks,
                 reduction_channels=reduction_channels,
+                board_stats_hidden=board_stats_hidden,
+                board_proj_hidden=board_proj_hidden,
                 fc_hidden=fc_hidden,
                 conv_kernel_size=conv_kernel_size,
                 conv_padding=conv_padding,
                 aux_hidden=aux_hidden,
+                fusion_hidden=fusion_hidden,
                 num_fusion_blocks=num_fusion_blocks,
             )
         elif architecture == NETWORK_ARCH_SIMPLE_AUX_MLP:
@@ -235,10 +242,13 @@ class TetrisNet(nn.Module):
         trunk_channels: int,
         num_conv_residual_blocks: int,
         reduction_channels: int,
+        board_stats_hidden: int,
+        board_proj_hidden: int,
         fc_hidden: int,
         conv_kernel_size: int,
         conv_padding: int,
         aux_hidden: int,
+        fusion_hidden: int,
         num_fusion_blocks: int,
     ) -> None:
         # Conv backbone: initial -> res blocks -> stride-2 reduction
@@ -270,18 +280,29 @@ class TetrisNet(nn.Module):
         reduced_h = (BOARD_HEIGHT + 1) // 2  # 10
         reduced_w = (BOARD_WIDTH + 1) // 2  # 5
         conv_flat_size = reduction_channels * reduced_h * reduced_w
-        fusion_hidden = fc_hidden
+        if board_stats_hidden <= 0:
+            raise ValueError(f"board_stats_hidden must be > 0, got {board_stats_hidden}")
+        if board_proj_hidden <= 0:
+            raise ValueError(f"board_proj_hidden must be > 0, got {board_proj_hidden}")
+        if fusion_hidden <= 0:
+            raise ValueError(f"fusion_hidden must be > 0, got {fusion_hidden}")
 
-        # Board projection: conv features + board stats, cached by Rust inference.
-        self.board_proj = nn.Linear(
-            conv_flat_size + BOARD_STATS_FEATURES, fusion_hidden
+        # Cached board path: board stats encoder followed by a deeper board MLP.
+        self.board_stats_fc = nn.Linear(BOARD_STATS_FEATURES, board_stats_hidden)
+        self.board_stats_ln = nn.LayerNorm(board_stats_hidden)
+        self.board_proj_fc1 = nn.Linear(
+            conv_flat_size + board_stats_hidden, board_proj_hidden
         )
+        self.board_proj_ln1 = nn.LayerNorm(board_proj_hidden)
+        self.board_proj_fc2 = nn.Linear(board_proj_hidden, fc_hidden)
+        # Keep the old attribute name as the final cached-board projection layer so generic
+        # export/test code can still query the board embedding width.
+        self.board_proj = self.board_proj_fc2
 
-        # Aux-conditioned modulation (piece/game features only).
+        # Piece/game aux path, fused by concatenation instead of gating.
         self.aux_fc = nn.Linear(PIECE_AUX_FEATURES, aux_hidden)
         self.aux_ln = nn.LayerNorm(aux_hidden)
-        self.gate_fc = nn.Linear(aux_hidden, fusion_hidden)
-        self.aux_proj = nn.Linear(aux_hidden, fusion_hidden)
+        self.fusion_fc = nn.Linear(fc_hidden + aux_hidden, fusion_hidden)
 
         # Post-fusion processing.
         self.fusion_ln = nn.LayerNorm(fusion_hidden)
@@ -318,13 +339,22 @@ class TetrisNet(nn.Module):
         self.simple_policy_head = nn.Linear(fc_hidden, NUM_ACTIONS)
         self.simple_value_head = nn.Linear(fc_hidden, 1)
 
+    def forward_board_embedding_from_parts(
+        self, conv_out: torch.Tensor, board_stats: torch.Tensor
+    ) -> torch.Tensor:
+        if self.architecture != NETWORK_ARCH_GATED_FUSION:
+            return self.board_proj(torch.cat([conv_out, board_stats], dim=1))
+
+        board_stats_h = F.silu(self.board_stats_ln(self.board_stats_fc(board_stats)))
+        board_hidden = torch.cat([conv_out, board_stats_h], dim=1)
+        board_hidden = F.silu(self.board_proj_ln1(self.board_proj_fc1(board_hidden)))
+        return self.board_proj_fc2(board_hidden)
+
     def _forward_gated_fusion_from_board_embedding(
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
         aux_h = F.silu(self.aux_ln(self.aux_fc(piece_aux)))
-        gate = torch.sigmoid(self.gate_fc(aux_h))
-
-        fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
+        fused = self.fusion_fc(torch.cat([board_h, aux_h], dim=1))
         fused = F.silu(self.fusion_ln(fused))
         for block in self.fusion_blocks:
             fused = block(fused)
@@ -374,8 +404,8 @@ class TetrisNet(nn.Module):
             for block in self.res_blocks:
                 x = block(x)
             x = F.silu(self.bn_reduce(self.conv_reduce(x)))
-            board_h = self.board_proj(
-                torch.cat([x.view(x.size(0), -1), board_stats], dim=1)
+            board_h = self.forward_board_embedding_from_parts(
+                x.view(x.size(0), -1), board_stats
             )
             return self._forward_gated_fusion_from_board_embedding(board_h, piece_aux)
 
@@ -439,8 +469,7 @@ class HeadsModel(nn.Module):
         if self.architecture == NETWORK_ARCH_GATED_FUSION:
             self.aux_fc = parent.aux_fc
             self.aux_ln = parent.aux_ln
-            self.gate_fc = parent.gate_fc
-            self.aux_proj = parent.aux_proj
+            self.fusion_fc = parent.fusion_fc
             self.fusion_ln = parent.fusion_ln
             self.fusion_blocks = parent.fusion_blocks
             self.policy_fc = parent.policy_fc
@@ -458,8 +487,7 @@ class HeadsModel(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.architecture == NETWORK_ARCH_GATED_FUSION:
             aux_h = F.silu(self.aux_ln(self.aux_fc(piece_aux)))
-            gate = torch.sigmoid(self.gate_fc(aux_h))
-            fused = board_h * (1.0 + gate) + self.aux_proj(aux_h)
+            fused = self.fusion_fc(torch.cat([board_h, aux_h], dim=1))
             fused = F.silu(self.fusion_ln(fused))
             for block in self.fusion_blocks:
                 fused = block(fused)

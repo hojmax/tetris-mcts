@@ -1,7 +1,7 @@
 //! Neural Network Inference
 //!
-//! Loads split ONNX models (conv backbone + heads) and board projection weights from binary.
-//! Caches board embeddings to skip conv + board projection on repeated board states.
+//! Loads split ONNX models (conv backbone + heads) and cached-board-path weights from binary.
+//! Caches board embeddings to skip recomputing the board-only path on repeated board states.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -36,8 +36,7 @@ mod tests;
 /// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
     backend: InferenceBackend,
-    board_proj_weight: Arc<Array2<f32>>, // (board_hidden, conv_out_size + BOARD_STATS_FEATURES)
-    board_proj_bias: Arc<Array1<f32>>,   // (board_hidden,)
+    cached_board_path: Arc<CachedBoardPathKind>,
     board_hidden: usize,
     conv_out_size: usize, // conv model output dim (e.g. 1600)
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
@@ -66,6 +65,33 @@ enum RuntimeBackend {
     Tract,
     #[cfg(feature = "nn-ort")]
     Ort,
+}
+
+#[derive(Clone)]
+struct LinearLayer {
+    weight: Array2<f32>,
+    bias: Array1<f32>,
+}
+
+#[derive(Clone)]
+struct LayerNorm1D {
+    weight: Array1<f32>,
+    bias: Array1<f32>,
+}
+
+#[derive(Clone)]
+struct CachedBoardPath {
+    board_stats_fc: LinearLayer,
+    board_stats_ln: LayerNorm1D,
+    board_proj_fc1: LinearLayer,
+    board_proj_ln1: LayerNorm1D,
+    board_proj_fc2: LinearLayer,
+}
+
+#[derive(Clone)]
+enum CachedBoardPathKind {
+    Deep(CachedBoardPath),
+    Linear(LinearLayer),
 }
 
 impl TetrisNN {
@@ -183,8 +209,8 @@ impl TetrisNN {
     /// Load split models from file.
     /// Given a base path like "latest.onnx", loads:
     /// - "latest.conv.onnx" (conv backbone)
-    /// - "latest.heads.onnx" (gated fusion + heads)
-    /// - "latest.fc.bin" (board projection weight + bias)
+    /// - "latest.heads.onnx" (post-cache fusion + heads)
+    /// - "latest.fc.bin" (cached-board-path weights)
     pub fn load<P: AsRef<Path>>(path: P) -> TractResult<Self> {
         let base = path.as_ref().with_extension("");
         let conv_path = base.with_extension("conv.onnx");
@@ -192,25 +218,44 @@ impl TetrisNN {
         let fc_path = base.with_extension("fc.bin");
         let backend = Self::load_inference_backend(&conv_path, &heads_path)?;
 
-        let (board_proj_weight, board_proj_bias) = load_fc_binary(&fc_path)?;
-        let board_hidden = board_proj_weight.nrows();
-        let board_proj_cols = board_proj_weight.ncols();
-        if board_proj_cols <= BOARD_STATS_FEATURES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Board projection width {} must be > BOARD_STATS_FEATURES ({})",
-                    board_proj_cols, BOARD_STATS_FEATURES
-                ),
-            )
-            .into());
-        }
-        let conv_out_size = board_proj_cols - BOARD_STATS_FEATURES;
+        let cached_board_path = load_fc_binary(&fc_path)?;
+        let (board_hidden, conv_out_size) = match &cached_board_path {
+            CachedBoardPathKind::Deep(path) => {
+                let board_hidden = path.board_proj_fc2.weight.nrows();
+                let board_proj_cols = path.board_proj_fc1.weight.ncols();
+                let board_stats_hidden = path.board_stats_fc.weight.nrows();
+                if board_proj_cols <= board_stats_hidden {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "Cached board-path width {} must be > board_stats_hidden ({})",
+                            board_proj_cols, board_stats_hidden
+                        ),
+                    )
+                    .into());
+                }
+                (board_hidden, board_proj_cols - board_stats_hidden)
+            }
+            CachedBoardPathKind::Linear(layer) => {
+                let board_hidden = layer.weight.nrows();
+                let board_proj_cols = layer.weight.ncols();
+                if board_proj_cols <= BOARD_STATS_FEATURES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "Linear cached board-path width {} must be > BOARD_STATS_FEATURES ({})",
+                            board_proj_cols, BOARD_STATS_FEATURES
+                        ),
+                    )
+                    .into());
+                }
+                (board_hidden, board_proj_cols - BOARD_STATS_FEATURES)
+            }
+        };
 
         Ok(TetrisNN {
             backend,
-            board_proj_weight: Arc::new(board_proj_weight),
-            board_proj_bias: Arc::new(board_proj_bias),
+            cached_board_path: Arc::new(cached_board_path),
             board_hidden,
             conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
@@ -399,15 +444,31 @@ impl TetrisNN {
             .into());
         }
 
-        // Concatenate conv output (e.g. 1600) + board_stats (19) -> board_proj input.
-        let mut combined = Vec::with_capacity(self.conv_out_size + BOARD_STATS_FEATURES);
-        combined.extend_from_slice(&conv_values);
-        combined.extend_from_slice(board_stats);
+        match self.cached_board_path.as_ref() {
+            CachedBoardPathKind::Deep(path) => {
+                let board_stats_h = silu_vec(layer_norm_1d(
+                    linear_forward(&path.board_stats_fc, board_stats),
+                    &path.board_stats_ln,
+                )?);
 
-        let combined_arr = ArrayView1::from(&combined);
-        let mut board_embed = self.board_proj_weight.dot(&combined_arr);
-        board_embed += self.board_proj_bias.as_ref();
-        Ok(board_embed)
+                let mut combined = Vec::with_capacity(self.conv_out_size + board_stats_h.len());
+                combined.extend_from_slice(&conv_values);
+                combined.extend_from_slice(&board_stats_h);
+
+                let hidden = silu_vec(layer_norm_1d(
+                    linear_forward(&path.board_proj_fc1, &combined),
+                    &path.board_proj_ln1,
+                )?);
+
+                Ok(linear_forward(&path.board_proj_fc2, &hidden))
+            }
+            CachedBoardPathKind::Linear(layer) => {
+                let mut combined = Vec::with_capacity(self.conv_out_size + BOARD_STATS_FEATURES);
+                combined.extend_from_slice(&conv_values);
+                combined.extend_from_slice(board_stats);
+                Ok(linear_forward(layer, &combined))
+            }
+        }
     }
 
     fn insert_board_embedding_cache(&self, board_key: [u64; 4], embed: Array1<f32>) {
@@ -599,8 +660,7 @@ impl Clone for TetrisNN {
         // Share backend sessions/models and weights, create fresh empty cache and counters.
         TetrisNN {
             backend: self.backend.clone(),
-            board_proj_weight: Arc::clone(&self.board_proj_weight),
-            board_proj_bias: Arc::clone(&self.board_proj_bias),
+            cached_board_path: Arc::clone(&self.cached_board_path),
             board_hidden: self.board_hidden,
             conv_out_size: self.conv_out_size,
             board_cache: RefCell::new(HashMap::new()),
@@ -626,50 +686,226 @@ fn pack_board(env: &TetrisEnv) -> [u64; 4] {
     key
 }
 
-/// Load board-projection weight matrix and bias from binary file.
-/// Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
-fn load_fc_binary(path: &Path) -> TractResult<(Array2<f32>, Array1<f32>)> {
+/// Load cached-board-path weights from binary file.
+/// Deep format (`TCM2`):
+/// - board_stats_fc: [rows u32][cols u32][weight f32][bias f32]
+/// - board_stats_ln: [hidden u32][weight f32][bias f32]
+/// - board_proj_fc1: [rows u32][cols u32][weight f32][bias f32]
+/// - board_proj_ln1: [hidden u32][weight f32][bias f32]
+/// - board_proj_fc2: [rows u32][cols u32][weight f32][bias f32]
+///
+/// Simple format (`TCS2`):
+/// - board_proj: [rows u32][cols u32][weight f32][bias f32]
+fn load_fc_binary(path: &Path) -> TractResult<CachedBoardPathKind> {
     let mut file = File::open(path).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!(
-                "Board projection binary not found at {}: {}",
+                "Cached board-path binary not found at {}: {}",
                 path.display(),
                 e
             ),
         )
     })?;
 
-    let mut header = [0u8; 8];
-    file.read_exact(&mut header)?;
-    let rows = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
-    let cols = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic)?;
+    if magic == *b"TCS2" {
+        return Ok(CachedBoardPathKind::Linear(read_linear_layer(
+            &mut file,
+            "board_proj",
+        )?));
+    }
+    if magic != *b"TCM2" {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Unsupported cached board-path binary format in {} (expected magic TCM2 or TCS2)",
+                path.display()
+            ),
+        )
+        .into());
+    }
 
-    let weight_bytes = rows * cols * 4;
-    let bias_bytes = rows * 4;
-    let mut data = vec![0u8; weight_bytes + bias_bytes];
+    let board_stats_fc = read_linear_layer(&mut file, "board_stats_fc")?;
+    if board_stats_fc.weight.ncols() != BOARD_STATS_FEATURES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "board_stats_fc input width mismatch: got {}, expected {}",
+                board_stats_fc.weight.ncols(),
+                BOARD_STATS_FEATURES
+            ),
+        )
+        .into());
+    }
+
+    let board_stats_ln = read_layer_norm_1d(&mut file, "board_stats_ln")?;
+    if board_stats_ln.weight.len() != board_stats_fc.weight.nrows() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "board_stats_ln width {} must match board_stats_fc output {}",
+                board_stats_ln.weight.len(),
+                board_stats_fc.weight.nrows()
+            ),
+        )
+        .into());
+    }
+
+    let board_proj_fc1 = read_linear_layer(&mut file, "board_proj_fc1")?;
+    if board_proj_fc1.weight.ncols() <= board_stats_fc.weight.nrows() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "board_proj_fc1 input width {} must exceed board_stats hidden {}",
+                board_proj_fc1.weight.ncols(),
+                board_stats_fc.weight.nrows()
+            ),
+        )
+        .into());
+    }
+
+    let board_proj_ln1 = read_layer_norm_1d(&mut file, "board_proj_ln1")?;
+    if board_proj_ln1.weight.len() != board_proj_fc1.weight.nrows() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "board_proj_ln1 width {} must match board_proj_fc1 output {}",
+                board_proj_ln1.weight.len(),
+                board_proj_fc1.weight.nrows()
+            ),
+        )
+        .into());
+    }
+
+    let board_proj_fc2 = read_linear_layer(&mut file, "board_proj_fc2")?;
+    if board_proj_fc2.weight.ncols() != board_proj_fc1.weight.nrows() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "board_proj_fc2 input width {} must match board_proj_fc1 output {}",
+                board_proj_fc2.weight.ncols(),
+                board_proj_fc1.weight.nrows()
+            ),
+        )
+        .into());
+    }
+
+    Ok(CachedBoardPathKind::Deep(CachedBoardPath {
+        board_stats_fc,
+        board_stats_ln,
+        board_proj_fc1,
+        board_proj_ln1,
+        board_proj_fc2,
+    }))
+}
+
+fn read_u32(file: &mut File) -> TractResult<usize> {
+    let mut bytes = [0u8; 4];
+    file.read_exact(&mut bytes)?;
+    Ok(u32::from_le_bytes(bytes) as usize)
+}
+
+fn read_f32_vec(file: &mut File, len: usize) -> TractResult<Vec<f32>> {
+    let mut data = vec![0u8; len * 4];
     file.read_exact(&mut data)?;
-
-    let weight_f32: Vec<f32> = data[..weight_bytes]
+    Ok(data
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect();
+        .collect())
+}
 
-    let bias_f32: Vec<f32> = data[weight_bytes..]
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect();
+fn read_linear_layer(file: &mut File, label: &str) -> TractResult<LinearLayer> {
+    let rows = read_u32(file)?;
+    let cols = read_u32(file)?;
+    let weight =
+        Array2::from_shape_vec((rows, cols), read_f32_vec(file, rows * cols)?).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{label} weight shape mismatch: {e}"),
+            )
+        })?;
+    let bias = Array1::from_vec(read_f32_vec(file, rows)?);
+    Ok(LinearLayer { weight, bias })
+}
 
-    let weight = Array2::from_shape_vec((rows, cols), weight_f32).map_err(|e| {
+fn read_layer_norm_1d(file: &mut File, label: &str) -> TractResult<LayerNorm1D> {
+    let hidden = read_u32(file)?;
+    let weight = Array1::from_vec(read_f32_vec(file, hidden)?);
+    let bias = Array1::from_vec(read_f32_vec(file, hidden)?);
+    if bias.len() != weight.len() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "{label} bias width {} must match weight width {}",
+                bias.len(),
+                weight.len()
+            ),
+        )
+        .into());
+    }
+    Ok(LayerNorm1D { weight, bias })
+}
+
+fn linear_forward(layer: &LinearLayer, inputs: &[f32]) -> Array1<f32> {
+    let input_arr = ArrayView1::from(inputs);
+    let mut output = layer.weight.dot(&input_arr);
+    output += &layer.bias;
+    output
+}
+
+fn layer_norm_1d(inputs: Array1<f32>, layer: &LayerNorm1D) -> TractResult<Array1<f32>> {
+    if inputs.len() != layer.weight.len() || inputs.len() != layer.bias.len() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "LayerNorm width mismatch: input={}, weight={}, bias={}",
+                inputs.len(),
+                layer.weight.len(),
+                layer.bias.len()
+            ),
+        )
+        .into());
+    }
+
+    let input_slice = inputs.as_slice_memory_order().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Board projection weight shape mismatch: {}", e),
+            "LayerNorm input is not contiguous",
         )
     })?;
+    let mean = input_slice
+        .iter()
+        .map(|value| f64::from(*value))
+        .sum::<f64>()
+        / input_slice.len() as f64;
+    let variance = input_slice
+        .iter()
+        .map(|value| {
+            let centered = f64::from(*value) - mean;
+            centered * centered
+        })
+        .sum::<f64>()
+        / input_slice.len() as f64;
+    let denom = (variance + 1e-5f64).sqrt();
 
-    let bias = Array1::from_vec(bias_f32);
+    let normalized = input_slice
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| {
+            let centered = (f64::from(*value) - mean) / denom;
+            (centered * f64::from(layer.weight[idx]) + f64::from(layer.bias[idx])) as f32
+        })
+        .collect();
+    Ok(Array1::from_vec(normalized))
+}
 
-    Ok((weight, bias))
+fn silu_vec(inputs: Array1<f32>) -> Vec<f32> {
+    inputs
+        .iter()
+        .map(|value| *value / (1.0 + (-*value).exp()))
+        .collect()
 }
 
 /// Encode a TetrisEnv state into neural network input tensors

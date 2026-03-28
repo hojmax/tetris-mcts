@@ -59,10 +59,11 @@ def inspect_onnx(model_path: Path) -> None:
                 "res_blocks.",
                 "bn_initial",
                 "bn_reduce",
-                "board_proj.weight",
+                "board_stats_fc.weight",
+                "board_proj_fc1.weight",
+                "board_proj_fc2.weight",
                 "aux_fc.weight",
-                "gate_fc.weight",
-                "aux_proj.weight",
+                "fusion_fc.weight",
                 "policy_head.weight",
                 "value_head.weight",
             ]
@@ -85,12 +86,14 @@ def inspect_onnx(model_path: Path) -> None:
         elif "res_blocks." in initializer.name and ".conv1.weight" in initializer.name:
             num_res_blocks += 1
 
-    has_gating = any("gate_fc.weight" in init.name for init in model.graph.initializer)
+    has_concat_fusion = any(
+        "fusion_fc.weight" in init.name for init in model.graph.initializer
+    )
 
     if init_channels is not None:
         logger.info(
             "Detected deep conv backbone"
-            + (" with gated-fusion" if has_gating else ""),
+            + (" with concat-MLP fusion" if has_concat_fusion else ""),
             trunk_channels=init_channels,
             num_res_blocks=num_res_blocks,
             reduction_channels=reduce_channels,
