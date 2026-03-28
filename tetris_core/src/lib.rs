@@ -102,8 +102,13 @@ fn debug_predict_masked_from_tensors(
 
     let nn = inference::TetrisNN::load(model_path)
         .map_err(|e| PyValueError::new_err(format!("Failed to load model: {e}")))?;
-    nn.predict_masked_from_tensors(&board_tensor, &aux_tensor, &action_mask)
-        .map_err(|e| PyValueError::new_err(format!("Failed to run inference: {e}")))
+    nn.predict_masked_from_tensors(
+        &board_tensor,
+        &aux_tensor,
+        &action_mask,
+        inference::PredictionNoiseSettings::default(),
+    )
+    .map_err(|e| PyValueError::new_err(format!("Failed to run inference: {e}")))
 }
 
 #[pymodule]

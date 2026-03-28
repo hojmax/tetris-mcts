@@ -56,6 +56,24 @@ pub struct MCTSConfig {
     /// spawn is extracted and used as the starting point for the next search.
     #[pyo3(get, set)]
     pub reuse_tree: bool,
+    /// Mean of Gaussian noise added independently to each policy logit before masking/softmax.
+    #[pyo3(get, set)]
+    pub policy_noise_mean: f32,
+    /// Standard deviation of Gaussian noise added independently to each policy logit
+    /// before masking/softmax.
+    #[pyo3(get, set)]
+    pub policy_noise_std: f32,
+    /// Mean of Gaussian noise added to the raw value-head prediction.
+    #[pyo3(get, set)]
+    pub value_noise_mean: f32,
+    /// Standard deviation of Gaussian noise added to the raw value-head prediction.
+    #[pyo3(get, set)]
+    pub value_noise_std: f32,
+    /// Optional base seed for deterministic state-keyed prediction noise.
+    /// Keep this separate from `seed` so search stochasticity and prediction noise can vary
+    /// independently in evaluation sweeps.
+    #[pyo3(get, set)]
+    pub prediction_noise_seed: Option<u64>,
 }
 
 #[pymethods]
@@ -78,6 +96,11 @@ impl MCTSConfig {
             q_scale: Some(8.0),
             use_parent_value_for_unvisited_q: false,
             reuse_tree: true,
+            policy_noise_mean: 0.0,
+            policy_noise_std: 0.0,
+            value_noise_mean: 0.0,
+            value_noise_std: 0.0,
+            prediction_noise_seed: None,
         }
     }
 }
@@ -110,5 +133,10 @@ mod tests {
         assert_eq!(config.q_scale, Some(8.0));
         assert!(!config.use_parent_value_for_unvisited_q);
         assert!(config.reuse_tree);
+        assert_eq!(config.policy_noise_mean, 0.0);
+        assert_eq!(config.policy_noise_std, 0.0);
+        assert_eq!(config.value_noise_mean, 0.0);
+        assert_eq!(config.value_noise_std, 0.0);
+        assert_eq!(config.prediction_noise_seed, None);
     }
 }

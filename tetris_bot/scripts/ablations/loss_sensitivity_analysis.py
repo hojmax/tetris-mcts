@@ -1,48 +1,45 @@
-"""Loss sensitivity analysis: marginal utility of policy vs value loss.
+"""Loss sensitivity analysis via runtime output noise.
 
-Takes a trained model and measures how game performance (avg attack) degrades
-when policy or value predictions are perturbed with increasing noise.
+Sweeps Gaussian noise over either:
+- policy logits, before invalid-action masking and softmax
+- value predictions, after the value head output
 
-For each noise level:
-  1. Clone model, perturb policy-head weights → export → run games → record
-  2. Clone model, perturb value-head weights  → export → run games → record
-  3. Measure held-out policy/value loss for both perturbed variants
-
-Fits sigmoid curves  attack = L / (1 + exp(-k*(loss - x0))) + b  to each
-noise-type series, then computes d(attack)/d(loss) at the clean operating
-point.  The derivative ratio gives the recommended relative weighting of
-value loss vs policy loss in the training objective.
+For each noise setting, the script:
+1. Measures held-out policy/value loss on replay-buffer examples
+2. Runs fixed-seed Rust evaluation with the same output-noise parameters
+3. Fits sigmoid curves of held-out loss vs average attack
+4. Writes JSON summaries plus one plot for policy and one for value
 
 Usage:
-    python -m tetris_bot.scripts.ablations.loss_sensitivity_analysis \
-        --run_dir training_runs/v32
+    python tetris_bot/scripts/ablations/loss_sensitivity_analysis.py training_runs/v32
 """
 
 from __future__ import annotations
 
-import copy
-import json
-import tempfile
-import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, field
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 
+import matplotlib
 import numpy as np
+from pydantic import BaseModel
+from pydantic.dataclasses import dataclass
+from simple_parsing import field as sp_field
+from simple_parsing import parse
 import structlog
 import torch
-from simple_parsing import parse
+import torch.nn.functional as F
 
 from tetris_bot.constants import (
     BENCHMARKS_DIR,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
-    LATEST_ONNX_FILENAME,
     TRAINING_DATA_FILENAME,
 )
 from tetris_bot.ml.config import TrainingConfig, load_training_config_json
-from tetris_bot.ml.loss import compute_loss
+from tetris_bot.ml.loss import apply_action_mask
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import export_onnx, export_split_models, load_checkpoint
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
@@ -53,6 +50,10 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
     select_subset,
     validate_shapes,
 )
+from tetris_bot.scripts.utils.eval_utils import compute_attack_stats
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 try:
     from tetris_core.tetris_core import MCTSConfig, evaluate_model
@@ -60,51 +61,168 @@ except ImportError:
     evaluate_model = None  # type: ignore[assignment]
     MCTSConfig = None  # type: ignore[assignment,misc]
 
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Args
-# ---------------------------------------------------------------------------
+class SweepPoint(BaseModel):
+    noise_type: str
+    noise_mean: float
+    noise_std: float
+    repeat_index: int
+    noise_seed: int | None
+    policy_loss: float
+    value_loss: float
+    avg_attack: float
+    avg_lines: float
+    avg_moves: float
+    max_attack: int
+    total_attack: int
+    num_games: int
+    attack_std: float
+    attack_sem: float
+    elapsed_sec: float
+
+
+class AggregatedPoint(BaseModel):
+    noise_std: float
+    noise_mean: float
+    num_repeats: int
+    loss_mean: float
+    loss_std: float
+    loss_sem: float
+    policy_loss_mean: float
+    value_loss_mean: float
+    avg_attack_mean: float
+    avg_attack_std: float
+    avg_attack_sem: float
+
+
+class SigmoidFit(BaseModel):
+    L: float
+    k: float
+    x0: float
+    b: float
+
+
+class SweepAnalysis(BaseModel):
+    noise_type: str
+    loss_metric: str
+    baseline_loss: float
+    baseline_avg_attack: float
+    aggregated: list[AggregatedPoint]
+    sigmoid_fit: SigmoidFit | None
+    derivative_at_baseline: float | None
+    plot_path: str | None
+
+
+class RecommendedWeighting(BaseModel):
+    value_loss_weight: float
+    policy_derivative: float
+    value_derivative: float
+    interpretation: str
+
+
+class AnalysisSummary(BaseModel):
+    run_dir: str
+    generated_at: str
+    args: dict[str, object]
+    analysis_model_path: str
+    analysis_model_source: str
+    baseline: SweepPoint
+    policy: SweepAnalysis
+    value: SweepAnalysis
+    recommended_weighting: RecommendedWeighting | None
 
 
 @dataclass
 class ScriptArgs:
-    run_dir: Path  # Training run directory (has checkpoints/, config.json, training_data.npz)
-
-    # Noise sweep parameters
-    noise_fractions: list[float] = field(
+    run_dir: Path = sp_field(
+        positional=True
+    )  # Training run directory with checkpoints/, config.json, training_data.npz
+    policy_noise_mean: float = 0.0  # Mean added to each policy-logit noise draw
+    value_noise_mean: float = 0.0  # Mean added to value-head noise draws
+    policy_noise_stds: list[float] = field(
         default_factory=lambda: [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
     )
-    num_noise_repeats: int = 3  # Random noise samples per noise level
-
-    # Offline loss evaluation
-    max_examples: int = 0
-    train_fraction: float = 0.9
-    eval_examples: int = 32_768
+    value_noise_stds: list[float] = field(
+        default_factory=lambda: [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
+    )
+    num_noise_repeats: int = 3  # Random draws per non-zero noise level
+    max_examples: int = 0  # 0 uses the full replay buffer before the train/eval split
+    train_fraction: float = (
+        0.9  # Fraction of shuffled examples reserved for the train split
+    )
+    eval_examples: int = (
+        32_768  # Max held-out examples used for each loss evaluation pass
+    )
     eval_batch_size: int = 2048
-    preload_to_gpu: bool = True
-    preload_to_ram: bool = False
-
-    # Game evaluation
+    preload_to_gpu: bool = True  # Preload selected replay data to GPU if available
+    preload_to_ram: bool = False  # Preload selected replay data to CPU RAM
     num_eval_games: int = 20
     eval_num_simulations: int = 2000
     eval_max_placements: int = 50
     eval_num_workers: int = 7
     eval_seed_start: int = 0
-    eval_mcts_seed: int | None = 0
-
-    # General
+    eval_mcts_seed: int | None = 0  # Fixed MCTS seed so only prediction noise varies
     device: str = "auto"
     seed: int = 42
-    output_dir: Path | None = (
-        None  # Default: benchmarks/loss_sensitivity/<run_name>_<ts>
-    )
+    output_dir: Path | None = None
+
+    def __post_init__(self) -> None:
+        self.policy_noise_stds = normalize_noise_stds(
+            self.policy_noise_stds,
+            label="policy_noise_stds",
+        )
+        self.value_noise_stds = normalize_noise_stds(
+            self.value_noise_stds,
+            label="value_noise_stds",
+        )
+        if self.num_noise_repeats <= 0:
+            raise ValueError(
+                f"num_noise_repeats must be > 0, got {self.num_noise_repeats}"
+            )
+        if self.max_examples < 0:
+            raise ValueError(f"max_examples must be >= 0, got {self.max_examples}")
+        if not 0.0 < self.train_fraction < 1.0:
+            raise ValueError(
+                f"train_fraction must be in (0, 1), got {self.train_fraction}"
+            )
+        if self.eval_examples <= 0:
+            raise ValueError(f"eval_examples must be > 0, got {self.eval_examples}")
+        if self.eval_batch_size <= 0:
+            raise ValueError(f"eval_batch_size must be > 0, got {self.eval_batch_size}")
+        if self.num_eval_games <= 0:
+            raise ValueError(f"num_eval_games must be > 0, got {self.num_eval_games}")
+        if self.eval_num_simulations <= 0:
+            raise ValueError(
+                f"eval_num_simulations must be > 0, got {self.eval_num_simulations}"
+            )
+        if self.eval_max_placements <= 0:
+            raise ValueError(
+                f"eval_max_placements must be > 0, got {self.eval_max_placements}"
+            )
+        if self.eval_num_workers <= 1:
+            raise ValueError(
+                f"eval_num_workers must be > 1 for normal parallel evaluation, got {self.eval_num_workers}"
+            )
+        if self.eval_num_workers > self.num_eval_games:
+            raise ValueError(
+                "eval_num_workers must be <= num_eval_games so each worker has work "
+                f"(got workers={self.eval_num_workers}, games={self.num_eval_games})"
+            )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def normalize_noise_stds(values: list[float], label: str) -> list[float]:
+    if not values:
+        raise ValueError(f"{label} must not be empty")
+    normalized: set[float] = {0.0}
+    for value in values:
+        if not np.isfinite(value):
+            raise ValueError(f"{label} must contain finite values, got {value}")
+        if value < 0:
+            raise ValueError(f"{label} must contain only values >= 0, got {value}")
+        normalized.add(float(value))
+    return sorted(normalized)
 
 
 def pick_device(device_arg: str) -> str:
@@ -117,123 +235,144 @@ def pick_device(device_arg: str) -> str:
     return "cpu"
 
 
-def load_model_from_run(
-    run_dir: Path, config: TrainingConfig, device: torch.device
-) -> TetrisNet:
+def get_preload_mode(args: ScriptArgs, device: torch.device) -> str:
+    if args.preload_to_gpu and device.type != "cpu":
+        return "gpu"
+    if args.preload_to_ram:
+        return "ram"
+    return "none"
+
+
+def load_analysis_model(
+    run_dir: Path,
+    config: TrainingConfig,
+    device: torch.device,
+) -> tuple[TetrisNet, str]:
     checkpoint_path = run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-    model = TetrisNet(**config.network.to_model_kwargs()).to(device)
-    load_checkpoint(checkpoint_path, model=model, ema_model=None)
-    model.eval()
-    return model
+
+    raw_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
+    ema_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
+    state = load_checkpoint(checkpoint_path, model=raw_model, ema_model=ema_model)
+    model_source = "ema" if state.get("ema_state_dict") is not None else "raw"
+    analysis_model = ema_model if model_source == "ema" else raw_model
+    analysis_model.eval()
+    return analysis_model, model_source
 
 
-def evaluate_val_losses(
+def export_analysis_model(model: TetrisNet, output_dir: Path) -> Path:
+    model_path = output_dir / "analysis_model.onnx"
+    if not export_onnx(model, model_path):
+        raise RuntimeError("ONNX export failed")
+    if not export_split_models(model, model_path):
+        raise RuntimeError("Split-model export failed")
+    return model_path
+
+
+def sample_noise_tensor(
+    *,
+    shape: torch.Size,
+    mean: float,
+    std: float,
+    generator: torch.Generator | None,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if std == 0.0 and mean == 0.0:
+        return None
+    if std == 0.0:
+        return torch.full(shape, mean, dtype=torch.float32, device=device)
+    cpu_noise = torch.randn(shape, generator=generator, dtype=torch.float32)
+    noise = cpu_noise.mul(std).add(mean)
+    return noise.to(device=device)
+
+
+def evaluate_losses_with_output_noise(
     model: TetrisNet,
     source: OfflineDataSource,
-    val_indices: np.ndarray,
+    eval_indices: np.ndarray,
     device: torch.device,
     eval_batch_size: int,
-) -> dict[str, float]:
-    """Compute policy and value loss on held-out validation data."""
+    *,
+    noise_type: str | None,
+    noise_mean: float,
+    noise_std: float,
+    noise_seed: int | None,
+) -> tuple[float, float]:
     policy_sum = 0.0
     value_sum = 0.0
     count = 0
+    noise_generator = None
+    if noise_seed is not None:
+        noise_generator = torch.Generator(device="cpu")
+        noise_generator.manual_seed(noise_seed)
+
     model.eval()
-    with torch.no_grad():
-        for start in range(0, len(val_indices), eval_batch_size):
-            batch_idx = val_indices[start : start + eval_batch_size]
+    with torch.inference_mode():
+        for start in range(0, len(eval_indices), eval_batch_size):
+            batch_idx = eval_indices[start : start + eval_batch_size]
             boards, aux, policy_targets, value_targets, action_masks = (
-                build_torch_batch(source, batch_idx, device)
+                build_torch_batch(
+                    source,
+                    batch_idx,
+                    device,
+                )
             )
-            _, policy_loss, value_loss = compute_loss(
-                model=model,
-                boards=boards,
-                aux_features=aux,
-                policy_targets=policy_targets,
-                value_targets=value_targets,
-                action_masks=action_masks,
-                value_loss_weight=1.0,
+            policy_logits, value_pred = model(boards.float(), aux)
+            if noise_type == "policy":
+                policy_noise = sample_noise_tensor(
+                    shape=policy_logits.shape,
+                    mean=noise_mean,
+                    std=noise_std,
+                    generator=noise_generator,
+                    device=policy_logits.device,
+                )
+                if policy_noise is not None:
+                    policy_logits = policy_logits + policy_noise
+            elif noise_type == "value":
+                value_noise = sample_noise_tensor(
+                    shape=value_pred.shape,
+                    mean=noise_mean,
+                    std=noise_std,
+                    generator=noise_generator,
+                    device=value_pred.device,
+                )
+                if value_noise is not None:
+                    value_pred = value_pred + value_noise
+
+            masked_logits = apply_action_mask(policy_logits, action_masks)
+            log_policy = F.log_softmax(masked_logits, dim=-1)
+            log_policy = torch.where(
+                torch.isinf(log_policy),
+                torch.zeros_like(log_policy),
+                log_policy,
             )
-            n = len(batch_idx)
-            policy_sum += policy_loss.item() * n
-            value_sum += value_loss.item() * n
-            count += n
-    return {
-        "policy_loss": policy_sum / count,
-        "value_loss": value_sum / count,
-    }
+            policy_loss = -torch.sum(policy_targets * log_policy, dim=1).mean()
+            value_loss = F.mse_loss(value_pred.squeeze(-1), value_targets)
 
+            batch_size = len(batch_idx)
+            policy_sum += policy_loss.item() * batch_size
+            value_sum += value_loss.item() * batch_size
+            count += batch_size
 
-def weight_rms(module: torch.nn.Module) -> float:
-    """Root-mean-square of all parameters in a module."""
-    total = 0.0
-    count = 0
-    for p in module.parameters():
-        total += (p.data**2).sum().item()
-        count += p.numel()
-    return (total / max(count, 1)) ** 0.5
-
-
-def perturb_module_weights(
-    module: torch.nn.Module,
-    noise_fraction: float,
-    rng: torch.Generator,
-) -> None:
-    """Add Gaussian noise to all parameters: param += N(0, noise_fraction * rms)."""
-    rms = weight_rms(module)
-    sigma = noise_fraction * rms
-    if sigma <= 0:
-        return
-    for p in module.parameters():
-        noise = torch.randn(
-            p.data.shape, generator=rng, dtype=p.data.dtype, device=p.data.device
-        )
-        p.data.add_(noise * sigma)
-
-
-def clone_and_perturb(
-    model: TetrisNet,
-    noise_type: str,
-    noise_fraction: float,
-    noise_seed: int,
-) -> TetrisNet:
-    """Clone a model and perturb either policy or value head weights."""
-    perturbed = copy.deepcopy(model)
-    if noise_fraction == 0.0:
-        return perturbed
-    rng = torch.Generator()
-    rng.manual_seed(noise_seed)
-    if noise_type == "policy":
-        perturb_module_weights(perturbed.policy_fc, noise_fraction, rng)
-        perturb_module_weights(perturbed.policy_head, noise_fraction, rng)
-    elif noise_type == "value":
-        perturb_module_weights(perturbed.value_fc, noise_fraction, rng)
-        perturb_module_weights(perturbed.value_head, noise_fraction, rng)
-    else:
-        raise ValueError(f"Unknown noise_type: {noise_type}")
-    return perturbed
-
-
-def export_to_tempdir(model: TetrisNet, tmpdir: Path) -> Path:
-    """Export split models to a temporary directory, return the base onnx path."""
-    onnx_path = tmpdir / LATEST_ONNX_FILENAME
-    if not export_onnx(model, onnx_path):
-        raise RuntimeError("ONNX export failed")
-    if not export_split_models(model, onnx_path):
-        raise RuntimeError("Split-model export failed")
-    return onnx_path
+    if count == 0:
+        raise ValueError("Held-out evaluation set is empty")
+    return policy_sum / count, value_sum / count
 
 
 def run_games(
     model_path: Path,
     args: ScriptArgs,
+    *,
+    noise_type: str | None,
+    noise_mean: float,
+    noise_std: float,
+    noise_seed: int | None,
 ) -> dict[str, float | int]:
-    """Run deterministic fixed-seed games and return attack metrics."""
     if evaluate_model is None or MCTSConfig is None:
         raise ImportError("tetris_core not available; rebuild with make build-dev")
-    config = MCTSConfig()  # type: ignore[operator]
+
+    config = MCTSConfig()
     config.num_simulations = args.eval_num_simulations
     config.max_placements = args.eval_max_placements
     config.visit_sampling_epsilon = 0.0
@@ -241,8 +380,15 @@ def run_games(
     config.death_penalty = 0.0
     config.overhang_penalty_weight = 0.0
     config.reuse_tree = True
-    if args.eval_mcts_seed is not None:
-        config.seed = args.eval_mcts_seed
+    config.seed = args.eval_mcts_seed
+    config.prediction_noise_seed = noise_seed
+
+    if noise_type == "policy":
+        config.policy_noise_mean = noise_mean
+        config.policy_noise_std = noise_std
+    elif noise_type == "value":
+        config.value_noise_mean = noise_mean
+        config.value_noise_std = noise_std
 
     seeds = list(
         range(args.eval_seed_start, args.eval_seed_start + args.num_eval_games)
@@ -255,20 +401,18 @@ def run_games(
         num_workers=args.eval_num_workers,
         add_noise=False,
     )
-    game_results = [(int(a), int(m)) for a, m in result.game_results]
+    attack_std, attack_sem = compute_attack_stats(seeds, result)
+    game_results = [(int(attack), int(moves)) for attack, moves in result.game_results]
     return {
-        "avg_attack": result.avg_attack,
-        "avg_lines": result.avg_lines,
-        "avg_moves": result.avg_moves,
-        "max_attack": result.max_attack,
-        "total_attack": sum(a for a, _ in game_results),
-        "num_games": result.num_games,
+        "avg_attack": float(result.avg_attack),
+        "avg_lines": float(result.avg_lines),
+        "avg_moves": float(result.avg_moves),
+        "max_attack": int(result.max_attack),
+        "total_attack": int(sum(attack for attack, _ in game_results)),
+        "num_games": int(result.num_games),
+        "attack_std": attack_std,
+        "attack_sem": attack_sem,
     }
-
-
-# ---------------------------------------------------------------------------
-# Sigmoid fitting
-# ---------------------------------------------------------------------------
 
 
 def sigmoid(x: np.ndarray, L: float, k: float, x0: float, b: float) -> np.ndarray:
@@ -276,257 +420,432 @@ def sigmoid(x: np.ndarray, L: float, k: float, x0: float, b: float) -> np.ndarra
 
 
 def sigmoid_derivative(x: float, L: float, k: float, x0: float) -> float:
-    """d/dx of sigmoid(x, L, k, x0, b)."""
-    e = np.exp(-k * (x - x0))
-    return L * k * e / (1.0 + e) ** 2
+    exponent = np.exp(-k * (x - x0))
+    return float(L * k * exponent / (1.0 + exponent) ** 2)
 
 
-def fit_sigmoid(losses: np.ndarray, attacks: np.ndarray) -> dict[str, float] | None:
-    """Fit sigmoid to (loss, attack) data. Returns params or None on failure."""
+def fit_sigmoid(losses: np.ndarray, attacks: np.ndarray) -> SigmoidFit | None:
     try:
-        from scipy.optimize import curve_fit  # type: ignore[import-not-found]
+        from scipy.optimize import curve_fit  # pyright: ignore[reportMissingImports]
     except ImportError:
         logger.warning("scipy not available; skipping sigmoid fit")
         return None
 
     if len(losses) < 4:
-        logger.warning("Not enough data points for sigmoid fit", n=len(losses))
+        logger.warning(
+            "Not enough aggregated points for sigmoid fit", num_points=len(losses)
+        )
         return None
 
-    # Initial guess: L = range of attack, x0 = median loss, k = -1 (decreasing)
-    a_min, a_max = float(attacks.min()), float(attacks.max())
-    L0 = a_max - a_min if a_max > a_min else 1.0
-    x0_init = float(np.median(losses))
-    b0 = a_min
+    sort_order = np.argsort(losses)
+    losses = losses[sort_order]
+    attacks = attacks[sort_order]
+    attack_min = float(attacks.min())
+    attack_max = float(attacks.max())
+    attack_range = attack_max - attack_min
+    initial_L = attack_range if attack_range > 0 else 1.0
+    initial_x0 = float(np.median(losses))
+    initial_b = attack_min
 
     try:
-        popt, _ = curve_fit(
+        params, _ = curve_fit(
             sigmoid,
             losses,
             attacks,
-            p0=[L0, -1.0, x0_init, b0],
-            maxfev=10000,
+            p0=[initial_L, -1.0, initial_x0, initial_b],
+            maxfev=20_000,
         )
-        L, k, x0, b = popt
-        return {"L": float(L), "k": float(k), "x0": float(x0), "b": float(b)}
-    except RuntimeError:
-        logger.warning("Sigmoid curve_fit did not converge")
+    except Exception as exc:  # curve_fit throws heterogeneous exception types
+        logger.warning("Sigmoid fit failed", error=str(exc))
         return None
 
-
-# ---------------------------------------------------------------------------
-# Main experiment
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class SensitivityPoint:
-    noise_type: str  # "policy" or "value"
-    noise_fraction: float
-    noise_seed: int
-    policy_loss: float
-    value_loss: float
-    avg_attack: float
-    avg_lines: float
-    avg_moves: float
-    max_attack: int
-    total_attack: int
-    num_games: int
-    elapsed_sec: float
+    return SigmoidFit(
+        L=float(params[0]), k=float(params[1]), x0=float(params[2]), b=float(params[3])
+    )
 
 
-def run_sensitivity_sweep(
-    model: TetrisNet,
-    source: OfflineDataSource,
-    val_indices: np.ndarray,
-    device: torch.device,
-    args: ScriptArgs,
-) -> list[SensitivityPoint]:
-    results: list[SensitivityPoint] = []
-    noise_types = ["policy", "value"]
-    total_runs = len(noise_types) * len(args.noise_fractions) * args.num_noise_repeats
-    run_index = 0
-
-    for noise_type in noise_types:
-        for noise_fraction in sorted(args.noise_fractions):
-            repeats = 1 if noise_fraction == 0.0 else args.num_noise_repeats
-            for repeat in range(repeats):
-                run_index += 1
-                noise_seed = args.seed + repeat * 1000 + int(noise_fraction * 10000)
-
-                logger.info(
-                    "Running sensitivity point",
-                    run=f"{run_index}/{total_runs}",
-                    noise_type=noise_type,
-                    noise_fraction=noise_fraction,
-                    repeat=repeat,
-                )
-
-                start = time.perf_counter()
-
-                # Perturb model
-                perturbed = clone_and_perturb(
-                    model, noise_type, noise_fraction, noise_seed
-                )
-                perturbed.to(device)
-
-                # Measure held-out losses
-                losses = evaluate_val_losses(
-                    perturbed, source, val_indices, device, args.eval_batch_size
-                )
-
-                # Export and run games
-                perturbed.cpu()
-                with tempfile.TemporaryDirectory(prefix="sensitivity_") as tmpdir:
-                    onnx_path = export_to_tempdir(perturbed, Path(tmpdir))
-                    game_metrics = run_games(onnx_path, args)
-
-                elapsed = time.perf_counter() - start
-
-                point = SensitivityPoint(
-                    noise_type=noise_type,
-                    noise_fraction=noise_fraction,
-                    noise_seed=noise_seed,
-                    policy_loss=losses["policy_loss"],
-                    value_loss=losses["value_loss"],
-                    avg_attack=game_metrics["avg_attack"],
-                    avg_lines=game_metrics["avg_lines"],
-                    avg_moves=game_metrics["avg_moves"],
-                    max_attack=int(game_metrics["max_attack"]),
-                    total_attack=int(game_metrics["total_attack"]),
-                    num_games=int(game_metrics["num_games"]),
-                    elapsed_sec=elapsed,
-                )
-                results.append(point)
-
-                logger.info(
-                    "Sensitivity point done",
-                    noise_type=noise_type,
-                    noise_fraction=noise_fraction,
-                    policy_loss=f"{losses['policy_loss']:.4f}",
-                    value_loss=f"{losses['value_loss']:.4f}",
-                    avg_attack=f"{game_metrics['avg_attack']:.2f}",
-                    elapsed_sec=f"{elapsed:.1f}",
-                )
-
-    return results
+def noise_seed_for_point(
+    *,
+    base_seed: int,
+    noise_type: str,
+    noise_index: int,
+    repeat_index: int,
+    noise_mean: float,
+    noise_std: float,
+) -> int | None:
+    if noise_mean == 0.0 and noise_std == 0.0:
+        return None
+    type_offset = 0 if noise_type == "policy" else 1_000_000
+    return base_seed + type_offset + (noise_index * 10_000) + repeat_index
 
 
-def aggregate_and_fit(
-    points: list[SensitivityPoint],
-    baseline_policy_loss: float,
-    baseline_value_loss: float,
-) -> dict:
-    """Aggregate repeated noise samples, fit sigmoids, compute derivatives."""
-    analysis: dict = {}
+def mean_std_sem(values: list[float]) -> tuple[float, float, float]:
+    if not values:
+        raise ValueError("Cannot summarize an empty list")
+    if len(values) == 1:
+        return float(values[0]), 0.0, 0.0
+    array = np.asarray(values, dtype=np.float64)
+    std = float(np.std(array, ddof=0))
+    sem = float(std / np.sqrt(len(array)))
+    return float(array.mean()), std, sem
 
-    for noise_type in ["policy", "value"]:
-        type_points = [p for p in points if p.noise_type == noise_type]
-        loss_key = "policy_loss" if noise_type == "policy" else "value_loss"
 
-        # Average over repeats at each noise_fraction
-        by_fraction: dict[float, list[SensitivityPoint]] = {}
-        for p in type_points:
-            by_fraction.setdefault(p.noise_fraction, []).append(p)
+def aggregate_points(
+    points: list[SweepPoint],
+    *,
+    noise_type: str,
+    baseline_loss: float,
+    baseline_avg_attack: float,
+) -> SweepAnalysis:
+    loss_metric = "policy_loss" if noise_type == "policy" else "value_loss"
+    rows_by_std: dict[float, list[SweepPoint]] = {}
+    for point in points:
+        if point.noise_type == noise_type:
+            rows_by_std.setdefault(point.noise_std, []).append(point)
 
-        aggregated_rows = []
-        for frac in sorted(by_fraction):
-            group = by_fraction[frac]
-            row = {
-                "noise_fraction": frac,
-                "loss_mean": float(np.mean([getattr(p, loss_key) for p in group])),
-                "loss_std": float(np.std([getattr(p, loss_key) for p in group])),
-                "avg_attack_mean": float(np.mean([p.avg_attack for p in group])),
-                "avg_attack_std": float(np.std([p.avg_attack for p in group])),
-                "policy_loss_mean": float(np.mean([p.policy_loss for p in group])),
-                "value_loss_mean": float(np.mean([p.value_loss for p in group])),
-                "n_repeats": len(group),
-            }
-            aggregated_rows.append(row)
-
-        losses_arr = np.array([r["loss_mean"] for r in aggregated_rows])
-        attacks_arr = np.array([r["avg_attack_mean"] for r in aggregated_rows])
-
-        fit_params = fit_sigmoid(losses_arr, attacks_arr)
-        baseline_loss = (
-            baseline_policy_loss if noise_type == "policy" else baseline_value_loss
+    aggregated_rows: list[AggregatedPoint] = []
+    for noise_std in sorted(rows_by_std):
+        row_points = rows_by_std[noise_std]
+        losses = [
+            point.policy_loss if loss_metric == "policy_loss" else point.value_loss
+            for point in row_points
+        ]
+        attacks = [point.avg_attack for point in row_points]
+        loss_mean, loss_std, loss_sem = mean_std_sem(losses)
+        attack_mean, attack_std, attack_sem = mean_std_sem(attacks)
+        aggregated_rows.append(
+            AggregatedPoint(
+                noise_std=noise_std,
+                noise_mean=row_points[0].noise_mean,
+                num_repeats=len(row_points),
+                loss_mean=loss_mean,
+                loss_std=loss_std,
+                loss_sem=loss_sem,
+                policy_loss_mean=float(
+                    np.mean([point.policy_loss for point in row_points])
+                ),
+                value_loss_mean=float(
+                    np.mean([point.value_loss for point in row_points])
+                ),
+                avg_attack_mean=attack_mean,
+                avg_attack_std=attack_std,
+                avg_attack_sem=attack_sem,
+            )
         )
 
-        deriv_at_baseline = None
-        if fit_params is not None:
-            deriv_at_baseline = sigmoid_derivative(
-                baseline_loss, fit_params["L"], fit_params["k"], fit_params["x0"]
-            )
+    loss_array = np.asarray(
+        [row.loss_mean for row in aggregated_rows], dtype=np.float64
+    )
+    attack_array = np.asarray(
+        [row.avg_attack_mean for row in aggregated_rows], dtype=np.float64
+    )
+    sigmoid_fit = fit_sigmoid(loss_array, attack_array)
+    derivative = None
+    if sigmoid_fit is not None:
+        derivative = sigmoid_derivative(
+            baseline_loss,
+            sigmoid_fit.L,
+            sigmoid_fit.k,
+            sigmoid_fit.x0,
+        )
 
-        analysis[noise_type] = {
-            "aggregated": aggregated_rows,
-            "sigmoid_fit": fit_params,
-            "baseline_loss": baseline_loss,
-            "derivative_at_baseline": deriv_at_baseline,
-        }
+    return SweepAnalysis(
+        noise_type=noise_type,
+        loss_metric=loss_metric,
+        baseline_loss=baseline_loss,
+        baseline_avg_attack=baseline_avg_attack,
+        aggregated=aggregated_rows,
+        sigmoid_fit=sigmoid_fit,
+        derivative_at_baseline=derivative,
+        plot_path=None,
+    )
 
-    # Compute recommended weighting
-    policy_deriv = analysis["policy"].get("derivative_at_baseline")
-    value_deriv = analysis["value"].get("derivative_at_baseline")
 
-    recommended_weighting = None
-    if policy_deriv is not None and value_deriv is not None and policy_deriv != 0:
-        # ratio = |d(attack)/d(value_loss)| / |d(attack)/d(policy_loss)|
-        # If ratio > 1, value loss improvement is more valuable per unit loss change.
-        ratio = abs(value_deriv) / abs(policy_deriv)
-        recommended_weighting = {
-            "value_loss_weight": ratio,
-            "policy_derivative": policy_deriv,
-            "value_derivative": value_deriv,
-            "interpretation": (
-                f"Value loss is {ratio:.2f}x as impactful as policy loss "
-                f"per unit loss change at the current operating point. "
-                f"Recommended: value_loss_weight = {ratio:.3f}"
-            ),
-        }
+def plot_analysis(
+    analysis: SweepAnalysis,
+    output_path: Path,
+    *,
+    run_dir: Path,
+    eval_examples: int,
+    num_games: int,
+    num_simulations: int,
+) -> None:
+    if not analysis.aggregated:
+        raise ValueError(
+            f"No aggregated points available for {analysis.noise_type} plot"
+        )
 
-    analysis["recommended_weighting"] = recommended_weighting
-    return analysis
+    x_values = np.asarray(
+        [row.loss_mean for row in analysis.aggregated], dtype=np.float64
+    )
+    y_values = np.asarray(
+        [row.avg_attack_mean for row in analysis.aggregated], dtype=np.float64
+    )
+    x_err = np.asarray([row.loss_sem for row in analysis.aggregated], dtype=np.float64)
+    y_err = np.asarray(
+        [row.avg_attack_sem for row in analysis.aggregated], dtype=np.float64
+    )
+
+    fig, ax = plt.subplots(figsize=(8.0, 5.0))
+    ax.errorbar(
+        x_values,
+        y_values,
+        xerr=x_err,
+        yerr=y_err,
+        fmt="o",
+        color="#1f77b4",
+        ecolor="#4c78a8",
+        capsize=4,
+        linewidth=1.2,
+    )
+
+    for row in analysis.aggregated:
+        ax.annotate(
+            f"{row.avg_attack_mean:.2f}\nσ={row.noise_std:g}, n={row.num_repeats}",
+            (row.loss_mean, row.avg_attack_mean),
+            xytext=(6, 6),
+            textcoords="offset points",
+            fontsize=7,
+        )
+
+    if analysis.sigmoid_fit is not None:
+        fit_x = np.linspace(float(x_values.min()), float(x_values.max()), 300)
+        fit_y = sigmoid(
+            fit_x,
+            analysis.sigmoid_fit.L,
+            analysis.sigmoid_fit.k,
+            analysis.sigmoid_fit.x0,
+            analysis.sigmoid_fit.b,
+        )
+        ax.plot(fit_x, fit_y, color="#d62728", linewidth=1.5, label="Sigmoid fit")
+        ax.legend(loc="best")
+
+    x_padding = max(0.02, 0.05 * max(1e-6, float(x_values.max() - x_values.min())))
+    y_min = min(float(y_values.min()), analysis.baseline_avg_attack)
+    y_max = max(float(y_values.max()), analysis.baseline_avg_attack)
+    y_padding = max(0.2, 0.1 * max(1e-6, y_max - y_min))
+
+    ax.scatter(
+        [analysis.baseline_loss],
+        [analysis.baseline_avg_attack],
+        color="#2ca02c",
+        marker="D",
+        zorder=4,
+    )
+    ax.annotate(
+        f"{analysis.baseline_avg_attack:.2f}\nbaseline",
+        (analysis.baseline_loss, analysis.baseline_avg_attack),
+        xytext=(6, -20),
+        textcoords="offset points",
+        fontsize=7,
+    )
+    ax.set_xlim(float(x_values.min()) - x_padding, float(x_values.max()) + x_padding)
+    ax.set_ylim(y_min - y_padding, y_max + y_padding)
+    ax.grid(axis="y", alpha=0.3)
+
+    x_label = (
+        "Held-out policy cross-entropy"
+        if analysis.loss_metric == "policy_loss"
+        else "Held-out value MSE"
+    )
+    ax.set_xlabel(x_label)
+    ax.set_ylabel("Average attack over fixed-seed eval")
+
+    title = (
+        "Policy Loss vs Average Attack"
+        if analysis.noise_type == "policy"
+        else "Value Loss vs Average Attack"
+    )
+    subtitle = (
+        f"Run: {run_dir.name} | Held-out examples: {eval_examples:,} | "
+        f"Eval games: {num_games} | Sims: {num_simulations}"
+    )
+    fig.suptitle(title, fontsize=12)
+    ax.set_title(subtitle, fontsize=8, color="gray", pad=4)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def make_point(
+    *,
+    noise_type: str,
+    noise_mean: float,
+    noise_std: float,
+    repeat_index: int,
+    noise_seed: int | None,
+    policy_loss: float,
+    value_loss: float,
+    game_metrics: dict[str, float | int],
+    elapsed_sec: float,
+) -> SweepPoint:
+    return SweepPoint(
+        noise_type=noise_type,
+        noise_mean=noise_mean,
+        noise_std=noise_std,
+        repeat_index=repeat_index,
+        noise_seed=noise_seed,
+        policy_loss=policy_loss,
+        value_loss=value_loss,
+        avg_attack=float(game_metrics["avg_attack"]),
+        avg_lines=float(game_metrics["avg_lines"]),
+        avg_moves=float(game_metrics["avg_moves"]),
+        max_attack=int(game_metrics["max_attack"]),
+        total_attack=int(game_metrics["total_attack"]),
+        num_games=int(game_metrics["num_games"]),
+        attack_std=float(game_metrics["attack_std"]),
+        attack_sem=float(game_metrics["attack_sem"]),
+        elapsed_sec=elapsed_sec,
+    )
+
+
+def run_sweep(
+    *,
+    model: TetrisNet,
+    model_path: Path,
+    source: OfflineDataSource,
+    eval_indices: np.ndarray,
+    device: torch.device,
+    args: ScriptArgs,
+    baseline_point: SweepPoint,
+) -> list[SweepPoint]:
+    all_points: list[SweepPoint] = [
+        baseline_point.model_copy(update={"noise_type": "policy"}),
+        baseline_point.model_copy(update={"noise_type": "value"}),
+    ]
+    sweep_specs = [
+        ("policy", args.policy_noise_mean, args.policy_noise_stds),
+        ("value", args.value_noise_mean, args.value_noise_stds),
+    ]
+
+    for noise_type, noise_mean, noise_stds in sweep_specs:
+        for noise_index, noise_std in enumerate(noise_stds):
+            if noise_std == 0.0 and noise_mean == 0.0:
+                continue
+            repeats = args.num_noise_repeats if noise_std > 0.0 else 1
+            for repeat_index in range(repeats):
+                noise_seed = noise_seed_for_point(
+                    base_seed=args.seed,
+                    noise_type=noise_type,
+                    noise_index=noise_index,
+                    repeat_index=repeat_index,
+                    noise_mean=noise_mean,
+                    noise_std=noise_std,
+                )
+                logger.info(
+                    "Running noise point",
+                    noise_type=noise_type,
+                    noise_std=noise_std,
+                    repeat_index=repeat_index,
+                    repeats=repeats,
+                    noise_seed=noise_seed,
+                )
+                start = datetime.now(timezone.utc)
+                policy_loss, value_loss = evaluate_losses_with_output_noise(
+                    model,
+                    source,
+                    eval_indices,
+                    device,
+                    args.eval_batch_size,
+                    noise_type=noise_type,
+                    noise_mean=noise_mean,
+                    noise_std=noise_std,
+                    noise_seed=noise_seed,
+                )
+                game_metrics = run_games(
+                    model_path,
+                    args,
+                    noise_type=noise_type,
+                    noise_mean=noise_mean,
+                    noise_std=noise_std,
+                    noise_seed=noise_seed,
+                )
+                elapsed_sec = (datetime.now(timezone.utc) - start).total_seconds()
+                point = make_point(
+                    noise_type=noise_type,
+                    noise_mean=noise_mean,
+                    noise_std=noise_std,
+                    repeat_index=repeat_index,
+                    noise_seed=noise_seed,
+                    policy_loss=policy_loss,
+                    value_loss=value_loss,
+                    game_metrics=game_metrics,
+                    elapsed_sec=elapsed_sec,
+                )
+                all_points.append(point)
+                logger.info(
+                    "Noise point complete",
+                    noise_type=noise_type,
+                    noise_std=noise_std,
+                    repeat_index=repeat_index,
+                    policy_loss=f"{policy_loss:.4f}",
+                    value_loss=f"{value_loss:.4f}",
+                    avg_attack=f"{point.avg_attack:.2f}",
+                    elapsed_sec=f"{elapsed_sec:.1f}",
+                )
+
+    return all_points
+
+
+def recommended_weighting(
+    policy: SweepAnalysis,
+    value: SweepAnalysis,
+) -> RecommendedWeighting | None:
+    if policy.derivative_at_baseline is None or value.derivative_at_baseline is None:
+        return None
+    if policy.derivative_at_baseline == 0.0:
+        return None
+
+    ratio = abs(value.derivative_at_baseline) / abs(policy.derivative_at_baseline)
+    return RecommendedWeighting(
+        value_loss_weight=ratio,
+        policy_derivative=policy.derivative_at_baseline,
+        value_derivative=value.derivative_at_baseline,
+        interpretation=(
+            f"Value loss is {ratio:.2f}x as impactful as policy loss per unit held-out loss "
+            "change at the current operating point. A matching training objective would scale "
+            f"value loss by about {ratio:.3f} relative to policy loss."
+        ),
+    )
 
 
 def main(args: ScriptArgs) -> None:
-    # Validate paths
     run_dir = args.run_dir.resolve()
     config_path = run_dir / CONFIG_FILENAME
     data_path = run_dir / TRAINING_DATA_FILENAME
     checkpoint_path = run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
-
-    for path, desc in [
+    for path, label in [
         (config_path, "config.json"),
         (data_path, "training_data.npz"),
-        (checkpoint_path, "checkpoint"),
+        (checkpoint_path, "latest checkpoint"),
     ]:
         if not path.exists():
-            raise FileNotFoundError(f"{desc} not found: {path}")
+            raise FileNotFoundError(f"{label} not found: {path}")
 
-    # Output directory
+    if args.policy_noise_mean != 0.0:
+        logger.warning(
+            "Non-zero policy_noise_mean shifts every logit equally, so it leaves the masked softmax unchanged"
+        )
+
     if args.output_dir is not None:
         output_dir = args.output_dir.resolve()
     else:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        output_dir = BENCHMARKS_DIR / "loss_sensitivity" / f"{run_dir.name}_{ts}"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        output_dir = BENCHMARKS_DIR / "loss_sensitivity" / f"{run_dir.name}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load config and model
     config = load_training_config_json(config_path)
-    device_str = pick_device(args.device)
-    device = torch.device(device_str)
-    logger.info("Loading model", run_dir=str(run_dir), device=device_str)
+    device = torch.device(pick_device(args.device))
+    logger.info("Loading analysis model", run_dir=str(run_dir), device=str(device))
+    model, model_source = load_analysis_model(run_dir, config, device)
+    model_path = export_analysis_model(model, output_dir)
+    logger.info(
+        "Exported analysis model",
+        model_path=str(model_path),
+        model_source=model_source,
+    )
 
-    model = load_model_from_run(run_dir, config, device)
-
-    # Load validation data (no wandb dependency)
-    preload_mode = "none"
-    if args.preload_to_gpu and device.type != "cpu":
-        preload_mode = "gpu"
-    elif args.preload_to_ram:
-        preload_mode = "ram"
-
+    preload_mode = get_preload_mode(args, device)
     npz = np.load(data_path, mmap_mode="r")
     try:
         ensure_required_keys(npz)
@@ -538,9 +857,11 @@ def main(args: ScriptArgs) -> None:
             selected = selected[: args.max_examples]
 
         split_point = int(len(selected) * args.train_fraction)
-        val_local_indices = np.arange(split_point, len(selected), dtype=np.int64)
-        val_eval_indices = select_subset(
-            val_local_indices, max_examples=args.eval_examples, seed=args.seed + 2
+        eval_pool_indices = np.arange(split_point, len(selected), dtype=np.int64)
+        eval_indices = select_subset(
+            eval_pool_indices,
+            max_examples=args.eval_examples,
+            seed=args.seed + 17,
         )
 
         tensor_data = None
@@ -556,76 +877,144 @@ def main(args: ScriptArgs) -> None:
             selected_global_indices=selected,
             tensor_data=tensor_data,
         )
-
         logger.info(
-            "Dataset loaded",
-            total=total_examples,
-            selected=len(selected),
-            val_eval=len(val_eval_indices),
+            "Prepared held-out dataset",
+            total_examples=total_examples,
+            selected_examples=len(selected),
+            eval_examples=len(eval_indices),
+            preload_mode=preload_mode,
         )
 
-        # Baseline (clean model) losses
-        baseline_losses = evaluate_val_losses(
-            model, source, val_eval_indices, device, args.eval_batch_size
+        baseline_policy_loss, baseline_value_loss = evaluate_losses_with_output_noise(
+            model,
+            source,
+            eval_indices,
+            device,
+            args.eval_batch_size,
+            noise_type=None,
+            noise_mean=0.0,
+            noise_std=0.0,
+            noise_seed=None,
+        )
+        baseline_game_metrics = run_games(
+            model_path,
+            args,
+            noise_type=None,
+            noise_mean=0.0,
+            noise_std=0.0,
+            noise_seed=None,
+        )
+        baseline_point = make_point(
+            noise_type="baseline",
+            noise_mean=0.0,
+            noise_std=0.0,
+            repeat_index=0,
+            noise_seed=None,
+            policy_loss=baseline_policy_loss,
+            value_loss=baseline_value_loss,
+            game_metrics=baseline_game_metrics,
+            elapsed_sec=0.0,
         )
         logger.info(
-            "Baseline losses",
-            policy_loss=f"{baseline_losses['policy_loss']:.4f}",
-            value_loss=f"{baseline_losses['value_loss']:.4f}",
+            "Baseline measured",
+            policy_loss=f"{baseline_policy_loss:.4f}",
+            value_loss=f"{baseline_value_loss:.4f}",
+            avg_attack=f"{baseline_point.avg_attack:.2f}",
         )
 
-        # Run sensitivity sweep
-        points = run_sensitivity_sweep(
+        points = run_sweep(
             model=model,
+            model_path=model_path,
             source=source,
-            val_indices=val_eval_indices,
+            eval_indices=eval_indices,
             device=device,
             args=args,
+            baseline_point=baseline_point,
         )
 
-        # Aggregate and fit
-        analysis = aggregate_and_fit(
+        policy_analysis = aggregate_points(
             points,
-            baseline_policy_loss=baseline_losses["policy_loss"],
-            baseline_value_loss=baseline_losses["value_loss"],
+            noise_type="policy",
+            baseline_loss=baseline_policy_loss,
+            baseline_avg_attack=baseline_point.avg_attack,
+        )
+        value_analysis = aggregate_points(
+            points,
+            noise_type="value",
+            baseline_loss=baseline_value_loss,
+            baseline_avg_attack=baseline_point.avg_attack,
         )
 
-        # Write outputs
-        raw_path = output_dir / "sensitivity_points.json"
-        raw_path.write_text(json.dumps([asdict(p) for p in points], indent=2) + "\n")
+        policy_plot = output_dir / "policy_loss_vs_attack.png"
+        value_plot = output_dir / "value_loss_vs_attack.png"
+        plot_analysis(
+            policy_analysis,
+            policy_plot,
+            run_dir=run_dir,
+            eval_examples=len(eval_indices),
+            num_games=args.num_eval_games,
+            num_simulations=args.eval_num_simulations,
+        )
+        plot_analysis(
+            value_analysis,
+            value_plot,
+            run_dir=run_dir,
+            eval_examples=len(eval_indices),
+            num_games=args.num_eval_games,
+            num_simulations=args.eval_num_simulations,
+        )
+        policy_analysis = policy_analysis.model_copy(
+            update={"plot_path": str(policy_plot.relative_to(output_dir))}
+        )
+        value_analysis = value_analysis.model_copy(
+            update={"plot_path": str(value_plot.relative_to(output_dir))}
+        )
 
-        summary = {
-            "run_dir": str(run_dir),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "args": {
+        summary = AnalysisSummary(
+            run_dir=str(run_dir),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            args={
                 **asdict(args),
                 "run_dir": str(run_dir),
                 "output_dir": str(output_dir),
             },
-            "baseline": baseline_losses,
-            "analysis": analysis,
-        }
-        summary_path = output_dir / "sensitivity_summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+            analysis_model_path=str(model_path),
+            analysis_model_source=model_source,
+            baseline=baseline_point,
+            policy=policy_analysis,
+            value=value_analysis,
+            recommended_weighting=recommended_weighting(
+                policy_analysis, value_analysis
+            ),
+        )
 
-        # Print summary
+        raw_points_path = output_dir / "sensitivity_points.json"
+        raw_points_path.write_text(
+            json.dumps([point.model_dump(mode="json") for point in points], indent=2)
+            + "\n"
+        )
+        summary_path = output_dir / "sensitivity_summary.json"
+        summary_path.write_text(
+            json.dumps(summary.model_dump(mode="json"), indent=2) + "\n"
+        )
+
         logger.info(
             "Loss sensitivity analysis complete",
             output_dir=str(output_dir),
-            baseline_policy_loss=f"{baseline_losses['policy_loss']:.4f}",
-            baseline_value_loss=f"{baseline_losses['value_loss']:.4f}",
+            policy_plot=str(policy_plot),
+            value_plot=str(value_plot),
         )
-        if analysis.get("recommended_weighting") is not None:
-            rec = analysis["recommended_weighting"]
+        if summary.recommended_weighting is not None:
             logger.info(
                 "Recommended loss weighting",
-                value_loss_weight=f"{rec['value_loss_weight']:.3f}",
-                policy_derivative=f"{rec['policy_derivative']:.4f}",
-                value_derivative=f"{rec['value_derivative']:.4f}",
+                value_loss_weight=f"{summary.recommended_weighting.value_loss_weight:.3f}",
+                policy_derivative=f"{summary.recommended_weighting.policy_derivative:.4f}",
+                value_derivative=f"{summary.recommended_weighting.value_derivative:.4f}",
             )
         else:
-            logger.warning("Could not compute recommended weighting (fit failed)")
-
+            logger.warning(
+                "Could not compute a recommended weighting from the fitted curves"
+            )
     finally:
         npz.close()
 

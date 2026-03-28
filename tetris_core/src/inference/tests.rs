@@ -528,7 +528,7 @@ fn test_load_and_predict_split_model() {
     let mask = get_action_mask(&env);
 
     let (policy1, value1) = nn
-        .predict_masked(&env, &mask, 100)
+        .predict_masked(&env, &mask, 100, PredictionNoiseSettings::default())
         .expect("First inference failed");
     assert_eq!(policy1.len(), mask.len());
     let policy_sum: f32 = policy1.iter().sum();
@@ -539,7 +539,7 @@ fn test_load_and_predict_split_model() {
     );
 
     let (policy2, value2) = nn
-        .predict_masked(&env, &mask, 100)
+        .predict_masked(&env, &mask, 100, PredictionNoiseSettings::default())
         .expect("Second inference (cache hit) failed");
     assert_eq!(policy1, policy2, "Cache hit should produce same policy");
     assert_eq!(value1, value2, "Cache hit should produce same value");
@@ -547,7 +547,12 @@ fn test_load_and_predict_split_model() {
     let mut env_with_late_count = env.clone();
     env_with_late_count.placement_count = 50;
     let (_policy3, value3) = nn
-        .predict_masked(&env_with_late_count, &mask, 100)
+        .predict_masked(
+            &env_with_late_count,
+            &mask,
+            100,
+            PredictionNoiseSettings::default(),
+        )
         .expect("Third inference (different aux) failed");
     assert_ne!(
         value1, value3,
@@ -579,10 +584,15 @@ fn test_predict_with_valid_actions_matches_masked_policy_subset() {
         .collect();
 
     let (masked_policy, masked_value) = nn
-        .predict_masked(&env, &mask, 100)
+        .predict_masked(&env, &mask, 100, PredictionNoiseSettings::default())
         .expect("Masked inference failed");
     let (valid_policy, valid_value) = nn
-        .predict_with_valid_actions(&env, &valid_actions, 100)
+        .predict_with_valid_actions(
+            &env,
+            &valid_actions,
+            100,
+            PredictionNoiseSettings::default(),
+        )
         .expect("Valid-actions inference failed");
 
     let expected_valid_policy: Vec<f32> = valid_actions
@@ -597,4 +607,76 @@ fn test_predict_with_valid_actions_matches_masked_policy_subset() {
         valid_value, masked_value,
         "Valid-actions and masked paths should return the same value prediction"
     );
+}
+
+#[test]
+fn test_prediction_noise_is_deterministic_for_fixed_seed_and_state() {
+    let mut policy_logits = vec![0.1, -0.3, 1.2, 0.0];
+    let mut first_value = 2.5;
+    let mut second_logits = policy_logits.clone();
+    let mut second_value = first_value;
+    let noise = PredictionNoiseSettings {
+        policy_mean: 0.0,
+        policy_std: 0.25,
+        value_mean: 0.5,
+        value_std: 0.1,
+        seed: Some(1234),
+    };
+
+    apply_prediction_noise(&mut policy_logits, &mut first_value, noise, 77)
+        .expect("noise application should succeed");
+    apply_prediction_noise(&mut second_logits, &mut second_value, noise, 77)
+        .expect("noise application should succeed");
+
+    assert_eq!(policy_logits, second_logits);
+    assert_eq!(first_value, second_value);
+}
+
+#[test]
+fn test_prediction_noise_changes_with_state_hash() {
+    let noise = PredictionNoiseSettings {
+        policy_mean: 0.0,
+        policy_std: 0.5,
+        value_mean: 0.0,
+        value_std: 0.25,
+        seed: Some(7),
+    };
+    let mut first_logits = vec![0.0, 0.0, 0.0];
+    let mut first_value = 0.0;
+    let mut second_logits = vec![0.0, 0.0, 0.0];
+    let mut second_value = 0.0;
+
+    apply_prediction_noise(&mut first_logits, &mut first_value, noise, 1)
+        .expect("noise application should succeed");
+    apply_prediction_noise(&mut second_logits, &mut second_value, noise, 2)
+        .expect("noise application should succeed");
+
+    assert_ne!(first_logits, second_logits);
+    assert_ne!(first_value, second_value);
+}
+
+#[test]
+fn test_policy_mean_only_does_not_change_masked_probabilities() {
+    let logits = vec![1.0, 3.0, -2.0, 0.5];
+    let mask = vec![true, false, true, true];
+    let baseline = masked_softmax(&logits, &mask);
+
+    let mut shifted_logits = logits.clone();
+    let mut value = 0.0;
+    apply_prediction_noise(
+        &mut shifted_logits,
+        &mut value,
+        PredictionNoiseSettings {
+            policy_mean: 2.0,
+            policy_std: 0.0,
+            value_mean: 0.0,
+            value_std: 0.0,
+            seed: Some(5),
+        },
+        11,
+    )
+    .expect("noise application should succeed");
+
+    let shifted = masked_softmax(&shifted_logits, &mask);
+    assert_eq!(baseline, shifted);
 }

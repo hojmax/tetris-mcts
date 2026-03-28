@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 
 use crate::game::constants::{BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES};
 use crate::game::env::TetrisEnv;
+use crate::inference::PredictionNoiseSettings;
 use crate::replay::ReplayMove;
 
 use super::config::MCTSConfig;
@@ -129,6 +130,16 @@ fn compute_value_targets(attacks: &[u32]) -> Vec<f32> {
     values
 }
 
+fn prediction_noise_from_config(config: &MCTSConfig) -> PredictionNoiseSettings {
+    PredictionNoiseSettings {
+        policy_mean: config.policy_noise_mean,
+        policy_std: config.policy_noise_std,
+        value_mean: config.value_noise_mean,
+        value_std: config.value_noise_std,
+        seed: config.prediction_noise_seed,
+    }
+}
+
 #[pymethods]
 impl MCTSAgent {
     #[new]
@@ -198,8 +209,13 @@ impl MCTSAgent {
         };
 
         let valid_actions = env.get_cached_valid_action_indices_arc();
-        nn.predict_with_valid_actions(env, valid_actions.as_slice(), max_placements)
-            .map_err(|e| PyValueError::new_err(format!("Failed to run inference: {e}")))
+        nn.predict_with_valid_actions(
+            env,
+            valid_actions.as_slice(),
+            max_placements,
+            prediction_noise_from_config(&self.config),
+        )
+        .map_err(|e| PyValueError::new_err(format!("Failed to run inference: {e}")))
     }
 
     /// Play a full game using MCTS with the loaded model
@@ -271,7 +287,12 @@ impl MCTSAgent {
         let (mcts_result, root, _tree_stats, _traversal_stats, q_bounds) =
             if let Some(nn) = self.nn.as_ref() {
                 let (policy, nn_value) = nn
-                    .predict_masked(env, &mask, self.config.max_placements as usize)
+                    .predict_masked(
+                        env,
+                        &mask,
+                        self.config.max_placements as usize,
+                        prediction_noise_from_config(&self.config),
+                    )
                     .expect("Neural network prediction failed");
 
                 search_internal(&self.config, nn, env, policy, nn_value, add_noise)
@@ -408,7 +429,12 @@ impl MCTSAgent {
         }
 
         let (policy, nn_value) = nn
-            .predict_masked(env, &mask, self.config.max_placements as usize)
+            .predict_masked(
+                env,
+                &mask,
+                self.config.max_placements as usize,
+                prediction_noise_from_config(&self.config),
+            )
             .expect("Neural network prediction failed");
 
         let (mcts_result, _root, _tree_stats, _traversal_stats, _q_bounds) =
@@ -774,17 +800,22 @@ impl MCTSAgent {
                 let evaluator = super::search::NeuralLeafEvaluator {
                     nn,
                     nn_value_weight: self.config.nn_value_weight,
+                    prediction_noise: prediction_noise_from_config(&self.config),
                 };
                 run_search(&self.config, &evaluator, root, add_noise)
             } else {
-                let (policy, nn_value) = match nn.predict_masked(env, mask, max_placements as usize)
-                {
+                let (policy, nn_value) = match nn.predict_masked(
+                    env,
+                    mask,
+                    max_placements as usize,
+                    prediction_noise_from_config(&self.config),
+                ) {
                     Ok(result) => result,
                     Err(e) => {
                         eprintln!(
-                                    "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
-                                    env.placement_count, e
-                                );
+                            "[MCTSAgent] NN prediction failed at placement {}: {}. Discarding rollout.",
+                            env.placement_count, e
+                        );
                         return None;
                     }
                 };
@@ -861,7 +892,14 @@ mod tests {
         // Run MCTS search to expand the action
         let mask = crate::inference::get_action_mask(&env);
         let nn = agent.nn.as_ref().unwrap();
-        let (nn_policy, nn_value) = nn.predict_masked(&env, &mask, 100).unwrap();
+        let (nn_policy, nn_value) = nn
+            .predict_masked(
+                &env,
+                &mask,
+                100,
+                prediction_noise_from_config(&agent.config),
+            )
+            .unwrap();
 
         let (_result, root_after, _tree_stats, _traversal_stats, _q_bounds) =
             search_internal(&agent.config, nn, &env, nn_policy, nn_value, false);

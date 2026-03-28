@@ -463,6 +463,42 @@ mod tests {
     }
 
     #[test]
+    fn parallel_eval_with_prediction_noise_matches_single_thread() {
+        let model_path = "/tmp/tetris_split_test/test.onnx";
+        if !std::path::Path::new("/tmp/tetris_split_test/test.conv.onnx").exists() {
+            eprintln!("Skipping test - split model files not found (run Python export first)");
+            return;
+        }
+
+        let seeds: Vec<u64> = (0..12).collect();
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 50;
+        config.seed = Some(123);
+        config.max_placements = 30;
+        config.reuse_tree = true;
+        config.prediction_noise_seed = Some(456);
+        config.policy_noise_std = 0.2;
+        config.value_noise_std = 0.1;
+
+        let single = evaluate_model(
+            model_path,
+            seeds.clone(),
+            Some(config.clone()),
+            30,
+            1,
+            false,
+        )
+        .expect("single-thread eval with prediction noise should succeed");
+        let parallel = evaluate_model(model_path, seeds, Some(config), 30, 4, false)
+            .expect("parallel eval with prediction noise should succeed");
+
+        assert_eq!(
+            parallel.game_results, single.game_results,
+            "parallel evaluation should preserve deterministic prediction noise"
+        );
+    }
+
+    #[test]
     fn avg_attack_helper_matches_public_eval_without_nn() {
         let seeds: Vec<u64> = (0..12).collect();
         let mut config = MCTSConfig::default();

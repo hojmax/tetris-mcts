@@ -4,9 +4,11 @@
 //! Caches board embeddings to skip recomputing the board-only path on repeated board states.
 
 use std::cell::{Cell, RefCell};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
@@ -16,6 +18,9 @@ use std::sync::Mutex;
 use ndarray::{Array1, Array2, ArrayView1};
 #[cfg(feature = "nn-ort")]
 use ort::{inputs, session::Session, value::TensorRef};
+use rand::rngs::StdRng;
+use rand::{thread_rng, SeedableRng};
+use rand_distr::{Distribution, StandardNormal};
 use tract_onnx::prelude::*;
 
 use crate::game::constants::{
@@ -77,6 +82,24 @@ struct LinearLayer {
 struct LayerNorm1D {
     weight: Array1<f32>,
     bias: Array1<f32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PredictionNoiseSettings {
+    pub policy_mean: f32,
+    pub policy_std: f32,
+    pub value_mean: f32,
+    pub value_std: f32,
+    pub seed: Option<u64>,
+}
+
+impl PredictionNoiseSettings {
+    pub fn is_enabled(&self) -> bool {
+        self.policy_mean != 0.0
+            || self.policy_std != 0.0
+            || self.value_mean != 0.0
+            || self.value_std != 0.0
+    }
 }
 
 #[derive(Clone)]
@@ -492,12 +515,14 @@ impl TetrisNN {
         &self,
         env: &TetrisEnv,
         max_placements: usize,
-    ) -> TractResult<(Vec<f32>, f32)> {
+    ) -> TractResult<(Vec<f32>, f32, u64)> {
         let board_embed = self.get_or_compute_board_embedding(env)?;
 
         // Encode only piece/game aux features (61-dim) for the heads model.
         let piece_aux_vec = encode_piece_aux_features(env, max_placements)?;
-        self.run_heads_for_embedding(&board_embed, &piece_aux_vec)
+        let state_hash = hash_prediction_inputs(&pack_board(env), &piece_aux_vec);
+        let (policy_logits, value) = self.run_heads_for_embedding(&board_embed, &piece_aux_vec)?;
+        Ok((policy_logits, value, state_hash))
     }
 
     fn validate_policy_output_len(
@@ -563,9 +588,12 @@ impl TetrisNN {
         env: &TetrisEnv,
         action_mask: &[bool],
         max_placements: usize,
+        prediction_noise: PredictionNoiseSettings,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits, value) = self.predict_policy_logits_and_value(env, max_placements)?;
+        let (mut policy_logits, mut value, state_hash) =
+            self.predict_policy_logits_and_value(env, max_placements)?;
         self.validate_policy_output_len(policy_logits.len(), action_mask.len())?;
+        apply_prediction_noise(&mut policy_logits, &mut value, prediction_noise, state_hash)?;
 
         let policy = masked_softmax(&policy_logits, action_mask);
         Ok((policy, value))
@@ -577,9 +605,12 @@ impl TetrisNN {
         env: &TetrisEnv,
         valid_actions: &[usize],
         max_placements: usize,
+        prediction_noise: PredictionNoiseSettings,
     ) -> TractResult<(Vec<f32>, f32)> {
-        let (policy_logits, value) = self.predict_policy_logits_and_value(env, max_placements)?;
+        let (mut policy_logits, mut value, state_hash) =
+            self.predict_policy_logits_and_value(env, max_placements)?;
         self.validate_valid_actions(policy_logits.len(), valid_actions)?;
+        apply_prediction_noise(&mut policy_logits, &mut value, prediction_noise, state_hash)?;
         Ok((
             softmax_over_valid_actions(&policy_logits, valid_actions),
             value,
@@ -591,13 +622,17 @@ impl TetrisNN {
         board_tensor: &[f32],
         aux_tensor: &[f32],
         action_mask: &[bool],
+        prediction_noise: PredictionNoiseSettings,
     ) -> TractResult<(Vec<f32>, f32)> {
         // No caching for raw tensor inputs (used only by debug functions).
         // aux_tensor is the full 80-dim vector; split into piece_aux (61) + board_stats (19).
         let (piece_aux, board_stats) = self.split_aux_tensor(aux_tensor)?;
         let board_embed = self.compute_board_embedding(board_tensor, board_stats)?;
-        let (policy_logits, value) = self.run_heads_for_embedding(&board_embed, piece_aux)?;
+        let (mut policy_logits, mut value) =
+            self.run_heads_for_embedding(&board_embed, piece_aux)?;
+        let state_hash = hash_prediction_inputs_for_tensors(board_tensor, piece_aux);
         self.validate_policy_output_len(policy_logits.len(), action_mask.len())?;
+        apply_prediction_noise(&mut policy_logits, &mut value, prediction_noise, state_hash)?;
 
         let policy = masked_softmax(&policy_logits, action_mask);
         Ok((policy, value))
@@ -650,6 +685,133 @@ fn pack_board(env: &TetrisEnv) -> [u64; 4] {
         }
     }
     key
+}
+
+fn hash_prediction_inputs(board_key: &[u64; 4], piece_aux: &[f32]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    board_key.hash(&mut hasher);
+    for &value in piece_aux {
+        value.to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_prediction_inputs_for_tensors(board_tensor: &[f32], piece_aux: &[f32]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for &value in board_tensor {
+        value.to_bits().hash(&mut hasher);
+    }
+    for &value in piece_aux {
+        value.to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn validate_prediction_noise(mean: f32, std: f32, label: &str) -> TractResult<()> {
+    if !mean.is_finite() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{label} noise mean must be finite, got {mean}"),
+        )
+        .into());
+    }
+    if !std.is_finite() || std < 0.0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{label} noise std must be finite and >= 0, got {std}"),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn deterministic_noise_rng(base_seed: u64, state_hash: u64, stream_id: u64) -> StdRng {
+    let derived_seed =
+        base_seed ^ state_hash.rotate_left(17) ^ stream_id.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    StdRng::seed_from_u64(derived_seed)
+}
+
+fn add_gaussian_noise_with_rng<R: rand::Rng + ?Sized>(
+    values: &mut [f32],
+    mean: f32,
+    std: f32,
+    rng: &mut R,
+) {
+    if values.is_empty() {
+        return;
+    }
+    if std == 0.0 {
+        if mean != 0.0 {
+            for value in values {
+                *value += mean;
+            }
+        }
+        return;
+    }
+
+    for value in values {
+        let sample: f64 = StandardNormal.sample(rng);
+        *value += mean + (std * sample as f32);
+    }
+}
+
+fn apply_prediction_noise(
+    policy_logits: &mut [f32],
+    value: &mut f32,
+    prediction_noise: PredictionNoiseSettings,
+    state_hash: u64,
+) -> TractResult<()> {
+    validate_prediction_noise(
+        prediction_noise.policy_mean,
+        prediction_noise.policy_std,
+        "policy",
+    )?;
+    validate_prediction_noise(
+        prediction_noise.value_mean,
+        prediction_noise.value_std,
+        "value",
+    )?;
+    if !prediction_noise.is_enabled() {
+        return Ok(());
+    }
+
+    if let Some(base_seed) = prediction_noise.seed {
+        let mut policy_rng = deterministic_noise_rng(base_seed, state_hash, 0);
+        add_gaussian_noise_with_rng(
+            policy_logits,
+            prediction_noise.policy_mean,
+            prediction_noise.policy_std,
+            &mut policy_rng,
+        );
+
+        let mut value_rng = deterministic_noise_rng(base_seed, state_hash, 1);
+        let mut noisy_value = [*value];
+        add_gaussian_noise_with_rng(
+            &mut noisy_value,
+            prediction_noise.value_mean,
+            prediction_noise.value_std,
+            &mut value_rng,
+        );
+        *value = noisy_value[0];
+        return Ok(());
+    }
+
+    let mut rng = thread_rng();
+    add_gaussian_noise_with_rng(
+        policy_logits,
+        prediction_noise.policy_mean,
+        prediction_noise.policy_std,
+        &mut rng,
+    );
+    let mut noisy_value = [*value];
+    add_gaussian_noise_with_rng(
+        &mut noisy_value,
+        prediction_noise.value_mean,
+        prediction_noise.value_std,
+        &mut rng,
+    );
+    *value = noisy_value[0];
+    Ok(())
 }
 
 /// Load cached-board-path weights from binary file.

@@ -7,7 +7,7 @@ use rand::{thread_rng, Rng, SeedableRng};
 
 use crate::game::constants::{NUM_PIECE_TYPES, QUEUE_SIZE};
 use crate::game::env::TetrisEnv;
-use crate::inference::TetrisNN;
+use crate::inference::{PredictionNoiseSettings, TetrisNN};
 
 use super::config::MCTSConfig;
 use super::nodes::{ChanceNode, DecisionNode, MCTSNode};
@@ -93,6 +93,7 @@ pub(super) struct LeafEvaluation {
 pub(super) struct NeuralLeafEvaluator<'a> {
     pub(super) nn: &'a TetrisNN,
     pub(super) nn_value_weight: f32,
+    pub(super) prediction_noise: PredictionNoiseSettings,
 }
 
 impl LeafEvaluator for NeuralLeafEvaluator<'_> {
@@ -102,6 +103,7 @@ impl LeafEvaluator for NeuralLeafEvaluator<'_> {
             state,
             valid_actions.as_slice(),
             max_placements as usize,
+            self.prediction_noise,
         ) {
             Ok((policy, value)) => Ok(LeafEvaluation {
                 action_priors: policy,
@@ -633,6 +635,13 @@ pub(super) fn search_internal(
     let evaluator = NeuralLeafEvaluator {
         nn,
         nn_value_weight: config.nn_value_weight,
+        prediction_noise: PredictionNoiseSettings {
+            policy_mean: config.policy_noise_mean,
+            policy_std: config.policy_noise_std,
+            value_mean: config.value_noise_mean,
+            value_std: config.value_noise_std,
+            seed: config.prediction_noise_seed,
+        },
     };
     let mut root = DecisionNode::new(env.clone());
     root.set_nn_output_with_raw(
