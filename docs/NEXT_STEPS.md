@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Reintroduce the board stats in the fusion part. Ablate this.
 - [ ] Improve policy layout. (not 735).
 - [ ] Figure out data augmentation.
 - [ ] Adding in coords into input layer
