@@ -29,7 +29,7 @@ class NetworkConfig:
     """Neural network architecture hyperparameters."""
 
     trunk_channels: int = 16
-    num_conv_residual_blocks: int = 3
+    num_conv_residual_blocks: int = 5
     reduction_channels: int = 32
     board_stats_hidden: int = 32
     board_proj_hidden: int = 256
