@@ -19,7 +19,18 @@ logger = structlog.get_logger()
 
 ROTATION_LABELS = ["0", "R", "2", "L"]
 # Pieces where rotations 2/3 are equivalent to rotations 0/1 (only 2 unique rotations).
-PIECES_TWO_ROTATIONS: set[int] = {0, 1, 3, 4}  # I, O, S, Z
+PIECES_TWO_ROTATIONS: set[int] = {0, 3, 4}  # I, S, Z
+# O has a single unique rotation (all 4 are identical).
+PIECES_ONE_ROTATION: set[int] = {1}  # O
+
+
+def _is_redundant_rotation(piece_type: int, rotation: int) -> bool:
+    """Whether *rotation* is redundant for *piece_type*."""
+    if piece_type in PIECES_ONE_ROTATION:
+        return rotation >= 1
+    if piece_type in PIECES_TWO_ROTATIONS:
+        return rotation >= 2
+    return False
 GRID_CELLS_PER_MAP = BOARD_HEIGHT * BOARD_WIDTH
 AGGREGATE_PIECE_VALUE = "D"
 AGGREGATE_PIECE_LABEL = "D (all layers)"
@@ -711,12 +722,16 @@ MINI_GAP_PX = 1
 # Additional forced masks per rotation for further action-space compression.
 # These cells are treated as "never valid" even if a piece could geometrically fit.
 _EXTRA_FORCED_MASKS: dict[int, set[tuple[int, int]]] = {
-    # Rotation 2: also block second-rightmost column and bottom row.
+    # Rotation R: block bottom row (O-exclusive; O restricted to rot 0 only).
+    1: {
+        *((x, BOARD_HEIGHT - 2) for x in range(BOARD_WIDTH)),
+    },
+    # Rotation 2: block second-rightmost column and bottom row.
     2: {
         *((8, y) for y in range(BOARD_HEIGHT)),
         *((x, BOARD_HEIGHT - 1) for x in range(BOARD_WIDTH)),
     },
-    # Rotation L: also block rightmost column and second-bottom row.
+    # Rotation L: block rightmost column and second-bottom row.
     3: {
         *((BOARD_WIDTH - 1, y) for y in range(BOARD_HEIGHT)),
         *((x, BOARD_HEIGHT - 2) for x in range(BOARD_WIDTH)),
@@ -890,9 +905,7 @@ def make_exploded_placement_section() -> html.Div:
             )
         ]
         for rotation in range(4):
-            is_disabled = (
-                piece_type in PIECES_TWO_ROTATIONS and rotation >= 2
-            )
+            is_disabled = _is_redundant_rotation(piece_type, rotation)
             if is_disabled:
                 grid = _make_disabled_grid()
                 caption = "redundant"
@@ -966,8 +979,8 @@ def make_exploded_placement_section() -> html.Div:
                 },
             ),
             html.Div(
-                "Grayed-out rotations (I, O, S, Z at rot 2/L) are redundant — their valid placements "
-                "are identical to rotations 0/R. Only T, J, L use all four rotations.",
+                "Grayed-out rotations are redundant: O uses only rot 0 (all shapes identical), "
+                "I/S/Z use rotations 0 and R only (rot 2/L mirror 0/R). Only T, J, L use all four.",
                 style={"marginBottom": "14px", "fontSize": "13px", "lineHeight": 1.5},
             ),
             *rows,
@@ -1049,8 +1062,7 @@ def make_flat_row_figure(
     custom: list[list[int]] = []
     piece_redundant_rotation = (
         piece_type is not None
-        and piece_type in PIECES_TWO_ROTATIONS
-        and rotation >= 2
+        and _is_redundant_rotation(piece_type, rotation)
     )
     valid_count = 0
     for x, y in cells:
@@ -1190,6 +1202,7 @@ def _flat_section_layout() -> html.Div:
             for piece in TETROMINO_CELLS
         ],
         "two_rot_pieces": sorted(PIECES_TWO_ROTATIONS),
+        "one_rot_pieces": sorted(PIECES_ONE_ROTATION),
         "piece_colors": [list(c) for c in PIECE_COLORS],
     }
 
@@ -1683,7 +1696,10 @@ clientside_callback(
         if (flatIdx < 0 || flatIdx >= cells.length) return emptyBoard();
 
         // Redundant rotation for this piece?
-        if (precomputed.two_rot_pieces.indexOf(pieceType) >= 0 && rotation >= 2)
+        // Check if this rotation is redundant for the selected piece.
+        var isRedundant = (precomputed.one_rot_pieces.indexOf(pieceType) >= 0 && rotation >= 1)
+            || (precomputed.two_rot_pieces.indexOf(pieceType) >= 0 && rotation >= 2);
+        if (isRedundant)
             return emptyBoard();
 
         var gridX = cells[flatIdx][0], gridY = cells[flatIdx][1];

@@ -144,10 +144,10 @@ class ScriptArgs:
         positional=True
     )  # Training run directory with checkpoints/, config.json, training_data.npz
     policy_noise_stds: list[float] = field(
-        default_factory=lambda: [0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]
+        default_factory=lambda: [0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0]
     )
     value_noise_stds: list[float] = field(
-        default_factory=lambda: [0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+        default_factory=lambda: [0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]
     )
     num_noise_repeats: int = 3  # Random draws per non-zero noise level
     max_examples: int = 0  # 0 uses the full replay buffer before the train/eval split
@@ -964,25 +964,22 @@ def main(args: ScriptArgs) -> None:
         model_source=model_source,
     )
 
-    preload_mode = get_preload_mode(args, device)
     npz = np.load(data_path, mmap_mode="r")
     try:
         ensure_required_keys(npz)
         total_examples = validate_shapes(npz)
-        selected = np.arange(total_examples, dtype=np.int64)
+
+        # Fast path: only select the eval examples we need, skip full-buffer shuffle
         rng = np.random.default_rng(args.seed)
-        rng.shuffle(selected)
+        num_needed = min(args.eval_examples, total_examples)
         if args.max_examples > 0:
-            selected = selected[: args.max_examples]
+            num_needed = min(num_needed, args.max_examples)
+        selected = rng.choice(total_examples, size=num_needed, replace=False)
+        selected.sort()  # sorted for sequential NPZ reads via mmap
+        eval_indices = np.arange(len(selected), dtype=np.int64)
 
-        split_point = int(len(selected) * args.train_fraction)
-        eval_pool_indices = np.arange(split_point, len(selected), dtype=np.int64)
-        eval_indices = select_subset(
-            eval_pool_indices,
-            max_examples=args.eval_examples,
-            seed=args.seed + 17,
-        )
-
+        # Preload only the selected subset to GPU
+        preload_mode = get_preload_mode(args, device)
         tensor_data = None
         if preload_mode != "none":
             tensor_data = build_tensor_dataset(
