@@ -66,7 +66,6 @@ logger = structlog.get_logger(__name__)
 
 class SweepPoint(BaseModel):
     noise_type: str
-    noise_mean: float
     noise_std: float
     repeat_index: int
     noise_seed: int | None
@@ -85,7 +84,6 @@ class SweepPoint(BaseModel):
 
 class AggregatedPoint(BaseModel):
     noise_std: float
-    noise_mean: float
     num_repeats: int
     loss_mean: float
     loss_std: float
@@ -139,8 +137,6 @@ class ScriptArgs:
     run_dir: Path = sp_field(
         positional=True
     )  # Training run directory with checkpoints/, config.json, training_data.npz
-    policy_noise_mean: float = 0.0  # Mean added to each policy-logit noise draw
-    value_noise_mean: float = 0.0  # Mean added to value-head noise draws
     policy_noise_stds: list[float] = field(
         default_factory=lambda: [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
     )
@@ -295,7 +291,6 @@ def evaluate_losses_with_output_noise(
     eval_batch_size: int,
     *,
     noise_type: str | None,
-    noise_mean: float,
     noise_std: float,
     noise_seed: int | None,
 ) -> tuple[float, float]:
@@ -322,7 +317,7 @@ def evaluate_losses_with_output_noise(
             if noise_type == "policy":
                 policy_noise = sample_noise_tensor(
                     shape=policy_logits.shape,
-                    mean=noise_mean,
+                    mean=0.0,
                     std=noise_std,
                     generator=noise_generator,
                     device=policy_logits.device,
@@ -332,7 +327,7 @@ def evaluate_losses_with_output_noise(
             elif noise_type == "value":
                 value_noise = sample_noise_tensor(
                     shape=value_pred.shape,
-                    mean=noise_mean,
+                    mean=0.0,
                     std=noise_std,
                     generator=noise_generator,
                     device=value_pred.device,
@@ -365,9 +360,7 @@ def run_games(
     args: ScriptArgs,
     *,
     noise_type: str | None,
-    noise_mean: float,
     noise_std: float,
-    noise_seed: int | None,
 ) -> dict[str, float | int]:
     if evaluate_model is None or MCTSConfig is None:
         raise ImportError("tetris_core not available; rebuild with make build-dev")
@@ -381,13 +374,13 @@ def run_games(
     config.overhang_penalty_weight = 0.0
     config.reuse_tree = True
     config.seed = args.eval_mcts_seed
-    config.prediction_noise_seed = noise_seed
+    config.prediction_noise_seed = None
 
     if noise_type == "policy":
-        config.policy_noise_mean = noise_mean
+        config.policy_noise_mean = 0.0
         config.policy_noise_std = noise_std
     elif noise_type == "value":
-        config.value_noise_mean = noise_mean
+        config.value_noise_mean = 0.0
         config.value_noise_std = noise_std
 
     seeds = list(
@@ -470,10 +463,14 @@ def noise_seed_for_point(
     noise_type: str,
     noise_index: int,
     repeat_index: int,
-    noise_mean: float,
     noise_std: float,
 ) -> int | None:
-    if noise_mean == 0.0 and noise_std == 0.0:
+    """Seed for Python-side held-out loss noise (deterministic per point).
+
+    Rust eval uses thread_rng (prediction_noise_seed=None) so each MCTS
+    inference call gets independent noise draws.
+    """
+    if noise_std == 0.0:
         return None
     type_offset = 0 if noise_type == "policy" else 1_000_000
     return base_seed + type_offset + (noise_index * 10_000) + repeat_index
@@ -516,7 +513,6 @@ def aggregate_points(
         aggregated_rows.append(
             AggregatedPoint(
                 noise_std=noise_std,
-                noise_mean=row_points[0].noise_mean,
                 num_repeats=len(row_points),
                 loss_mean=loss_mean,
                 loss_std=loss_std,
@@ -670,7 +666,6 @@ def plot_analysis(
 def make_point(
     *,
     noise_type: str,
-    noise_mean: float,
     noise_std: float,
     repeat_index: int,
     noise_seed: int | None,
@@ -681,7 +676,6 @@ def make_point(
 ) -> SweepPoint:
     return SweepPoint(
         noise_type=noise_type,
-        noise_mean=noise_mean,
         noise_std=noise_std,
         repeat_index=repeat_index,
         noise_seed=noise_seed,
@@ -714,22 +708,20 @@ def run_sweep(
         baseline_point.model_copy(update={"noise_type": "value"}),
     ]
     sweep_specs = [
-        ("policy", args.policy_noise_mean, args.policy_noise_stds),
-        ("value", args.value_noise_mean, args.value_noise_stds),
+        ("policy", args.policy_noise_stds),
+        ("value", args.value_noise_stds),
     ]
 
-    for noise_type, noise_mean, noise_stds in sweep_specs:
+    for noise_type, noise_stds in sweep_specs:
         for noise_index, noise_std in enumerate(noise_stds):
-            if noise_std == 0.0 and noise_mean == 0.0:
+            if noise_std == 0.0:
                 continue
-            repeats = args.num_noise_repeats if noise_std > 0.0 else 1
-            for repeat_index in range(repeats):
+            for repeat_index in range(args.num_noise_repeats):
                 noise_seed = noise_seed_for_point(
                     base_seed=args.seed,
                     noise_type=noise_type,
                     noise_index=noise_index,
                     repeat_index=repeat_index,
-                    noise_mean=noise_mean,
                     noise_std=noise_std,
                 )
                 logger.info(
@@ -737,7 +729,7 @@ def run_sweep(
                     noise_type=noise_type,
                     noise_std=noise_std,
                     repeat_index=repeat_index,
-                    repeats=repeats,
+                    repeats=args.num_noise_repeats,
                     noise_seed=noise_seed,
                 )
                 start = datetime.now(timezone.utc)
@@ -748,7 +740,6 @@ def run_sweep(
                     device,
                     args.eval_batch_size,
                     noise_type=noise_type,
-                    noise_mean=noise_mean,
                     noise_std=noise_std,
                     noise_seed=noise_seed,
                 )
@@ -756,14 +747,11 @@ def run_sweep(
                     model_path,
                     args,
                     noise_type=noise_type,
-                    noise_mean=noise_mean,
                     noise_std=noise_std,
-                    noise_seed=noise_seed,
                 )
                 elapsed_sec = (datetime.now(timezone.utc) - start).total_seconds()
                 point = make_point(
                     noise_type=noise_type,
-                    noise_mean=noise_mean,
                     noise_std=noise_std,
                     repeat_index=repeat_index,
                     noise_seed=noise_seed,
@@ -821,11 +809,6 @@ def main(args: ScriptArgs) -> None:
     ]:
         if not path.exists():
             raise FileNotFoundError(f"{label} not found: {path}")
-
-    if args.policy_noise_mean != 0.0:
-        logger.warning(
-            "Non-zero policy_noise_mean shifts every logit equally, so it leaves the masked softmax unchanged"
-        )
 
     if args.output_dir is not None:
         output_dir = args.output_dir.resolve()
@@ -892,7 +875,6 @@ def main(args: ScriptArgs) -> None:
             device,
             args.eval_batch_size,
             noise_type=None,
-            noise_mean=0.0,
             noise_std=0.0,
             noise_seed=None,
         )
@@ -900,13 +882,10 @@ def main(args: ScriptArgs) -> None:
             model_path,
             args,
             noise_type=None,
-            noise_mean=0.0,
             noise_std=0.0,
-            noise_seed=None,
         )
         baseline_point = make_point(
             noise_type="baseline",
-            noise_mean=0.0,
             noise_std=0.0,
             repeat_index=0,
             noise_seed=None,
