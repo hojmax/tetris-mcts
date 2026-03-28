@@ -161,7 +161,7 @@ class SelfPlayConfig:
 class ReplayConfig:
     """Replay buffer and batch sampling hyperparameters."""
 
-    buffer_size: int = 4_000_000  # Maximum buffer size. FIFO eviction.
+    buffer_size: int = 7_000_000  # Maximum buffer size. FIFO eviction.
     min_buffer_size: int = 100  # Minimum buffer size before training starts
     prefetch_batches: int = (  # Number of train batches sampled/staged per generator.sample_batch call
         1
