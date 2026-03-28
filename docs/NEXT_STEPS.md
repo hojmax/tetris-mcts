@@ -3,11 +3,11 @@
 - [ ] Figure out data augmentation.
 - [ ] Improve policy layout. (not 735).
 - [ ] How large can I make replay buffer?
+- [ ] Adding in coords into input layer
 - [ ] Larger trunk impact in warm start?
 
 - [ ] Data augmentation. horisontal flip.
 - [ ] Optimized EMA. 
-- [ ] Adding in coords into input layer?
 - [ ] Adding in holes map into input layer?
 - [ ] Adding in overhang map into input layer?
 - [ ] sometimes evaluating candidates takes way longer than other times?
