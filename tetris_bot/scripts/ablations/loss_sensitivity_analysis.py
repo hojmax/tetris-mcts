@@ -239,6 +239,41 @@ def get_preload_mode(args: ScriptArgs, device: torch.device) -> str:
     return "none"
 
 
+_LEGACY_AUX_KEY_MAP = {
+    "aux_fc.weight": "aux_mlp.0.weight",
+    "aux_fc.bias": "aux_mlp.0.bias",
+    "aux_ln.weight": "aux_mlp.1.weight",
+    "aux_ln.bias": "aux_mlp.1.bias",
+}
+
+
+def _is_legacy_aux(sd: dict[str, object]) -> bool:
+    return "aux_fc.weight" in sd and "aux_mlp.0.weight" not in sd
+
+
+def _remap_legacy_state_dict(sd: dict[str, object]) -> dict[str, object]:
+    """Rename legacy aux_fc/aux_ln keys to aux_mlp.0/1."""
+    return {_LEGACY_AUX_KEY_MAP.get(k, k): v for k, v in sd.items()}
+
+
+def _patch_legacy_forward(model: TetrisNet) -> None:
+    """Pre-33a961e: board_proj_fc2 had no activation."""
+
+    def _forward_no_board_proj_activation(
+        conv_out: torch.Tensor, board_stats: torch.Tensor
+    ) -> torch.Tensor:
+        board_stats_h = F.silu(
+            model.board_stats_ln(model.board_stats_fc(board_stats))
+        )
+        board_hidden = torch.cat([conv_out, board_stats_h], dim=1)
+        board_hidden = F.silu(
+            model.board_proj_ln1(model.board_proj_fc1(board_hidden))
+        )
+        return model.board_proj_fc2(board_hidden)
+
+    model.forward_board_embedding_from_parts = _forward_no_board_proj_activation  # type: ignore[assignment]
+
+
 def load_analysis_model(
     run_dir: Path,
     config: TrainingConfig,
@@ -248,11 +283,40 @@ def load_analysis_model(
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    raw_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
-    ema_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
-    state = load_checkpoint(checkpoint_path, model=raw_model, ema_model=ema_model)
-    model_source = "ema" if state.get("ema_state_dict") is not None else "raw"
-    analysis_model = ema_model if model_source == "ema" else raw_model
+    state = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    probe_sd = state.get("ema_state_dict") or state.get("model_state_dict", {})
+    is_legacy = _is_legacy_aux(probe_sd)
+
+    model_kwargs = config.network.to_model_kwargs()
+    if is_legacy:
+        model_kwargs["num_aux_hidden_layers"] = 0
+        logger.info("Detected legacy aux_fc checkpoint; remapping keys")
+        if "model_state_dict" in state:
+            state["model_state_dict"] = _remap_legacy_state_dict(
+                state["model_state_dict"]
+            )
+        if "ema_state_dict" in state:
+            state["ema_state_dict"] = _remap_legacy_state_dict(
+                state["ema_state_dict"]
+            )
+
+    raw_model = TetrisNet(**model_kwargs).to(device)
+    ema_model = TetrisNet(**model_kwargs).to(device)
+
+    raw_model.load_state_dict(state["model_state_dict"])
+    ema_sd = state.get("ema_state_dict")
+    if ema_sd is not None:
+        ema_model.load_state_dict(ema_sd)
+        model_source = "ema"
+        analysis_model = ema_model
+    else:
+        model_source = "raw"
+        analysis_model = raw_model
+
+    if is_legacy:
+        _patch_legacy_forward(analysis_model)
+        logger.info("Patched board_proj forward to omit final SiLU for legacy checkpoint")
+
     analysis_model.eval()
     return analysis_model, model_source
 
