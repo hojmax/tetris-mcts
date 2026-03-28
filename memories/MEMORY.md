@@ -11,6 +11,7 @@ Short-term operational memory for this repo. Read this file at the start of ever
 
 ## Notes
 
+- 2026-03-28: `tetris_bot/scripts/warm_start.py` now mirrors trainer EMA behavior during offline warm start. The offline loop still optimizes raw weights with plain `AdamW` and no LR scheduler, but when `optimizer.ema_decay > 0` it maintains a live EMA shadow, evaluates/selects the best offline checkpoint on that EMA export model, persists both current and best EMA state in `warm_start_offline_latest.pt`, and loads the best EMA into the final `latest`/`incumbent`/`parallel` export path.
 - 2026-03-28: `NetworkConfig` and `TetrisNet` no longer expose an `architecture` selector. The repo now supports only the cached-board-path model; `simple_aux_mlp` and its `TCS2` split-export/runtime format were removed from both Python and Rust.
 - 2026-03-28: User preference: when explaining the network, do not use "fusion" as a shorthand by itself; write out that this step concatenates the board embedding and auxiliary embedding, then runs linear/norm/activation/residual MLP layers before the policy and value heads.
 - 2026-03-28: Default `gated_fusion` now matches the `gated_fusion_concat_mlp_fast_recipe_ema_twostage_asinh_s4` architecture from `tetris-network-optimization`: board stats go through a `19 -> 32` MLP, the cached board path is `1600+32 -> 256 -> 256`, aux fusion is concat-based via `fusion_fc`, and `fc.bin` is now a versioned `TCM2` dump of the full cached-board path (not a single `board_proj` matrix).

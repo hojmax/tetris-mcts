@@ -32,6 +32,7 @@ from tetris_bot.ml.artifacts import (
     copy_model_artifact_bundle,
 )
 from tetris_bot.ml.config import TrainingConfig, default_training_config
+from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.trainer import Trainer
@@ -113,8 +114,10 @@ class WarmStartDatasetSetup:
 @dataclass(frozen=True)
 class WarmStartTrainingResult:
     best_state_dict: dict[str, torch.Tensor]
+    best_ema_state_dict: dict[str, torch.Tensor] | None
     best_record: dict[str, float | int | bool | str]
     history: list[dict[str, float | int | bool | str]]
+    ema_state_dict: dict[str, torch.Tensor] | None
     optimizer_state_dict: dict[str, object]
     loss_balancer_state: dict[str, object]
     current_value_loss_weight: float
@@ -130,6 +133,7 @@ class WarmStartTrainingResult:
 class WarmStartOfflineResumeState:
     checkpoint_path: Path
     best_state_dict: dict[str, torch.Tensor]
+    best_ema_state_dict: dict[str, torch.Tensor] | None
     best_record: dict[str, float | int | bool | str]
     history: list[dict[str, float | int | bool | str]]
     total_steps: int
@@ -229,7 +233,7 @@ def validate_args(args: ScriptArgs) -> None:
             )
 
 
-def clone_model_state_dict(model: TetrisNet) -> dict[str, torch.Tensor]:
+def clone_model_state_dict(model: torch.nn.Module) -> dict[str, torch.Tensor]:
     return {
         key: value.detach().cpu().clone() for key, value in model.state_dict().items()
     }
@@ -337,8 +341,10 @@ def save_offline_resume_checkpoint(
     path: Path,
     *,
     model: TetrisNet,
+    ema_state_dict: dict[str, torch.Tensor] | None,
     optimizer_state_dict: dict[str, object],
     best_state_dict: dict[str, torch.Tensor],
+    best_ema_state_dict: dict[str, torch.Tensor] | None,
     best_record: dict[str, float | int | bool | str],
     history: list[dict[str, float | int | bool | str]],
     total_steps: int,
@@ -349,29 +355,32 @@ def save_offline_resume_checkpoint(
     rng_state: dict[str, object],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "version": 1,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer_state_dict,
-            "best_state_dict": best_state_dict,
-            "best_record": best_record,
-            "history": history,
-            "total_steps": total_steps,
-            "rounds_completed": rounds_completed,
-            "non_improving_rounds": non_improving_rounds,
-            "current_value_loss_weight": current_value_loss_weight,
-            "loss_balancer_state": loss_balancer_state,
-            "rng_state": rng_state,
-        },
-        path,
-    )
+    state = {
+        "version": 2,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer_state_dict,
+        "best_state_dict": best_state_dict,
+        "best_record": best_record,
+        "history": history,
+        "total_steps": total_steps,
+        "rounds_completed": rounds_completed,
+        "non_improving_rounds": non_improving_rounds,
+        "current_value_loss_weight": current_value_loss_weight,
+        "loss_balancer_state": loss_balancer_state,
+        "rng_state": rng_state,
+    }
+    if ema_state_dict is not None:
+        state["ema_state_dict"] = ema_state_dict
+    if best_ema_state_dict is not None:
+        state["best_ema_state_dict"] = best_ema_state_dict
+    torch.save(state, path)
 
 
 def load_offline_resume_checkpoint(
     path: Path,
     *,
     model: TetrisNet,
+    ema_model: torch.nn.Module | None,
     optimizer: torch.optim.Optimizer,
     loss_balancer: RunningLossBalancer,
 ) -> WarmStartOfflineResumeState:
@@ -394,6 +403,12 @@ def load_offline_resume_checkpoint(
         raise ValueError(f"Offline resume checkpoint is missing best record: {path}")
 
     model.load_state_dict(model_state_dict)
+    if ema_model is not None:
+        ema_state_dict = state.get("ema_state_dict")
+        if ema_state_dict is None:
+            ema_model.load_state_dict(model_state_dict)
+        else:
+            ema_model.load_state_dict(ema_state_dict)
     load_optimizer_state_dict(optimizer, optimizer_state_dict, source=path)
     loss_balancer.load_state_dict(
         state.get(
@@ -401,12 +416,23 @@ def load_offline_resume_checkpoint(
             {},
         )
     )
+    best_ema_state_dict = state.get("best_ema_state_dict")
+    if best_ema_state_dict is None and ema_model is not None:
+        best_ema_state_dict = best_state_dict
 
     return WarmStartOfflineResumeState(
         checkpoint_path=path,
         best_state_dict={
             key: value.detach().cpu().clone() for key, value in best_state_dict.items()
         },
+        best_ema_state_dict=(
+            {
+                key: value.detach().cpu().clone()
+                for key, value in best_ema_state_dict.items()
+            }
+            if best_ema_state_dict is not None
+            else None
+        ),
         best_record=dict(best_record),
         history=[dict(record) for record in state.get("history", [])],
         total_steps=int(state.get("total_steps", 0)),
@@ -502,7 +528,7 @@ def setup_offline_dataset(
 
 
 def evaluate_offline_losses(
-    model: TetrisNet,
+    model: torch.nn.Module,
     *,
     source: OfflineDataSource,
     local_indices: np.ndarray,
@@ -590,17 +616,22 @@ def train_warm_start_model(
     eval_batch_size: int,
     value_loss_window: int,
     seed: int,
+    ema_decay: float,
 ) -> WarmStartTrainingResult:
+    if not 0.0 <= ema_decay < 1.0:
+        raise ValueError(f"ema_decay must be in [0, 1) (got {ema_decay})")
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=learning_rate,
         weight_decay=weight_decay,
     )
+    ema = ExponentialMovingAverage(model, ema_decay) if ema_decay > 0.0 else None
     loss_balancer = RunningLossBalancer(value_loss_window)
     current_value_loss_weight = 1.0
     history: list[dict[str, float | int | bool | str]] = []
     best_record: dict[str, float | int | bool | str] | None = None
     best_state_dict = clone_model_state_dict(model)
+    best_ema_state_dict = clone_model_state_dict(ema.model) if ema is not None else None
     rng = np.random.default_rng(seed)
     steps_per_round = compute_training_steps(
         len(dataset_setup.train_local_indices),
@@ -619,6 +650,7 @@ def train_warm_start_model(
         resume_state = load_offline_resume_checkpoint(
             source_offline_resume_checkpoint,
             model=model,
+            ema_model=ema.model if ema is not None else None,
             optimizer=optimizer,
             loss_balancer=loss_balancer,
         )
@@ -631,6 +663,14 @@ def train_warm_start_model(
             key: value.detach().cpu().clone()
             for key, value in resume_state.best_state_dict.items()
         }
+        best_ema_state_dict = (
+            {
+                key: value.detach().cpu().clone()
+                for key, value in resume_state.best_ema_state_dict.items()
+            }
+            if resume_state.best_ema_state_dict is not None
+            else None
+        )
         total_steps = resume_state.total_steps
         rounds_completed = resume_state.rounds_completed
         non_improving_rounds = resume_state.non_improving_rounds
@@ -647,9 +687,12 @@ def train_warm_start_model(
         )
 
     def record_eval(round_index: int, step: int, epochs_seen: float) -> None:
-        nonlocal best_record, best_state_dict, non_improving_rounds
+        nonlocal best_record, best_state_dict, best_ema_state_dict
+        nonlocal non_improving_rounds
+        eval_model = ema.model if ema is not None else model
+        eval_uses_ema = ema is not None
         eval_metrics = evaluate_offline_losses(
-            model,
+            eval_model,
             source=dataset_setup.source,
             local_indices=dataset_setup.eval_local_indices,
             device=device,
@@ -666,6 +709,7 @@ def train_warm_start_model(
                 "round_index": round_index,
                 "step": step,
                 "epochs_seen": epochs_seen,
+                "eval_uses_ema": eval_uses_ema,
                 "value_loss_weight": current_value_loss_weight,
                 "eval_selection_metric": eval_selection_metric,
                 "eval_total_loss": eval_metrics["total_loss"],
@@ -675,6 +719,9 @@ def train_warm_start_model(
                 "non_improving_rounds": 0,
             }
             best_state_dict = clone_model_state_dict(model)
+            best_ema_state_dict = (
+                clone_model_state_dict(eval_model) if ema is not None else None
+            )
             non_improving_rounds = 0
         else:
             non_improving_rounds += 1
@@ -682,6 +729,7 @@ def train_warm_start_model(
             "round_index": round_index,
             "step": step,
             "epochs_seen": epochs_seen,
+            "eval_uses_ema": eval_uses_ema,
             "value_loss_weight": current_value_loss_weight,
             "eval_selection_metric": eval_selection_metric,
             "eval_total_loss": eval_metrics["total_loss"],
@@ -700,6 +748,7 @@ def train_warm_start_model(
             eval_total_loss=record["eval_total_loss"],
             eval_policy_loss=record["eval_policy_loss"],
             eval_value_loss=record["eval_value_loss"],
+            eval_uses_ema=eval_uses_ema,
             value_loss_weight=current_value_loss_weight,
             improved=improved,
             non_improving_rounds=non_improving_rounds,
@@ -715,6 +764,7 @@ def train_warm_start_model(
                 "warm_start/eval_total_loss": record["eval_total_loss"],
                 "warm_start/eval_policy_loss": record["eval_policy_loss"],
                 "warm_start/eval_value_loss": record["eval_value_loss"],
+                "warm_start/eval_uses_ema": eval_uses_ema,
                 "warm_start/eval_improved": improved,
                 "warm_start/eval_non_improving_rounds": non_improving_rounds,
             }
@@ -751,6 +801,8 @@ def train_warm_start_model(
                 model.parameters(), grad_clip_norm
             )
             optimizer.step()
+            if ema is not None:
+                ema.update(model)
 
             total_steps += 1
             policy_loss_scalar = policy_loss.item()
@@ -826,8 +878,10 @@ def train_warm_start_model(
 
     return WarmStartTrainingResult(
         best_state_dict=best_state_dict,
+        best_ema_state_dict=best_ema_state_dict,
         best_record=best_record,
         history=history,
+        ema_state_dict=(clone_model_state_dict(ema.model) if ema is not None else None),
         optimizer_state_dict=copy.deepcopy(optimizer.state_dict()),
         loss_balancer_state=loss_balancer.state_dict(),
         current_value_loss_weight=current_value_loss_weight,
@@ -1079,6 +1133,7 @@ def run_warm_start(
                     resolved_output_config.optimizer.value_loss_weight_window
                 ),
                 seed=args.seed,
+                ema_decay=resolved_output_config.optimizer.ema_decay,
             )
         finally:
             npz.close()
@@ -1089,8 +1144,10 @@ def run_warm_start(
         save_offline_resume_checkpoint(
             offline_resume_checkpoint,
             model=model,
+            ema_state_dict=training_result.ema_state_dict,
             optimizer_state_dict=training_result.optimizer_state_dict,
             best_state_dict=training_result.best_state_dict,
+            best_ema_state_dict=training_result.best_ema_state_dict,
             best_record=training_result.best_record,
             history=training_result.history,
             total_steps=training_result.total_steps,
@@ -1117,6 +1174,11 @@ def run_warm_start(
         shutil.copy2(source_training_data_path, output_training_data_path)
 
         trainer = Trainer(resolved_output_config, model=model, device=device_str)
+        if (
+            trainer.ema_model is not None
+            and training_result.best_ema_state_dict is not None
+        ):
+            trainer.ema_model.load_state_dict(training_result.best_ema_state_dict)
         trainer.step = 0
         initial_checkpoint_state = {
             "incumbent_uses_network": True,
@@ -1322,6 +1384,7 @@ def run_warm_start(
             "learning_rate": learning_rate,
             "weight_decay": weight_decay,
             "grad_clip_norm": grad_clip_norm,
+            "ema_decay": resolved_output_config.optimizer.ema_decay,
             "max_examples": args.max_examples,
             "preload_mode": preload_mode,
             "offline_dataset": {

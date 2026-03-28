@@ -1,17 +1,24 @@
 import json
 from pathlib import Path
+from typing import cast
 
+import numpy as np
 import torch
 
-from tetris_bot.constants import CONFIG_FILENAME
+import tetris_bot.scripts.warm_start as warm_start_module
+from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, CONFIG_FILENAME, NUM_ACTIONS
 from tetris_bot.ml.config import (
     default_training_config,
     NetworkConfig,
     load_training_config_json,
 )
+from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.run_setup import config_to_json
+from tetris_bot.scripts.ablations.compare_offline_architectures import (
+    OfflineDataSource,
+)
 from tetris_bot.scripts.warm_start import (
     build_output_config,
     build_wandb_config,
@@ -24,7 +31,9 @@ from tetris_bot.scripts.warm_start import (
     resolve_eval_num_workers,
     save_offline_resume_checkpoint,
     ScriptArgs,
+    train_warm_start_model,
     validate_args,
+    WarmStartDatasetSetup,
     warm_start_selection_metric,
 )
 
@@ -323,6 +332,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
 ) -> None:
     checkpoint_path = offline_resume_checkpoint_path(tmp_path / "training_runs" / "v5")
     model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    ema = ExponentialMovingAverage(model, decay=0.5)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
     loss_balancer = RunningLossBalancer(window_size=8)
     loss_balancer.append(2.0, 8.0)
@@ -338,6 +348,17 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     best_state_dict = {
         key: value.detach().cpu().clone() for key, value in model.state_dict().items()
     }
+    with torch.no_grad():
+        for parameter in ema.model.parameters():
+            parameter.add_(0.25)
+    ema_state_dict = {
+        key: value.detach().cpu().clone()
+        for key, value in ema.model.state_dict().items()
+    }
+    best_ema_state_dict = {
+        key: value.detach().cpu().clone()
+        for key, value in ema.model.state_dict().items()
+    }
     best_record = {
         "round_index": 4,
         "step": 14064,
@@ -349,8 +370,10 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     save_offline_resume_checkpoint(
         checkpoint_path,
         model=model,
+        ema_state_dict=ema_state_dict,
         optimizer_state_dict=optimizer.state_dict(),
         best_state_dict=best_state_dict,
+        best_ema_state_dict=best_ema_state_dict,
         best_record=best_record,
         history=history,
         total_steps=14064,
@@ -362,11 +385,13 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     )
 
     restored_model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    restored_ema = ExponentialMovingAverage(restored_model, decay=0.5)
     restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=5e-4)
     restored_loss_balancer = RunningLossBalancer(window_size=8)
     resumed = load_offline_resume_checkpoint(
         checkpoint_path,
         model=restored_model,
+        ema_model=restored_ema.model,
         optimizer=restored_optimizer,
         loss_balancer=restored_loss_balancer,
     )
@@ -380,7 +405,14 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     assert resumed.history == history
     assert resumed.rng_state == rng_state
     assert resumed.best_state_dict.keys() == best_state_dict.keys()
+    assert resumed.best_ema_state_dict is not None
+    assert resumed.best_ema_state_dict.keys() == best_ema_state_dict.keys()
     assert restored_loss_balancer.state_dict() == loss_balancer.state_dict()
+    restored_ema_state = restored_ema.model.state_dict()
+    for name, expected_value in ema_state_dict.items():
+        assert torch.equal(restored_ema_state[name], expected_value)
+    for name, expected_value in best_ema_state_dict.items():
+        assert torch.equal(resumed.best_ema_state_dict[name], expected_value)
     restored_optimizer_state = restored_optimizer.state_dict()["state"]
     expected_optimizer_state = optimizer.state_dict()["state"]
     assert restored_optimizer_state.keys() == expected_optimizer_state.keys()
@@ -393,3 +425,89 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
                 assert torch.equal(restored_value, expected_value)
             else:
                 assert restored_value == expected_value
+
+
+def test_train_warm_start_model_evaluates_and_snapshots_ema_weights(
+    monkeypatch,
+) -> None:
+    model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    dataset_setup = WarmStartDatasetSetup(
+        source=OfflineDataSource(
+            npz=cast(np.lib.npyio.NpzFile, object()),
+            selected_global_indices=np.array([0, 1], dtype=np.int64),
+            tensor_data=None,
+        ),
+        train_local_indices=np.array([0, 1], dtype=np.int64),
+        eval_local_indices=np.array([0], dtype=np.int64),
+        total_examples=2,
+        num_selected=2,
+        preload_sec=0.0,
+    )
+
+    boards = torch.randn(2, 1, BOARD_HEIGHT, BOARD_WIDTH)
+    aux = torch.randn(2, 80)
+    policy_targets = torch.zeros(2, NUM_ACTIONS)
+    policy_targets[:, 0] = 1.0
+    value_targets = torch.tensor([0.25, -0.25], dtype=torch.float32)
+    action_masks = torch.ones(2, NUM_ACTIONS, dtype=torch.bool)
+    captured: dict[str, bool] = {}
+
+    def fake_build_torch_batch(source, batch_indices, device):
+        del source, batch_indices
+        return (
+            boards.to(device),
+            aux.to(device),
+            policy_targets.to(device),
+            value_targets.to(device),
+            action_masks.to(device),
+        )
+
+    def fake_evaluate_offline_losses(eval_model, **kwargs):
+        del kwargs
+        raw_state = model.state_dict()
+        captured["eval_used_raw_model"] = all(
+            torch.equal(eval_model.state_dict()[name], raw_state[name])
+            for name in raw_state
+        )
+        return {
+            "total_loss": 1.0,
+            "policy_loss": 0.75,
+            "value_loss": 0.5,
+        }
+
+    monkeypatch.setattr(warm_start_module, "build_torch_batch", fake_build_torch_batch)
+    monkeypatch.setattr(
+        warm_start_module,
+        "evaluate_offline_losses",
+        fake_evaluate_offline_losses,
+    )
+
+    training_result = train_warm_start_model(
+        model,
+        dataset_setup=dataset_setup,
+        source_offline_resume_checkpoint=None,
+        device=torch.device("cpu"),
+        batch_size=2,
+        learning_rate=1e-2,
+        weight_decay=0.0,
+        grad_clip_norm=1e6,
+        epochs_per_round=1.0,
+        early_stopping_patience=1,
+        max_rounds=1,
+        eval_batch_size=1,
+        value_loss_window=4,
+        seed=123,
+        ema_decay=0.5,
+    )
+
+    assert captured["eval_used_raw_model"] is False
+    assert training_result.best_record["eval_uses_ema"] is True
+    assert training_result.best_ema_state_dict is not None
+    assert training_result.ema_state_dict is not None
+    assert any(
+        not torch.equal(
+            training_result.best_state_dict[name],
+            training_result.best_ema_state_dict[name],
+        )
+        for name in training_result.best_state_dict
+    )
