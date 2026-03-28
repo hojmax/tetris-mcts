@@ -155,7 +155,7 @@ class ScriptArgs:
         0.9  # Fraction of shuffled examples reserved for the train split
     )
     eval_examples: int = (
-        32_768  # Max held-out examples used for each loss evaluation pass
+        4_096  # Max held-out examples used for each loss evaluation pass
     )
     eval_batch_size: int = 2048
     preload_to_gpu: bool = True  # Preload selected replay data to GPU if available
