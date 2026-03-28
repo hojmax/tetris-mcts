@@ -35,19 +35,13 @@ from tetris_bot.constants import (
     BENCHMARKS_DIR,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
-    INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
     TRAINING_DATA_FILENAME,
 )
 from tetris_bot.ml.config import TrainingConfig, load_training_config_json
 from tetris_bot.ml.loss import apply_action_mask
 from tetris_bot.ml.network import TetrisNet
-from tetris_bot.ml.weights import (
-    export_onnx,
-    export_split_models,
-    load_checkpoint,
-    split_model_paths,
-)
+from tetris_bot.ml.weights import export_onnx, export_split_models, load_checkpoint
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
     build_tensor_dataset,
@@ -245,86 +239,26 @@ def get_preload_mode(args: ScriptArgs, device: torch.device) -> str:
     return "none"
 
 
-class OnnxModel:
-    """Wraps an ONNX model via onnxruntime to match TetrisNet's call signature."""
-
-    def __init__(self, onnx_path: Path, device: torch.device) -> None:
-        import onnxruntime as ort  # pyright: ignore[reportMissingImports]
-
-        providers: list[str] = []
-        if device.type == "cuda":
-            providers.append("CUDAExecutionProvider")
-        providers.append("CPUExecutionProvider")
-        self.session = ort.InferenceSession(str(onnx_path), providers=providers)
-        self.device = device
-        self.onnx_path = onnx_path
-
-    def eval(self) -> None:
-        pass
-
-    def __call__(
-        self, board: torch.Tensor, aux_features: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        board_np = board.cpu().numpy()
-        aux_np = aux_features.cpu().numpy()
-        policy_logits_np, value_np = self.session.run(
-            ["policy_logits", "value"],
-            {"board": board_np, "aux_features": aux_np},
-        )
-        policy_logits = torch.from_numpy(policy_logits_np).to(self.device)
-        value = torch.from_numpy(value_np).to(self.device)
-        return policy_logits, value
-
-
-AnalysisModel = TetrisNet | OnnxModel
-
-
 def load_analysis_model(
     run_dir: Path,
     config: TrainingConfig,
     device: torch.device,
-) -> tuple[AnalysisModel, str]:
+) -> tuple[TetrisNet, str]:
     checkpoint_path = run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
-    if checkpoint_path.exists():
-        raw_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
-        ema_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
-        state = load_checkpoint(checkpoint_path, model=raw_model, ema_model=ema_model)
-        model_source = "ema" if state.get("ema_state_dict") is not None else "raw"
-        analysis_model: AnalysisModel = (
-            ema_model if model_source == "ema" else raw_model
-        )
-        analysis_model.eval()
-        return analysis_model, model_source
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-    incumbent_path = run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
-    if incumbent_path.exists():
-        logger.info(
-            "No latest.pt found; loading incumbent ONNX model",
-            incumbent_path=str(incumbent_path),
-        )
-        return OnnxModel(incumbent_path, device), "incumbent_onnx"
-
-    raise FileNotFoundError(
-        f"Neither {checkpoint_path} nor {incumbent_path} found in run dir"
-    )
+    raw_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
+    ema_model = TetrisNet(**config.network.to_model_kwargs()).to(device)
+    state = load_checkpoint(checkpoint_path, model=raw_model, ema_model=ema_model)
+    model_source = "ema" if state.get("ema_state_dict") is not None else "raw"
+    analysis_model = ema_model if model_source == "ema" else raw_model
+    analysis_model.eval()
+    return analysis_model, model_source
 
 
-def export_analysis_model(
-    model: AnalysisModel, output_dir: Path, run_dir: Path
-) -> Path:
+def export_analysis_model(model: TetrisNet, output_dir: Path) -> Path:
     model_path = output_dir / "analysis_model.onnx"
-    if isinstance(model, OnnxModel):
-        import shutil
-
-        src_onnx = model.onnx_path
-        shutil.copy2(src_onnx, model_path)
-        src_splits = split_model_paths(src_onnx)
-        dst_splits = split_model_paths(model_path)
-        for src_split, dst_split in zip(src_splits, dst_splits):
-            if src_split.exists():
-                shutil.copy2(src_split, dst_split)
-        return model_path
-
     if not export_onnx(model, model_path):
         raise RuntimeError("ONNX export failed")
     if not export_split_models(model, model_path):
@@ -350,7 +284,7 @@ def sample_noise_tensor(
 
 
 def evaluate_losses_with_output_noise(
-    model: AnalysisModel,
+    model: TetrisNet,
     source: OfflineDataSource,
     eval_indices: np.ndarray,
     device: torch.device,
@@ -761,7 +695,7 @@ def make_point(
 
 def run_sweep(
     *,
-    model: AnalysisModel,
+    model: TetrisNet,
     model_path: Path,
     source: OfflineDataSource,
     eval_indices: np.ndarray,
@@ -867,9 +801,11 @@ def main(args: ScriptArgs) -> None:
     run_dir = args.run_dir.resolve()
     config_path = run_dir / CONFIG_FILENAME
     data_path = run_dir / TRAINING_DATA_FILENAME
+    checkpoint_path = run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
     for path, label in [
         (config_path, "config.json"),
         (data_path, "training_data.npz"),
+        (checkpoint_path, "latest checkpoint"),
     ]:
         if not path.exists():
             raise FileNotFoundError(f"{label} not found: {path}")
@@ -885,7 +821,7 @@ def main(args: ScriptArgs) -> None:
     device = torch.device(pick_device(args.device))
     logger.info("Loading analysis model", run_dir=str(run_dir), device=str(device))
     model, model_source = load_analysis_model(run_dir, config, device)
-    model_path = export_analysis_model(model, output_dir, run_dir)
+    model_path = export_analysis_model(model, output_dir)
     logger.info(
         "Exported analysis model",
         model_path=str(model_path),
