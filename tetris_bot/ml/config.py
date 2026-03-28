@@ -32,7 +32,7 @@ class NetworkConfig:
     num_conv_residual_blocks: int = 5
     reduction_channels: int = 32
     board_stats_hidden: int = 32
-    board_proj_hidden: int = 256
+    board_proj_hidden: int = 512
     fc_hidden: int = 256
     aux_hidden: int = 64
     fusion_hidden: int = 256
