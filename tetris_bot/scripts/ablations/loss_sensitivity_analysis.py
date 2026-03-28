@@ -138,10 +138,10 @@ class ScriptArgs:
         positional=True
     )  # Training run directory with checkpoints/, config.json, training_data.npz
     policy_noise_stds: list[float] = field(
-        default_factory=lambda: [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
+        default_factory=lambda: [0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]
     )
     value_noise_stds: list[float] = field(
-        default_factory=lambda: [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
+        default_factory=lambda: [0.0, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
     )
     num_noise_repeats: int = 3  # Random draws per non-zero noise level
     max_examples: int = 0  # 0 uses the full replay buffer before the train/eval split

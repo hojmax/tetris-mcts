@@ -18,6 +18,8 @@ from tetris_bot.constants import (
 logger = structlog.get_logger()
 
 ROTATION_LABELS = ["0", "R", "2", "L"]
+# Pieces where rotations 2/3 are equivalent to rotations 0/1 (only 2 unique rotations).
+PIECES_TWO_ROTATIONS: set[int] = {0, 1, 3, 4}  # I, O, S, Z
 GRID_CELLS_PER_MAP = BOARD_HEIGHT * BOARD_WIDTH
 AGGREGATE_PIECE_VALUE = "D"
 AGGREGATE_PIECE_LABEL = "D (all layers)"
@@ -703,6 +705,504 @@ def make_hover_details(
     )
 
 
+MINI_CELL_PX = 8
+MINI_GAP_PX = 1
+
+# Additional forced masks per rotation for further action-space compression.
+# These cells are treated as "never valid" even if a piece could geometrically fit.
+_EXTRA_FORCED_MASKS: dict[int, set[tuple[int, int]]] = {
+    # Rotation 2: also block second-rightmost column and bottom row.
+    2: {
+        *((8, y) for y in range(BOARD_HEIGHT)),
+        *((x, BOARD_HEIGHT - 1) for x in range(BOARD_WIDTH)),
+    },
+    # Rotation L: also block rightmost column and second-bottom row.
+    3: {
+        *((BOARD_WIDTH - 1, y) for y in range(BOARD_HEIGHT)),
+        *((x, BOARD_HEIGHT - 2) for x in range(BOARD_WIDTH)),
+    },
+}
+
+
+def _is_force_masked(rotation: int, x: int, y: int) -> bool:
+    masks = _EXTRA_FORCED_MASKS.get(rotation)
+    return masks is not None and (x, y) in masks
+
+
+def _make_mini_placement_grid(piece_type: int, rotation: int) -> html.Div:
+    """Small 20x10 heatmap grid showing valid/masked placements.
+
+    Four visual states:
+    - Green: valid placement for this piece/rotation.
+    - Light gray: invalid for this piece, but at least one other piece can be placed here.
+    - Black: no piece can ever be placed here at this rotation (universally masked),
+      OR force-masked for additional action-space compression.
+    """
+    children: list[html.Div] = []
+    for y in range(BOARD_HEIGHT):
+        for x in range(BOARD_WIDTH):
+            forced = _is_force_masked(rotation, x, y)
+            if forced:
+                bg = "#1A1A1A"
+            elif build_placement_info(piece_type, rotation, x, y).valid:
+                bg = "#4D7C0F"
+            elif AGGREGATE_GRID_COUNTS_BY_ROTATION[rotation][y][x] == 0:
+                bg = "#1A1A1A"
+            else:
+                bg = "#D7D9CE"
+            children.append(
+                html.Div(
+                    style={
+                        "width": f"{MINI_CELL_PX}px",
+                        "height": f"{MINI_CELL_PX}px",
+                        "background": bg,
+                        "boxSizing": "border-box",
+                    }
+                )
+            )
+    return html.Div(
+        children,
+        style={
+            "display": "grid",
+            "gridTemplateColumns": f"repeat({BOARD_WIDTH}, {MINI_CELL_PX}px)",
+            "gridTemplateRows": f"repeat({BOARD_HEIGHT}, {MINI_CELL_PX}px)",
+            "gap": f"{MINI_GAP_PX}px",
+            "background": "#C8B79C",
+        },
+    )
+
+
+def _make_disabled_grid() -> html.Div:
+    """Fully grayed-out grid for a redundant rotation."""
+    children: list[html.Div] = []
+    for _ in range(BOARD_HEIGHT * BOARD_WIDTH):
+        children.append(
+            html.Div(
+                style={
+                    "width": f"{MINI_CELL_PX}px",
+                    "height": f"{MINI_CELL_PX}px",
+                    "background": "#B8B8B8",
+                    "boxSizing": "border-box",
+                }
+            )
+        )
+    return html.Div(
+        children,
+        style={
+            "display": "grid",
+            "gridTemplateColumns": f"repeat({BOARD_WIDTH}, {MINI_CELL_PX}px)",
+            "gridTemplateRows": f"repeat({BOARD_HEIGHT}, {MINI_CELL_PX}px)",
+            "gap": f"{MINI_GAP_PX}px",
+            "background": "#A0A0A0",
+        },
+    )
+
+
+def _make_piece_preview_mini(piece_type: int) -> html.Div:
+    """Small 20x10 board preview with the piece drawn at a centered position."""
+    cells = _piece_cells(piece_type, 0)
+    anchor_x, anchor_y = 4, 9
+    occupied = {(anchor_x + dx, anchor_y + dy) for dx, dy in cells}
+    pc = PIECE_COLORS[piece_type]
+    color = f"rgb({pc[0]}, {pc[1]}, {pc[2]})"
+    children: list[html.Div] = []
+    for y in range(BOARD_HEIGHT):
+        for x in range(BOARD_WIDTH):
+            children.append(
+                html.Div(
+                    style={
+                        "width": f"{MINI_CELL_PX}px",
+                        "height": f"{MINI_CELL_PX}px",
+                        "background": color if (x, y) in occupied else "#EFE6D2",
+                        "boxSizing": "border-box",
+                    }
+                )
+            )
+    return html.Div(
+        children,
+        style={
+            "display": "grid",
+            "gridTemplateColumns": f"repeat({BOARD_WIDTH}, {MINI_CELL_PX}px)",
+            "gridTemplateRows": f"repeat({BOARD_HEIGHT}, {MINI_CELL_PX}px)",
+            "gap": f"{MINI_GAP_PX}px",
+            "background": "#C8B79C",
+        },
+    )
+
+
+def make_exploded_placement_section() -> html.Div:
+    """Build a 7-row x 5-column exploded view of all piece/rotation placement grids."""
+    col_headers = [
+        html.Div(
+            "Piece",
+            style={
+                "fontWeight": 700,
+                "textAlign": "center",
+                "padding": "4px",
+            },
+        )
+    ] + [
+        html.Div(
+            f"Rot {label}",
+            style={
+                "fontWeight": 700,
+                "textAlign": "center",
+                "padding": "4px",
+            },
+        )
+        for label in ROTATION_LABELS
+    ] + [
+        html.Div(
+            "Preview",
+            style={
+                "fontWeight": 700,
+                "textAlign": "center",
+                "padding": "4px",
+            },
+        )
+    ]
+
+    rows: list[html.Div] = []
+    rows.append(
+        html.Div(
+            col_headers,
+            style={
+                "display": "grid",
+                "gridTemplateColumns": "60px repeat(5, 1fr)",
+                "gap": "10px",
+                "alignItems": "center",
+            },
+        )
+    )
+
+    for piece_type, piece_name in enumerate(PIECE_NAMES):
+        pc = PIECE_COLORS[piece_type]
+        label_color = f"rgb({pc[0]}, {pc[1]}, {pc[2]})"
+        row_children: list[html.Div] = [
+            html.Div(
+                piece_name,
+                style={
+                    "fontWeight": 700,
+                    "fontSize": "16px",
+                    "textAlign": "center",
+                    "color": label_color,
+                },
+            )
+        ]
+        for rotation in range(4):
+            is_disabled = (
+                piece_type in PIECES_TWO_ROTATIONS and rotation >= 2
+            )
+            if is_disabled:
+                grid = _make_disabled_grid()
+                caption = "redundant"
+            else:
+                grid = _make_mini_placement_grid(piece_type, rotation)
+                base_valid = SUMMARY_COUNTS[piece_type][rotation]["valid"]
+                force_lost = sum(
+                    1
+                    for gy in range(BOARD_HEIGHT)
+                    for gx in range(BOARD_WIDTH)
+                    if _is_force_masked(rotation, gx, gy)
+                    and build_placement_info(piece_type, rotation, gx, gy).valid
+                )
+                effective_valid = base_valid - force_lost
+                effective_masked = GRID_CELLS_PER_MAP - effective_valid
+                caption = f"{effective_valid}v / {effective_masked}m"
+            row_children.append(
+                html.Div(
+                    [
+                        grid,
+                        html.Div(
+                            caption,
+                            style={
+                                "fontSize": "10px",
+                                "textAlign": "center",
+                                "marginTop": "2px",
+                                "color": "#888" if is_disabled else "#2F241F",
+                            },
+                        ),
+                    ],
+                    style={"display": "flex", "flexDirection": "column", "alignItems": "center"},
+                )
+            )
+        row_children.append(
+            html.Div(
+                [
+                    _make_piece_preview_mini(piece_type),
+                    html.Div(
+                        piece_name,
+                        style={
+                            "fontSize": "10px",
+                            "textAlign": "center",
+                            "marginTop": "2px",
+                        },
+                    ),
+                ],
+                style={"display": "flex", "flexDirection": "column", "alignItems": "center"},
+            )
+        )
+        rows.append(
+            html.Div(
+                row_children,
+                style={
+                    "display": "grid",
+                    "gridTemplateColumns": "60px repeat(5, 1fr)",
+                    "gap": "10px",
+                    "alignItems": "center",
+                    "padding": "6px 0",
+                    "borderBottom": "1px solid #D8CBB6",
+                },
+            )
+        )
+
+    return html.Div(
+        [
+            html.H2(
+                "Exploded Placement Grids (All Pieces x Rotations)",
+                style={
+                    "margin": "0 0 14px 0",
+                    "fontFamily": "Georgia, Times New Roman, serif",
+                },
+            ),
+            html.Div(
+                "Grayed-out rotations (I, O, S, Z at rot 2/L) are redundant — their valid placements "
+                "are identical to rotations 0/R. Only T, J, L use all four rotations.",
+                style={"marginBottom": "14px", "fontSize": "13px", "lineHeight": 1.5},
+            ),
+            *rows,
+        ],
+        style={
+            "marginTop": "18px",
+            "padding": "18px",
+            "background": "#FFF9EE",
+            "border": "1px solid #D0BFA2",
+            "borderRadius": "18px",
+        },
+    )
+
+
+EXPLODED_SECTION = make_exploded_placement_section()
+
+# ---------------------------------------------------------------------------
+# Flattened action-space section
+# ---------------------------------------------------------------------------
+
+# For each rotation, the list of (x, y) cells that are in the action space,
+# enumerated in row-major order (top-to-bottom, left-to-right).
+FLAT_ACTION_CELLS: list[list[tuple[int, int]]] = []
+for _rot in range(4):
+    _cells: list[tuple[int, int]] = []
+    for _y in range(BOARD_HEIGHT):
+        for _x in range(BOARD_WIDTH):
+            if (
+                AGGREGATE_GRID_COUNTS_BY_ROTATION[_rot][_y][_x] > 0
+                and not _is_force_masked(_rot, _x, _y)
+            ):
+                _cells.append((_x, _y))
+    FLAT_ACTION_CELLS.append(_cells)
+
+FLAT_TOTAL_CELLS = sum(len(cells) for cells in FLAT_ACTION_CELLS)
+
+# Piece dropdown options for the flat section (real pieces only, no aggregate).
+FLAT_PIECE_OPTIONS = [
+    {"label": name, "value": idx} for idx, name in enumerate(PIECE_NAMES)
+]
+
+
+def make_flat_row_figure(
+    rotation: int, piece_type: int | None
+) -> go.Figure:
+    """Build a 1-row heatmap for one rotation's flattened action cells."""
+    cells = FLAT_ACTION_CELLS[rotation]
+    n = len(cells)
+    if n == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            height=40,
+            margin=dict(l=0, r=0, t=0, b=0),
+            template="plotly_white",
+            paper_bgcolor="#F7F3E8",
+            plot_bgcolor="#F7F3E8",
+            annotations=[
+                dict(
+                    text="empty (redundant rotation)",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(
+                        size=12,
+                        color="#888",
+                        family="Menlo, Consolas, monospace",
+                    ),
+                )
+            ],
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+        )
+        return fig
+
+    # Determine per-cell validity for the selected piece.
+    z_row: list[int] = []
+    custom: list[list[int]] = []
+    piece_redundant_rotation = (
+        piece_type is not None
+        and piece_type in PIECES_TWO_ROTATIONS
+        and rotation >= 2
+    )
+    valid_count = 0
+    for x, y in cells:
+        if piece_type is None:
+            val = 1
+        elif piece_redundant_rotation:
+            val = 0
+        else:
+            val = 1 if build_placement_info(piece_type, rotation, x, y).valid else 0
+        z_row.append(val)
+        custom.append([x, y])
+        valid_count += val
+
+    fig = go.Figure(
+        data=[
+            go.Heatmap(
+                z=[z_row],
+                x=list(range(n)),
+                y=[0],
+                customdata=[custom],
+                showscale=False,
+                xgap=1,
+                ygap=0,
+                zmin=0,
+                zmax=1,
+                colorscale=[
+                    [0.0, "#D7D9CE"],
+                    [0.499, "#D7D9CE"],
+                    [0.5, "#4D7C0F"],
+                    [1.0, "#4D7C0F"],
+                ],
+                hovertemplate=(
+                    "Action idx %{x}<br>"
+                    "Grid: (%{customdata[0]}, %{customdata[1]})"
+                    "<extra></extra>"
+                ),
+            )
+        ]
+    )
+    cell_w = max(6, min(10, 1400 // n))
+    fig.update_layout(
+        height=cell_w + 16,
+        width=n * (cell_w + 1) + 40,
+        margin=dict(l=0, r=0, t=0, b=0),
+        template="plotly_white",
+        paper_bgcolor="#F7F3E8",
+        plot_bgcolor="#F7F3E8",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+    )
+    return fig
+
+
+def _flat_section_layout() -> html.Div:
+    """Build the flattened action-space section layout."""
+    rows: list[html.Div] = []
+    for rot in range(4):
+        n = len(FLAT_ACTION_CELLS[rot])
+        label = f"Rot {ROTATION_LABELS[rot]}: {n} cells"
+        rows.append(
+            html.Div(
+                [
+                    html.Div(
+                        label,
+                        style={
+                            "fontWeight": 700,
+                            "fontSize": "12px",
+                            "marginBottom": "2px",
+                        },
+                    ),
+                    html.Div(
+                        dcc.Graph(
+                            id=f"flat-row-{rot}",
+                            clear_on_unhover=True,
+                            config={"displayModeBar": False},
+                        ),
+                        style={"overflowX": "auto"},
+                    ),
+                ],
+                style={"marginBottom": "8px"},
+            )
+        )
+
+    return html.Div(
+        [
+            html.H2(
+                "Flattened Action Space",
+                style={
+                    "margin": "0 0 10px 0",
+                    "fontFamily": "Georgia, Times New Roman, serif",
+                },
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Label(
+                                "Piece",
+                                style={"display": "block", "marginBottom": "4px"},
+                            ),
+                            dcc.Dropdown(
+                                id="flat-piece-dropdown",
+                                options=FLAT_PIECE_OPTIONS,  # type: ignore[arg-type]
+                                value=2,
+                                clearable=False,
+                                style={"width": "160px"},
+                            ),
+                        ],
+                        style={"display": "inline-block", "marginRight": "24px"},
+                    ),
+                    html.Div(
+                        f"Total action-space cells: {FLAT_TOTAL_CELLS}  "
+                        f"({' + '.join(str(len(c)) for c in FLAT_ACTION_CELLS)})",
+                        style={
+                            "display": "inline-block",
+                            "fontWeight": 700,
+                            "fontSize": "13px",
+                            "verticalAlign": "bottom",
+                            "lineHeight": "38px",
+                        },
+                    ),
+                ],
+                style={"marginBottom": "14px"},
+            ),
+            *rows,
+            html.Div(
+                [
+                    html.H3(
+                        "Board Preview",
+                        style={"margin": "0 0 8px 0", "fontSize": "18px"},
+                    ),
+                    html.Div(
+                        id="flat-preview-board",
+                        children=make_preview_board((), background_color="#EFE6D2"),
+                    ),
+                ],
+                style={"marginTop": "12px"},
+            ),
+        ],
+        style={
+            "marginTop": "18px",
+            "padding": "18px",
+            "background": "#FFF9EE",
+            "border": "1px solid #D0BFA2",
+            "borderRadius": "18px",
+        },
+    )
+
+
+FLAT_SECTION = _flat_section_layout()
+
+
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.title = "Policy Grid Visualizer"
 
@@ -894,6 +1394,8 @@ app.layout = html.Div(
                 "borderRadius": "18px",
             },
         ),
+        EXPLODED_SECTION,
+        FLAT_SECTION,
     ],
     style={
         "minHeight": "100vh",
@@ -1051,6 +1553,75 @@ def update_hover_preview(
         ]
     )
     return details, preview
+
+
+# ---------------------------------------------------------------------------
+# Flattened action-space callbacks
+# ---------------------------------------------------------------------------
+
+
+@callback(
+    Output("flat-row-0", "figure"),
+    Output("flat-row-1", "figure"),
+    Output("flat-row-2", "figure"),
+    Output("flat-row-3", "figure"),
+    Input("flat-piece-dropdown", "value"),
+)
+def update_flat_rows(piece_type: int) -> tuple[go.Figure, go.Figure, go.Figure, go.Figure]:
+    return tuple(make_flat_row_figure(rot, piece_type) for rot in range(4))  # type: ignore[return-value]
+
+
+@callback(
+    Output("flat-preview-board", "children"),
+    Input("flat-row-0", "hoverData"),
+    Input("flat-row-1", "hoverData"),
+    Input("flat-row-2", "hoverData"),
+    Input("flat-row-3", "hoverData"),
+    State("flat-piece-dropdown", "value"),
+    prevent_initial_call=True,
+)
+def update_flat_preview(
+    hover0: dict | None,
+    hover1: dict | None,
+    hover2: dict | None,
+    hover3: dict | None,
+    piece_type: int,
+) -> html.Div:
+    # Find which row triggered the callback.
+    triggered = dash.ctx.triggered_id
+    hover_map = {
+        "flat-row-0": (0, hover0),
+        "flat-row-1": (1, hover1),
+        "flat-row-2": (2, hover2),
+        "flat-row-3": (3, hover3),
+    }
+    if triggered not in hover_map:
+        return make_preview_board((), background_color="#EFE6D2")
+
+    rotation, hover_data = hover_map[triggered]
+    if not hover_data or not hover_data.get("points"):
+        return make_preview_board((), background_color="#EFE6D2")
+
+    point = hover_data["points"][0]
+    idx = int(point["x"])
+    cells = FLAT_ACTION_CELLS[rotation]
+    if idx < 0 or idx >= len(cells):
+        return make_preview_board((), background_color="#EFE6D2")
+
+    grid_x, grid_y = cells[idx]
+
+    # Check if this is a valid placement for the selected piece.
+    piece_redundant = piece_type in PIECES_TWO_ROTATIONS and rotation >= 2
+    if piece_redundant:
+        return make_preview_board((), background_color="#EFE6D2")
+
+    info = build_placement_info(piece_type, rotation, grid_x, grid_y)
+    if not info.valid:
+        return make_preview_board((), background_color="#EFE6D2")
+
+    pc = PIECE_COLORS[piece_type]
+    color = f"rgb({pc[0]}, {pc[1]}, {pc[2]})"
+    return make_preview_board(info.in_bounds_cells, background_color=color)
 
 
 def main(args: ScriptArgs) -> None:
