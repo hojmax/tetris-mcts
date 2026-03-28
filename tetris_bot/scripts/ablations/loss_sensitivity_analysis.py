@@ -417,15 +417,24 @@ def sample_noise_tensor(
     return noise.to(device=device)
 
 
-@dataclass
 class CachedPredictions:
     """Base model outputs cached once, reused for all noise levels."""
 
-    policy_logits: torch.Tensor  # (N, 735)
-    value_pred: torch.Tensor  # (N, 1)
-    policy_targets: torch.Tensor  # (N, 735)
-    value_targets: torch.Tensor  # (N,)
-    action_masks: torch.Tensor  # (N, 735)
+    __slots__ = ("policy_logits", "value_pred", "policy_targets", "value_targets", "action_masks")
+
+    def __init__(
+        self,
+        policy_logits: torch.Tensor,
+        value_pred: torch.Tensor,
+        policy_targets: torch.Tensor,
+        value_targets: torch.Tensor,
+        action_masks: torch.Tensor,
+    ) -> None:
+        self.policy_logits = policy_logits
+        self.value_pred = value_pred
+        self.policy_targets = policy_targets
+        self.value_targets = value_targets
+        self.action_masks = action_masks
 
 
 def compute_base_predictions(
