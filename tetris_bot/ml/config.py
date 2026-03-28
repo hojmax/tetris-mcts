@@ -64,7 +64,7 @@ class OptimizerConfig:
     batch_size: int = 512
     learning_rate: float = 0.0005
     weight_decay: float = 5e-5
-    grad_clip_norm: float = 0.0
+    grad_clip_norm: float = 10.0
     lr_schedule: str = "linear"  # 'linear', 'cosine', 'step', 'none'
     lr_decay_steps: int = 200_000
     lr_min_factor: float = 0.2  # Final LR as fraction of initial (for linear/cosine)

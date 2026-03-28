@@ -1,5 +1,7 @@
 # Next Steps
 
+- [ ] Data augmentation. horisontal flip.
+- [ ] Optimized EMA. 
 - [ ] Adding in coords into input layer?
 - [ ] Adding in holes map into input layer?
 - [ ] Adding in overhang map into input layer?
