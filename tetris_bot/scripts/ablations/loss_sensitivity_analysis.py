@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, field
 from datetime import datetime, timezone
 import json
@@ -149,7 +150,7 @@ class ScriptArgs:
     value_noise_stds: list[float] = field(
         default_factory=lambda: [0.0, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0]
     )
-    num_noise_repeats: int = 3  # Random draws per non-zero noise level
+    num_noise_repeats: int = 2  # Random draws per non-zero noise level
     max_examples: int = 0  # 0 uses the full replay buffer before the train/eval split
     train_fraction: float = (
         0.9  # Fraction of shuffled examples reserved for the train split
@@ -164,6 +165,7 @@ class ScriptArgs:
     eval_num_simulations: int = 2000
     eval_max_placements: int = 50
     eval_num_workers: int = 7
+    eval_parallel_sweeps: int = 2  # Run this many Rust eval jobs concurrently
     eval_seed_start: int = 0
     eval_mcts_seed: int | None = 0  # Fixed MCTS seed so only prediction noise varies
     device: str = "auto"
@@ -415,76 +417,101 @@ def sample_noise_tensor(
     return noise.to(device=device)
 
 
-def evaluate_losses_with_output_noise(
+@dataclass
+class CachedPredictions:
+    """Base model outputs cached once, reused for all noise levels."""
+
+    policy_logits: torch.Tensor  # (N, 735)
+    value_pred: torch.Tensor  # (N, 1)
+    policy_targets: torch.Tensor  # (N, 735)
+    value_targets: torch.Tensor  # (N,)
+    action_masks: torch.Tensor  # (N, 735)
+
+
+def compute_base_predictions(
     model: AnalysisModel,
     source: OfflineDataSource,
     eval_indices: np.ndarray,
     device: torch.device,
     eval_batch_size: int,
-    *,
-    noise_type: str | None,
-    noise_std: float,
-    noise_seed: int | None,
-) -> tuple[float, float]:
-    policy_sum = 0.0
-    value_sum = 0.0
-    count = 0
-    noise_generator = None
-    if noise_seed is not None:
-        noise_generator = torch.Generator(device="cpu")
-        noise_generator.manual_seed(noise_seed)
+) -> CachedPredictions:
+    """Run model once on the eval set and cache outputs + targets."""
+    all_logits = []
+    all_values = []
+    all_policy_targets = []
+    all_value_targets = []
+    all_masks = []
 
     model.eval()
     with torch.inference_mode():
         for start in range(0, len(eval_indices), eval_batch_size):
             batch_idx = eval_indices[start : start + eval_batch_size]
             boards, aux, policy_targets, value_targets, action_masks = (
-                build_torch_batch(
-                    source,
-                    batch_idx,
-                    device,
-                )
+                build_torch_batch(source, batch_idx, device)
             )
             policy_logits, value_pred = model(boards.float(), aux)
-            if noise_type == "policy":
-                policy_noise = sample_noise_tensor(
-                    shape=policy_logits.shape,
-                    mean=0.0,
-                    std=noise_std,
-                    generator=noise_generator,
-                    device=policy_logits.device,
-                )
-                if policy_noise is not None:
-                    policy_logits = policy_logits + policy_noise
-            elif noise_type == "value":
-                value_noise = sample_noise_tensor(
-                    shape=value_pred.shape,
-                    mean=0.0,
-                    std=noise_std,
-                    generator=noise_generator,
-                    device=value_pred.device,
-                )
-                if value_noise is not None:
-                    value_pred = value_pred + value_noise
+            all_logits.append(policy_logits)
+            all_values.append(value_pred)
+            all_policy_targets.append(policy_targets)
+            all_value_targets.append(value_targets)
+            all_masks.append(action_masks)
 
-            masked_logits = apply_action_mask(policy_logits, action_masks)
-            log_policy = F.log_softmax(masked_logits, dim=-1)
-            log_policy = torch.where(
-                torch.isinf(log_policy),
-                torch.zeros_like(log_policy),
-                log_policy,
+    return CachedPredictions(
+        policy_logits=torch.cat(all_logits, dim=0),
+        value_pred=torch.cat(all_values, dim=0),
+        policy_targets=torch.cat(all_policy_targets, dim=0),
+        value_targets=torch.cat(all_value_targets, dim=0),
+        action_masks=torch.cat(all_masks, dim=0),
+    )
+
+
+def evaluate_losses_from_cached(
+    cached: CachedPredictions,
+    *,
+    noise_type: str | None,
+    noise_std: float,
+    noise_seed: int | None,
+) -> tuple[float, float]:
+    """Compute losses from cached predictions with optional additive noise."""
+    policy_logits = cached.policy_logits
+    value_pred = cached.value_pred
+    device = policy_logits.device
+
+    if noise_type is not None and noise_std > 0.0:
+        noise_generator = None
+        if noise_seed is not None:
+            noise_generator = torch.Generator(device="cpu")
+            noise_generator.manual_seed(noise_seed)
+
+        if noise_type == "policy":
+            noise = sample_noise_tensor(
+                shape=policy_logits.shape,
+                mean=0.0,
+                std=noise_std,
+                generator=noise_generator,
+                device=device,
             )
-            policy_loss = -torch.sum(policy_targets * log_policy, dim=1).mean()
-            value_loss = F.mse_loss(value_pred.squeeze(-1), value_targets)
+            if noise is not None:
+                policy_logits = policy_logits + noise
+        elif noise_type == "value":
+            noise = sample_noise_tensor(
+                shape=value_pred.shape,
+                mean=0.0,
+                std=noise_std,
+                generator=noise_generator,
+                device=device,
+            )
+            if noise is not None:
+                value_pred = value_pred + noise
 
-            batch_size = len(batch_idx)
-            policy_sum += policy_loss.item() * batch_size
-            value_sum += value_loss.item() * batch_size
-            count += batch_size
-
-    if count == 0:
-        raise ValueError("Held-out evaluation set is empty")
-    return policy_sum / count, value_sum / count
+    masked_logits = apply_action_mask(policy_logits, cached.action_masks)
+    log_policy = F.log_softmax(masked_logits, dim=-1)
+    log_policy = torch.where(
+        torch.isinf(log_policy), torch.zeros_like(log_policy), log_policy
+    )
+    policy_loss = -torch.sum(cached.policy_targets * log_policy, dim=1).mean()
+    value_loss = F.mse_loss(value_pred.squeeze(-1), cached.value_targets)
+    return policy_loss.item(), value_loss.item()
 
 
 def run_games(
@@ -827,11 +854,8 @@ def make_point(
 
 def run_sweep(
     *,
-    model: AnalysisModel,
+    cached: CachedPredictions,
     model_path: Path,
-    source: OfflineDataSource,
-    eval_indices: np.ndarray,
-    device: torch.device,
     args: ScriptArgs,
     baseline_point: SweepPoint,
 ) -> list[SweepPoint]:
@@ -839,12 +863,13 @@ def run_sweep(
         baseline_point.model_copy(update={"noise_type": "policy"}),
         baseline_point.model_copy(update={"noise_type": "value"}),
     ]
-    sweep_specs = [
+
+    # Build all jobs and pre-compute losses (instant from cached predictions)
+    jobs: list[dict[str, object]] = []
+    for noise_type, noise_stds in [
         ("policy", args.policy_noise_stds),
         ("value", args.value_noise_stds),
-    ]
-
-    for noise_type, noise_stds in sweep_specs:
+    ]:
         for noise_index, noise_std in enumerate(noise_stds):
             if noise_std == 0.0:
                 continue
@@ -856,53 +881,63 @@ def run_sweep(
                     repeat_index=repeat_index,
                     noise_std=noise_std,
                 )
-                logger.info(
-                    "Running noise point",
-                    noise_type=noise_type,
-                    noise_std=noise_std,
-                    repeat_index=repeat_index,
-                    repeats=args.num_noise_repeats,
-                    noise_seed=noise_seed,
-                )
-                start = datetime.now(timezone.utc)
-                policy_loss, value_loss = evaluate_losses_with_output_noise(
-                    model,
-                    source,
-                    eval_indices,
-                    device,
-                    args.eval_batch_size,
+                policy_loss, value_loss = evaluate_losses_from_cached(
+                    cached,
                     noise_type=noise_type,
                     noise_std=noise_std,
                     noise_seed=noise_seed,
                 )
-                game_metrics = run_games(
-                    model_path,
-                    args,
-                    noise_type=noise_type,
-                    noise_std=noise_std,
-                )
-                elapsed_sec = (datetime.now(timezone.utc) - start).total_seconds()
-                point = make_point(
-                    noise_type=noise_type,
-                    noise_std=noise_std,
-                    repeat_index=repeat_index,
-                    noise_seed=noise_seed,
-                    policy_loss=policy_loss,
-                    value_loss=value_loss,
-                    game_metrics=game_metrics,
-                    elapsed_sec=elapsed_sec,
-                )
-                all_points.append(point)
-                logger.info(
-                    "Noise point complete",
-                    noise_type=noise_type,
-                    noise_std=noise_std,
-                    repeat_index=repeat_index,
-                    policy_loss=f"{policy_loss:.4f}",
-                    value_loss=f"{value_loss:.4f}",
-                    avg_attack=f"{point.avg_attack:.2f}",
-                    elapsed_sec=f"{elapsed_sec:.1f}",
-                )
+                jobs.append({
+                    "noise_type": noise_type,
+                    "noise_std": noise_std,
+                    "repeat_index": repeat_index,
+                    "noise_seed": noise_seed,
+                    "policy_loss": policy_loss,
+                    "value_loss": value_loss,
+                })
+
+    logger.info(
+        "Pre-computed all losses; running game evals",
+        num_jobs=len(jobs),
+        parallel_sweeps=args.eval_parallel_sweeps,
+    )
+
+    # Pipeline Rust eval jobs with concurrent workers
+    def _run_one(job: dict[str, object]) -> SweepPoint:
+        start = datetime.now(timezone.utc)
+        game_metrics = run_games(
+            model_path,
+            args,
+            noise_type=str(job["noise_type"]),
+            noise_std=float(job["noise_std"]),  # type: ignore[arg-type]
+        )
+        elapsed_sec = (datetime.now(timezone.utc) - start).total_seconds()
+        point = make_point(
+            noise_type=str(job["noise_type"]),
+            noise_std=float(job["noise_std"]),  # type: ignore[arg-type]
+            repeat_index=int(job["repeat_index"]),  # type: ignore[arg-type]
+            noise_seed=job["noise_seed"],  # type: ignore[arg-type]
+            policy_loss=float(job["policy_loss"]),  # type: ignore[arg-type]
+            value_loss=float(job["value_loss"]),  # type: ignore[arg-type]
+            game_metrics=game_metrics,
+            elapsed_sec=elapsed_sec,
+        )
+        logger.info(
+            "Noise point complete",
+            noise_type=job["noise_type"],
+            noise_std=job["noise_std"],
+            repeat_index=job["repeat_index"],
+            policy_loss=f"{job['policy_loss']:.4f}",
+            value_loss=f"{job['value_loss']:.4f}",
+            avg_attack=f"{point.avg_attack:.2f}",
+            elapsed_sec=f"{elapsed_sec:.1f}",
+        )
+        return point
+
+    with ThreadPoolExecutor(max_workers=args.eval_parallel_sweeps) as executor:
+        futures = {executor.submit(_run_one, job): job for job in jobs}
+        for future in as_completed(futures):
+            all_points.append(future.result())
 
     return all_points
 
@@ -1001,15 +1036,13 @@ def main(args: ScriptArgs) -> None:
             preload_mode=preload_mode,
         )
 
-        baseline_policy_loss, baseline_value_loss = evaluate_losses_with_output_noise(
-            model,
-            source,
-            eval_indices,
-            device,
-            args.eval_batch_size,
-            noise_type=None,
-            noise_std=0.0,
-            noise_seed=None,
+        cached = compute_base_predictions(
+            model, source, eval_indices, device, args.eval_batch_size
+        )
+        logger.info("Cached base predictions", num_examples=len(eval_indices))
+
+        baseline_policy_loss, baseline_value_loss = evaluate_losses_from_cached(
+            cached, noise_type=None, noise_std=0.0, noise_seed=None
         )
         baseline_game_metrics = run_games(
             model_path,
@@ -1035,11 +1068,8 @@ def main(args: ScriptArgs) -> None:
         )
 
         points = run_sweep(
-            model=model,
+            cached=cached,
             model_path=model_path,
-            source=source,
-            eval_indices=eval_indices,
-            device=device,
             args=args,
             baseline_point=baseline_point,
         )
