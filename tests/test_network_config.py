@@ -27,9 +27,8 @@ def _make_config(tmp_path: Path, network: NetworkConfig) -> TrainingConfig:
     )
 
 
-def test_network_config_to_model_kwargs_includes_full_gated_fusion_surface() -> None:
+def test_network_config_to_model_kwargs_includes_full_model_surface() -> None:
     network = NetworkConfig(
-        architecture="gated_fusion",
         trunk_channels=9,
         num_conv_residual_blocks=3,
         reduction_channels=18,
@@ -44,7 +43,6 @@ def test_network_config_to_model_kwargs_includes_full_gated_fusion_surface() -> 
     )
 
     assert network.to_model_kwargs() == {
-        "architecture": "gated_fusion",
         "trunk_channels": 9,
         "num_conv_residual_blocks": 3,
         "reduction_channels": 18,

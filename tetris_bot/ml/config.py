@@ -11,7 +11,6 @@ from typing import TypedDict
 
 
 class ModelKwargs(TypedDict):
-    architecture: str
     trunk_channels: int
     num_conv_residual_blocks: int
     reduction_channels: int
@@ -29,7 +28,6 @@ class ModelKwargs(TypedDict):
 class NetworkConfig:
     """Neural network architecture hyperparameters."""
 
-    architecture: str = "gated_fusion"  # 'gated_fusion' (default) or 'simple_aux_mlp'
     trunk_channels: int = 16
     num_conv_residual_blocks: int = 3
     reduction_channels: int = 32
@@ -44,7 +42,6 @@ class NetworkConfig:
 
     def to_model_kwargs(self) -> ModelKwargs:
         return {
-            "architecture": self.architecture,
             "trunk_channels": self.trunk_channels,
             "num_conv_residual_blocks": self.num_conv_residual_blocks,
             "reduction_channels": self.reduction_channels,

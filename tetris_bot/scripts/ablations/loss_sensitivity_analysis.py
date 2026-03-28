@@ -516,11 +516,6 @@ def main(args: ScriptArgs) -> None:
     logger.info("Loading model", run_dir=str(run_dir), device=device_str)
 
     model = load_model_from_run(run_dir, config, device)
-    if config.network.architecture != "gated_fusion":
-        raise ValueError(
-            "Loss sensitivity analysis only supports gated_fusion architecture "
-            f"(got {config.network.architecture!r})"
-        )
 
     # Load validation data (no wandb dependency)
     preload_mode = "none"

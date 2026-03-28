@@ -36,7 +36,6 @@ from tetris_bot.ml.weights import export_split_models, split_model_paths
 logger = structlog.get_logger()
 _DEFAULT_SELF_PLAY = SelfPlayConfig()
 _LARGE_CONFIG = NetworkConfig(
-    architecture="gated_fusion",
     trunk_channels=16,
     num_conv_residual_blocks=3,
     reduction_channels=32,
@@ -47,7 +46,6 @@ _LARGE_CONFIG = NetworkConfig(
     conv_padding=1,
 )
 _SMALL_CONFIG = NetworkConfig(
-    architecture="gated_fusion",
     trunk_channels=8,
     num_conv_residual_blocks=2,
     reduction_channels=16,

@@ -143,9 +143,7 @@ Ownership split:
   - 61 piece/game features for uncached heads path.
   - 19 board-derived stats folded into cached board embedding.
 - Outputs: policy over 735 actions + scalar value.
-- Architecture options:
-  - `gated_fusion` (default): conv trunk + board-stats encoder + deeper cached board MLP, then concat-based aux fusion.
-  - `simple_aux_mlp`: aux-only MLP over all 80 aux features, then linear policy/value heads (board input ignored for predictions).
+- Architecture: conv trunk + board-stats encoder + deeper cached board MLP, then concat the board embedding and auxiliary embedding before the policy/value trunk.
 
 ### Scoring Reminder
 
@@ -154,7 +152,7 @@ Ownership split:
 
 ## Important Defaults (TrainingConfig)
 
-- Network (`gated_fusion` default): `trunk_channels=16`, `num_conv_residual_blocks=3`, `reduction_channels=32`, `board_stats_hidden=32`, `board_proj_hidden=256`, `fc_hidden=256`, `aux_hidden=64`, `fusion_hidden=256`, `num_fusion_blocks=1`.
+- Network: `trunk_channels=16`, `num_conv_residual_blocks=3`, `reduction_channels=32`, `board_stats_hidden=32`, `board_proj_hidden=256`, `fc_hidden=256`, `aux_hidden=64`, `fusion_hidden=256`, `num_fusion_blocks=1`.
 - MCTS: `num_simulations=2000`, `c_puct=1.5`, `temperature=0.8`, `reuse_tree=true`, `max_placements=50`.
 - Training: `batch_size=512`, `learning_rate=7e-4` with linear decay to `1.4e-4`, `weight_decay=5e-5`, `grad_clip_norm=0.0`.
 - Workers/buffer: `num_workers=7`, replay ring buffer size `2_000_000`.
@@ -191,7 +189,6 @@ python tetris_bot/scripts/train.py --total_steps 100000
 python tetris_bot/scripts/train.py --resume_dir training_runs/vN
 python tetris_bot/scripts/train.py --resume_wandb entity/project/run_id
 python tetris_bot/scripts/inspection/download_wandb_training_data.py --reference entity/project/run_id --run_dir training_runs/vN --overwrite true
-python tetris_bot/scripts/train.py --architecture simple_aux_mlp --fc_hidden 64
 python tetris_bot/scripts/warm_start.py --source_run_dir training_runs/v3
 ```
 

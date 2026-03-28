@@ -90,7 +90,7 @@ def test_async_checkpoint_saver_flushes_completed_requests(tmp_path: Path) -> No
             scheduler_state_dict=None,
             extra_state={},
         ),
-        model_kwargs={"architecture": "gated_fusion"},
+        model_kwargs={},
         export_for_rust=False,
     )
 
@@ -123,7 +123,7 @@ def test_async_checkpoint_saver_propagates_worker_errors() -> None:
             scheduler_state_dict=None,
             extra_state={},
         ),
-        model_kwargs={"architecture": "gated_fusion"},
+        model_kwargs={},
         export_for_rust=False,
     )
 

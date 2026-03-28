@@ -355,11 +355,6 @@ def build_variants(
     args: ScriptArgs,
 ) -> list[TrunkVariant]:
     source_network = source_config.network
-    if source_network.architecture != "gated_fusion":
-        raise ValueError(
-            "compare_warm_start_trunk_sizes only supports gated_fusion runs "
-            f"(got architecture={source_network.architecture!r})"
-        )
     resolved_trunk_channels = resolve_trunk_channels(source_network, args)
     resolved_residual_blocks = resolve_residual_block_counts(
         source_network,

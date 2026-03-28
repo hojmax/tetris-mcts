@@ -22,7 +22,7 @@ Short version of the current implementation:
 - The current input contract is `280` total features:
   - `board`: `1 x 20 x 10`
   - `aux_features`: `80 = 61 piece/game + 19 board stats`
-- The default model is `gated_fusion`, not the older flat board-plus-aux MLP described in previous versions of this document.
+- The current model uses a cached board path plus a separate piece/game auxiliary path that are concatenated before the policy/value trunk.
 - The default hyperparameters are:
   - `trunk_channels=16`
   - `num_conv_residual_blocks=3`
@@ -42,7 +42,7 @@ Short version of the current implementation:
   - `*.fc.bin`
 - Rust caches the intermediate `board_h` embedding by board occupancy so repeated searches on the same board do not re-run the board-only path.
 
-For exact feature offsets, tensor shapes, connection equations, split-export details, and the `simple_aux_mlp` baseline, use [NETWORK_ARCHITECTURE.md](./NETWORK_ARCHITECTURE.md).
+For exact feature offsets, tensor shapes, connection equations, and split-export details, use [NETWORK_ARCHITECTURE.md](./NETWORK_ARCHITECTURE.md).
 
 ---
 

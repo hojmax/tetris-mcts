@@ -6,16 +6,14 @@
 
 = Network Architecture
 
-Figure @fig:network-architecture shows the default `gated_fusion` network used by the current system. The board occupancy tensor flows through the cached convolutional backbone, engineered board statistics are injected at `board_proj`, and the piece/game context modulates the cached board embedding before the policy and value heads.
+Figure @fig:network-architecture shows the current network used by the system. The board occupancy tensor flows through the cached convolutional backbone, engineered board statistics are injected at `board_proj`, and the piece/game context modulates the cached board embedding before the policy and value heads.
 
 #figure(
   image("../plots/network_architecture.pdf", width: 100%),
   caption: [
-    Default `gated_fusion` architecture. Inputs are split into a `1 x 20 x 10` board tensor, `19` custom board-stat features, and `61` piece/game features. The custom board stats are column heights, max height, bottom-row fill counts, total blocks, bumpiness, holes, and overhang fields. The piece/game features are current piece, hold piece, hold availability, next queue, placement count, combo, back-to-back state, and hidden-piece distribution. The board path produces a cached `board_h` embedding, the aux path generates the gate and additive bias, and the fused representation feeds the `735`-logit policy head and scalar value head. The runtime split model is `conv.onnx + fc.bin + heads.onnx`, with `board_h` cached by board state.
+    Current architecture. Inputs are split into a `1 x 20 x 10` board tensor, `19` custom board-stat features, and `61` piece/game features. The custom board stats are column heights, max height, bottom-row fill counts, total blocks, bumpiness, holes, and overhang fields. The piece/game features are current piece, hold piece, hold availability, next queue, placement count, combo, back-to-back state, and hidden-piece distribution. The board path produces a cached `board_h` embedding, the aux path produces a separate embedding, and the concatenated representation feeds the `735`-logit policy head and scalar value head. The runtime split model is `conv.onnx + fc.bin + heads.onnx`, with `board_h` cached by board state.
   ],
 ) <fig:network-architecture>
-
-The repo also includes a simpler `simple_aux_mlp` baseline that preserves the same split-model contract but ignores the board tensor for prediction and operates on the `80` auxiliary features directly.
 
 = Runtime and Average Attack
 

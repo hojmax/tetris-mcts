@@ -15,7 +15,6 @@ from tetris_bot.constants import (
 from tetris_bot.ml.network import (
     AUX_FEATURES,
     COMBO_NORMALIZATION_MAX,
-    NETWORK_ARCH_SIMPLE_AUX_MLP,
     PIECE_AUX_FEATURES,
     ConvBackbone,
     HeadsModel,
@@ -304,137 +303,6 @@ def test_pytorch_and_rust_tract_inference_match_on_same_onnx(tmp_path: Path) -> 
         )
 
 
-def test_simple_aux_mlp_ignores_board_tensor() -> None:
-    torch.manual_seed(17)
-    model = TetrisNet(
-        architecture=NETWORK_ARCH_SIMPLE_AUX_MLP,
-        trunk_channels=16,
-        num_conv_residual_blocks=1,
-        reduction_channels=32,
-        fc_hidden=64,
-        conv_kernel_size=3,
-        conv_padding=1,
-    )
-    model.eval()
-
-    aux = torch.randn(1, AUX_FEATURES)
-    board_a = torch.zeros(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
-    board_b = torch.ones(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
-
-    with torch.no_grad():
-        logits_a, value_a = model(board_a, aux)
-        logits_b, value_b = model(board_b, aux)
-
-    np.testing.assert_allclose(logits_a.numpy(), logits_b.numpy(), atol=1e-7, rtol=0.0)
-    np.testing.assert_allclose(value_a.numpy(), value_b.numpy(), atol=1e-7, rtol=0.0)
-
-
-def test_simple_aux_mlp_split_model_matches_end_to_end_pytorch() -> None:
-    rng = np.random.default_rng(314)
-
-    for seed in range(5):
-        torch.manual_seed(seed)
-        model = TetrisNet(
-            architecture=NETWORK_ARCH_SIMPLE_AUX_MLP,
-            trunk_channels=16,
-            num_conv_residual_blocks=1,
-            reduction_channels=32,
-            fc_hidden=64,
-            conv_kernel_size=3,
-            conv_padding=1,
-        )
-        model.eval()
-
-        conv_backbone = ConvBackbone(model)
-        conv_backbone.eval()
-        heads = HeadsModel(model)
-        heads.eval()
-
-        for _ in range(20):
-            board = torch.from_numpy(
-                rng.integers(0, 2, size=(1, 1, BOARD_HEIGHT, BOARD_WIDTH)).astype(
-                    np.float32
-                )
-            )
-            aux = torch.from_numpy(
-                rng.standard_normal((1, AUX_FEATURES)).astype(np.float32)
-            )
-
-            with torch.no_grad():
-                expected_logits, expected_value = model(board, aux)
-                conv_out = conv_backbone(board)
-                board_stats = aux[:, PIECE_AUX_FEATURES:]
-                board_h = model.forward_board_embedding_from_parts(conv_out, board_stats)
-                piece_aux = aux[:, :PIECE_AUX_FEATURES]
-                split_logits, split_value = heads(board_h, piece_aux)
-
-            np.testing.assert_allclose(
-                split_logits.numpy(),
-                expected_logits.numpy(),
-                rtol=1e-5,
-                atol=1e-5,
-                err_msg=f"Simple policy logits mismatch (seed={seed})",
-            )
-            np.testing.assert_allclose(
-                split_value.numpy(),
-                expected_value.numpy(),
-                rtol=1e-5,
-                atol=1e-5,
-                err_msg=f"Simple value mismatch (seed={seed})",
-            )
-
-
-def test_simple_aux_mlp_pytorch_and_rust_tract_inference_match_on_same_onnx(
-    tmp_path: Path,
-) -> None:
-    torch.manual_seed(27)
-    model = TetrisNet(
-        architecture=NETWORK_ARCH_SIMPLE_AUX_MLP,
-        trunk_channels=16,
-        num_conv_residual_blocks=1,
-        reduction_channels=32,
-        fc_hidden=64,
-        conv_kernel_size=3,
-        conv_padding=1,
-    )
-    model.eval()
-
-    onnx_path = tmp_path / "simple_parity_model.onnx"
-    assert export_onnx(model, onnx_path)
-    assert export_split_models(model, onnx_path)
-
-    for env, move_number, max_placements in _build_env_variants():
-        board, aux = _encode_state_python(env, move_number, max_placements)
-        action_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
-
-        board_tensor = torch.from_numpy(board).reshape(1, 1, BOARD_HEIGHT, BOARD_WIDTH)
-        aux_tensor = torch.from_numpy(aux).reshape(1, -1)
-        mask_tensor = torch.from_numpy(action_mask).reshape(1, -1)
-
-        with torch.no_grad():
-            policy_logits, value_tensor = model(board_tensor, aux_tensor)
-            masked_logits = policy_logits.masked_fill(~mask_tensor, float("-inf"))
-            expected_policy = torch.softmax(masked_logits, dim=-1).squeeze(0).numpy()
-            expected_value = value_tensor.item()
-
-        rust_policy, rust_value = tetris_core.debug_predict_masked_from_tensors(
-            str(onnx_path),
-            board.tolist(),
-            aux.tolist(),
-            action_mask.tolist(),
-        )
-
-        np.testing.assert_allclose(
-            np.asarray(rust_policy, dtype=np.float32),
-            expected_policy.astype(np.float32),
-            rtol=1e-4,
-            atol=1e-5,
-        )
-        np.testing.assert_allclose(
-            float(rust_value), float(expected_value), rtol=1e-4, atol=1e-5
-        )
-
-
 def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
     """Verify split computation (conv + board proj + heads) matches TetrisNet.forward()."""
     rng = np.random.default_rng(42)
@@ -474,7 +342,9 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
                 # Split path
                 conv_out = conv_backbone(board)  # (1, 1600)
                 board_stats = aux[:, PIECE_AUX_FEATURES:]  # (1, 19)
-                board_h = model.forward_board_embedding_from_parts(conv_out, board_stats)
+                board_h = model.forward_board_embedding_from_parts(
+                    conv_out, board_stats
+                )
                 piece_aux = aux[:, :PIECE_AUX_FEATURES]  # (1, 61)
                 split_logits, split_value = heads(board_h, piece_aux)
 
@@ -723,7 +593,6 @@ def test_direct_inference_cache_matches_uncached(tmp_path: Path) -> None:
         fc_hidden=128,
         aux_hidden=64,
         num_fusion_blocks=1,
-        architecture="gated_fusion",
         conv_kernel_size=3,
         conv_padding=1,
     )

@@ -1,6 +1,6 @@
 # Network Architecture
 
-This document describes the current neural network architecture implemented in this repo, including the training-time model, the runtime split-export path, tensor shapes, feature layout, and the alternative baseline architecture.
+This document describes the current neural network architecture implemented in this repo, including the training-time model, the runtime split-export path, tensor shapes, and feature layout.
 
 The code is the source of truth. If this document and the code disagree, trust:
 
@@ -11,11 +11,11 @@ The code is the source of truth. If this document and the code disagree, trust:
 - `tetris_core/src/game/action_space.rs`
 - `tetris_bot/ml/loss.py`
 
-## Current Default at a Glance
+## Current Model at a Glance
 
-The default network instantiated by `NetworkConfig()` is:
+The network instantiated by `NetworkConfig()` is:
 
-- Architecture: `gated_fusion`
+- Architecture: cached board path plus separate piece/game aux path, concatenated before the shared trunk
 - Board input: `1 x 20 x 10`
 - Auxiliary input: `80` features
 - Auxiliary split: `61` piece/game features + `19` board-stat features
@@ -33,8 +33,6 @@ The default network instantiated by `NetworkConfig()` is:
   - `conv_kernel_size=3`
   - `conv_padding=1`
 - Total trainable parameters: `1,265,120`
-
-The repo also includes a simpler baseline architecture, `simple_aux_mlp`, described near the end of this document.
 
 ## High-Level Design
 
@@ -126,7 +124,7 @@ The normalization divisors are empirical constants in `tetris_core/src/game/cons
 - Holes: `20.0`
 - Overhang fields: `25.0`
 
-## Default Architecture: `gated_fusion`
+## Current Architecture
 
 ### End-to-End Tensor Flow
 
@@ -174,7 +172,7 @@ fused -> Linear(256,128) -> SiLU -> Linear(128,1)   = value
 
 ### Stage-by-Stage Shapes
 
-For batch size `B`, the default `gated_fusion` model has the following shapes:
+For batch size `B`, the current model has the following shapes:
 
 | Stage | Operation | Output shape | Notes |
 | --- | --- | --- | --- |
@@ -280,7 +278,7 @@ The current architecture does not use BatchNorm or ReLU.
 - For default `16`-channel tensors, it uses `GroupNorm(16, 16)`.
 - For default `32`-channel tensors, it uses `GroupNorm(32, 32)`.
 
-### Parameter Counts for Default `gated_fusion`
+### Parameter Counts
 
 | Subsystem | Parameters |
 | --- | ---: |
@@ -364,7 +362,7 @@ The repo does not run the monolithic training model directly inside Rust for nor
 
 Exported from `ConvBackbone`.
 
-For `gated_fusion`, it contains:
+It contains:
 
 - `conv_initial`
 - initial `GroupNorm`
@@ -406,7 +404,7 @@ board_h = board_proj_fc2(board_hidden)
 
 Exported from `HeadsModel`.
 
-For `gated_fusion`, it contains:
+It contains:
 
 - `aux_fc`
 - `aux_ln`
@@ -452,60 +450,12 @@ This is why the feature split matters:
 - board-only information is cached
 - piece/game context stays uncached and cheap to recompute
 
-## Alternative Architecture: `simple_aux_mlp`
-
-The repo also supports `architecture="simple_aux_mlp"`.
-
-This architecture keeps the same external model interface and the same split-export contract, but it does not use the board tensor for actual prediction.
-
-### Forward Path
-
-```text
-board -> summed to a dummy scalar -> multiplied by 0
-board_stats -> passed through a frozen identity-like board_proj
-piece_aux + board_h(=board_stats) -> concat to full_aux[80]
-full_aux -> Linear(80,128) -> LayerNorm -> SiLU
-        -> Linear(128,735) = policy_logits
-        -> Linear(128,1)   = value
-```
-
-More precisely:
-
-- `board_proj` is defined as `Linear(1 + 19, 19)`
-- its weights are frozen
-- its first input column, the dummy board scalar, is forced to zero contribution
-- its remaining `19` columns are set to the identity matrix
-
-So in effect:
-
-```text
-board_h == board_stats
-full_aux == concat(piece_aux, board_stats)
-```
-
-### Why It Exists
-
-It is a baseline architecture that:
-
-- preserves the same ONNX signatures as the default model
-- preserves the same Rust split-runtime contract
-- provides a lower-capacity comparison point
-
-### Parameter Count
-
-With the default `fc_hidden=128`:
-
-- Total parameters: `105,967`
-- Trainable parameters: `105,568`
-
-The difference is the frozen `board_proj` identity map.
-
 ## Differences From Older Repo Docs
 
 If you have seen older architecture descriptions in this repo, the main changes are:
 
 - Current input contract is `280` total features, not `297`.
-- Current default model is `gated_fusion`, not a simple board-flatten-then-concat MLP.
+- Current model uses a cached board path plus separate piece/game context, not a simple board-flatten-then-concat MLP.
 - Current conv path uses `GroupNorm + SiLU + residual blocks`, not `BatchNorm + ReLU`.
 - Current runtime uses split export plus a cached `board_h` embedding in Rust.
 - Current board-stat vector keeps only the bottom `4` row-fill features, not all `20` rows.
@@ -514,7 +464,7 @@ If you have seen older architecture descriptions in this repo, the main changes 
 
 If you want the one-sentence description of the production model used here, it is:
 
-> A split `gated_fusion` policy/value network that turns the board into a cached `256`-dimensional embedding, concatenates that embedding with `61` piece/game features through a shared MLP trunk, and predicts `735` action logits plus a scalar value.
+> A split policy/value network that turns the board into a cached `256`-dimensional embedding, concatenates that embedding with `61` piece/game features through a shared MLP trunk, and predicts `735` action logits plus a scalar value.
 
 If you change any of the following, you must keep Python and Rust in sync:
 

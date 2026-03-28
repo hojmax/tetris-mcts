@@ -37,7 +37,6 @@ def test_load_training_config_json_fills_missing_network_defaults(
         json.dumps(
             {
                 "network": {
-                    "architecture": "gated_fusion",
                     "trunk_channels": 4,
                     "num_conv_residual_blocks": 1,
                     "reduction_channels": 8,

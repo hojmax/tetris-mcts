@@ -490,7 +490,6 @@ def main(args: ScriptArgs) -> None:
             fc_hidden=args.baseline_fc_hidden,
             conv_kernel_size=args.baseline_conv_kernel_size,
             conv_padding=args.baseline_conv_padding,
-            architecture="gated_fusion",
             aux_hidden=args.baseline_aux_hidden,
             num_fusion_blocks=args.baseline_num_fusion_blocks,
         ).to(device)

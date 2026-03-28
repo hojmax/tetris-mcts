@@ -36,7 +36,7 @@ mod tests;
 /// Neural network model wrapper with board embedding cache
 pub struct TetrisNN {
     backend: InferenceBackend,
-    cached_board_path: Arc<CachedBoardPathKind>,
+    cached_board_path: Arc<CachedBoardPath>,
     board_hidden: usize,
     conv_out_size: usize, // conv model output dim (e.g. 1600)
     board_cache: RefCell<HashMap<[u64; 4], Array1<f32>>>,
@@ -86,12 +86,6 @@ struct CachedBoardPath {
     board_proj_fc1: LinearLayer,
     board_proj_ln1: LayerNorm1D,
     board_proj_fc2: LinearLayer,
-}
-
-#[derive(Clone)]
-enum CachedBoardPathKind {
-    Deep(CachedBoardPath),
-    Linear(LinearLayer),
 }
 
 impl TetrisNN {
@@ -219,39 +213,20 @@ impl TetrisNN {
         let backend = Self::load_inference_backend(&conv_path, &heads_path)?;
 
         let cached_board_path = load_fc_binary(&fc_path)?;
-        let (board_hidden, conv_out_size) = match &cached_board_path {
-            CachedBoardPathKind::Deep(path) => {
-                let board_hidden = path.board_proj_fc2.weight.nrows();
-                let board_proj_cols = path.board_proj_fc1.weight.ncols();
-                let board_stats_hidden = path.board_stats_fc.weight.nrows();
-                if board_proj_cols <= board_stats_hidden {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Cached board-path width {} must be > board_stats_hidden ({})",
-                            board_proj_cols, board_stats_hidden
-                        ),
-                    )
-                    .into());
-                }
-                (board_hidden, board_proj_cols - board_stats_hidden)
-            }
-            CachedBoardPathKind::Linear(layer) => {
-                let board_hidden = layer.weight.nrows();
-                let board_proj_cols = layer.weight.ncols();
-                if board_proj_cols <= BOARD_STATS_FEATURES {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "Linear cached board-path width {} must be > BOARD_STATS_FEATURES ({})",
-                            board_proj_cols, BOARD_STATS_FEATURES
-                        ),
-                    )
-                    .into());
-                }
-                (board_hidden, board_proj_cols - BOARD_STATS_FEATURES)
-            }
-        };
+        let board_hidden = cached_board_path.board_proj_fc2.weight.nrows();
+        let board_proj_cols = cached_board_path.board_proj_fc1.weight.ncols();
+        let board_stats_hidden = cached_board_path.board_stats_fc.weight.nrows();
+        if board_proj_cols <= board_stats_hidden {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Cached board-path width {} must be > board_stats_hidden ({})",
+                    board_proj_cols, board_stats_hidden
+                ),
+            )
+            .into());
+        }
+        let conv_out_size = board_proj_cols - board_stats_hidden;
 
         Ok(TetrisNN {
             backend,
@@ -444,31 +419,22 @@ impl TetrisNN {
             .into());
         }
 
-        match self.cached_board_path.as_ref() {
-            CachedBoardPathKind::Deep(path) => {
-                let board_stats_h = silu_vec(layer_norm_1d(
-                    linear_forward(&path.board_stats_fc, board_stats),
-                    &path.board_stats_ln,
-                )?);
+        let path = self.cached_board_path.as_ref();
+        let board_stats_h = silu_vec(layer_norm_1d(
+            linear_forward(&path.board_stats_fc, board_stats),
+            &path.board_stats_ln,
+        )?);
 
-                let mut combined = Vec::with_capacity(self.conv_out_size + board_stats_h.len());
-                combined.extend_from_slice(&conv_values);
-                combined.extend_from_slice(&board_stats_h);
+        let mut combined = Vec::with_capacity(self.conv_out_size + board_stats_h.len());
+        combined.extend_from_slice(&conv_values);
+        combined.extend_from_slice(&board_stats_h);
 
-                let hidden = silu_vec(layer_norm_1d(
-                    linear_forward(&path.board_proj_fc1, &combined),
-                    &path.board_proj_ln1,
-                )?);
+        let hidden = silu_vec(layer_norm_1d(
+            linear_forward(&path.board_proj_fc1, &combined),
+            &path.board_proj_ln1,
+        )?);
 
-                Ok(linear_forward(&path.board_proj_fc2, &hidden))
-            }
-            CachedBoardPathKind::Linear(layer) => {
-                let mut combined = Vec::with_capacity(self.conv_out_size + BOARD_STATS_FEATURES);
-                combined.extend_from_slice(&conv_values);
-                combined.extend_from_slice(board_stats);
-                Ok(linear_forward(layer, &combined))
-            }
-        }
+        Ok(linear_forward(&path.board_proj_fc2, &hidden))
     }
 
     fn insert_board_embedding_cache(&self, board_key: [u64; 4], embed: Array1<f32>) {
@@ -687,16 +653,13 @@ fn pack_board(env: &TetrisEnv) -> [u64; 4] {
 }
 
 /// Load cached-board-path weights from binary file.
-/// Deep format (`TCM2`):
+/// Format (`TCM2`):
 /// - board_stats_fc: [rows u32][cols u32][weight f32][bias f32]
 /// - board_stats_ln: [hidden u32][weight f32][bias f32]
 /// - board_proj_fc1: [rows u32][cols u32][weight f32][bias f32]
 /// - board_proj_ln1: [hidden u32][weight f32][bias f32]
 /// - board_proj_fc2: [rows u32][cols u32][weight f32][bias f32]
-///
-/// Simple format (`TCS2`):
-/// - board_proj: [rows u32][cols u32][weight f32][bias f32]
-fn load_fc_binary(path: &Path) -> TractResult<CachedBoardPathKind> {
+fn load_fc_binary(path: &Path) -> TractResult<CachedBoardPath> {
     let mut file = File::open(path).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -710,17 +673,11 @@ fn load_fc_binary(path: &Path) -> TractResult<CachedBoardPathKind> {
 
     let mut magic = [0u8; 4];
     file.read_exact(&mut magic)?;
-    if magic == *b"TCS2" {
-        return Ok(CachedBoardPathKind::Linear(read_linear_layer(
-            &mut file,
-            "board_proj",
-        )?));
-    }
     if magic != *b"TCM2" {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
-                "Unsupported cached board-path binary format in {} (expected magic TCM2 or TCS2)",
+                "Unsupported cached board-path binary format in {} (expected magic TCM2)",
                 path.display()
             ),
         )
@@ -792,13 +749,13 @@ fn load_fc_binary(path: &Path) -> TractResult<CachedBoardPathKind> {
         .into());
     }
 
-    Ok(CachedBoardPathKind::Deep(CachedBoardPath {
+    Ok(CachedBoardPath {
         board_stats_fc,
         board_stats_ln,
         board_proj_fc1,
         board_proj_ln1,
         board_proj_fc2,
-    }))
+    })
 }
 
 fn read_u32(file: &mut File) -> TractResult<usize> {
