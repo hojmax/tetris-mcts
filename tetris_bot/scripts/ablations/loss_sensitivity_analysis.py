@@ -187,7 +187,8 @@ def perturb_module_weights(
     if sigma <= 0:
         return
     for p in module.parameters():
-        p.data.add_(torch.randn_like(p.data, generator=rng) * sigma)
+        noise = torch.randn(p.data.shape, generator=rng, dtype=p.data.dtype, device=p.data.device)
+        p.data.add_(noise * sigma)
 
 
 def clone_and_perturb(
@@ -226,11 +227,11 @@ def export_to_tempdir(model: TetrisNet, tmpdir: Path) -> Path:
 def run_games(
     model_path: Path,
     args: ScriptArgs,
-) -> dict[str, float]:
+) -> dict[str, float | int]:
     """Run deterministic fixed-seed games and return attack metrics."""
-    if evaluate_model is None:
+    if evaluate_model is None or MCTSConfig is None:
         raise ImportError("tetris_core not available; rebuild with make build-dev")
-    config = MCTSConfig()
+    config = MCTSConfig()  # type: ignore[operator]
     config.num_simulations = args.eval_num_simulations
     config.max_placements = args.eval_max_placements
     config.visit_sampling_epsilon = 0.0
@@ -254,12 +255,12 @@ def run_games(
     )
     game_results = [(int(a), int(m)) for a, m in result.game_results]
     return {
-        "avg_attack": float(result.avg_attack),
-        "avg_lines": float(result.avg_lines),
-        "avg_moves": float(result.avg_moves),
-        "max_attack": int(result.max_attack),
+        "avg_attack": result.avg_attack,
+        "avg_lines": result.avg_lines,
+        "avg_moves": result.avg_moves,
+        "max_attack": result.max_attack,
         "total_attack": sum(a for a, _ in game_results),
-        "num_games": int(result.num_games),
+        "num_games": result.num_games,
     }
 
 
@@ -281,7 +282,7 @@ def sigmoid_derivative(x: float, L: float, k: float, x0: float) -> float:
 def fit_sigmoid(losses: np.ndarray, attacks: np.ndarray) -> dict[str, float] | None:
     """Fit sigmoid to (loss, attack) data. Returns params or None on failure."""
     try:
-        from scipy.optimize import curve_fit
+        from scipy.optimize import curve_fit  # type: ignore[import-not-found]
     except ImportError:
         logger.warning("scipy not available; skipping sigmoid fit")
         return None
@@ -389,9 +390,9 @@ def run_sensitivity_sweep(
                     avg_attack=game_metrics["avg_attack"],
                     avg_lines=game_metrics["avg_lines"],
                     avg_moves=game_metrics["avg_moves"],
-                    max_attack=game_metrics["max_attack"],
-                    total_attack=game_metrics["total_attack"],
-                    num_games=game_metrics["num_games"],
+                    max_attack=int(game_metrics["max_attack"]),
+                    total_attack=int(game_metrics["total_attack"]),
+                    num_games=int(game_metrics["num_games"]),
                     elapsed_sec=elapsed,
                 )
                 results.append(point)

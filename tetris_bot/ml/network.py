@@ -289,15 +289,19 @@ class TetrisNet(nn.Module):
 
         # Piece/game aux path, combined with the cached board embedding by concatenation.
         if num_aux_hidden_layers < 0:
-            raise ValueError(f"num_aux_hidden_layers must be >= 0, got {num_aux_hidden_layers}")
+            raise ValueError(
+                f"num_aux_hidden_layers must be >= 0, got {num_aux_hidden_layers}"
+            )
         aux_layers: list[nn.Module] = []
         aux_in = PIECE_AUX_FEATURES
         for _ in range(num_aux_hidden_layers):
-            aux_layers.extend([
-                nn.Linear(aux_in, aux_hidden),
-                nn.LayerNorm(aux_hidden),
-                nn.SiLU(),
-            ])
+            aux_layers.extend(
+                [
+                    nn.Linear(aux_in, aux_hidden),
+                    nn.LayerNorm(aux_hidden),
+                    nn.SiLU(),
+                ]
+            )
             aux_in = aux_hidden
         # Final projection (activation applied in forward)
         aux_layers.append(nn.Linear(aux_in, aux_hidden))

@@ -181,9 +181,7 @@ def validate_args(args: ScriptArgs) -> None:
     if args.warmup_epochs < 0.0:
         raise ValueError(f"warmup_epochs must be >= 0 (got {args.warmup_epochs})")
     if not 0.0 <= args.lr_min_factor <= 1.0:
-        raise ValueError(
-            f"lr_min_factor must be in [0, 1] (got {args.lr_min_factor})"
-        )
+        raise ValueError(f"lr_min_factor must be in [0, 1] (got {args.lr_min_factor})")
     if args.weight_decay is not None and args.weight_decay < 0.0:
         raise ValueError(
             f"weight_decay must be >= 0 when set (got {args.weight_decay})"
@@ -501,9 +499,7 @@ def compute_warmup_cosine_lr_factor(
     if total_steps <= 0:
         raise ValueError(f"total_steps must be > 0 (got {total_steps})")
     if not 0.0 <= lr_min_factor <= 1.0:
-        raise ValueError(
-            f"lr_min_factor must be in [0, 1] (got {lr_min_factor})"
-        )
+        raise ValueError(f"lr_min_factor must be in [0, 1] (got {lr_min_factor})")
 
     if warmup_steps > 0 and step < warmup_steps:
         return (step + 1) / warmup_steps
@@ -520,9 +516,7 @@ def apply_scheduler_lrs(
     lrs: list[float],
 ) -> None:
     if len(optimizer.param_groups) != len(lrs):
-        raise ValueError(
-            "Optimizer param group count does not match computed LR count"
-        )
+        raise ValueError("Optimizer param group count does not match computed LR count")
     for param_group, lr in zip(optimizer.param_groups, lrs):
         param_group["lr"] = lr
 
