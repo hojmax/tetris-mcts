@@ -2,7 +2,6 @@
 
 - [ ] Improve policy layout. (not 735).
 - [ ] Figure out data augmentation.
-- [ ] How large can I make replay buffer?
 - [ ] Adding in coords into input layer
 - [ ] Larger trunk impact in warm start?
 
