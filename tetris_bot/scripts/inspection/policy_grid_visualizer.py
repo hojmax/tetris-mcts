@@ -1104,6 +1104,54 @@ def make_flat_row_figure(
     return fig
 
 
+def _make_flat_preview_figure(
+    occupied: list[tuple[int, int]], piece_color: str
+) -> dict:
+    """Return a plotly figure dict for the flat-section board preview."""
+    z = [[0] * BOARD_WIDTH for _ in range(BOARD_HEIGHT)]
+    for x, y in occupied:
+        if 0 <= x < BOARD_WIDTH and 0 <= y < BOARD_HEIGHT:
+            z[y][x] = 1
+    return {
+        "data": [
+            {
+                "type": "heatmap",
+                "z": z,
+                "x": list(range(BOARD_WIDTH)),
+                "y": list(range(BOARD_HEIGHT)),
+                "showscale": False,
+                "xgap": 2,
+                "ygap": 2,
+                "zmin": 0,
+                "zmax": 1,
+                "colorscale": [
+                    [0.0, "#EFE6D2"],
+                    [0.499, "#EFE6D2"],
+                    [0.5, piece_color],
+                    [1.0, piece_color],
+                ],
+                "hoverinfo": "skip",
+            }
+        ],
+        "layout": {
+            "template": "plotly_white",
+            "paper_bgcolor": "#FFF9EE",
+            "plot_bgcolor": "#FFF9EE",
+            "margin": {"l": 24, "r": 8, "t": 8, "b": 8},
+            "font": {"family": "Menlo, Consolas, monospace", "color": "#2F241F"},
+            "xaxis": {
+                "visible": False,
+                "range": [-0.5, BOARD_WIDTH - 0.5],
+            },
+            "yaxis": {
+                "visible": False,
+                "autorange": "reversed",
+                "range": [-0.5, BOARD_HEIGHT - 0.5],
+            },
+        },
+    }
+
+
 def _flat_section_layout() -> html.Div:
     """Build the flattened action-space section layout."""
     rows: list[html.Div] = []
@@ -1134,8 +1182,23 @@ def _flat_section_layout() -> html.Div:
             )
         )
 
+    # Precompute data for the clientside hover callback.
+    precomputed = {
+        "flat_cells": [[[x, y] for x, y in cells] for cells in FLAT_ACTION_CELLS],
+        "tetromino_cells": [
+            [[[dx, dy] for dx, dy in rot] for rot in piece]
+            for piece in TETROMINO_CELLS
+        ],
+        "two_rot_pieces": sorted(PIECES_TWO_ROTATIONS),
+        "piece_colors": [list(c) for c in PIECE_COLORS],
+    }
+
+    # Empty board figure used as initial state.
+    empty_board = _make_flat_preview_figure([], "#EFE6D2")
+
     return html.Div(
         [
+            dcc.Store(id="flat-precomputed", data=precomputed),
             html.H2(
                 "Flattened Action Space",
                 style={
@@ -1182,9 +1245,11 @@ def _flat_section_layout() -> html.Div:
                         "Board Preview",
                         style={"margin": "0 0 8px 0", "fontSize": "18px"},
                     ),
-                    html.Div(
-                        id="flat-preview-board",
-                        children=make_preview_board((), background_color="#EFE6D2"),
+                    dcc.Graph(
+                        id="flat-preview-graph",
+                        figure=empty_board,
+                        config={"displayModeBar": False},
+                        style={"width": "282px", "height": "540px"},
                     ),
                 ],
                 style={"marginTop": "12px"},
@@ -1571,57 +1636,113 @@ def update_flat_rows(piece_type: int) -> tuple[go.Figure, go.Figure, go.Figure, 
     return tuple(make_flat_row_figure(rot, piece_type) for rot in range(4))  # type: ignore[return-value]
 
 
-@callback(
-    Output("flat-preview-board", "children"),
+clientside_callback(
+    """
+    function(hover0, hover1, hover2, hover3, pieceType, precomputed) {
+        var BOARD_W = 10, BOARD_H = 20;
+        var emptyColor = '#EFE6D2', bgColor = '#FFF9EE';
+
+        function emptyBoard() {
+            var z = [];
+            for (var r = 0; r < BOARD_H; r++) {
+                z.push(new Array(BOARD_W).fill(0));
+            }
+            return {
+                data: [{
+                    type: 'heatmap', z: z,
+                    x: Array.from({length: BOARD_W}, (_, i) => i),
+                    y: Array.from({length: BOARD_H}, (_, i) => i),
+                    showscale: false, xgap: 2, ygap: 2, zmin: 0, zmax: 1,
+                    colorscale: [[0, emptyColor], [1, emptyColor]],
+                    hoverinfo: 'skip'
+                }],
+                layout: {
+                    template: 'plotly_white',
+                    paper_bgcolor: bgColor, plot_bgcolor: bgColor,
+                    margin: {l: 24, r: 8, t: 8, b: 8},
+                    font: {family: 'Menlo, Consolas, monospace', color: '#2F241F'},
+                    xaxis: {visible: false, range: [-0.5, BOARD_W - 0.5]},
+                    yaxis: {visible: false, autorange: 'reversed', range: [-0.5, BOARD_H - 0.5]}
+                }
+            };
+        }
+
+        // Determine which row triggered.
+        var ctx = dash_clientside.callback_context;
+        if (!ctx || !ctx.triggered || !ctx.triggered.length) return emptyBoard();
+        var trigId = ctx.triggered[0].prop_id.split('.')[0];
+        var hovMap = {'flat-row-0': [0, hover0], 'flat-row-1': [1, hover1],
+                      'flat-row-2': [2, hover2], 'flat-row-3': [3, hover3]};
+        if (!(trigId in hovMap)) return emptyBoard();
+        var rotation = hovMap[trigId][0];
+        var hd = hovMap[trigId][1];
+        if (!hd || !hd.points || !hd.points.length) return emptyBoard();
+
+        var flatIdx = hd.points[0].x;
+        var cells = precomputed.flat_cells[rotation];
+        if (flatIdx < 0 || flatIdx >= cells.length) return emptyBoard();
+
+        // Redundant rotation for this piece?
+        if (precomputed.two_rot_pieces.indexOf(pieceType) >= 0 && rotation >= 2)
+            return emptyBoard();
+
+        var gridX = cells[flatIdx][0], gridY = cells[flatIdx][1];
+        var pCells = precomputed.tetromino_cells[pieceType][rotation];
+
+        // Compute anchor.
+        var minDx = Infinity;
+        var minDy = Infinity;
+        for (var i = 0; i < pCells.length; i++) {
+            if (pCells[i][0] < minDx) minDx = pCells[i][0];
+            if (pCells[i][1] < minDy) minDy = pCells[i][1];
+        }
+        var ax = gridX - minDx, ay = gridY - minDy;
+
+        // Place cells, check bounds.
+        var occupied = [];
+        for (var i = 0; i < pCells.length; i++) {
+            var bx = ax + pCells[i][0], by = ay + pCells[i][1];
+            if (bx < 0 || bx >= BOARD_W || by < 0 || by >= BOARD_H) return emptyBoard();
+            occupied.push([bx, by]);
+        }
+
+        // Build z-array.
+        var z = [];
+        for (var r = 0; r < BOARD_H; r++) z.push(new Array(BOARD_W).fill(0));
+        for (var i = 0; i < occupied.length; i++) z[occupied[i][1]][occupied[i][0]] = 1;
+
+        var pc = precomputed.piece_colors[pieceType];
+        var colorStr = 'rgb(' + pc[0] + ',' + pc[1] + ',' + pc[2] + ')';
+
+        return {
+            data: [{
+                type: 'heatmap', z: z,
+                x: Array.from({length: BOARD_W}, (_, i) => i),
+                y: Array.from({length: BOARD_H}, (_, i) => i),
+                showscale: false, xgap: 2, ygap: 2, zmin: 0, zmax: 1,
+                colorscale: [[0, emptyColor], [0.499, emptyColor], [0.5, colorStr], [1, colorStr]],
+                hoverinfo: 'skip'
+            }],
+            layout: {
+                template: 'plotly_white',
+                paper_bgcolor: bgColor, plot_bgcolor: bgColor,
+                margin: {l: 24, r: 8, t: 8, b: 8},
+                font: {family: 'Menlo, Consolas, monospace', color: '#2F241F'},
+                xaxis: {visible: false, range: [-0.5, BOARD_W - 0.5]},
+                yaxis: {visible: false, autorange: 'reversed', range: [-0.5, BOARD_H - 0.5]}
+            }
+        };
+    }
+    """,
+    Output("flat-preview-graph", "figure"),
     Input("flat-row-0", "hoverData"),
     Input("flat-row-1", "hoverData"),
     Input("flat-row-2", "hoverData"),
     Input("flat-row-3", "hoverData"),
     State("flat-piece-dropdown", "value"),
+    State("flat-precomputed", "data"),
     prevent_initial_call=True,
 )
-def update_flat_preview(
-    hover0: dict | None,
-    hover1: dict | None,
-    hover2: dict | None,
-    hover3: dict | None,
-    piece_type: int,
-) -> html.Div:
-    # Find which row triggered the callback.
-    triggered = dash.ctx.triggered_id
-    hover_map = {
-        "flat-row-0": (0, hover0),
-        "flat-row-1": (1, hover1),
-        "flat-row-2": (2, hover2),
-        "flat-row-3": (3, hover3),
-    }
-    if triggered not in hover_map:
-        return make_preview_board((), background_color="#EFE6D2")
-
-    rotation, hover_data = hover_map[triggered]
-    if not hover_data or not hover_data.get("points"):
-        return make_preview_board((), background_color="#EFE6D2")
-
-    point = hover_data["points"][0]
-    idx = int(point["x"])
-    cells = FLAT_ACTION_CELLS[rotation]
-    if idx < 0 or idx >= len(cells):
-        return make_preview_board((), background_color="#EFE6D2")
-
-    grid_x, grid_y = cells[idx]
-
-    # Check if this is a valid placement for the selected piece.
-    piece_redundant = piece_type in PIECES_TWO_ROTATIONS and rotation >= 2
-    if piece_redundant:
-        return make_preview_board((), background_color="#EFE6D2")
-
-    info = build_placement_info(piece_type, rotation, grid_x, grid_y)
-    if not info.valid:
-        return make_preview_board((), background_color="#EFE6D2")
-
-    pc = PIECE_COLORS[piece_type]
-    color = f"rgb({pc[0]}, {pc[1]}, {pc[2]})"
-    return make_preview_board(info.in_bounds_cells, background_color=color)
 
 
 def main(args: ScriptArgs) -> None:

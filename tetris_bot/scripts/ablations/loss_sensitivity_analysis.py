@@ -284,23 +284,13 @@ class OnnxModel:
     """Wraps an ONNX model via onnxruntime to match TetrisNet's call signature."""
 
     def __init__(self, onnx_path: Path) -> None:
-        import onnx  # pyright: ignore[reportMissingImports]
         import onnxruntime as ort  # pyright: ignore[reportMissingImports]
 
-        model = onnx.load(str(onnx_path))
-        for inp in model.graph.input:
-            inp.type.tensor_type.shape.dim[0].dim_param = "batch"
-        for out in model.graph.output:
-            out.type.tensor_type.shape.dim[0].dim_param = "batch"
-
         providers: list[str] = []
-        if ort.get_available_providers():
-            if "CUDAExecutionProvider" in ort.get_available_providers():
-                providers.append("CUDAExecutionProvider")
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            providers.append("CUDAExecutionProvider")
         providers.append("CPUExecutionProvider")
-        self.session = ort.InferenceSession(
-            model.SerializeToString(), providers=providers
-        )
+        self.session = ort.InferenceSession(str(onnx_path), providers=providers)
         self.onnx_path = onnx_path
 
     def eval(self) -> None:
@@ -311,10 +301,22 @@ class OnnxModel:
     ) -> tuple[torch.Tensor, torch.Tensor]:
         board_np = board.cpu().float().numpy()
         aux_np = aux_features.cpu().float().numpy()
-        policy_logits_np, value_np = self.session.run(
-            ["policy_logits", "value"],
-            {"board": board_np, "aux_features": aux_np},
-        )
+        # ONNX model has hardcoded batch=1 in internal reshape nodes;
+        # run sample-by-sample (fine for small eval sets)
+        all_policy = []
+        all_value = []
+        for i in range(board_np.shape[0]):
+            p, v = self.session.run(
+                ["policy_logits", "value"],
+                {
+                    "board": board_np[i : i + 1],
+                    "aux_features": aux_np[i : i + 1],
+                },
+            )
+            all_policy.append(p)
+            all_value.append(v)
+        policy_logits_np = np.concatenate(all_policy, axis=0)
+        value_np = np.concatenate(all_value, axis=0)
         return (
             torch.from_numpy(policy_logits_np).to(board.device),
             torch.from_numpy(value_np).to(board.device),
@@ -328,14 +330,18 @@ def load_analysis_model(
     run_dir: Path,
     config: TrainingConfig,
     device: torch.device,
-) -> tuple[AnalysisModel, str]:
+) -> tuple[AnalysisModel, str, Path | None]:
+    """Load the best available model. Returns (model, source, onnx_path).
+
+    onnx_path is set when loading from incumbent ONNX (no export needed).
+    """
     # Prefer incumbent ONNX (the promoted best model)
     incumbent_path = run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
     if incumbent_path.exists():
         logger.info(
             "Loading incumbent ONNX model", incumbent_path=str(incumbent_path)
         )
-        return OnnxModel(incumbent_path), "incumbent_onnx"
+        return OnnxModel(incumbent_path), "incumbent_onnx", incumbent_path
 
     # Fall back to latest.pt
     checkpoint_path = run_dir / CHECKPOINT_DIRNAME / LATEST_CHECKPOINT_FILENAME
@@ -379,24 +385,12 @@ def load_analysis_model(
         logger.info("Patched board_proj forward to omit final SiLU for legacy checkpoint")
 
     analysis_model.eval()
-    return analysis_model, model_source
+    return analysis_model, model_source, None
 
 
-def export_analysis_model(model: AnalysisModel, output_dir: Path) -> Path:
-    """Export or copy analysis model artifacts for Rust eval."""
+def export_analysis_model(model: TetrisNet, output_dir: Path) -> Path:
+    """Export a PyTorch model to ONNX + split models for Rust eval."""
     model_path = output_dir / "analysis_model.onnx"
-    if isinstance(model, OnnxModel):
-        import shutil
-
-        src_onnx = model.onnx_path
-        shutil.copy2(src_onnx, model_path)
-        src_splits = split_model_paths(src_onnx)
-        dst_splits = split_model_paths(model_path)
-        for src_split, dst_split in zip(src_splits, dst_splits):
-            if src_split.exists():
-                shutil.copy2(src_split, dst_split)
-        return model_path
-
     if not export_onnx(model, model_path):
         raise RuntimeError("ONNX export failed")
     if not export_split_models(model, model_path):
@@ -956,10 +950,16 @@ def main(args: ScriptArgs) -> None:
     config = load_training_config_json(config_path)
     device = torch.device(pick_device(args.device))
     logger.info("Loading analysis model", run_dir=str(run_dir), device=str(device))
-    model, model_source = load_analysis_model(run_dir, config, device)
-    model_path = export_analysis_model(model, output_dir)
+    model, model_source, existing_onnx_path = load_analysis_model(
+        run_dir, config, device
+    )
+    if existing_onnx_path is not None:
+        model_path = existing_onnx_path
+    else:
+        assert isinstance(model, TetrisNet)
+        model_path = export_analysis_model(model, output_dir)
     logger.info(
-        "Exported analysis model",
+        "Analysis model ready",
         model_path=str(model_path),
         model_source=model_source,
     )
