@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import fmean, pstdev
+from typing import cast
 
 import structlog
 from simple_parsing import parse
@@ -47,6 +48,8 @@ class ScriptArgs:
     max_examples: int = 0
     batch_size: int | None = None
     learning_rate: float | None = None
+    warmup_epochs: float = 3.0
+    lr_min_factor: float = 0.1
     weight_decay: float | None = None
     grad_clip_norm: float | None = None
     eval_examples: int = 32_768
@@ -428,6 +431,8 @@ def make_warm_start_args(
         max_examples=args.max_examples,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
+        warmup_epochs=args.warmup_epochs,
+        lr_min_factor=args.lr_min_factor,
         weight_decay=args.weight_decay,
         grad_clip_norm=args.grad_clip_norm,
         eval_examples=args.eval_examples,
@@ -665,7 +670,17 @@ def main(args: ScriptArgs) -> None:
             warm_start_args,
             output_config=variant_output_config,
         )
-        warm_start_final_eval = warm_start_result.summary["final_eval"]
+        warm_start_final_eval = cast(
+            dict[str, object],
+            warm_start_result.summary["final_eval"],
+        )
+        warm_start_num_steps = cast(int, warm_start_result.summary["num_steps"])
+        warm_start_offline_best = cast(
+            dict[str, object],
+            warm_start_result.summary["offline_best"],
+        )
+        warm_start_avg_attack = cast(float, warm_start_final_eval["avg_attack"])
+        warm_start_avg_moves = cast(float, warm_start_final_eval["avg_moves"])
         variant_records.append(
             WarmStartVariantRecord(
                 label=variant.label,
@@ -677,10 +692,10 @@ def main(args: ScriptArgs) -> None:
                 output_run_dir=str(warm_start_result.output_run_dir),
                 summary_path=str(warm_start_result.summary_path),
                 incumbent_onnx_path=str(warm_start_result.incumbent_onnx_path),
-                warm_start_avg_attack=float(warm_start_final_eval["avg_attack"]),
-                warm_start_avg_moves=float(warm_start_final_eval["avg_moves"]),
-                warm_start_num_steps=int(warm_start_result.summary["num_steps"]),
-                warm_start_offline_best=dict(warm_start_result.summary["offline_best"]),
+                warm_start_avg_attack=warm_start_avg_attack,
+                warm_start_avg_moves=warm_start_avg_moves,
+                warm_start_num_steps=warm_start_num_steps,
+                warm_start_offline_best=warm_start_offline_best,
             )
         )
 

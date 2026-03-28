@@ -76,6 +76,8 @@ class ScriptArgs:
     max_examples: int = 0
     batch_size: int | None = None
     learning_rate: float | None = None
+    warmup_epochs: float = 3.0
+    lr_min_factor: float = 0.1
     weight_decay: float | None = None
     grad_clip_norm: float | None = None
     eval_examples: int = 32_768
@@ -119,11 +121,15 @@ class WarmStartTrainingResult:
     history: list[dict[str, float | int | bool | str]]
     ema_state_dict: dict[str, torch.Tensor] | None
     optimizer_state_dict: dict[str, object]
+    scheduler_state_dict: dict[str, object]
     loss_balancer_state: dict[str, object]
     current_value_loss_weight: float
     rng_state: dict[str, object]
     total_steps: int
     steps_per_round: int
+    lr_schedule_total_steps: int
+    lr_schedule_total_rounds: int
+    lr_warmup_steps: int
     rounds_completed: int
     stop_reason: str
     stopped_after_non_improving_rounds: int
@@ -171,6 +177,12 @@ def validate_args(args: ScriptArgs) -> None:
     if args.learning_rate is not None and args.learning_rate <= 0.0:
         raise ValueError(
             f"learning_rate must be > 0 when set (got {args.learning_rate})"
+        )
+    if args.warmup_epochs < 0.0:
+        raise ValueError(f"warmup_epochs must be >= 0 (got {args.warmup_epochs})")
+    if not 0.0 <= args.lr_min_factor <= 1.0:
+        raise ValueError(
+            f"lr_min_factor must be in [0, 1] (got {args.lr_min_factor})"
         )
     if args.weight_decay is not None and args.weight_decay < 0.0:
         raise ValueError(
@@ -343,6 +355,7 @@ def save_offline_resume_checkpoint(
     model: TetrisNet,
     ema_state_dict: dict[str, torch.Tensor] | None,
     optimizer_state_dict: dict[str, object],
+    scheduler_state_dict: dict[str, object],
     best_state_dict: dict[str, torch.Tensor],
     best_ema_state_dict: dict[str, torch.Tensor] | None,
     best_record: dict[str, float | int | bool | str],
@@ -356,9 +369,10 @@ def save_offline_resume_checkpoint(
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     state = {
-        "version": 2,
+        "version": 3,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer_state_dict,
+        "scheduler_state_dict": scheduler_state_dict,
         "best_state_dict": best_state_dict,
         "best_record": best_record,
         "history": history,
@@ -382,7 +396,11 @@ def load_offline_resume_checkpoint(
     model: TetrisNet,
     ema_model: torch.nn.Module | None,
     optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     loss_balancer: RunningLossBalancer,
+    lr_schedule_total_steps: int,
+    lr_warmup_steps: int,
+    lr_min_factor: float,
 ) -> WarmStartOfflineResumeState:
     state = torch.load(path, map_location="cpu", weights_only=False)
     model_state_dict = state.get("model_state_dict")
@@ -410,6 +428,22 @@ def load_offline_resume_checkpoint(
         else:
             ema_model.load_state_dict(ema_state_dict)
     load_optimizer_state_dict(optimizer, optimizer_state_dict, source=path)
+    resumed_total_steps = int(state.get("total_steps", 0))
+    if scheduler is not None:
+        scheduler_state_dict = state.get("scheduler_state_dict")
+        if scheduler_state_dict is not None:
+            scheduler.load_state_dict(scheduler_state_dict)
+            apply_scheduler_lrs(optimizer, scheduler.get_last_lr())
+        else:
+            assert isinstance(scheduler, torch.optim.lr_scheduler.LambdaLR)
+            align_warm_start_lr_scheduler_to_step(
+                optimizer=optimizer,
+                scheduler=scheduler,
+                step=resumed_total_steps,
+                warmup_steps=lr_warmup_steps,
+                total_steps=lr_schedule_total_steps,
+                lr_min_factor=lr_min_factor,
+            )
     loss_balancer.load_state_dict(
         state.get(
             "loss_balancer_state",
@@ -435,12 +469,108 @@ def load_offline_resume_checkpoint(
         ),
         best_record=dict(best_record),
         history=[dict(record) for record in state.get("history", [])],
-        total_steps=int(state.get("total_steps", 0)),
+        total_steps=resumed_total_steps,
         rounds_completed=int(state.get("rounds_completed", 0)),
         non_improving_rounds=int(state.get("non_improving_rounds", 0)),
         current_value_loss_weight=float(state.get("current_value_loss_weight", 1.0)),
         rng_state=copy.deepcopy(state.get("rng_state", {})),
     )
+
+
+def resolve_lr_schedule_round_budget(
+    *,
+    early_stopping_patience: int,
+    max_rounds: int,
+) -> int:
+    if max_rounds > 0:
+        return max_rounds
+    return early_stopping_patience + 1
+
+
+def compute_warmup_cosine_lr_factor(
+    *,
+    step: int,
+    warmup_steps: int,
+    total_steps: int,
+    lr_min_factor: float,
+) -> float:
+    if step < 0:
+        raise ValueError(f"step must be >= 0 (got {step})")
+    if warmup_steps < 0:
+        raise ValueError(f"warmup_steps must be >= 0 (got {warmup_steps})")
+    if total_steps <= 0:
+        raise ValueError(f"total_steps must be > 0 (got {total_steps})")
+    if not 0.0 <= lr_min_factor <= 1.0:
+        raise ValueError(
+            f"lr_min_factor must be in [0, 1] (got {lr_min_factor})"
+        )
+
+    if warmup_steps > 0 and step < warmup_steps:
+        return (step + 1) / warmup_steps
+
+    cosine_steps = max(total_steps - warmup_steps, 1)
+    cosine_denominator = max(cosine_steps - 1, 1)
+    progress = min(max(step - warmup_steps, 0) / cosine_denominator, 1.0)
+    cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+    return lr_min_factor + (1.0 - lr_min_factor) * cosine
+
+
+def apply_scheduler_lrs(
+    optimizer: torch.optim.Optimizer,
+    lrs: list[float],
+) -> None:
+    if len(optimizer.param_groups) != len(lrs):
+        raise ValueError(
+            "Optimizer param group count does not match computed LR count"
+        )
+    for param_group, lr in zip(optimizer.param_groups, lrs):
+        param_group["lr"] = lr
+
+
+def align_warm_start_lr_scheduler_to_step(
+    *,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LambdaLR,
+    step: int,
+    warmup_steps: int,
+    total_steps: int,
+    lr_min_factor: float,
+) -> None:
+    lrs = [
+        base_lr
+        * compute_warmup_cosine_lr_factor(
+            step=step,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            lr_min_factor=lr_min_factor,
+        )
+        for base_lr in scheduler.base_lrs
+    ]
+    scheduler.last_epoch = step
+    scheduler._step_count = max(step + 1, 1)
+    scheduler._last_lr = lrs
+    apply_scheduler_lrs(optimizer, lrs)
+
+
+def build_warm_start_lr_scheduler(
+    optimizer: torch.optim.Optimizer,
+    *,
+    warmup_steps: int,
+    total_steps: int,
+    lr_min_factor: float,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    if total_steps <= 0:
+        raise ValueError(f"total_steps must be > 0 (got {total_steps})")
+
+    def lr_lambda(step: int) -> float:
+        return compute_warmup_cosine_lr_factor(
+            step=step,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            lr_min_factor=lr_min_factor,
+        )
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 
 def warm_start_selection_metric(policy_loss: float, value_loss: float) -> float:
@@ -608,6 +738,8 @@ def train_warm_start_model(
     device: torch.device,
     batch_size: int,
     learning_rate: float,
+    warmup_epochs: float,
+    lr_min_factor: float,
     weight_decay: float,
     grad_clip_norm: float,
     epochs_per_round: float,
@@ -638,6 +770,26 @@ def train_warm_start_model(
         batch_size=batch_size,
         epochs=epochs_per_round,
     )
+    lr_schedule_total_rounds = resolve_lr_schedule_round_budget(
+        early_stopping_patience=early_stopping_patience,
+        max_rounds=max_rounds,
+    )
+    lr_warmup_steps = (
+        compute_training_steps(
+            len(dataset_setup.train_local_indices),
+            batch_size=batch_size,
+            epochs=warmup_epochs,
+        )
+        if warmup_epochs > 0.0
+        else 0
+    )
+    lr_schedule_total_steps = max(steps_per_round * lr_schedule_total_rounds, 1)
+    scheduler = build_warm_start_lr_scheduler(
+        optimizer,
+        warmup_steps=lr_warmup_steps,
+        total_steps=lr_schedule_total_steps,
+        lr_min_factor=lr_min_factor,
+    )
     log_interval = max(1, steps_per_round // 10)
     start_time = time.perf_counter()
     total_steps = 0
@@ -652,7 +804,11 @@ def train_warm_start_model(
             model=model,
             ema_model=ema.model if ema is not None else None,
             optimizer=optimizer,
+            scheduler=scheduler,
             loss_balancer=loss_balancer,
+            lr_schedule_total_steps=lr_schedule_total_steps,
+            lr_warmup_steps=lr_warmup_steps,
+            lr_min_factor=lr_min_factor,
         )
         if resume_state.rng_state:
             rng.bit_generator.state = resume_state.rng_state
@@ -684,7 +840,31 @@ def train_warm_start_model(
             best_round_index=best_record.get("round_index"),
             best_step=best_record.get("step"),
             best_eval_selection_metric=best_record.get("eval_selection_metric"),
+            learning_rate=optimizer.param_groups[0]["lr"],
         )
+
+    logger.info(
+        "Warm-start offline LR schedule",
+        lr_schedule="warmup_cosine",
+        warmup_epochs=warmup_epochs,
+        lr_warmup_steps=lr_warmup_steps,
+        lr_schedule_total_rounds=lr_schedule_total_rounds,
+        lr_schedule_total_steps=lr_schedule_total_steps,
+        lr_min_factor=lr_min_factor,
+        base_learning_rate=learning_rate,
+        initial_learning_rate=optimizer.param_groups[0]["lr"],
+    )
+    log_wandb(
+        {
+            "offline_step": total_steps,
+            "warm_start/lr_schedule_total_rounds": lr_schedule_total_rounds,
+            "warm_start/lr_schedule_total_steps": lr_schedule_total_steps,
+            "warm_start/lr_warmup_steps": lr_warmup_steps,
+            "warm_start/lr_warmup_epochs": warmup_epochs,
+            "warm_start/lr_min_factor": lr_min_factor,
+            "warm_start/learning_rate": optimizer.param_groups[0]["lr"],
+        }
+    )
 
     def record_eval(round_index: int, step: int, epochs_seen: float) -> None:
         nonlocal best_record, best_state_dict, best_ema_state_dict
@@ -801,6 +981,7 @@ def train_warm_start_model(
                 model.parameters(), grad_clip_norm
             )
             optimizer.step()
+            scheduler.step()
             if ema is not None:
                 ema.update(model)
 
@@ -883,11 +1064,15 @@ def train_warm_start_model(
         history=history,
         ema_state_dict=(clone_model_state_dict(ema.model) if ema is not None else None),
         optimizer_state_dict=copy.deepcopy(optimizer.state_dict()),
+        scheduler_state_dict=copy.deepcopy(scheduler.state_dict()),
         loss_balancer_state=loss_balancer.state_dict(),
         current_value_loss_weight=current_value_loss_weight,
         rng_state=dict(copy.deepcopy(rng.bit_generator.state)),
         total_steps=total_steps,
         steps_per_round=steps_per_round,
+        lr_schedule_total_steps=lr_schedule_total_steps,
+        lr_schedule_total_rounds=lr_schedule_total_rounds,
+        lr_warmup_steps=lr_warmup_steps,
         rounds_completed=rounds_completed,
         stop_reason=stop_reason,
         stopped_after_non_improving_rounds=non_improving_rounds,
@@ -916,6 +1101,8 @@ def build_wandb_config(
     preload_mode: str,
     batch_size: int,
     learning_rate: float,
+    warmup_epochs: float,
+    lr_min_factor: float,
     weight_decay: float,
     grad_clip_norm: float,
     eval_worker_resolution: EvalWorkerResolution,
@@ -940,6 +1127,8 @@ def build_wandb_config(
         "max_examples": args.max_examples,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
+        "warmup_epochs": warmup_epochs,
+        "lr_min_factor": lr_min_factor,
         "weight_decay": weight_decay,
         "grad_clip_norm": grad_clip_norm,
         "eval_examples": args.eval_examples,
@@ -1048,6 +1237,8 @@ def run_warm_start(
         preload_mode=preload_mode,
         batch_size=batch_size,
         learning_rate=learning_rate,
+        warmup_epochs=args.warmup_epochs,
+        lr_min_factor=args.lr_min_factor,
         weight_decay=weight_decay,
         grad_clip_norm=grad_clip_norm,
         eval_worker_resolution=eval_worker_resolution,
@@ -1080,6 +1271,8 @@ def run_warm_start(
         max_rounds=args.max_rounds,
         batch_size=batch_size,
         learning_rate=learning_rate,
+        warmup_epochs=args.warmup_epochs,
+        lr_min_factor=args.lr_min_factor,
         weight_decay=weight_decay,
         grad_clip_norm=grad_clip_norm,
         preload_mode=preload_mode,
@@ -1123,6 +1316,8 @@ def run_warm_start(
                 device=device,
                 batch_size=batch_size,
                 learning_rate=learning_rate,
+                warmup_epochs=args.warmup_epochs,
+                lr_min_factor=args.lr_min_factor,
                 weight_decay=weight_decay,
                 grad_clip_norm=grad_clip_norm,
                 epochs_per_round=args.epochs_per_round,
@@ -1146,6 +1341,7 @@ def run_warm_start(
             model=model,
             ema_state_dict=training_result.ema_state_dict,
             optimizer_state_dict=training_result.optimizer_state_dict,
+            scheduler_state_dict=training_result.scheduler_state_dict,
             best_state_dict=training_result.best_state_dict,
             best_ema_state_dict=training_result.best_ema_state_dict,
             best_record=training_result.best_record,
@@ -1382,8 +1578,13 @@ def run_warm_start(
             "seed": args.seed,
             "batch_size": batch_size,
             "learning_rate": learning_rate,
+            "warmup_epochs": args.warmup_epochs,
+            "lr_min_factor": args.lr_min_factor,
             "weight_decay": weight_decay,
             "grad_clip_norm": grad_clip_norm,
+            "lr_schedule_total_rounds": training_result.lr_schedule_total_rounds,
+            "lr_schedule_total_steps": training_result.lr_schedule_total_steps,
+            "lr_warmup_steps": training_result.lr_warmup_steps,
             "ema_decay": resolved_output_config.optimizer.ema_decay,
             "max_examples": args.max_examples,
             "preload_mode": preload_mode,

@@ -20,8 +20,11 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
 )
 from tetris_bot.scripts.warm_start import (
+    align_warm_start_lr_scheduler_to_step,
+    build_warm_start_lr_scheduler,
     build_output_config,
     build_wandb_config,
+    compute_warmup_cosine_lr_factor,
     compute_training_steps,
     EvalWorkerResolution,
     has_better_eval_metric,
@@ -216,6 +219,8 @@ def test_build_wandb_config_includes_full_resolved_training_config(
         preload_mode="none",
         batch_size=resolved_output_config.optimizer.batch_size,
         learning_rate=resolved_output_config.optimizer.learning_rate,
+        warmup_epochs=args.warmup_epochs,
+        lr_min_factor=args.lr_min_factor,
         weight_decay=resolved_output_config.optimizer.weight_decay,
         grad_clip_norm=resolved_output_config.optimizer.grad_clip_norm,
         eval_worker_resolution=eval_worker_resolution,
@@ -224,10 +229,69 @@ def test_build_wandb_config_includes_full_resolved_training_config(
     serialized_output_config = json.loads(config_to_json(resolved_output_config))
     assert wandb_config["output_config"] == serialized_output_config
     assert wandb_config["training_config"] == serialized_output_config
+    assert wandb_config["warmup_epochs"] == args.warmup_epochs
+    assert wandb_config["lr_min_factor"] == args.lr_min_factor
 
 
 def test_compute_training_steps_rounds_up_epochs() -> None:
     assert compute_training_steps(900, batch_size=1024, epochs=20.0) == 18
+
+
+def test_build_warm_start_lr_scheduler_matches_reference_curve() -> None:
+    model = torch.nn.Linear(1, 1)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1.0)
+    scheduler = build_warm_start_lr_scheduler(
+        optimizer,
+        warmup_steps=3,
+        total_steps=6,
+        lr_min_factor=0.1,
+    )
+
+    expected_lrs = [
+        compute_warmup_cosine_lr_factor(
+            step=step,
+            warmup_steps=3,
+            total_steps=6,
+            lr_min_factor=0.1,
+        )
+        for step in range(7)
+    ]
+    actual_lrs = [optimizer.param_groups[0]["lr"]]
+    for _ in range(6):
+        optimizer.step()
+        scheduler.step()
+        actual_lrs.append(optimizer.param_groups[0]["lr"])
+
+    assert actual_lrs == expected_lrs
+
+
+def test_align_warm_start_lr_scheduler_to_step_restores_lr() -> None:
+    model = torch.nn.Linear(1, 1)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=2.0)
+    scheduler = build_warm_start_lr_scheduler(
+        optimizer,
+        warmup_steps=3,
+        total_steps=8,
+        lr_min_factor=0.1,
+    )
+
+    align_warm_start_lr_scheduler_to_step(
+        optimizer=optimizer,
+        scheduler=scheduler,
+        step=5,
+        warmup_steps=3,
+        total_steps=8,
+        lr_min_factor=0.1,
+    )
+
+    expected_lr = 2.0 * compute_warmup_cosine_lr_factor(
+        step=5,
+        warmup_steps=3,
+        total_steps=8,
+        lr_min_factor=0.1,
+    )
+    assert optimizer.param_groups[0]["lr"] == expected_lr
+    assert scheduler.last_epoch == 5
 
 
 def test_resolve_eval_num_workers_uses_machine_optimize_cache(
@@ -334,6 +398,12 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     model = TetrisNet(**NetworkConfig().to_model_kwargs())
     ema = ExponentialMovingAverage(model, decay=0.5)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
+    scheduler = build_warm_start_lr_scheduler(
+        optimizer,
+        warmup_steps=4,
+        total_steps=12,
+        lr_min_factor=0.1,
+    )
     loss_balancer = RunningLossBalancer(window_size=8)
     loss_balancer.append(2.0, 8.0)
     loss_balancer.append(1.8, 7.2)
@@ -344,6 +414,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     loss = policy_logits.sum() + value.sum()
     loss.backward()
     optimizer.step()
+    scheduler.step()
 
     best_state_dict = {
         key: value.detach().cpu().clone() for key, value in model.state_dict().items()
@@ -372,6 +443,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
         model=model,
         ema_state_dict=ema_state_dict,
         optimizer_state_dict=optimizer.state_dict(),
+        scheduler_state_dict=scheduler.state_dict(),
         best_state_dict=best_state_dict,
         best_ema_state_dict=best_ema_state_dict,
         best_record=best_record,
@@ -387,13 +459,23 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     restored_model = TetrisNet(**NetworkConfig().to_model_kwargs())
     restored_ema = ExponentialMovingAverage(restored_model, decay=0.5)
     restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=5e-4)
+    restored_scheduler = build_warm_start_lr_scheduler(
+        restored_optimizer,
+        warmup_steps=4,
+        total_steps=12,
+        lr_min_factor=0.1,
+    )
     restored_loss_balancer = RunningLossBalancer(window_size=8)
     resumed = load_offline_resume_checkpoint(
         checkpoint_path,
         model=restored_model,
         ema_model=restored_ema.model,
         optimizer=restored_optimizer,
+        scheduler=restored_scheduler,
         loss_balancer=restored_loss_balancer,
+        lr_schedule_total_steps=12,
+        lr_warmup_steps=4,
+        lr_min_factor=0.1,
     )
 
     assert resumed.checkpoint_path == checkpoint_path
@@ -425,6 +507,8 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
                 assert torch.equal(restored_value, expected_value)
             else:
                 assert restored_value == expected_value
+    assert restored_scheduler.state_dict() == scheduler.state_dict()
+    assert restored_optimizer.param_groups[0]["lr"] == optimizer.param_groups[0]["lr"]
 
 
 def test_train_warm_start_model_evaluates_and_snapshots_ema_weights(
@@ -489,6 +573,8 @@ def test_train_warm_start_model_evaluates_and_snapshots_ema_weights(
         device=torch.device("cpu"),
         batch_size=2,
         learning_rate=1e-2,
+        warmup_epochs=3.0,
+        lr_min_factor=0.1,
         weight_decay=0.0,
         grad_clip_norm=1e6,
         epochs_per_round=1.0,

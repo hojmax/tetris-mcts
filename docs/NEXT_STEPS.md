@@ -3,8 +3,8 @@
 - [ ] Reintroduce the board stats in the fusion part. Ablate this.
 - [ ] Improve policy layout. (not 735).
 - [ ] Figure out data augmentation.
+  - Ah the way we do the search... Hmm we favor one rotation. Meaning we should not just naively swap the policy logits.
 - [ ] Adding in coords into input layer
-- [ ] Larger trunk impact in warm start?
 
 - [ ] Data augmentation. horisontal flip.
 - [ ] Optimized EMA. 
