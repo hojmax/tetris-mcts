@@ -73,9 +73,7 @@ class OptimizerConfig:
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
         2000
     )
-    ema_decay: float = (
-        0.9998  # EMA decay for export/eval shadow weights; 0 disables EMA
-    )
+    ema_decay: float = 0.999  # EMA decay for export/eval shadow weights; 0 disables EMA
     use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
         True
     )
