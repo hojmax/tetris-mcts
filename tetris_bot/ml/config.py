@@ -28,13 +28,13 @@ class ModelKwargs(TypedDict):
 class NetworkConfig:
     """Neural network architecture hyperparameters."""
 
-    trunk_channels: int = 16
+    trunk_channels: int = 32
     num_conv_residual_blocks: int = 5
     reduction_channels: int = 32
     board_stats_hidden: int = 32
     board_proj_hidden: int = 512
     fc_hidden: int = 256
-    aux_hidden: int = 64
+    aux_hidden: int = 128
     fusion_hidden: int = 256
     num_fusion_blocks: int = 1
     conv_kernel_size: int = 3

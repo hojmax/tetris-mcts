@@ -309,7 +309,7 @@ class TetrisNet(nn.Module):
         board_stats_h = F.silu(self.board_stats_ln(self.board_stats_fc(board_stats)))
         board_hidden = torch.cat([conv_out, board_stats_h], dim=1)
         board_hidden = F.silu(self.board_proj_ln1(self.board_proj_fc1(board_hidden)))
-        return self.board_proj_fc2(board_hidden)
+        return F.silu(self.board_proj_fc2(board_hidden))
 
     def _forward_from_board_embedding(
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
