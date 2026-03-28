@@ -27,6 +27,7 @@ from tetris_bot.constants import (
 )
 from tetris_bot.ml.network import (
     AUX_FEATURES,
+    NETWORK_ARCH_GATED_FUSION,
     PIECE_AUX_FEATURES,
     ConvBackbone,
     HeadsModel,
@@ -34,6 +35,47 @@ from tetris_bot.ml.network import (
 )
 
 logger = structlog.get_logger()
+FC_BINARY_MAGIC = b"TCM2"
+FC_BINARY_SIMPLE_MAGIC = b"TCS2"
+
+
+def _write_linear_layer(buffer: io.BufferedWriter, layer: nn.Linear) -> None:
+    weight = layer.weight.detach().cpu().numpy().astype(np.float32)
+    bias = layer.bias.detach().cpu().numpy().astype(np.float32)
+    rows, cols = weight.shape
+    buffer.write(struct.pack("<II", rows, cols))
+    buffer.write(weight.tobytes())
+    buffer.write(bias.tobytes())
+
+
+def _write_layer_norm(buffer: io.BufferedWriter, layer: nn.LayerNorm) -> None:
+    if len(layer.normalized_shape) != 1:
+        raise ValueError(
+            "Only 1D LayerNorm export is supported for cached board path "
+            f"(got normalized_shape={layer.normalized_shape})"
+        )
+    hidden = int(layer.normalized_shape[0])
+    weight = layer.weight.detach().cpu().numpy().astype(np.float32)
+    bias = layer.bias.detach().cpu().numpy().astype(np.float32)
+    buffer.write(struct.pack("<I", hidden))
+    buffer.write(weight.tobytes())
+    buffer.write(bias.tobytes())
+
+
+def _export_cached_board_path_binary(model: TetrisNet, fc_path: Path) -> None:
+    with open(fc_path, "wb") as f:
+        f.write(FC_BINARY_MAGIC)
+        if model.architecture == NETWORK_ARCH_GATED_FUSION:
+            _write_linear_layer(f, model.board_stats_fc)
+            _write_layer_norm(f, model.board_stats_ln)
+            _write_linear_layer(f, model.board_proj_fc1)
+            _write_layer_norm(f, model.board_proj_ln1)
+            _write_linear_layer(f, model.board_proj_fc2)
+            return
+
+        f.seek(0)
+        f.write(FC_BINARY_SIMPLE_MAGIC)
+        _write_linear_layer(f, model.board_proj)
 
 
 def _optimizer_step_scalar_dtype(*, fused: bool) -> torch.dtype:
@@ -329,15 +371,7 @@ def export_split_models(
                     verbose=False,
                 )
 
-            # Export board projection weight and bias as raw f32 binary
-            # Format: [rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
-            weight = model.board_proj.weight.detach().numpy()
-            bias = model.board_proj.bias.detach().numpy()
-            rows, cols = weight.shape
-            with open(fc_path, "wb") as f:
-                f.write(struct.pack("<II", rows, cols))
-                f.write(weight.astype(np.float32).tobytes())
-                f.write(bias.astype(np.float32).tobytes())
+            _export_cached_board_path_binary(model, fc_path)
 
         return True
     except (ImportError, ModuleNotFoundError) as e:

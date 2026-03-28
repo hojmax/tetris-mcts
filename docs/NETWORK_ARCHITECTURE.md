@@ -24,12 +24,15 @@ The default network instantiated by `NetworkConfig()` is:
   - `trunk_channels=16`
   - `num_conv_residual_blocks=3`
   - `reduction_channels=32`
-  - `fc_hidden=128`
+  - `board_stats_hidden=32`
+  - `board_proj_hidden=256`
+  - `fc_hidden=256`
   - `aux_hidden=64`
+  - `fusion_hidden=256`
   - `num_fusion_blocks=1`
   - `conv_kernel_size=3`
   - `conv_padding=1`
-- Total trainable parameters: `511,136`
+- Total trainable parameters: `1,265,120`
 
 The repo also includes a simpler baseline architecture, `simple_aux_mlp`, described near the end of this document.
 
@@ -38,9 +41,9 @@ The repo also includes a simpler baseline architecture, `simple_aux_mlp`, descri
 The current default model is intentionally split into a board-dependent path and a piece/game-context path:
 
 - The board occupancy tensor goes through a convolutional trunk.
-- Board-derived scalar statistics are concatenated only after the conv trunk.
+- Board-derived scalar statistics are encoded through a small MLP before entering the cached board path.
 - Piece/game context never enters the conv trunk. It is processed separately and only interacts with the board representation in the fusion stage.
-- At runtime, Rust caches the board embedding keyed only by board occupancy, so repeated searches on the same board do not re-run the expensive conv path.
+- At runtime, Rust caches the board embedding keyed only by board occupancy, so repeated searches on the same board do not re-run the board-only path.
 
 That split is the main architectural idea in this repo.
 
@@ -137,9 +140,20 @@ board (B,1,20,10)
   -> GroupNorm(32 groups, 32 channels)
   -> SiLU
   -> flatten
-  -> concat(board_stats[19])
-  -> Linear(1619,128)
-  = board_h (B,128)
+  = conv_out (B,1600)
+
+board_stats (B,19)
+  -> Linear(19,32)
+  -> LayerNorm(32)
+  -> SiLU
+  = board_stats_h (B,32)
+
+concat(conv_out, board_stats_h)
+  -> Linear(1632,256)
+  -> LayerNorm(256)
+  -> SiLU
+  -> Linear(256,256)
+  = board_h (B,256)
 
 piece_aux (B,61)
   -> Linear(61,64)
@@ -147,17 +161,15 @@ piece_aux (B,61)
   -> SiLU
   = aux_h (B,64)
 
-aux_h
-  -> Linear(64,128) -> sigmoid = gate (B,128)
-  -> Linear(64,128) = aux_bias (B,128)
+concat(board_h, aux_h)
+  -> Linear(320,256)
+  -> LayerNorm(256)
+  -> SiLU
+  -> 1 x ResidualFusionBlock(256)
+  = fused (B,256)
 
-fused_0 = board_h * (1 + gate) + aux_bias
-fused_0 -> LayerNorm(128) -> SiLU
-        -> 1 x ResidualFusionBlock(128)
-        = fused (B,128)
-
-fused -> Linear(128,256) -> SiLU -> Linear(256,735) = policy_logits
-fused -> Linear(128,64)  -> SiLU -> Linear(64,1)    = value
+fused -> Linear(256,512) -> SiLU -> Linear(512,735) = policy_logits
+fused -> Linear(256,128) -> SiLU -> Linear(128,1)   = value
 ```
 
 ### Stage-by-Stage Shapes
@@ -173,17 +185,17 @@ For batch size `B`, the default `gated_fusion` model has the following shapes:
 | 5 | `conv_reduce` | `(B, 32, 10, 5)` | `Conv2d(16,32,3,padding=1,stride=2)` |
 | 6 | Reduction norm/activation | `(B, 32, 10, 5)` | `GroupNorm -> SiLU` |
 | 7 | Flatten | `(B, 1600)` | `32 x 10 x 5 = 1600` |
-| 8 | Concat board stats | `(B, 1619)` | `1600 + 19` |
-| 9 | `board_proj` | `(B, 128)` | This is `board_h` |
-| 10 | `aux_fc + aux_ln + SiLU` | `(B, 64)` | Piece/game-context path |
-| 11 | `gate_fc -> sigmoid` | `(B, 128)` | Channelwise gate |
-| 12 | `aux_proj` | `(B, 128)` | Channelwise additive term |
-| 13 | Fusion | `(B, 128)` | `board_h * (1 + gate) + aux_proj(aux_h)` |
-| 14 | `fusion_ln + SiLU` | `(B, 128)` | Prepares fused state for residual MLP |
-| 15 | `1 x ResidualFusionBlock` | `(B, 128)` | Preserves width |
-| 16 | `policy_fc + SiLU` | `(B, 256)` | Hidden width is `2 x fc_hidden` |
+| 8 | `board_stats_fc + board_stats_ln + SiLU` | `(B, 32)` | Board-stats encoder |
+| 9 | Concat cached board input | `(B, 1632)` | `1600 + 32` |
+| 10 | `board_proj_fc1 + board_proj_ln1 + SiLU` | `(B, 256)` | Cached board MLP hidden |
+| 11 | `board_proj_fc2` | `(B, 256)` | This is `board_h` |
+| 12 | `aux_fc + aux_ln + SiLU` | `(B, 64)` | Piece/game-context path |
+| 13 | Concat fusion input | `(B, 320)` | `256 + 64` |
+| 14 | `fusion_fc + fusion_ln + SiLU` | `(B, 256)` | Shared post-concat trunk |
+| 15 | `1 x ResidualFusionBlock` | `(B, 256)` | Preserves width |
+| 16 | `policy_fc + SiLU` | `(B, 512)` | Hidden width is `2 x fusion_hidden` |
 | 17 | `policy_head` | `(B, 735)` | Raw logits |
-| 18 | `value_fc + SiLU` | `(B, 64)` | Hidden width is `fc_hidden / 2` |
+| 18 | `value_fc + SiLU` | `(B, 128)` | Hidden width is `fusion_hidden / 2` |
 | 19 | `value_head` | `(B, 1)` | Scalar value |
 
 ### Exact Connection Equations
@@ -198,11 +210,12 @@ x3 = ResidualConvBlock_3(x2)
 x4 = SiLU(GN(conv_reduce(x3)))
 
 flat = flatten(x4)
-board_h = board_proj(concat(flat, board_stats))
+board_stats_h = SiLU(LayerNorm(board_stats_fc(board_stats)))
+board_hidden = SiLU(LayerNorm(board_proj_fc1(concat(flat, board_stats_h))))
+board_h = board_proj_fc2(board_hidden)
 
 aux_h = SiLU(LayerNorm(aux_fc(piece_aux)))
-gate = sigmoid(gate_fc(aux_h))
-fused = board_h * (1 + gate) + aux_proj(aux_h)
+fused = fusion_fc(concat(board_h, aux_h))
 fused = SiLU(LayerNorm(fused))
 fused = ResidualFusionBlocks(fused)
 
@@ -212,12 +225,10 @@ value = value_head(SiLU(value_fc(fused)))
 
 Important connection details:
 
-- `board_stats` are injected exactly once, at `board_proj`.
+- `board_stats` are injected exactly once, in the cached board path before `board_proj_fc1`.
 - `piece_aux` never touches the conv trunk.
-- The gate is multiplicative but only in the form `1 + sigmoid(...)`, so it scales each `board_h` channel by a factor in `(1, 2)` before the additive aux term is applied.
-- The fusion stage is both multiplicative and additive:
-  - multiplicative via `board_h * (1 + gate)`
-  - additive via `aux_proj(aux_h)`
+- The current default no longer uses multiplicative gating or a separate aux-bias path.
+- Fusion is a plain concatenation followed by a shared MLP trunk.
 
 ### Residual Block Definitions
 
@@ -276,18 +287,18 @@ The current architecture does not use BatchNorm or ReLU.
 | Initial conv + initial GroupNorm | 192 |
 | 3 conv residual blocks | 14,112 |
 | Reduction conv + reduction GroupNorm | 4,704 |
-| `board_proj` | 207,360 |
-| Aux path (`aux_fc`, `aux_ln`, `gate_fc`, `aux_proj`) | 20,736 |
-| Fusion LayerNorm | 256 |
-| 1 fusion residual block | 33,536 |
-| Policy head stack | 221,919 |
-| Value head stack | 8,321 |
-| **Total** | **511,136** |
+| Board-stats encoder + cached board MLP | 485,504 |
+| Aux path (`aux_fc`, `aux_ln`) | 4,096 |
+| Fusion MLP + fusion LayerNorm | 82,688 |
+| 1 fusion residual block | 132,096 |
+| Policy head stack | 509,167 |
+| Value head stack | 32,769 |
+| **Total** | **1,265,120** |
 
 Two modules dominate parameter count:
 
-- `board_proj`, because it maps `1619 -> 128`
-- The policy head, because `735` actions is a wide output layer
+- The deeper cached board MLP, because it maps `1600 + 32 -> 256 -> 256`
+- The policy head, because `735` actions is still a wide output layer
 
 ## Output Contract
 
@@ -372,24 +383,24 @@ Output:
 
 #### `fc.bin`
 
-This is not ONNX. It is the raw `board_proj` weight and bias written as:
+This is not ONNX. It is a binary dump of the cached board path:
 
 ```text
-[rows u32 LE][cols u32 LE][weight row-major f32][bias f32]
+magic "TCM2"
+board_stats_fc
+board_stats_ln
+board_proj_fc1
+board_proj_ln1
+board_proj_fc2
 ```
 
-For the default config:
-
-- rows = `128`
-- cols = `1619`
-
-Rust loads this file and computes:
+Rust loads these weights and computes the same nonlinear cached board path as Python:
 
 ```text
-board_h = board_proj([conv_out ; board_stats])
+board_stats_h = SiLU(LayerNorm(board_stats_fc(board_stats)))
+board_hidden = SiLU(LayerNorm(board_proj_fc1([conv_out ; board_stats_h])))
+board_h = board_proj_fc2(board_hidden)
 ```
-
-directly in Rust, without needing another ONNX session for that layer.
 
 #### `heads.onnx`
 
@@ -399,8 +410,7 @@ For `gated_fusion`, it contains:
 
 - `aux_fc`
 - `aux_ln`
-- `gate_fc`
-- `aux_proj`
+- `fusion_fc`
 - `fusion_ln`
 - `fusion_blocks`
 - `policy_fc`
@@ -410,7 +420,7 @@ For `gated_fusion`, it contains:
 
 Inputs:
 
-- `board_h`: `(B, 128)`
+- `board_h`: `(B, 256)`
 - `piece_aux`: `(B, 61)`
 
 Outputs:
@@ -431,8 +441,7 @@ Inference flow in Rust is:
 2. Encode the 19 board-stat features.
 3. If the packed board is not in cache:
    - run `conv.onnx`
-   - concatenate `conv_out` with the 19 board stats
-   - apply the `board_proj` weights from `fc.bin`
+   - run the cached board path from `fc.bin` on `(conv_out, board_stats)`
    - store `board_h` in the cache
 4. Encode the 61 piece/game features.
 5. Run `heads.onnx` on `(board_h, piece_aux)`.
@@ -505,12 +514,12 @@ If you have seen older architecture descriptions in this repo, the main changes 
 
 If you want the one-sentence description of the production model used here, it is:
 
-> A split `gated_fusion` policy/value network that turns the board into a cached `128`-dimensional embedding, modulates that embedding with `61` piece/game features, and predicts `735` action logits plus a scalar value.
+> A split `gated_fusion` policy/value network that turns the board into a cached `256`-dimensional embedding, concatenates that embedding with `61` piece/game features through a shared MLP trunk, and predicts `735` action logits plus a scalar value.
 
 If you change any of the following, you must keep Python and Rust in sync:
 
 - feature ordering or feature count
-- `board_proj` input or output size
+- cached-board-path widths or the shape of `board_h`
 - the shape of `board_h`
 - the action-space size
 - ONNX split-export assumptions

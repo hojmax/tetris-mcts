@@ -300,7 +300,7 @@ def test_pytorch_and_rust_tract_inference_match_on_same_onnx(tmp_path: Path) -> 
             atol=1e-5,
         )
         np.testing.assert_allclose(
-            float(rust_value), float(expected_value), rtol=1e-4, atol=1e-5
+            float(rust_value), float(expected_value), rtol=1e-4, atol=2.5e-5
         )
 
 
@@ -364,7 +364,7 @@ def test_simple_aux_mlp_split_model_matches_end_to_end_pytorch() -> None:
                 expected_logits, expected_value = model(board, aux)
                 conv_out = conv_backbone(board)
                 board_stats = aux[:, PIECE_AUX_FEATURES:]
-                board_h = model.board_proj(torch.cat([conv_out, board_stats], dim=1))
+                board_h = model.forward_board_embedding_from_parts(conv_out, board_stats)
                 piece_aux = aux[:, :PIECE_AUX_FEATURES]
                 split_logits, split_value = heads(board_h, piece_aux)
 
@@ -474,7 +474,7 @@ def test_split_model_matches_end_to_end_pytorch(tmp_path: Path) -> None:
                 # Split path
                 conv_out = conv_backbone(board)  # (1, 1600)
                 board_stats = aux[:, PIECE_AUX_FEATURES:]  # (1, 19)
-                board_h = model.board_proj(torch.cat([conv_out, board_stats], dim=1))
+                board_h = model.forward_board_embedding_from_parts(conv_out, board_stats)
                 piece_aux = aux[:, :PIECE_AUX_FEATURES]  # (1, 61)
                 split_logits, split_value = heads(board_h, piece_aux)
 

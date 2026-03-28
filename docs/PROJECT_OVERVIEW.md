@@ -27,8 +27,11 @@ Short version of the current implementation:
   - `trunk_channels=16`
   - `num_conv_residual_blocks=3`
   - `reduction_channels=32`
-  - `fc_hidden=128`
+  - `board_stats_hidden=32`
+  - `board_proj_hidden=256`
+  - `fc_hidden=256`
   - `aux_hidden=64`
+  - `fusion_hidden=256`
   - `num_fusion_blocks=1`
 - The current conv path uses `GroupNorm + SiLU` and residual conv blocks.
 - The current fusion/head path uses `LayerNorm + SiLU`.
@@ -37,7 +40,7 @@ Short version of the current implementation:
   - `*.conv.onnx`
   - `*.heads.onnx`
   - `*.fc.bin`
-- Rust caches the intermediate `board_h` embedding by board occupancy so repeated searches on the same board do not re-run the conv trunk.
+- Rust caches the intermediate `board_h` embedding by board occupancy so repeated searches on the same board do not re-run the board-only path.
 
 For exact feature offsets, tensor shapes, connection equations, split-export details, and the `simple_aux_mlp` baseline, use [NETWORK_ARCHITECTURE.md](./NETWORK_ARCHITECTURE.md).
 

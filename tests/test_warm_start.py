@@ -70,7 +70,10 @@ def test_load_training_config_json_fills_missing_network_defaults(
 
     loaded = load_training_config_json(config_path)
 
+    assert loaded.network.board_stats_hidden == NetworkConfig().board_stats_hidden
+    assert loaded.network.board_proj_hidden == NetworkConfig().board_proj_hidden
     assert loaded.network.aux_hidden == NetworkConfig().aux_hidden
+    assert loaded.network.fusion_hidden == NetworkConfig().fusion_hidden
     assert loaded.network.num_fusion_blocks == NetworkConfig().num_fusion_blocks
     assert loaded.run.run_dir == Path("/tmp/example/v3")
     assert loaded.run.checkpoint_dir == Path("/tmp/example/v3/checkpoints")
@@ -106,8 +109,17 @@ def test_build_output_config_uses_current_repo_defaults_for_new_run(
         output_config.network.reduction_channels
         == default_config.network.reduction_channels
     )
+    assert (
+        output_config.network.board_stats_hidden
+        == default_config.network.board_stats_hidden
+    )
+    assert (
+        output_config.network.board_proj_hidden
+        == default_config.network.board_proj_hidden
+    )
     assert output_config.network.fc_hidden == default_config.network.fc_hidden
     assert output_config.network.aux_hidden == default_config.network.aux_hidden
+    assert output_config.network.fusion_hidden == default_config.network.fusion_hidden
     assert (
         output_config.network.num_fusion_blocks
         == default_config.network.num_fusion_blocks

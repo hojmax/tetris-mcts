@@ -15,8 +15,11 @@ class ModelKwargs(TypedDict):
     trunk_channels: int
     num_conv_residual_blocks: int
     reduction_channels: int
+    board_stats_hidden: int
+    board_proj_hidden: int
     fc_hidden: int
     aux_hidden: int
+    fusion_hidden: int
     num_fusion_blocks: int
     conv_kernel_size: int
     conv_padding: int
@@ -30,8 +33,11 @@ class NetworkConfig:
     trunk_channels: int = 16
     num_conv_residual_blocks: int = 3
     reduction_channels: int = 32
-    fc_hidden: int = 128
+    board_stats_hidden: int = 32
+    board_proj_hidden: int = 256
+    fc_hidden: int = 256
     aux_hidden: int = 64
+    fusion_hidden: int = 256
     num_fusion_blocks: int = 1
     conv_kernel_size: int = 3
     conv_padding: int = 1
@@ -42,8 +48,11 @@ class NetworkConfig:
             "trunk_channels": self.trunk_channels,
             "num_conv_residual_blocks": self.num_conv_residual_blocks,
             "reduction_channels": self.reduction_channels,
+            "board_stats_hidden": self.board_stats_hidden,
+            "board_proj_hidden": self.board_proj_hidden,
             "fc_hidden": self.fc_hidden,
             "aux_hidden": self.aux_hidden,
+            "fusion_hidden": self.fusion_hidden,
             "num_fusion_blocks": self.num_fusion_blocks,
             "conv_kernel_size": self.conv_kernel_size,
             "conv_padding": self.conv_padding,
