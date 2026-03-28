@@ -295,11 +295,11 @@ def test_pytorch_and_rust_tract_inference_match_on_same_onnx(tmp_path: Path) -> 
         np.testing.assert_allclose(
             np.asarray(rust_policy, dtype=np.float32),
             expected_policy.astype(np.float32),
-            rtol=1e-1,
-            atol=1e-2,
+            rtol=1e-4,
+            atol=1e-5,
         )
         np.testing.assert_allclose(
-            float(rust_value), float(expected_value), rtol=1e-1, atol=1e-1
+            float(rust_value), float(expected_value), rtol=1e-4, atol=2.5e-5
         )
 
 
@@ -420,15 +420,15 @@ def test_split_onnx_rust_matches_end_to_end_pytorch(tmp_path: Path) -> None:
         np.testing.assert_allclose(
             np.asarray(rust_policy, dtype=np.float32),
             expected_policy.astype(np.float32),
-            rtol=1e-1,
-            atol=1e-2,
+            rtol=1e-4,
+            atol=1e-5,
             err_msg=f"Policy mismatch (seed={move_number})",
         )
         np.testing.assert_allclose(
             float(rust_value),
             float(expected_value),
-            rtol=1e-1,
-            atol=1e-1,
+            rtol=1e-4,
+            atol=1e-5,
             err_msg=f"Value mismatch (seed={move_number})",
         )
 

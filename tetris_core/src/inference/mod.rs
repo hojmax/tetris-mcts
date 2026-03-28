@@ -434,7 +434,7 @@ impl TetrisNN {
             &path.board_proj_ln1,
         )?);
 
-        Ok(linear_forward(&path.board_proj_fc2, &hidden))
+        Ok(silu_vec(linear_forward(&path.board_proj_fc2, &hidden)).into())
     }
 
     fn insert_board_embedding_cache(&self, board_key: [u64; 4], embed: Array1<f32>) {
