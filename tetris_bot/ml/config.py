@@ -61,7 +61,7 @@ class OptimizerConfig:
     """Training loop, optimizer, loss, and logging hyperparameters."""
 
     total_steps: int = 100_000_000_000
-    batch_size: int = 1024
+    batch_size: int = 2048
     learning_rate: float = 0.0005
     weight_decay: float = 5e-5
     grad_clip_norm: float = 10.0
