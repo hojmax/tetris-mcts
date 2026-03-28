@@ -18,6 +18,7 @@ class ModelKwargs(TypedDict):
     board_proj_hidden: int
     fc_hidden: int
     aux_hidden: int
+    num_aux_hidden_layers: int
     fusion_hidden: int
     num_fusion_blocks: int
     conv_kernel_size: int
@@ -35,6 +36,7 @@ class NetworkConfig:
     board_proj_hidden: int = 512
     fc_hidden: int = 256
     aux_hidden: int = 128
+    num_aux_hidden_layers: int = 1
     fusion_hidden: int = 256
     num_fusion_blocks: int = 1
     conv_kernel_size: int = 3
@@ -49,6 +51,7 @@ class NetworkConfig:
             "board_proj_hidden": self.board_proj_hidden,
             "fc_hidden": self.fc_hidden,
             "aux_hidden": self.aux_hidden,
+            "num_aux_hidden_layers": self.num_aux_hidden_layers,
             "fusion_hidden": self.fusion_hidden,
             "num_fusion_blocks": self.num_fusion_blocks,
             "conv_kernel_size": self.conv_kernel_size,

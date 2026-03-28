@@ -200,6 +200,7 @@ class TetrisNet(nn.Module):
         conv_kernel_size: int = 3,
         conv_padding: int = 1,
         aux_hidden: int = 64,
+        num_aux_hidden_layers: int = 1,
         fusion_hidden: int = 256,
         num_fusion_blocks: int = 0,
     ):
@@ -216,6 +217,7 @@ class TetrisNet(nn.Module):
             conv_kernel_size=conv_kernel_size,
             conv_padding=conv_padding,
             aux_hidden=aux_hidden,
+            num_aux_hidden_layers=num_aux_hidden_layers,
             fusion_hidden=fusion_hidden,
             num_fusion_blocks=num_fusion_blocks,
         )
@@ -231,6 +233,7 @@ class TetrisNet(nn.Module):
         conv_kernel_size: int,
         conv_padding: int,
         aux_hidden: int,
+        num_aux_hidden_layers: int,
         fusion_hidden: int,
         num_fusion_blocks: int,
     ) -> None:
@@ -285,8 +288,21 @@ class TetrisNet(nn.Module):
         self.board_proj = self.board_proj_fc2
 
         # Piece/game aux path, combined with the cached board embedding by concatenation.
-        self.aux_fc = nn.Linear(PIECE_AUX_FEATURES, aux_hidden)
-        self.aux_ln = nn.LayerNorm(aux_hidden)
+        if num_aux_hidden_layers < 0:
+            raise ValueError(f"num_aux_hidden_layers must be >= 0, got {num_aux_hidden_layers}")
+        aux_layers: list[nn.Module] = []
+        aux_in = PIECE_AUX_FEATURES
+        for _ in range(num_aux_hidden_layers):
+            aux_layers.extend([
+                nn.Linear(aux_in, aux_hidden),
+                nn.LayerNorm(aux_hidden),
+                nn.SiLU(),
+            ])
+            aux_in = aux_hidden
+        # Final projection (activation applied in forward)
+        aux_layers.append(nn.Linear(aux_in, aux_hidden))
+        aux_layers.append(nn.LayerNorm(aux_hidden))
+        self.aux_mlp = nn.Sequential(*aux_layers)
         self.fusion_fc = nn.Linear(fc_hidden + aux_hidden, fusion_hidden)
 
         # Post-fusion processing.
@@ -314,7 +330,7 @@ class TetrisNet(nn.Module):
     def _forward_from_board_embedding(
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        aux_h = F.silu(self.aux_ln(self.aux_fc(piece_aux)))
+        aux_h = F.silu(self.aux_mlp(piece_aux))
         fused = self.fusion_fc(torch.cat([board_h, aux_h], dim=1))
         fused = F.silu(self.fusion_ln(fused))
         for block in self.fusion_blocks:
@@ -400,8 +416,7 @@ class HeadsModel(nn.Module):
 
     def __init__(self, parent: TetrisNet):
         super().__init__()
-        self.aux_fc = parent.aux_fc
-        self.aux_ln = parent.aux_ln
+        self.aux_mlp = parent.aux_mlp
         self.fusion_fc = parent.fusion_fc
         self.fusion_ln = parent.fusion_ln
         self.fusion_blocks = parent.fusion_blocks
@@ -413,7 +428,7 @@ class HeadsModel(nn.Module):
     def forward(
         self, board_h: torch.Tensor, piece_aux: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        aux_h = F.silu(self.aux_ln(self.aux_fc(piece_aux)))
+        aux_h = F.silu(self.aux_mlp(piece_aux))
         fused = self.fusion_fc(torch.cat([board_h, aux_h], dim=1))
         fused = F.silu(self.fusion_ln(fused))
         for block in self.fusion_blocks:
