@@ -1,5 +1,10 @@
 # Next Steps
 
+- [ ] Figure out data augmentation.
+- [ ] Improve policy layout. (not 735).
+- [ ] How large can I make replay buffer?
+- [ ] Larger trunk impact in warm start?
+
 - [ ] Data augmentation. horisontal flip.
 - [ ] Optimized EMA. 
 - [ ] Adding in coords into input layer?
