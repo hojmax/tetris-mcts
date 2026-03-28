@@ -120,7 +120,7 @@ class DiagramArgs:
 def create_figure(*, width_inches: float, height_inches: float) -> tuple[Figure, Axes]:
     fig, ax = plt.subplots(figsize=(width_inches, height_inches))
     ax.set_xlim(0, 9.2)
-    ax.set_ylim(-2.0, 21.5)
+    ax.set_ylim(-2.5, 21.5)
     ax.axis("off")
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
@@ -473,7 +473,7 @@ def draw_architecture(ax: Axes) -> None:
             face_color=palette.note_fill,
             edge_color=palette.note_edge,
             title="Concat",
-            subtitle="flatten ++ 19 board stats",
+            subtitle="flatten (1600) ++ board_stats_h (32)",
             title_size=10.0,
             subtitle_size=7.7,
         ),
@@ -489,29 +489,46 @@ def draw_architecture(ax: Axes) -> None:
             y=4.00,
             width=2.80,
             height=1.20,
-            face_color="#d7efff",
-            edge_color=palette.conv_edge,
+            face_color=palette.fusion_fill,
+            edge_color=palette.fusion_edge,
             title="Board Projection",
-            subtitle="Linear(1619 → 128)\ncached board embedding",
+            subtitle="Linear(1632 → 256 → 256)\ncached board embedding",
             title_size=10.2,
             subtitle_size=7.75,
         ),
         palette,
     )
 
-    # ===== Gated Fusion box (green) =====
-    # y=2.20..3.55
+    # ===== Concat box (board_h + aux_h) =====
+    draw_box(
+        ax,
+        BoxSpec(
+            x=3.10,
+            y=3.10,
+            width=2.40,
+            height=0.70,
+            face_color=palette.note_fill,
+            edge_color=palette.note_edge,
+            title="Concat",
+            subtitle="board_h (256) ++ aux_h (64)",
+            title_size=10.0,
+            subtitle_size=7.7,
+        ),
+        palette,
+    )
+
+    # ===== Fusion MLP box (green) =====
     draw_box(
         ax,
         BoxSpec(
             x=2.70,
-            y=2.20,
+            y=1.60,
             width=3.20,
-            height=1.35,
+            height=1.15,
             face_color=palette.fusion_fill,
             edge_color=palette.fusion_edge,
-            title="Gated Fusion",
-            subtitle="fused = board_h × (1 + gate)\n        + aux_proj(aux_h)\n1 residual fusion MLP → 128-d",
+            title="MLP",
+            subtitle="Linear(320 → 256) + LayerNorm + SiLU\nResidual: 256 → 256 → 256 + skip",
             title_size=10.2,
             subtitle_size=7.55,
         ),
@@ -522,7 +539,7 @@ def draw_architecture(ax: Axes) -> None:
     head_gap = 0.25
     head_w = 2.0
     head_h = 0.82
-    head_y = 0.15
+    head_y = -0.45
     policy_x = cx - head_gap / 2 - head_w
     value_x = cx + head_gap / 2
 
@@ -533,10 +550,10 @@ def draw_architecture(ax: Axes) -> None:
             y=head_y,
             width=head_w,
             height=head_h,
-            face_color=palette.head_fill,
-            edge_color=palette.head_edge,
+            face_color=palette.fusion_fill,
+            edge_color=palette.fusion_edge,
             title="Policy Head",
-            subtitle="128 → 256 → 735 logits",
+            subtitle="256 → 512 → 735 logits",
             title_size=10.0,
             subtitle_size=7.7,
         ),
@@ -551,10 +568,10 @@ def draw_architecture(ax: Axes) -> None:
             y=head_y,
             width=head_w,
             height=head_h,
-            face_color=palette.head_fill,
-            edge_color=palette.head_edge,
+            face_color=palette.fusion_fill,
+            edge_color=palette.fusion_edge,
             title="Value Head",
-            subtitle="128 → 64 → 1 scalar",
+            subtitle="256 → 128 → 1 scalar",
             title_size=10.0,
             subtitle_size=7.7,
         ),
@@ -616,18 +633,36 @@ def draw_architecture(ax: Axes) -> None:
         palette,
     )
 
-    # --- Aux Encoder + Gates (left side, below features) ---
+    # --- Board Stats Encoder (right side, between features and concat) ---
+    draw_box(
+        ax,
+        BoxSpec(
+            x=6.05,
+            y=6.10,
+            width=2.70,
+            height=0.90,
+            face_color=palette.fusion_fill,
+            edge_color=palette.fusion_edge,
+            title="Board Stats Encoder",
+            subtitle="Linear(19 → 32) + LayerNorm + SiLU",
+            title_size=10.0,
+            subtitle_size=7.55,
+        ),
+        palette,
+    )
+
+    # --- Aux Encoder (left side, below features) ---
     draw_box(
         ax,
         BoxSpec(
             x=0.10,
-            y=2.80,
+            y=3.10,
             width=2.50,
-            height=1.65,
-            face_color=palette.aux_fill,
-            edge_color=palette.aux_edge,
-            title="Aux Encoder + Gates",
-            subtitle="aux_fc: 61 → 64\nLayerNorm + SiLU → aux_h\ngate_fc: 64 → 128\naux_proj: 64 → 128",
+            height=1.35,
+            face_color=palette.fusion_fill,
+            edge_color=palette.fusion_edge,
+            title="Aux Encoder",
+            subtitle="Linear(61 → 64) + LayerNorm + SiLU",
             title_size=10.1,
             subtitle_size=7.55,
         ),
@@ -656,25 +691,27 @@ def draw_architecture(ax: Axes) -> None:
     draw_arrow(ax, start_x=cx, start_y=7.57, end_x=cx, end_y=6.78, palette=palette)
     # Concat bottom (5.95) -> Board Projection top (5.20)
     draw_arrow(ax, start_x=cx, start_y=5.92, end_x=cx, end_y=5.23, palette=palette)
-    # Board Projection bottom (4.00) -> Gated Fusion top (3.55)
-    draw_arrow(ax, start_x=cx, start_y=3.97, end_x=cx, end_y=3.58, palette=palette)
+    # Board Projection bottom (4.00) -> Concat top (3.80)
+    draw_arrow(ax, start_x=cx, start_y=3.97, end_x=cx, end_y=3.83, palette=palette)
+    # Concat bottom (3.10) -> Fusion MLP top (2.75)
+    draw_arrow(ax, start_x=cx, start_y=3.07, end_x=cx, end_y=2.78, palette=palette)
 
-    # Gated Fusion bottom (2.20) -> Policy Head top
+    # Fusion MLP bottom (1.60) -> Policy Head top
     policy_cx = policy_x + head_w / 2
     value_cx = value_x + head_w / 2
     draw_arrow(
         ax,
         start_x=cx - 0.35,
-        start_y=2.17,
+        start_y=1.57,
         end_x=policy_cx,
         end_y=head_y + head_h + 0.03,
         palette=palette,
     )
-    # Gated Fusion bottom (2.20) -> Value Head top
+    # Fusion MLP bottom (1.60) -> Value Head top
     draw_arrow(
         ax,
         start_x=cx + 0.35,
-        start_y=2.17,
+        start_y=1.57,
         end_x=value_cx,
         end_y=head_y + head_h + 0.03,
         palette=palette,
@@ -687,25 +724,15 @@ def draw_architecture(ax: Axes) -> None:
         start_x=1.65,
         start_y=12.30,
         end_x=1.65,
-        end_y=4.45,
+        end_y=4.48,
         palette=palette,
     )
-    # Handcrafted Board Features -> Concat
-    draw_arrow(ax, start_x=7.4, start_y=7.20, end_x=5.20, end_y=6.40, palette=palette)
-    # Aux Encoder -> Gated Fusion
-    draw_arrow(ax, start_x=2.60, start_y=3.45, end_x=2.70, end_y=2.95, palette=palette)
-    # Board Projection -> Gated Fusion (short annotated connector for board_h)
-    ax.annotate(
-        "board_h",
-        xy=(5.70, 3.58),
-        xytext=(5.70, 3.97),
-        fontsize=8.3,
-        color=palette.text_muted,
-        ha="center",
-        va="bottom",
-        arrowprops={"arrowstyle": "-|>", "color": palette.arrow, "lw": 1.4},
-        zorder=20,
-    )
+    # Handcrafted Board Features -> Board Stats Encoder
+    draw_arrow(ax, start_x=7.4, start_y=7.20, end_x=7.4, end_y=7.03, palette=palette)
+    # Board Stats Encoder -> Concat
+    draw_arrow(ax, start_x=7.4, start_y=6.10, end_x=5.20, end_y=6.40, palette=palette)
+    # Aux Encoder -> Concat
+    draw_arrow(ax, start_x=2.60, start_y=3.10, end_x=3.10, end_y=3.45, palette=palette)
 
 
 def write_outputs(
