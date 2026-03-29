@@ -36,7 +36,7 @@ class NetworkConfig:
     board_proj_hidden: int = 512
     fc_hidden: int = 256
     aux_hidden: int = 128
-    num_aux_hidden_layers: int = 1
+    num_aux_hidden_layers: int = 0
     fusion_hidden: int = 256
     num_fusion_blocks: int = 1
     conv_kernel_size: int = 3
@@ -76,7 +76,9 @@ class OptimizerConfig:
     value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
         2000
     )
-    policy_loss_scale: float = 10.0  # Policy loss multiplier relative to value loss after balancing
+    policy_loss_scale: float = (
+        10.0  # Policy loss multiplier relative to value loss after balancing
+    )
     ema_decay: float = 0.999  # EMA decay for export/eval shadow weights; 0 disables EMA
     use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
         True
