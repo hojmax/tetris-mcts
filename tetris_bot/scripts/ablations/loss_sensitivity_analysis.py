@@ -606,23 +606,37 @@ def fit_sigmoid(losses: np.ndarray, attacks: np.ndarray) -> SigmoidFit | None:
     attack_max = float(attacks.max())
     attack_range = attack_max - attack_min
     initial_L = attack_range if attack_range > 0 else 1.0
-    initial_x0 = float(np.median(losses))
+
+    # Normalize x to [0, 1] to avoid numerical blowup in exp()
+    x_min = float(losses.min())
+    x_range = float(losses.max() - losses.min())
+    if x_range < 1e-12:
+        logger.warning("Loss range too small for sigmoid fit")
+        return None
+    losses_norm = (losses - x_min) / x_range
+
+    initial_x0_norm = float(np.median(losses_norm))
     initial_b = attack_min
 
     try:
         params, _ = curve_fit(
             sigmoid,
-            losses,
+            losses_norm,
             attacks,
-            p0=[initial_L, -1.0, initial_x0, initial_b],
+            p0=[initial_L, -5.0, initial_x0_norm, initial_b],
             maxfev=20_000,
         )
     except Exception as exc:  # curve_fit throws heterogeneous exception types
         logger.warning("Sigmoid fit failed", error=str(exc))
         return None
 
+    # Denormalize: k and x0 back to original scale
+    # sigmoid(x_norm) = sigmoid((x - x_min) / x_range)
+    # so k_orig = k_norm / x_range, x0_orig = x0_norm * x_range + x_min
+    k_orig = float(params[1]) / x_range
+    x0_orig = float(params[2]) * x_range + x_min
     return SigmoidFit(
-        L=float(params[0]), k=float(params[1]), x0=float(params[2]), b=float(params[3])
+        L=float(params[0]), k=k_orig, x0=x0_orig, b=float(params[3])
     )
 
 
