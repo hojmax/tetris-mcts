@@ -28,12 +28,17 @@ def main(args: Args) -> None:
     output = args.output or args.checkpoint
     state = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
 
-    sd = state["model_state_dict"]
+    dicts_to_remap = ["model_state_dict"]
+    if "ema_state_dict" in state:
+        dicts_to_remap.append("ema_state_dict")
+
     remapped = 0
-    for old_key, new_key in KEY_MAP.items():
-        if old_key in sd:
-            sd[new_key] = sd.pop(old_key)
-            remapped += 1
+    for dict_name in dicts_to_remap:
+        sd = state[dict_name]
+        for old_key, new_key in KEY_MAP.items():
+            if old_key in sd:
+                sd[new_key] = sd.pop(old_key)
+                remapped += 1
 
     if remapped == 0:
         print("No keys needed remapping — checkpoint already uses aux_mlp.* naming.")
