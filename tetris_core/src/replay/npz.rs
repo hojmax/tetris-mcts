@@ -68,12 +68,12 @@ pub(crate) fn write_examples_slices_to_npz(
     let mut zip = ZipWriter::new(file);
     // Replay snapshots can exceed 4 GiB for large buffers (notably policy_targets),
     // so ZIP64 must be enabled to emit valid archives.
-    // Use Stored (no compression) instead of Deflated: policy_targets (N×735 f32)
-    // dominates the file and compresses poorly (high-entropy floats), so Deflate
-    // burns hours of single-threaded CPU for negligible size reduction.  Stored
-    // turns a 2-hour shutdown save into ~30 seconds at modest file-size cost.
+    // Deflate level 1 (fastest) instead of default level 6: policy_targets (N×735 f32)
+    // dominates the file and compresses poorly (high-entropy floats), so higher
+    // levels burn hours of CPU for negligible extra compression.
     let options = FileOptions::default()
-        .compression_method(CompressionMethod::Stored)
+        .compression_method(CompressionMethod::Deflated)
+        .compression_level(Some(1))
         .large_file(true);
 
     write_example_flat_field(
