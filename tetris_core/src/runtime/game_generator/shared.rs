@@ -399,14 +399,31 @@ impl SnapshotPersister {
                 state.pending.take().expect("pending snapshot should exist")
             };
 
-            if let Err(error) = replace_snapshot_file(&request.filepath, |tmp_path| {
+            let num_examples = request.examples.len();
+            eprintln!(
+                "[GameGenerator] Writing replay snapshot ({} examples)...",
+                num_examples
+            );
+            let start = Instant::now();
+            let result = replace_snapshot_file(&request.filepath, |tmp_path| {
                 write_examples_to_npz(tmp_path, &request.examples)
-            }) {
-                eprintln!(
-                    "[GameGenerator] Failed to write replay snapshot {}: {}",
-                    request.filepath.display(),
-                    error
-                );
+            });
+            let elapsed = start.elapsed();
+            match result {
+                Ok(()) => {
+                    eprintln!(
+                        "[GameGenerator] Replay snapshot saved ({} examples) in {:.1}s",
+                        num_examples,
+                        elapsed.as_secs_f64()
+                    );
+                }
+                Err(error) => {
+                    eprintln!(
+                        "[GameGenerator] Failed to write replay snapshot {}: {}",
+                        request.filepath.display(),
+                        error
+                    );
+                }
             }
 
             let mut state = self.state.lock().unwrap();
