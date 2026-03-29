@@ -961,7 +961,10 @@ class Trainer:
         value_loss_scalar = value_loss.item()
         self.loss_balancer.append(policy_loss_scalar, value_loss_scalar)
         if self.loss_balancer.has_history():
-            self._cached_value_loss_weight = self.loss_balancer.value_loss_weight()
+            self._cached_value_loss_weight = (
+                self.loss_balancer.value_loss_weight()
+                / self.config.optimizer.policy_loss_scale
+            )
 
         policy_loss_avg, value_loss_avg = self.loss_balancer.averages()
         metrics = {
