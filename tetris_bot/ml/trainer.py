@@ -131,6 +131,7 @@ class Trainer:
             self.model.parameters(),
             lr=config.optimizer.learning_rate,
             weight_decay=config.optimizer.weight_decay,
+            foreach=not config.optimizer.use_torch_compile,
         )
 
         # Create scheduler

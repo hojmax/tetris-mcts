@@ -303,6 +303,7 @@ def export_onnx(
                     input_names=["board", "aux_features"],
                     output_names=["policy_logits", "value"],
                     verbose=False,
+                    dynamo=False,
                 )
         return True
     except (ImportError, ModuleNotFoundError) as e:
@@ -342,6 +343,7 @@ def export_split_models(
                     input_names=["board"],
                     output_names=["conv_out"],
                     verbose=False,
+                    dynamo=False,
                 )
 
             heads_model = HeadsModel(model)
@@ -361,6 +363,7 @@ def export_split_models(
                     input_names=["board_h", "piece_aux"],
                     output_names=["policy_logits", "value"],
                     verbose=False,
+                    dynamo=False,
                 )
 
             _export_cached_board_path_binary(model, fc_path)
