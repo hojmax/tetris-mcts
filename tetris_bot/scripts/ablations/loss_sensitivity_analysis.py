@@ -171,6 +171,7 @@ class ScriptArgs:
     device: str = "auto"
     seed: int = 42
     output_dir: Path | None = None
+    reanalyze: Path | None = None  # Path to existing output dir with sensitivity_points.json
 
     def __post_init__(self) -> None:
         self.policy_noise_stds = normalize_noise_stds(
@@ -1170,5 +1171,108 @@ def main(args: ScriptArgs) -> None:
         npz.close()
 
 
+def reanalyze(args: ScriptArgs) -> None:
+    """Re-run analysis/plots from saved sensitivity_points.json."""
+    assert args.reanalyze is not None
+    output_dir = args.reanalyze.resolve()
+    points_path = output_dir / "sensitivity_points.json"
+    if not points_path.exists():
+        raise FileNotFoundError(f"No sensitivity_points.json in {output_dir}")
+
+    raw_points = json.loads(points_path.read_text())
+    points = [SweepPoint(**p) for p in raw_points]
+    baseline_points = [p for p in points if p.noise_type == "baseline"]
+    if not baseline_points:
+        baseline_points = [p for p in points if p.noise_std == 0.0]
+    if not baseline_points:
+        raise ValueError("No baseline point found in saved data")
+    baseline = baseline_points[0]
+
+    run_dir = args.run_dir.resolve()
+
+    policy_analysis = aggregate_points(
+        points,
+        noise_type="policy",
+        baseline_loss=baseline.policy_loss,
+        baseline_avg_attack=baseline.avg_attack,
+    )
+    value_analysis = aggregate_points(
+        points,
+        noise_type="value",
+        baseline_loss=baseline.value_loss,
+        baseline_avg_attack=baseline.avg_attack,
+    )
+
+    policy_plot = output_dir / "policy_loss_vs_attack.png"
+    value_plot = output_dir / "value_loss_vs_attack.png"
+    plot_analysis(
+        policy_analysis,
+        policy_plot,
+        run_dir=run_dir,
+        eval_examples=args.eval_examples,
+        num_games=args.num_eval_games,
+        num_simulations=args.eval_num_simulations,
+    )
+    plot_analysis(
+        value_analysis,
+        value_plot,
+        run_dir=run_dir,
+        eval_examples=args.eval_examples,
+        num_games=args.num_eval_games,
+        num_simulations=args.eval_num_simulations,
+    )
+    policy_analysis = policy_analysis.model_copy(
+        update={"plot_path": str(policy_plot.relative_to(output_dir))}
+    )
+    value_analysis = value_analysis.model_copy(
+        update={"plot_path": str(value_plot.relative_to(output_dir))}
+    )
+
+    summary = AnalysisSummary(
+        run_dir=str(run_dir),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        args={
+            **asdict(args),
+            "run_dir": str(run_dir),
+            "output_dir": str(output_dir),
+        },
+        analysis_model_path="reanalyzed",
+        analysis_model_source="reanalyzed",
+        baseline=baseline,
+        policy=policy_analysis,
+        value=value_analysis,
+        recommended_weighting=recommended_weighting(
+            policy_analysis, value_analysis
+        ),
+    )
+
+    summary_path = output_dir / "sensitivity_summary.json"
+    summary_path.write_text(
+        json.dumps(summary.model_dump(mode="json"), indent=2) + "\n"
+    )
+
+    logger.info(
+        "Reanalysis complete",
+        output_dir=str(output_dir),
+        policy_plot=str(policy_plot),
+        value_plot=str(value_plot),
+    )
+    if summary.recommended_weighting is not None:
+        logger.info(
+            "Recommended loss weighting",
+            value_loss_weight=f"{summary.recommended_weighting.value_loss_weight:.3f}",
+            policy_derivative=f"{summary.recommended_weighting.policy_derivative:.4f}",
+            value_derivative=f"{summary.recommended_weighting.value_derivative:.4f}",
+        )
+    else:
+        logger.warning(
+            "Could not compute a recommended weighting from the fitted curves"
+        )
+
+
 if __name__ == "__main__":
-    main(parse(ScriptArgs))
+    parsed_args = parse(ScriptArgs)
+    if parsed_args.reanalyze is not None:
+        reanalyze(parsed_args)
+    else:
+        main(parsed_args)
