@@ -3,6 +3,7 @@
 //! Read and write training examples in NPZ format (compatible with Python numpy).
 
 use std::fs::File;
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
 use npyz::{NpyFile, WriterBuilder};
@@ -65,7 +66,7 @@ pub(crate) fn write_examples_slices_to_npz(
     let n64 = n as u64;
 
     let file = File::create(filepath).map_err(|e| e.to_string())?;
-    let mut zip = ZipWriter::new(file);
+    let mut zip = ZipWriter::new(BufWriter::new(file));
     // Replay snapshots can exceed 4 GiB for large buffers (notably policy_targets),
     // so ZIP64 must be enabled to emit valid archives.
     // Deflate level 1 (fastest) instead of default level 6: policy_targets (N×735 f32)
@@ -268,7 +269,7 @@ pub(crate) fn write_examples_slices_to_npz(
 /// Read training examples from NPZ format.
 pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, String> {
     let file = File::open(filepath).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(BufReader::new(file)).map_err(|e| e.to_string())?;
 
     let (boards, n) = read_dynamic_batch_field::<u8>(
         &mut archive,
@@ -507,7 +508,7 @@ fn validate_batch_shape(
 }
 
 fn read_dynamic_batch_field<T: npyz::Deserialize>(
-    archive: &mut ZipArchive<File>,
+    archive: &mut ZipArchive<BufReader<File>>,
     field_name: &str,
     trailing_dims: &[u64],
 ) -> Result<(Vec<T>, usize), String> {
@@ -521,7 +522,7 @@ fn read_dynamic_batch_field<T: npyz::Deserialize>(
 }
 
 fn read_batch_field<T: npyz::Deserialize>(
-    archive: &mut ZipArchive<File>,
+    archive: &mut ZipArchive<BufReader<File>>,
     field_name: &str,
     n: usize,
     trailing_dims: &[u64],
@@ -533,7 +534,7 @@ fn read_batch_field<T: npyz::Deserialize>(
 }
 
 fn read_bool_like_batch_field(
-    archive: &mut ZipArchive<File>,
+    archive: &mut ZipArchive<BufReader<File>>,
     field_name: &str,
     n: usize,
     trailing_dims: &[u64],
@@ -545,7 +546,7 @@ fn read_bool_like_batch_field(
 }
 
 fn read_npy_array<T: npyz::Deserialize>(
-    archive: &mut ZipArchive<File>,
+    archive: &mut ZipArchive<BufReader<File>>,
     entry_name: &str,
 ) -> Result<(Vec<T>, Vec<u64>), String> {
     let file = archive.by_name(entry_name).map_err(|e| e.to_string())?;
@@ -556,7 +557,7 @@ fn read_npy_array<T: npyz::Deserialize>(
 }
 
 fn read_npy_array_bool_like(
-    archive: &mut ZipArchive<File>,
+    archive: &mut ZipArchive<BufReader<File>>,
     entry_name: &str,
 ) -> Result<(Vec<u8>, Vec<u64>), String> {
     if let Ok((values, shape)) = read_npy_array::<u8>(archive, entry_name) {
@@ -568,7 +569,7 @@ fn read_npy_array_bool_like(
 }
 
 fn write_example_scalar_field<T: npyz::Serialize + npyz::AutoSerialize>(
-    zip: &mut ZipWriter<File>,
+    zip: &mut ZipWriter<BufWriter<File>>,
     options: FileOptions,
     name: &str,
     n: u64,
@@ -578,7 +579,7 @@ fn write_example_scalar_field<T: npyz::Serialize + npyz::AutoSerialize>(
 }
 
 fn write_example_flat_field<T: npyz::Serialize + npyz::AutoSerialize>(
-    zip: &mut ZipWriter<File>,
+    zip: &mut ZipWriter<BufWriter<File>>,
     options: FileOptions,
     name: &str,
     n: u64,
@@ -593,7 +594,7 @@ fn write_example_flat_field<T: npyz::Serialize + npyz::AutoSerialize>(
 
 /// Stream an npy array directly to a zip entry without intermediate buffers.
 fn stream_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize>(
-    zip: &mut ZipWriter<File>,
+    zip: &mut ZipWriter<BufWriter<File>>,
     options: FileOptions,
     name: &str,
     shape: &[u64],
