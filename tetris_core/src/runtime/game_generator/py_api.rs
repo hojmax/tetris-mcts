@@ -297,8 +297,18 @@ impl GameGenerator {
                 && snapshot_persister
                     .submit_buffer_snapshot(self.buffer.as_ref(), &self.training_data_path)
             {
+                eprintln!(
+                    "[GameGenerator] Writing final replay snapshot ({} examples)...",
+                    saved_examples
+                );
+                let start = Instant::now();
                 snapshot_persister.shutdown();
-                eprintln!("[GameGenerator] Saved {} examples to disk", saved_examples);
+                let elapsed = start.elapsed();
+                eprintln!(
+                    "[GameGenerator] Saved {} examples to disk in {:.1}s",
+                    saved_examples,
+                    elapsed.as_secs_f64()
+                );
             } else {
                 snapshot_persister.shutdown();
             }
