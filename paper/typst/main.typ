@@ -4,6 +4,8 @@
 #set par(justify: true, leading: 0.65em)
 #show figure.caption: set text(size: 10pt)
 
+= Gridsearch Cpuct and Temperature
+
 = Marginal utility of longer search
 
 = Optimal Weighting Between Value Head and Policy Head
