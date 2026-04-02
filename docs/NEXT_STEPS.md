@@ -11,6 +11,9 @@
 - [ ] Simplify code and drop all the bootstrapping and weighting logic
 - [ ] In the piece mask placemenet bfs, for O piece no need to consider rotation.
 - [ ] Maybe higher exploration factor? Yeah especially since sampling from visit frequencies anyways, so rare moves are still really really rare.
+- [ ] Remove tanh normalization
+- [ ] Remove penalties
+- [ ] Lets simplify all of tetris_bot/ml/config.py by just doing pydantic classes and dropping the dataclasses as terminal input
 
 # Experiments
 
@@ -22,6 +25,7 @@
   - Then we also show an average such curve.
 
 - [ ] Take trained network, and then gridsearch c_puct and temperature
+  - What else could we search?
 
 - [ ] Produce pareto frontier plot.
   - Start by generating for just single model. Like make script for getting the data.
@@ -105,6 +109,8 @@ In progress: 🟨
 ## Python Code
 
 ### tetris_bot/config.py ✅
+
+- Why do we have both NetworkConfig and ModelKwargs? Can't we just do only NetworkConfig?
 
 ### tetris_bot/run_setup.py ✅
 
