@@ -4,6 +4,10 @@
 #set par(justify: true, leading: 0.65em)
 #show figure.caption: set text(size: 10pt)
 
+= Marginal utility of longer search
+
+= Optimal Weighting Between Value Head and Policy Head
+
 = Network Architecture
 
 Figure @fig:network-architecture shows the current network used by the system. The board occupancy tensor flows through the cached convolutional backbone, engineered board statistics are injected at `board_proj`, and the piece/game context modulates the cached board embedding before the policy and value heads.

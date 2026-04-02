@@ -1,70 +1,35 @@
 # Next Steps
 
-- [ ] Reintroduce the board stats in the fusion part. Ablate this.
 - [ ] Improve policy layout. (not 735).
-- [ ] Figure out data augmentation.
-  - Ah the way we do the search... Hmm we favor one rotation. Meaning we should not just naively swap the policy logits.
+- [ ] Implement data augmentation.
+- [ ] Dropping the gating mechanism.
+  - Yeah param for turning it off, and just syncing every sync seconds.
+- [ ] Change network to do spatial policy. 4 x 20 x 10
 - [ ] Adding in coords into input layer
+- [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actions are always masked out.
+  - Actually would be great to see for all 7 pieces, how often each type of action is chosen. so would be like a vector of 7 x 732 + one number for holds. Maybe actually 7 x 323 where the last entry is for holds. Also will be less than 732 for all of them, more like 6XX. Could be cool to visualize the heatmap here.
+- [ ] Simplify code and drop all the bootstrapping and weighting logic
+- [ ] In the piece mask placemenet bfs, for O piece no need to consider rotation.
+- [ ] Maybe higher exploration factor? Yeah especially since sampling from visit frequencies anyways, so rare moves are still really really rare.
 
-- [ ] Data augmentation. horisontal flip.
-- [ ] Optimized EMA. 
-- [ ] Adding in holes map into input layer?
-- [ ] Adding in overhang map into input layer?
-- [ ] sometimes evaluating candidates takes way longer than other times?
-- [ ] the value / policy loss tradeoff experiment
+# Experiments
 
-- Not quite sure how important value vs. policy loss is? How would I test this?
-  - One thing would be take a well trained network, and then try adding noise to the respective policy and value, and with the noisy estimates calculate the held-out loss. Then you can make two graphs, one is held-out policy loss on x-axis, and then avg. attack on y-axis. The other plot is held-out value loss on x-axis vs. avg. attack on y-axis.
-  - What would we conclude from this? I guess we would want some notion of marginal utility of change in loss in the two? I guess we will also have to extrapolate to some degree probably, since the model will probably be improving outside the range of what I trained the marginal utility curves on. So say we had some extrapolated curve, and value loss said for 0.1 change in loss, I get +0.05 in avg. attak, and policy was for 0.1 change in loss I get +0.01 in attack, Then I guess you would scale the loss like: policy_loss + normalized_value_loss \* 5, i.e. the value loss gets to dominate 5 times as much in the loss.
-  - I would imagine we would fit a sigmoid here on both, as they would start of with noise not being useful, then sharp increase, then plateu at maximal performance. Then for the marginal improvement we can simply use the derivative of the sigmoid.
-  - We want to baseline this training method against just training 1:1 like we do right now.
-  - You could even do this during training, like run 20 games with a tiny bit of noise, get loss, and then apprixomate gradient from these 2 data points.
-  - Equation:
-    - pl x (d pl / d vl) + vl x (~pl / ~vl)
+- [ ] Redo the value / policy loss tradeoff experiment on better network
   - The noise-to-loss approximation trick assumes that value estimate is unbiased, which we know is true and can verify. I am not sure if the same is true for the probability distribution? I guess cross entropy is a proper scoring rule, such that I would expect probabilities to be unbiased (actually we could also check this, compare estimate to the train buffer).
 
-- [ ] Maybe just ask an agent team for like a full rewrite from scratch to make everything clean? altough all the reading I have been doing may have been for naught then.
+- [ ] Would be great to do the marginal KL divergence between a final distribution after 20K search, and then save the intermediate distributions. After every single simulation, save the distribution. End up with 20K ones. Do KL divergence for all of them relative to the final one, and plot this. Then also plot the emperical direvative of this.
+  - Do this for many different like 10 different ones, and show all the different curves in one plot. Maybe this varies quite a bit.
+  - Then we also show an average such curve.
 
-- [ ] Implment new architecture, and then run warm start
-- [ ] Allow an agent to iterate on the architecture by itself, so just give it a replay buffer and a fresh repo, and the idea is for it to get as low of a loss as possible, whilst being amenable to caching.
+- [ ] Take trained network, and then gridsearch c_puct and temperature
+
 - [ ] Produce pareto frontier plot.
-  - [ ] Start by generating for just single model. Like make script for getting the data.
-- [ ] Try out spatial policy.
-
-- [ ] We let the current run keep going until plateues, then we try to train some larger trunk models and see what the speed difference is.
-- [ ] I need to somehow decide the optimal trunk size. Like I could try a smaller and a larger one, trained locally on the replay buffer, and then run both and see what the concrete speed difference is.
-- [ ] Maybe I can simplify code now and drop all the bootstrappinitlogic, and just pretrain the network on the replay buffer from earlier experiment as warm start. But kind of wack to have unreproducable training run. Like does the method actually work without bootstrapping now? Could we get rid of the penalties and stuff? Once everything is fixed we should try, is kind of ugly. Why would this be necessary. Could of course just be compute multiplier.
-- [ ] Why is the GPU going cold repeatedly like 50% of the time?
-- [ ] Why don't the final moves look full optimal? Like just clean out the board in the last 5 moves? Surely that is highest attack possible? Instead it does random nonsense.
-- [ ] Why don't we always have 50 piece episodes??????
-- [ ] One thing we could do is to make the amount of resources allocated to evaluating candidates configurable, and then spend alot on it every time we have upgrade, and then less and less each time they fail to upgrade. So we evaluate frequently when we are seeing big changes, and rarely when we are seeing small changes.
-
-- [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actions are always masked out.
-  - [ ] Actually would be great to see for all 7 pieces, how often each type of action is chosen. so would be like a vector of 7 x 732 + one number for holds. Maybe actually 7 x 323 where the last entry is for holds. Also will be less than 732 for all of them, more like 6XX. Could be cool to visualize the heatmap here.
-  - [ ] Maybe higher exploration factor? Yeah especially since sampling from visit frequencies anyways, so rare moves are still really really rare.
-
-- Look up the gradient norm vs. learning rate schedueling advice again.
-
-- [ ] Speed up data generation
-- [ ] Multi machine RL environment generation?
-- [ ] Replay buffer should grow gradually?
-
-- [ ] Adding in alpha downweighting of value loss?
-- [ ] Do offline learning experiments. Things to validate:
-  - Learning rate and scheduler
-  - Model size
-  - Batch size
-  - Policy / Value loss weighting
-  - Weight decay
-  - Optimizer
-  - Architecture choices
-- [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
-- [ ] Improving model architecture
+  - Start by generating for just single model. Like make script for getting the data.
+  - We let the current run keep going until plateues, then we try to train some larger trunk models and see what the speed difference is.
 
 # Confusions
 
 - [ ] Why is episode length not 50/50? I guess random piece placements?? Still confused, mysterious answer.
-- [ ] Why was the lower loss warm started network not better than it was?
 - [ ] Why are some of the games still ending early?
 - [ ] How come the model is not even that much better even when doing tree reuse
 - [ ] Why does MCTS sometimes have games with like 1 in attack? And sometimes 37? What is the difference between these games? Look at replay buffer and inspect.
@@ -165,6 +130,26 @@ In progress: 🟨
   - can t-spin filter?
 - [ ] Try to handcraft great Tetris bot.
 - [ ] Make a readme
+- [ ] Do offline learning experiments. Things to validate:
+  - Learning rate and scheduler
+  - Model size
+  - Batch size
+  - Policy / Value loss weighting
+  - Weight decay
+  - Optimizer
+  - Architecture choices
+- [ ] predict "n-step bootstrapped return" instead of "cummulative reward"
+- [ ] Improving model architecture
+- [ ] Look up the gradient norm vs. learning rate schedueling advice again.
+- [ ] Speed up data generation
+- [ ] Multi machine RL environment generation?
+- [ ] Replay buffer should grow gradually?
+- [ ] Maybe just ask an agent team for like a full rewrite from scratch to make everything clean? altough all the reading I have been doing may have been for naught then.
+- [ ] Reintroduce the board stats in the fusion part. Ablate this.
+- [ ] Optimized EMA.
+- [ ] Adding in holes map into input layer?
+- [ ] Adding in overhang map into input layer?
+- [ ] sometimes evaluating candidates takes way longer than other times?
 
 ## Test Environment State
 
