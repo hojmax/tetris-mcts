@@ -1,9 +1,5 @@
 # Next Steps
 
-- [ ] Improve policy layout. (not 735).
-- [ ] Implement data augmentation.
-- [ ] Dropping the gating mechanism.
-  - Yeah param for turning it off, and just syncing every sync seconds.
 - [ ] Change network to do spatial policy. 4 x 20 x 10
 - [ ] Adding in coords into input layer
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actions are always masked out.
@@ -11,7 +7,6 @@
 - [ ] Simplify code and drop all the bootstrapping and weighting logic
 - [ ] In the piece mask placemenet bfs, for O piece no need to consider rotation.
 - [ ] Maybe higher exploration factor? Yeah especially since sampling from visit frequencies anyways, so rare moves are still really really rare.
-- [ ] Remove tanh normalization
 - [ ] Remove penalties
 - [ ] Are there any auxiliary losses we could apply?
   - Predict logits for n+1 move.
