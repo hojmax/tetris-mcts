@@ -13,7 +13,6 @@
 - [ ] Maybe higher exploration factor? Yeah especially since sampling from visit frequencies anyways, so rare moves are still really really rare.
 - [ ] Remove tanh normalization
 - [ ] Remove penalties
-- [ ] Lets simplify all of tetris_bot/ml/config.py by just doing pydantic classes and dropping the dataclasses as terminal input. Make a config.yaml that is where all the constants go that is loaded instead. So no defaults
 - [ ] Are there any auxiliary losses we could apply?
   - Predict logits for n+1 move.
   - Predict cummulative attack for next 1,2,3,4,5 moves.
