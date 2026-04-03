@@ -19,10 +19,10 @@ from tetris_bot.constants import (
     BENCHMARKS_DIR,
     PARALLEL_ONNX_FILENAME,
 )
-from tetris_bot.ml.config import SelfPlayConfig
+from tetris_bot.ml.config import default_self_play_config
 
 logger = structlog.get_logger()
-_DEFAULT_SELF_PLAY = SelfPlayConfig()
+_DEFAULT_SELF_PLAY = default_self_play_config()
 
 
 @dataclass

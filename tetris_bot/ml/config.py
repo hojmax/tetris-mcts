@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
-from dataclasses import fields as dataclass_fields
 from pathlib import Path
-from typing import Any, Mapping, TypeVar
-from typing import TypedDict
+from typing import Any, Mapping, TypedDict, cast
+
+import yaml
+from pydantic import BaseModel, ConfigDict
+
+from tetris_bot.constants import DEFAULT_CONFIG_PATH
 
 
 class ModelKwargs(TypedDict):
@@ -25,22 +26,25 @@ class ModelKwargs(TypedDict):
     conv_padding: int
 
 
-@dataclass
-class NetworkConfig:
+class ConfigModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+
+class NetworkConfig(ConfigModel):
     """Neural network architecture hyperparameters."""
 
-    trunk_channels: int = 32
-    num_conv_residual_blocks: int = 5
-    reduction_channels: int = 32
-    board_stats_hidden: int = 32
-    board_proj_hidden: int = 512
-    fc_hidden: int = 256
-    aux_hidden: int = 128
-    num_aux_hidden_layers: int = 0
-    fusion_hidden: int = 256
-    num_fusion_blocks: int = 1
-    conv_kernel_size: int = 3
-    conv_padding: int = 1
+    trunk_channels: int
+    num_conv_residual_blocks: int
+    reduction_channels: int
+    board_stats_hidden: int
+    board_proj_hidden: int
+    fc_hidden: int
+    aux_hidden: int
+    num_aux_hidden_layers: int
+    fusion_hidden: int
+    num_fusion_blocks: int
+    conv_kernel_size: int
+    conv_padding: int
 
     def to_model_kwargs(self) -> ModelKwargs:
         return {
@@ -59,193 +63,95 @@ class NetworkConfig:
         }
 
 
-@dataclass
-class OptimizerConfig:
+class OptimizerConfig(ConfigModel):
     """Training loop, optimizer, loss, and logging hyperparameters."""
 
-    total_steps: int = 100_000_000_000
-    batch_size: int = 2048
-    learning_rate: float = 0.0005
-    weight_decay: float = 5e-5
-    grad_clip_norm: float = 10.0
-    lr_schedule: str = "linear"  # 'linear', 'cosine', 'step', 'none'
-    lr_decay_steps: int = 200_000
-    lr_min_factor: float = 0.2  # Final LR as fraction of initial (for linear/cosine)
-    lr_step_gamma: float = 0.1  # LR decay factor (for step scheduler)
-    lr_step_divisor: int = 3  # Decay every (lr_decay_steps // divisor) steps
-    value_loss_weight_window: int = (  # Rolling window size for dynamic value-loss weighting
-        2000
-    )
-    policy_loss_scale: float = (
-        10.0  # Policy loss multiplier relative to value loss after balancing
-    )
-    ema_decay: float = 0.999  # EMA decay for export/eval shadow weights; 0 disables EMA
-    use_torch_compile: bool = (  # If True, use torch.compile for model forward/backward optimization
-        True
-    )
-    train_step_metrics_interval: int = (  # Collect full train-step scalar metrics every N updates (1 = every step)
-        16
-    )
-    compute_extra_train_metrics_on_log: bool = (  # If True, run an extra forward pass at log ticks for diagnostics (policy entropy, accuracy)
-        True
-    )
-    log_individual_games_to_wandb: bool = (  # If True, log one WandB row per completed game instead of aggregated replay summaries
-        False
-    )
+    total_steps: int
+    batch_size: int
+    learning_rate: float
+    weight_decay: float
+    grad_clip_norm: float
+    lr_schedule: str
+    lr_decay_steps: int
+    lr_min_factor: float
+    lr_step_gamma: float
+    lr_step_divisor: int
+    value_loss_weight_window: int
+    policy_loss_scale: float
+    ema_decay: float
+    use_torch_compile: bool
+    train_step_metrics_interval: int
+    compute_extra_train_metrics_on_log: bool
+    log_individual_games_to_wandb: bool
 
 
-@dataclass
-class SelfPlayConfig:
+class SelfPlayConfig(ConfigModel):
     """MCTS and self-play generation hyperparameters."""
 
-    num_simulations: int = 2000  # MCTS simulations per move
-    c_puct: float = 1.5  # PUCT exploration constant
-    temperature: float = (  # Sharpening / Smoothening of MCTS visit-count policy target
-        1.0
-    )
-    dirichlet_alpha: float = 0.02
-    dirichlet_epsilon: float = 0.25
-    add_noise: bool = (  # Whether to add Dirichlet noise at the MCTS root during self-play
-        True
-    )
-    nn_value_weight: float = (  # Scale factor for NN value output in MCTS (0.0 ignores value head)
-        1
-    )
-    nn_value_weight_promotion_multiplier: float = (  # Multiplicative growth target per accepted promotion (e.g. 1.4 means plus-40pct)
-        1.4
-    )
-    nn_value_weight_promotion_max_delta: float = (  # Hard cap on per-promotion absolute increase in nn_value_weight
-        0.10
-    )
-    nn_value_weight_cap: float = (  # Maximum allowed nn_value_weight during promotion ramp
-        1.0
-    )
-    use_tanh_q_normalization: bool = (  # If True, use tanh(Q/q_scale) squashing; if False, use global min-max Q normalization
-        False
-    )
-    q_scale: float = (  # Scale for tanh Q squashing in PUCT (only used when use_tanh_q_normalization=True)
-        8.0
-    )
-    use_parent_value_for_unvisited_q: bool = (  # If True, unvisited action children start from the parent node's initial total-value estimate instead of zero Q
-        True
-    )
-    bootstrap_use_min_max_q_normalization: bool = (  # If True, force no-network bootstrap rollouts to use global min-max Q normalization
-        True
-    )
-    visit_sampling_epsilon: float = (  # Fraction of self-play moves sampled from visit-policy instead of argmax
-        0.1
-    )
-    mcts_seed: (  # Base MCTS seed (combined with env seed + placement); set None for non-deterministic search RNG
-        int | None
-    ) = 0
-    reuse_tree: bool = (  # Reuse MCTS subtree from previous move instead of building fresh tree
-        True
-    )
-    num_workers: int = 7  # Parallel game generation threads
-    max_placements: int = (  # Maximum placements (holds excluded) for placement-count normalization
-        50
-    )
-    death_penalty: float = 0.0  # Search-time terminal penalty when game ends in death
-    overhang_penalty_weight: float = (  # Search-time weight for normalized overhang penalty
-        0.0
-    )
-    model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
-        20
-    )
-    bootstrap_without_network: bool = True  # If True, self-play starts with uniform-prior/zero-value MCTS until first promotion
-    bootstrap_num_simulations: int = (  # Simulations per move before first promoted NN model
-        4000
-    )
-    save_eval_trees: bool = (  # If True, persist worst-case candidate eval game trees to disk (can use ~250 MB per evaluation)
-        False
-    )
+    num_simulations: int
+    c_puct: float
+    temperature: float
+    dirichlet_alpha: float
+    dirichlet_epsilon: float
+    add_noise: bool
+    nn_value_weight: float
+    nn_value_weight_promotion_multiplier: float
+    nn_value_weight_promotion_max_delta: float
+    nn_value_weight_cap: float
+    use_tanh_q_normalization: bool
+    q_scale: float
+    use_parent_value_for_unvisited_q: bool
+    bootstrap_use_min_max_q_normalization: bool
+    visit_sampling_epsilon: float
+    mcts_seed: int | None
+    reuse_tree: bool
+    num_workers: int
+    max_placements: int
+    death_penalty: float
+    overhang_penalty_weight: float
+    model_promotion_eval_games: int
+    bootstrap_without_network: bool
+    bootstrap_num_simulations: int
+    save_eval_trees: bool
 
 
-@dataclass
-class ReplayConfig:
+class ReplayConfig(ConfigModel):
     """Replay buffer and batch sampling hyperparameters."""
 
-    buffer_size: int = 7_000_000  # Maximum buffer size. FIFO eviction.
-    min_buffer_size: int = 100  # Minimum buffer size before training starts
-    prefetch_batches: int = (  # Number of train batches sampled/staged per generator.sample_batch call
-        1
-    )
-    staged_batch_cache_batches: int = (  # Target number of train batches kept staged in memory/device queue
-        1
-    )
-    mirror_replay_on_accelerator: bool = (  # If True, mirror full replay buffer on CUDA/MPS and train from device-local samples
-        True
-    )
-    replay_mirror_refresh_seconds: float = (  # Seconds between full replay mirror refreshes while training from device-local replay
-        10.0
-    )
-    replay_mirror_delta_chunk_examples: int = (  # Max replay examples pulled per incremental mirror delta call
-        65_536
-    )
-    pin_memory_batches: bool = (  # If True, pin host tensors before CUDA transfer
-        True
-    )
+    buffer_size: int
+    min_buffer_size: int
+    prefetch_batches: int
+    staged_batch_cache_batches: int
+    mirror_replay_on_accelerator: bool
+    replay_mirror_refresh_seconds: float
+    replay_mirror_delta_chunk_examples: int
+    pin_memory_batches: bool
 
 
-@dataclass
-class RunConfig:
+class RunConfig(ConfigModel):
     """Run management: WandB identity, timing intervals, and auto-populated paths."""
 
-    # WandB
-    project_name: str = "tetris-alphazero"
-    run_name: str | None = None
-
-    # Intervals (seconds)
-    model_sync_interval_seconds: float = (
-        120  # Base seconds between candidate model exports/queues
-    )
-    model_sync_failure_backoff_seconds: float = (
-        120  # Extra seconds added after each failed candidate promotion
-    )
-    model_sync_max_interval_seconds: float = (
-        0.0  # Hard cap for adaptive candidate export interval (0 disables cap)
-    )
-    checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
-    log_interval_seconds: float = 10  # Seconds between logging
-    save_interval_seconds: float = (
-        10800  # Seconds between replay snapshot saves (0 to disable)
-    )
-
-    # Paths (set automatically by setup_run_directory)
-    run_dir: Path | None = None  # e.g., training_runs/v0
-    checkpoint_dir: Path | None = None  # e.g., training_runs/v0/checkpoints
-    data_dir: Path | None = None  # e.g., training_runs/v0 (for training_data.npz)
+    project_name: str
+    run_name: str | None
+    model_sync_interval_seconds: float
+    model_sync_failure_backoff_seconds: float
+    model_sync_max_interval_seconds: float
+    checkpoint_interval_seconds: float
+    log_interval_seconds: float
+    save_interval_seconds: float
+    run_dir: Path | None
+    checkpoint_dir: Path | None
+    data_dir: Path | None
 
 
-@dataclass
-class TrainingConfig:
-    """Training hyperparameters - all configurable via CLI."""
+class TrainingConfig(ConfigModel):
+    """Training hyperparameters."""
 
     network: NetworkConfig
     optimizer: OptimizerConfig
     self_play: SelfPlayConfig
     replay: ReplayConfig
     run: RunConfig
-
-
-def default_training_config() -> TrainingConfig:
-    return TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(),
-    )
-
-
-_ConfigSectionT = TypeVar(
-    "_ConfigSectionT",
-    NetworkConfig,
-    OptimizerConfig,
-    SelfPlayConfig,
-    ReplayConfig,
-    RunConfig,
-)
 
 
 def _coerce_mapping(
@@ -255,64 +161,58 @@ def _coerce_mapping(
 ) -> Mapping[str, Any]:
     if not isinstance(raw_value, Mapping):
         raise TypeError(
-            f"{field_name} must be a mapping in saved training config "
-            f"(got {type(raw_value).__name__})"
+            f"{field_name} must be a mapping (got {type(raw_value).__name__})"
         )
     return raw_value
 
 
-def _load_config_section(
-    section_type: type[_ConfigSectionT],
-    data: Mapping[str, Any],
-    *,
-    section_name: str,
-    path_fields: frozenset[str] = frozenset(),
-) -> _ConfigSectionT:
-    known_fields = {field.name for field in dataclass_fields(section_type)}
-    raw_section = data.get(section_name)
-    if raw_section is None:
-        section_data = {
-            key: value for key, value in data.items() if key in known_fields
-        }
-    else:
-        section_data = dict(_coerce_mapping(raw_section, field_name=section_name))
-
-    kwargs = {key: value for key, value in section_data.items() if key in known_fields}
-    for path_field in path_fields:
-        if kwargs.get(path_field) is not None:
-            kwargs[path_field] = Path(str(kwargs[path_field]))
-    return section_type(**kwargs)
-
-
 def training_config_from_dict(data: Mapping[str, Any]) -> TrainingConfig:
-    if not isinstance(data, Mapping):
-        raise TypeError(
-            "Saved training config must be a mapping at the top level "
-            f"(got {type(data).__name__})"
-        )
+    return TrainingConfig.model_validate(_coerce_mapping(data, field_name="config"))
 
-    return TrainingConfig(
-        network=_load_config_section(NetworkConfig, data, section_name="network"),
-        optimizer=_load_config_section(
-            OptimizerConfig,
-            data,
-            section_name="optimizer",
-        ),
-        self_play=_load_config_section(
-            SelfPlayConfig,
-            data,
-            section_name="self_play",
-        ),
-        replay=_load_config_section(ReplayConfig, data, section_name="replay"),
-        run=_load_config_section(
-            RunConfig,
-            data,
-            section_name="run",
-            path_fields=frozenset({"run_dir", "checkpoint_dir", "data_dir"}),
-        ),
+
+def training_config_to_dict(config: TrainingConfig) -> dict[str, Any]:
+    return cast(dict[str, Any], config.model_dump(mode="json"))
+
+
+def training_config_to_yaml(config: TrainingConfig) -> str:
+    return yaml.safe_dump(
+        training_config_to_dict(config),
+        sort_keys=False,
     )
 
 
-def load_training_config_json(path: Path) -> TrainingConfig:
-    raw_data = json.loads(path.read_text())
-    return training_config_from_dict(_coerce_mapping(raw_data, field_name="config"))
+def save_training_config(config: TrainingConfig, path: Path) -> None:
+    path.write_text(training_config_to_yaml(config))
+
+
+def load_training_config(path: Path) -> TrainingConfig:
+    raw_data = yaml.safe_load(path.read_text())
+    return training_config_from_dict(_coerce_mapping(raw_data, field_name=str(path)))
+
+
+def default_training_config(config_path: Path = DEFAULT_CONFIG_PATH) -> TrainingConfig:
+    return load_training_config(config_path)
+
+
+def default_network_config(config_path: Path = DEFAULT_CONFIG_PATH) -> NetworkConfig:
+    return default_training_config(config_path).network
+
+
+def default_optimizer_config(
+    config_path: Path = DEFAULT_CONFIG_PATH,
+) -> OptimizerConfig:
+    return default_training_config(config_path).optimizer
+
+
+def default_self_play_config(
+    config_path: Path = DEFAULT_CONFIG_PATH,
+) -> SelfPlayConfig:
+    return default_training_config(config_path).self_play
+
+
+def default_replay_config(config_path: Path = DEFAULT_CONFIG_PATH) -> ReplayConfig:
+    return default_training_config(config_path).replay
+
+
+def default_run_config(config_path: Path = DEFAULT_CONFIG_PATH) -> RunConfig:
+    return default_training_config(config_path).run

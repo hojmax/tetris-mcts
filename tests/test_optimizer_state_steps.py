@@ -7,12 +7,8 @@ import torch
 
 from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS
 from tetris_bot.ml.config import (
-    NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_training_config,
 )
 from tetris_bot.ml.network import AUX_FEATURES
 from tetris_bot.ml.replay_buffer import TrainingBatch
@@ -29,19 +25,17 @@ def _make_model() -> torch.nn.Linear:
 
 
 def _make_training_config(tmp_path: Path) -> TrainingConfig:
+    config = default_training_config()
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
-    return TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(
-            run_dir=tmp_path,
-            checkpoint_dir=checkpoint_dir,
-            data_dir=data_dir,
-        ),
+    config.run = config.run.model_copy(
+        update={
+            "run_dir": tmp_path,
+            "checkpoint_dir": checkpoint_dir,
+            "data_dir": data_dir,
+        }
     )
+    return config
 
 
 def _make_training_batch(batch_size: int = 8) -> TrainingBatch:

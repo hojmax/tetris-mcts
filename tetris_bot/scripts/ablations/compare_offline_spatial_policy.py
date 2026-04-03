@@ -18,7 +18,7 @@ from tetris_bot.constants import (
     NUM_PIECE_TYPES,
     PIECE_NAMES,
 )
-from tetris_bot.ml.config import NetworkConfig
+from tetris_bot.ml.config import default_network_config
 from tetris_bot.ml.network import (
     BOARD_STATS_FEATURES,
     PIECE_AUX_FEATURES,
@@ -38,7 +38,7 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
 )
 
 logger = structlog.get_logger()
-_DEFAULT_NETWORK = NetworkConfig()
+_DEFAULT_NETWORK = default_network_config()
 ROTATION_LABELS = ("0", "R", "2", "L")
 NUM_PLACEMENT_ACTIONS = NUM_ACTIONS - 1
 X_MIN = -3

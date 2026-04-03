@@ -12,11 +12,12 @@ from simple_parsing import parse
 
 from tetris_bot.constants import (
     CHECKPOINT_DIRNAME,
+    DEFAULT_CONFIG_PATH,
     INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
     TRAINING_DATA_FILENAME,
 )
-from tetris_bot.ml.config import TrainingConfig
+from tetris_bot.ml.config import TrainingConfig, load_training_config
 from tetris_bot.run_setup import configure_wandb, get_best_device, setup_run_directory
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.artifacts import copy_model_artifact_bundle
@@ -30,8 +31,7 @@ logger = structlog.get_logger()
 class ScriptArgs:
     """Training script arguments."""
 
-    # Training config (all hyperparameters)
-    training: TrainingConfig
+    config: Path = DEFAULT_CONFIG_PATH
 
     # Runtime
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
@@ -398,7 +398,7 @@ def apply_optimized_runtime_overrides(config: TrainingConfig) -> None:
     )
 
 
-def main(args: ScriptArgs) -> None:
+def main(args: ScriptArgs, *, config: TrainingConfig | None = None) -> None:
     resume_source_count = int(args.resume_dir is not None) + int(
         args.resume_wandb is not None
     )
@@ -419,9 +419,14 @@ def main(args: ScriptArgs) -> None:
     if effective_resume_dir is not None:
         logger.info("Using resume source", source_dir=str(effective_resume_dir))
 
+    if config is None:
+        config_path = args.config.resolve()
+        config = load_training_config(config_path)
+        logger.info("Loaded training config", config_path=str(config_path))
+
     try:
         config, resume_checkpoint, resume_incumbent_model_path = setup_run(
-            args, args.training, resume_dir=effective_resume_dir
+            args, config, resume_dir=effective_resume_dir
         )
         apply_optimized_runtime_overrides(config)
 

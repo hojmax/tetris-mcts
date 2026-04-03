@@ -4,30 +4,24 @@ import signal
 from pathlib import Path
 
 from tetris_bot.ml.config import (
-    NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_training_config,
 )
 from tetris_bot.ml.trainer import Trainer
 
 
 def _make_config(tmp_path: Path) -> TrainingConfig:
+    config = default_training_config()
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
-    return TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(
-            run_dir=tmp_path,
-            checkpoint_dir=checkpoint_dir,
-            data_dir=data_dir,
-        ),
+    config.run = config.run.model_copy(
+        update={
+            "run_dir": tmp_path,
+            "checkpoint_dir": checkpoint_dir,
+            "data_dir": data_dir,
+        }
     )
+    return config
 
 
 def _make_trainer(tmp_path: Path) -> Trainer:

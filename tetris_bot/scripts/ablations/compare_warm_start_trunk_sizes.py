@@ -17,7 +17,7 @@ from tetris_bot.constants import BENCHMARKS_DIR, CONFIG_FILENAME, TRAINING_DATA_
 from tetris_bot.ml.config import (
     NetworkConfig,
     TrainingConfig,
-    load_training_config_json,
+    load_training_config,
 )
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.scripts.warm_start import (
@@ -627,7 +627,7 @@ def main(args: ScriptArgs) -> None:
     )
     output_root.mkdir(parents=True, exist_ok=False)
 
-    source_config = load_training_config_json(source_run_dir / CONFIG_FILENAME)
+    source_config = load_training_config(source_run_dir / CONFIG_FILENAME)
     variants = build_variants(source_config, args)
     logger.info(
         "Starting warm-start trunk comparison",
@@ -831,7 +831,7 @@ def main(args: ScriptArgs) -> None:
     summary_payload: dict[str, object] = {
         "source_run_dir": str(source_run_dir),
         "output_root": str(output_root),
-        "source_network": asdict(source_config.network),
+        "source_network": source_config.network.model_dump(mode="json"),
         "source_self_play": {
             "num_simulations": source_config.self_play.num_simulations,
             "num_workers": source_config.self_play.num_workers,

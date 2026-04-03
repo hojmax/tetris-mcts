@@ -157,7 +157,7 @@ class ScriptArgs:
     policy_targets_edge_items: int = (
         6  # Number of edge items per axis when truncating policy_targets display
     )
-    config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
+    config_path: Path | None = None  # Config path (default: <run_dir>/config.yaml)
 
     def __post_init__(self) -> None:
         run_dir = self.data_path.parent

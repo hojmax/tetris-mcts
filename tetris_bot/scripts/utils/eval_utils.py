@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-import json
 import math
 import statistics
 from pathlib import Path
+from typing import Any
 
 from tetris_bot.constants import (
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     LATEST_ONNX_FILENAME,
 )
+from tetris_bot.ml.config import load_training_config, training_config_to_dict
 
 
-def load_run_config(run_dir: Path) -> dict:
+def load_run_config(run_dir: Path) -> dict[str, Any]:
     config_path = run_dir / CONFIG_FILENAME
     if not config_path.exists():
         raise FileNotFoundError(f"Run config not found: {config_path}")
-    data = json.loads(config_path.read_text())
-    if not isinstance(data, dict):
-        raise ValueError(f"Run config must be a JSON object: {config_path}")
-    return data
+    return training_config_to_dict(load_training_config(config_path))
 
 
 def resolve_config_value(

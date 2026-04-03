@@ -41,7 +41,7 @@ from tetris_bot.ml.weights import (
     load_optimizer_state_dict,
     save_checkpoint,
 )
-from tetris_bot.run_setup import config_to_json, save_config, setup_run_directory
+from tetris_bot.run_setup import config_to_dict, save_config, setup_run_directory
 from tetris_bot.scripts.inspection.optimize_machine import (
     machine_profile,
     machine_type_fingerprint,
@@ -704,7 +704,7 @@ def build_output_config(
     base_config: TrainingConfig | None = None,
 ) -> TrainingConfig:
     config = (
-        copy.deepcopy(base_config)
+        base_config.model_copy(deep=True)
         if base_config is not None
         else default_training_config()
     )
@@ -1101,7 +1101,7 @@ def build_wandb_config(
     grad_clip_norm: float,
     eval_worker_resolution: EvalWorkerResolution,
 ) -> dict[str, object]:
-    serialized_output_config = json.loads(config_to_json(resolved_output_config))
+    serialized_output_config = config_to_dict(resolved_output_config)
     return {
         "source_run_dir": str(source_run_dir),
         "source_config_path": str(source_config_path),
@@ -1167,7 +1167,7 @@ def run_warm_start(
             output_run_dir=output_run_dir,
         )
         if output_config is None
-        else copy.deepcopy(output_config)
+        else output_config.model_copy(deep=True)
     )
 
     if (
@@ -1402,7 +1402,7 @@ def run_warm_start(
         assert_rust_inference_artifacts(incumbent_onnx_path)
         assert_rust_inference_artifacts(parallel_onnx_path)
 
-        eval_config = copy.deepcopy(resolved_output_config.self_play)
+        eval_config = resolved_output_config.self_play.model_copy(deep=True)
         eval_num_workers = eval_worker_resolution.num_workers
         eval_num_simulations = (
             args.eval_num_simulations
@@ -1544,7 +1544,7 @@ def run_warm_start(
                 "warm_start_eval": eval_metrics,
                 "offline_best": training_result.best_record,
             },
-            config=json.loads(config_to_json(resolved_output_config)),
+            config=config_to_dict(resolved_output_config),
         )
 
         summary = {

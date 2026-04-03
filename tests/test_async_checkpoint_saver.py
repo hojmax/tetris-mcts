@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH
-from tetris_bot.ml.config import NetworkConfig
+from tetris_bot.ml.config import default_network_config
 from tetris_bot.ml.network import AUX_FEATURES, TetrisNet
 from tetris_bot.ml.weights import (
     AsyncCheckpointSaver,
@@ -16,7 +16,7 @@ from tetris_bot.ml.weights import (
 
 
 def _make_model() -> TetrisNet:
-    return TetrisNet(**NetworkConfig().to_model_kwargs())
+    return TetrisNet(**default_network_config().to_model_kwargs())
 
 
 def test_capture_checkpoint_snapshot_clones_state_to_cpu() -> None:

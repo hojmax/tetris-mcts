@@ -5,6 +5,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 TRAINING_RUNS_DIR = PROJECT_ROOT / "training_runs"
 OUTPUTS_DIR = PROJECT_ROOT / "outputs"
 BENCHMARKS_DIR = PROJECT_ROOT / "benchmarks"
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 
 # Core game constants
 BOARD_WIDTH = 10
@@ -16,7 +17,7 @@ NUM_ACTIONS = 735
 # Artifact names
 CHECKPOINT_DIRNAME = "checkpoints"
 MODEL_CANDIDATES_DIRNAME = "model_candidates"
-CONFIG_FILENAME = "config.json"
+CONFIG_FILENAME = "config.yaml"
 PARALLEL_ONNX_FILENAME = "parallel.onnx"
 INCUMBENT_ONNX_FILENAME = "incumbent.onnx"
 TRAINING_DATA_FILENAME = "training_data.npz"

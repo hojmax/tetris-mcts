@@ -2,44 +2,43 @@ from pathlib import Path
 
 from tetris_bot.ml.config import (
     NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_network_config,
+    default_training_config,
 )
 from tetris_bot.ml.trainer import Trainer
 
 
 def _make_config(tmp_path: Path, network: NetworkConfig) -> TrainingConfig:
+    config = default_training_config()
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
-    return TrainingConfig(
-        network=network,
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(
-            run_dir=tmp_path,
-            checkpoint_dir=checkpoint_dir,
-            data_dir=data_dir,
-        ),
+    config.network = network
+    config.run = config.run.model_copy(
+        update={
+            "run_dir": tmp_path,
+            "checkpoint_dir": checkpoint_dir,
+            "data_dir": data_dir,
+        }
     )
+    return config
 
 
 def test_network_config_to_model_kwargs_includes_full_model_surface() -> None:
-    network = NetworkConfig(
-        trunk_channels=9,
-        num_conv_residual_blocks=3,
-        reduction_channels=18,
-        board_stats_hidden=24,
-        board_proj_hidden=192,
-        fc_hidden=144,
-        aux_hidden=48,
-        fusion_hidden=160,
-        num_fusion_blocks=2,
-        conv_kernel_size=5,
-        conv_padding=2,
+    network = default_network_config().model_copy(
+        update={
+            "trunk_channels": 9,
+            "num_conv_residual_blocks": 3,
+            "reduction_channels": 18,
+            "board_stats_hidden": 24,
+            "board_proj_hidden": 192,
+            "fc_hidden": 144,
+            "aux_hidden": 48,
+            "fusion_hidden": 160,
+            "num_fusion_blocks": 2,
+            "conv_kernel_size": 5,
+            "conv_padding": 2,
+        }
     )
 
     assert network.to_model_kwargs() == {
@@ -59,31 +58,33 @@ def test_network_config_to_model_kwargs_includes_full_model_surface() -> None:
 
 
 def test_network_config_defaults_reflect_current_cached_trunk_size() -> None:
-    network = NetworkConfig()
+    network = default_network_config()
 
-    assert network.trunk_channels == 32
-    assert network.num_conv_residual_blocks == 5
+    assert network.trunk_channels == 16
+    assert network.num_conv_residual_blocks == 3
     assert network.reduction_channels == 32
     assert network.board_stats_hidden == 32
-    assert network.board_proj_hidden == 512
+    assert network.board_proj_hidden == 256
     assert network.fc_hidden == 256
-    assert network.aux_hidden == 128
+    assert network.aux_hidden == 64
     assert network.num_aux_hidden_layers == 1
     assert network.fusion_hidden == 256
     assert network.num_fusion_blocks == 1
 
 
 def test_trainer_builds_model_from_full_network_config(tmp_path: Path) -> None:
-    network = NetworkConfig(
-        trunk_channels=6,
-        num_conv_residual_blocks=3,
-        reduction_channels=12,
-        board_stats_hidden=20,
-        board_proj_hidden=88,
-        fc_hidden=96,
-        aux_hidden=40,
-        fusion_hidden=104,
-        num_fusion_blocks=2,
+    network = default_network_config().model_copy(
+        update={
+            "trunk_channels": 6,
+            "num_conv_residual_blocks": 3,
+            "reduction_channels": 12,
+            "board_stats_hidden": 20,
+            "board_proj_hidden": 88,
+            "fc_hidden": 96,
+            "aux_hidden": 40,
+            "fusion_hidden": 104,
+            "num_fusion_blocks": 2,
+        }
     )
     trainer = Trainer(_make_config(tmp_path, network), device="cpu")
 

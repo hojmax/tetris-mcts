@@ -464,15 +464,14 @@ The implementation uses **integrated parallel game generation** via Rust `GameGe
 ```python
 # Python training loop (simplified)
 from tetris_core import GameGenerator, MCTSConfig
-from tetris.config import TrainingConfig
-from tetris.ml.network import TetrisNet
+from tetris_bot.constants import PROJECT_ROOT
+from tetris_bot.ml.config import load_training_config
+from tetris_bot.ml.network import TetrisNet
 
 def train():
-    config = TrainingConfig()
+    config = load_training_config(PROJECT_ROOT / "config.yaml")
     model = TetrisNet(
-        conv_filters=config.conv_filters,
-        fc_hidden=config.fc_hidden,
-        conv_kernel_size=config.conv_kernel_size,
+        **config.network.to_model_kwargs(),
         conv_padding=config.conv_padding,
     )
     mcts_config = MCTSConfig(num_simulations=400, ...)
@@ -564,7 +563,7 @@ Training runs are organized with automatic versioning:
 ```
 training_runs/
 ├── v0/                    # First training run
-│   ├── config.json        # Saved hyperparameters
+│   ├── config.yaml        # Saved hyperparameters
 │   ├── training_data.npz  # Periodic backup of training data
 │   └── checkpoints/
 │       ├── step_1000.pt

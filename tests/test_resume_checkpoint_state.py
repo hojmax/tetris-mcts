@@ -5,12 +5,8 @@ import torch
 
 import tetris_bot.ml.trainer as trainer_module
 from tetris_bot.ml.config import (
-    NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_training_config,
 )
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.weights import save_checkpoint
@@ -18,19 +14,17 @@ from tetris_bot.scripts.train import ScriptArgs, restore_trainer_from_checkpoint
 
 
 def _make_config(tmp_path: Path) -> TrainingConfig:
+    config = default_training_config()
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
-    return TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(
-            run_dir=tmp_path,
-            checkpoint_dir=checkpoint_dir,
-            data_dir=data_dir,
-        ),
+    config.run = config.run.model_copy(
+        update={
+            "run_dir": tmp_path,
+            "checkpoint_dir": checkpoint_dir,
+            "data_dir": data_dir,
+        }
     )
+    return config
 
 
 def _make_trainer(tmp_path: Path) -> tuple[Trainer, TrainingConfig]:
@@ -65,7 +59,7 @@ def test_restore_trainer_restores_search_penalties_from_checkpoint(
 
     restore_trainer_from_checkpoint(
         trainer,
-        ScriptArgs(training=config, resume_dir=None),
+        ScriptArgs(config=tmp_path / "config.yaml", resume_dir=None),
         config,
         checkpoint,
         incumbent_model_path=None,
@@ -100,7 +94,7 @@ def test_restore_trainer_infers_zero_penalties_for_legacy_cap_checkpoint(
 
     restore_trainer_from_checkpoint(
         trainer,
-        ScriptArgs(training=config, resume_dir=None),
+        ScriptArgs(config=tmp_path / "config.yaml", resume_dir=None),
         config,
         checkpoint,
         incumbent_model_path=None,
@@ -133,7 +127,7 @@ def test_restore_trainer_can_use_latest_checkpoint_model_as_incumbent(
     restore_trainer_from_checkpoint(
         trainer,
         ScriptArgs(
-            training=config,
+            config=tmp_path / "config.yaml",
             resume_dir=None,
             resume_latest_as_incumbent=True,
         ),
@@ -234,7 +228,7 @@ def test_restore_trainer_recovers_ema_state_from_checkpoint(tmp_path: Path) -> N
     restored = Trainer(config, device="cpu")
     restore_trainer_from_checkpoint(
         restored,
-        ScriptArgs(training=config, resume_dir=None),
+        ScriptArgs(config=tmp_path / "config.yaml", resume_dir=None),
         config,
         checkpoint,
         incumbent_model_path=None,

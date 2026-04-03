@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
-from tetris_bot.ml.config import SelfPlayConfig
+from tetris_bot.ml.config import default_self_play_config
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -31,6 +31,7 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
 )
 
 logger = structlog.get_logger()
+_DEFAULT_SELF_PLAY = default_self_play_config()
 
 
 @dataclass
@@ -68,7 +69,7 @@ class ScriptArgs:
     aux_hidden: int = 24
     conv_kernel_size: int = 3
     conv_padding: int = 1
-    max_placements: int = SelfPlayConfig().max_placements
+    max_placements: int = _DEFAULT_SELF_PLAY.max_placements
 
     wandb_project: str = "tetris-mcts-offline"
     wandb_run_name: str | None = None

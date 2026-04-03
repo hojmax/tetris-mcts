@@ -381,7 +381,7 @@ class ScriptArgs:
     checkpoint_path: Path | None = (
         None  # Checkpoint path (default: <run_dir>/checkpoints/latest.pt)
     )
-    config_path: Path | None = None  # Config path (default: <run_dir>/config.json)
+    config_path: Path | None = None  # Config path (default: <run_dir>/config.yaml)
 
     def __post_init__(self) -> None:
         run_dir = self.data_path.parent
