@@ -335,11 +335,16 @@ def restore_trainer_from_checkpoint(
     if start_with_network and args.resume_latest_as_incumbent:
         trainer.initial_incumbent_model_path = None
         trainer.initial_incumbent_eval_avg_attack = 0.0
-        trainer.recompute_initial_incumbent_eval_avg_attack = True
+        trainer.recompute_initial_incumbent_eval_avg_attack = (
+            config.self_play.use_candidate_gating
+        )
         logger.info(
             "Configured resumed run to use checkpoint latest model as starting incumbent",
             checkpoint=str(checkpoint),
             incumbent_step=trainer.step,
+            recompute_incumbent_eval_avg_attack=(
+                trainer.recompute_initial_incumbent_eval_avg_attack
+            ),
         )
     elif start_with_network and incumbent_model_path is not None:
         trainer.initial_incumbent_model_path = incumbent_model_path

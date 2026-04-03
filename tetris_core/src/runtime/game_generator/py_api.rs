@@ -10,6 +10,7 @@ impl GameGenerator {
         max_examples: usize,
         save_interval_seconds: f64,
         num_workers: usize,
+        candidate_gating_enabled: bool,
         candidate_eval_seeds: &[u64],
         non_network_num_simulations: u32,
         nn_value_weight: f32,
@@ -28,7 +29,7 @@ impl GameGenerator {
         if num_workers == 0 {
             return Err(Self::invalid_generator_arg("num_workers must be > 0"));
         }
-        if candidate_eval_seeds.is_empty() {
+        if candidate_gating_enabled && candidate_eval_seeds.is_empty() {
             return Err(Self::invalid_generator_arg(
                 "candidate_eval_seeds must not be empty",
             ));
@@ -91,7 +92,7 @@ impl GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=0.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0, save_eval_trees=true))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=0.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, bootstrap_use_min_max_q_normalization=true, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0, candidate_gating_enabled=true, save_eval_trees=true))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -108,6 +109,7 @@ impl GameGenerator {
         bootstrap_use_min_max_q_normalization: bool,
         initial_incumbent_eval_avg_attack: f32,
         nn_value_weight_cap: f32,
+        candidate_gating_enabled: bool,
         save_eval_trees: bool,
     ) -> PyResult<Self> {
         let candidate_eval_seeds = candidate_eval_seeds.ok_or_else(|| {
@@ -121,6 +123,7 @@ impl GameGenerator {
             max_examples,
             save_interval_seconds,
             num_workers,
+            candidate_gating_enabled,
             &candidate_eval_seeds,
             non_network_num_simulations,
             resolved_config.nn_value_weight,
@@ -139,6 +142,7 @@ impl GameGenerator {
             add_noise,
             save_interval_seconds,
             num_workers,
+            candidate_gating_enabled,
             snapshot_persister: None,
             candidate_eval_seeds: Arc::from(candidate_eval_seeds),
             non_network_num_simulations,
@@ -172,8 +176,8 @@ impl GameGenerator {
     /// Start background game generation.
     ///
     /// Spawns worker threads that continuously generate games and write
-    /// them to training_data_path. One worker is dedicated to candidate
-    /// evaluation and promotion decisions.
+    /// them to training_data_path. When candidate gating is enabled, one
+    /// worker is dedicated to candidate evaluation and promotion decisions.
     pub fn start(&mut self) -> PyResult<()> {
         if self.running.load(Ordering::SeqCst) {
             return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -238,7 +242,9 @@ impl GameGenerator {
         self.running.store(true, Ordering::SeqCst);
         let snapshot_persister = SnapshotPersister::new();
         self.snapshot_persister = Some(Arc::clone(&snapshot_persister));
-        let evaluator_worker_id = self.num_workers - 1;
+        let evaluator_worker_id = self
+            .candidate_gating_enabled
+            .then_some(self.num_workers - 1);
         let worker_settings = self.worker_settings(snapshot_persister);
         let worker_shared_state = self.worker_shared_state();
 
@@ -246,7 +252,7 @@ impl GameGenerator {
         for worker_id in 0..self.num_workers {
             let worker_context = WorkerContext {
                 worker_id,
-                is_evaluator_worker: worker_id == evaluator_worker_id,
+                is_evaluator_worker: evaluator_worker_id == Some(worker_id),
                 settings: worker_settings.clone(),
                 shared: worker_shared_state.clone(),
             };
@@ -368,6 +374,9 @@ impl GameGenerator {
 
     /// Return whether a candidate is pending or currently being evaluated.
     pub fn candidate_gate_busy(&self) -> bool {
+        if !self.candidate_gating_enabled {
+            return false;
+        }
         self.pending_candidate.read().unwrap().is_some()
             || self.evaluating_candidate.read().unwrap().is_some()
     }
@@ -382,6 +391,11 @@ impl GameGenerator {
         model_step: u64,
         nn_value_weight: f32,
     ) -> PyResult<bool> {
+        if !self.candidate_gating_enabled {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Candidate gating is disabled; use sync_model_directly instead",
+            ));
+        }
         let candidate_path = PathBuf::from(model_path);
         if !nn_value_weight.is_finite() || nn_value_weight < 0.0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -432,6 +446,91 @@ impl GameGenerator {
                 );
             }
         }
+        Ok(true)
+    }
+
+    /// Immediately switch all workers to a freshly exported model artifact.
+    ///
+    /// Only available when candidate gating is disabled.
+    /// Returns True when the sync updates the incumbent, False when ignored as stale.
+    pub fn sync_model_directly(
+        &self,
+        model_path: String,
+        model_step: u64,
+        nn_value_weight: f32,
+    ) -> PyResult<bool> {
+        if self.candidate_gating_enabled {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Direct model sync is unavailable while candidate gating is enabled",
+            ));
+        }
+        let synced_model_path = PathBuf::from(model_path);
+        if !nn_value_weight.is_finite() || nn_value_weight < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "nn_value_weight must be finite and >= 0",
+            ));
+        }
+        if !synced_model_path.exists() {
+            return Err(PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Synced model does not exist: {}",
+                synced_model_path.display()
+            )));
+        }
+
+        let incumbent_step = self.incumbent_model_step.load(Ordering::SeqCst);
+        let incumbent_path = self.incumbent_model_path.read().unwrap().clone();
+        if model_step <= incumbent_step {
+            Self::remove_model_artifacts_if_safe(
+                &synced_model_path,
+                &self.bootstrap_model_path,
+                &incumbent_path,
+                None,
+            );
+            return Ok(false);
+        }
+
+        let previous_incumbent_death_penalty = Self::load_atomic_f32(&self.incumbent_death_penalty);
+        let previous_incumbent_overhang_penalty_weight =
+            Self::load_atomic_f32(&self.incumbent_overhang_penalty_weight);
+        let (death_penalty, overhang_penalty_weight) = Self::effective_search_penalties(
+            nn_value_weight,
+            self.nn_value_weight_cap,
+            self.config.death_penalty,
+            self.config.overhang_penalty_weight,
+        );
+        {
+            let mut incumbent_model_path = self.incumbent_model_path.write().unwrap();
+            *incumbent_model_path = synced_model_path.clone();
+        }
+        self.incumbent_uses_network.store(true, Ordering::SeqCst);
+        self.incumbent_model_step
+            .store(model_step, Ordering::SeqCst);
+        self.incumbent_model_version.fetch_add(1, Ordering::SeqCst);
+        Self::store_atomic_f32(&self.incumbent_nn_value_weight, nn_value_weight);
+        Self::store_atomic_f32(&self.incumbent_death_penalty, death_penalty);
+        Self::store_atomic_f32(
+            &self.incumbent_overhang_penalty_weight,
+            overhang_penalty_weight,
+        );
+        Self::store_atomic_f32(&self.incumbent_eval_avg_attack, 0.0);
+
+        if (previous_incumbent_death_penalty != 0.0
+            || previous_incumbent_overhang_penalty_weight != 0.0)
+            && death_penalty == 0.0
+            && overhang_penalty_weight == 0.0
+        {
+            eprintln!(
+                "[GameGenerator] Direct sync reached nn_value_weight cap ({:.6}), disabling death_penalty and overhang_penalty_weight",
+                self.nn_value_weight_cap
+            );
+        }
+
+        Self::remove_model_artifacts_if_safe(
+            &incumbent_path,
+            &self.bootstrap_model_path,
+            &synced_model_path,
+            None,
+        );
         Ok(true)
     }
 

@@ -160,15 +160,43 @@ class Trainer:
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         config.run.data_dir.mkdir(parents=True, exist_ok=True)
 
-    def _candidate_gate_timing_config(self) -> tuple[float, float, float | None]:
-        base_interval_seconds = self.config.run.model_sync_interval_seconds
-        failure_backoff_seconds = self.config.run.model_sync_failure_backoff_seconds
-        max_interval_seconds = self.config.run.model_sync_max_interval_seconds
-        if base_interval_seconds <= 0.0:
+    def _candidate_gating_enabled(self) -> bool:
+        return self.config.self_play.use_candidate_gating
+
+    def _model_sync_interval_seconds(self) -> float:
+        model_sync_interval_seconds = self.config.run.model_sync_interval_seconds
+        if model_sync_interval_seconds <= 0.0:
             raise ValueError(
                 "config.run.model_sync_interval_seconds must be > 0 "
-                f"(got {base_interval_seconds})"
+                f"(got {model_sync_interval_seconds})"
             )
+        return model_sync_interval_seconds
+
+    def _export_rust_inference_artifacts(
+        self,
+        model: TetrisNet,
+        onnx_path: Path,
+        *,
+        export_name: str,
+    ) -> float:
+        export_start = time.perf_counter()
+        full_export_ok = export_onnx(model, onnx_path)
+        if not full_export_ok:
+            raise RuntimeError(
+                f"{export_name} ONNX export failed due to missing dependencies"
+            )
+        split_export_ok = export_split_models(model, onnx_path)
+        if not split_export_ok:
+            raise RuntimeError(
+                f"{export_name} split-model export failed due to missing dependencies"
+            )
+        assert_rust_inference_artifacts(onnx_path)
+        return 1000.0 * (time.perf_counter() - export_start)
+
+    def _candidate_gate_timing_config(self) -> tuple[float, float, float | None]:
+        base_interval_seconds = self._model_sync_interval_seconds()
+        failure_backoff_seconds = self.config.run.model_sync_failure_backoff_seconds
+        max_interval_seconds = self.config.run.model_sync_max_interval_seconds
         if failure_backoff_seconds < 0.0:
             raise ValueError(
                 "config.run.model_sync_failure_backoff_seconds must be >= 0 "
@@ -1306,10 +1334,12 @@ class Trainer:
 
         The Rust GameGenerator runs in a background thread, continuously
         generating games into a shared in-memory buffer. Python samples
-        directly from the buffer via generator.sample_batch(). Candidate
-        ONNX exports are gated by an adaptive wall-clock schedule so failed
-        promotions back off future evaluations instead of exporting models
-        continuously while the evaluator is busy.
+        directly from the buffer via generator.sample_batch(). With candidate
+        gating enabled, ONNX exports are gated by an adaptive wall-clock
+        schedule so failed promotions back off future evaluations instead of
+        exporting models continuously while the evaluator is busy. Without
+        candidate gating, the trainer exports a fresh model artifact on the
+        base sync interval and switches all workers to it immediately.
 
         Args:
             log_to_wandb: Whether to log metrics to Weights & Biases
@@ -1328,16 +1358,15 @@ class Trainer:
         onnx_path = self.config.run.checkpoint_dir / PARALLEL_ONNX_FILENAME
         candidate_model_dir = self.config.run.checkpoint_dir / MODEL_CANDIDATES_DIRNAME
         candidate_model_dir.mkdir(parents=True, exist_ok=True)
+        candidate_gating_enabled = self._candidate_gating_enabled()
 
         # Export initial model (full ONNX + split models for cached Rust inference)
         initial_export_model = self.ema_model or self._export_model
-        full_export_ok = export_onnx(initial_export_model, onnx_path)
-        split_export_ok = export_split_models(initial_export_model, onnx_path)
-        if not full_export_ok:
-            raise RuntimeError("ONNX export failed due to missing dependencies")
-        if not split_export_ok:
-            raise RuntimeError("Split-model export failed due to missing dependencies")
-        assert_rust_inference_artifacts(onnx_path)
+        self._export_rust_inference_artifacts(
+            initial_export_model,
+            onnx_path,
+            export_name="Initial",
+        )
 
         # Optionally compile model for faster training forward/backward
         export_model = self._export_model
@@ -1351,10 +1380,20 @@ class Trainer:
             generator_model_path = self.initial_incumbent_model_path
 
         mcts_config = self._build_generator_mcts_config()
-        if self.recompute_initial_incumbent_eval_avg_attack:
+        if (
+            self.recompute_initial_incumbent_eval_avg_attack
+            and candidate_gating_enabled
+        ):
             self.initial_incumbent_eval_avg_attack = (
                 self._evaluate_starting_incumbent_avg_attack(generator_model_path)
             )
+            self.recompute_initial_incumbent_eval_avg_attack = False
+        elif self.recompute_initial_incumbent_eval_avg_attack:
+            logger.info(
+                "Skipping starting incumbent baseline recompute because candidate gating is disabled",
+                model_path=str(generator_model_path),
+            )
+            self.initial_incumbent_eval_avg_attack = 0.0
             self.recompute_initial_incumbent_eval_avg_attack = False
 
         # Start background game generator
@@ -1369,14 +1408,17 @@ class Trainer:
             save_interval_seconds=self.config.run.save_interval_seconds,
             num_workers=self.config.self_play.num_workers,
             initial_model_step=self.step,
-            candidate_eval_seeds=list(
-                range(self.config.self_play.model_promotion_eval_games)
+            candidate_eval_seeds=(
+                list(range(self.config.self_play.model_promotion_eval_games))
+                if candidate_gating_enabled
+                else []
             ),
             start_with_network=not self.config.self_play.bootstrap_without_network,
             non_network_num_simulations=self.config.self_play.bootstrap_num_simulations,
             bootstrap_use_min_max_q_normalization=self.config.self_play.bootstrap_use_min_max_q_normalization,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
             nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
+            candidate_gating_enabled=candidate_gating_enabled,
             save_eval_trees=self.config.self_play.save_eval_trees,
         )
         logger.info(
@@ -1384,32 +1426,36 @@ class Trainer:
             training_data_path=str(training_data_path),
         )
         generator.start()
-        logger.info(
-            "Started background game generator",
-            model_path=str(generator_model_path),
-            trainer_parallel_model_path=str(onnx_path),
-            training_data_path=str(training_data_path),
-            num_workers=self.config.self_play.num_workers,
-            add_noise=self.config.self_play.add_noise,
-            candidate_eval_seeds=self.config.self_play.model_promotion_eval_games,
-            bootstrap_without_network=self.config.self_play.bootstrap_without_network,
-            bootstrap_num_simulations=self.config.self_play.bootstrap_num_simulations,
-            bootstrap_use_min_max_q_normalization=self.config.self_play.bootstrap_use_min_max_q_normalization,
-            incumbent_nn_value_weight=self.config.self_play.nn_value_weight,
-            initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
-            nn_value_weight_promotion_multiplier=self.config.self_play.nn_value_weight_promotion_multiplier,
-            nn_value_weight_promotion_max_delta=self.config.self_play.nn_value_weight_promotion_max_delta,
-            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
-            candidate_gate_base_interval_seconds=(
-                self.config.run.model_sync_interval_seconds
+        generator_log_fields: dict[str, object] = {
+            "model_path": str(generator_model_path),
+            "trainer_parallel_model_path": str(onnx_path),
+            "training_data_path": str(training_data_path),
+            "num_workers": self.config.self_play.num_workers,
+            "add_noise": self.config.self_play.add_noise,
+            "candidate_gating_enabled": candidate_gating_enabled,
+            "candidate_eval_seeds": (
+                self.config.self_play.model_promotion_eval_games
+                if candidate_gating_enabled
+                else 0
             ),
-            candidate_gate_failure_backoff_seconds=(
+            "bootstrap_without_network": self.config.self_play.bootstrap_without_network,
+            "bootstrap_num_simulations": self.config.self_play.bootstrap_num_simulations,
+            "bootstrap_use_min_max_q_normalization": self.config.self_play.bootstrap_use_min_max_q_normalization,
+            "incumbent_nn_value_weight": self.config.self_play.nn_value_weight,
+            "initial_incumbent_eval_avg_attack": self.initial_incumbent_eval_avg_attack,
+            "nn_value_weight_promotion_multiplier": self.config.self_play.nn_value_weight_promotion_multiplier,
+            "nn_value_weight_promotion_max_delta": self.config.self_play.nn_value_weight_promotion_max_delta,
+            "nn_value_weight_cap": self.config.self_play.nn_value_weight_cap,
+            "model_sync_interval_seconds": self.config.run.model_sync_interval_seconds,
+        }
+        if candidate_gating_enabled:
+            generator_log_fields["candidate_gate_failure_backoff_seconds"] = (
                 self.config.run.model_sync_failure_backoff_seconds
-            ),
-            candidate_gate_max_interval_seconds=(
+            )
+            generator_log_fields["candidate_gate_max_interval_seconds"] = (
                 self.config.run.model_sync_max_interval_seconds
-            ),
-        )
+            )
+        logger.info("Started background game generator", **generator_log_fields)
 
         # Wait for minimum buffer size
         logger.info(
@@ -1476,17 +1522,36 @@ class Trainer:
         throughput_window_start_steps = 0
         next_log_time_s = interval_anchor_s + self.config.run.log_interval_seconds
         next_replay_sync_time_s = interval_anchor_s
-        candidate_gate_schedule = self._initialize_candidate_gate_schedule(
-            now_s=interval_anchor_s
-        )
-        logger.info(
-            "Initialized candidate gate schedule",
-            current_interval_seconds=candidate_gate_schedule.current_interval_seconds,
-            failed_promotion_streak=candidate_gate_schedule.failed_promotion_streak,
-            next_export_delay_seconds=max(
-                0.0, candidate_gate_schedule.next_export_time_s - interval_anchor_s
-            ),
-        )
+        candidate_gate_schedule: CandidateGateSchedule | None = None
+        direct_sync_interval_seconds: float | None = None
+        next_model_sync_time_s: float | None = None
+        if candidate_gating_enabled:
+            candidate_gate_schedule = self._initialize_candidate_gate_schedule(
+                now_s=interval_anchor_s
+            )
+            logger.info(
+                "Initialized candidate gate schedule",
+                current_interval_seconds=(
+                    candidate_gate_schedule.current_interval_seconds
+                ),
+                failed_promotion_streak=(
+                    candidate_gate_schedule.failed_promotion_streak
+                ),
+                next_export_delay_seconds=max(
+                    0.0,
+                    candidate_gate_schedule.next_export_time_s - interval_anchor_s,
+                ),
+            )
+        else:
+            direct_sync_interval_seconds = self._model_sync_interval_seconds()
+            next_model_sync_time_s = interval_anchor_s + direct_sync_interval_seconds
+            logger.info(
+                "Initialized direct model sync schedule",
+                interval_seconds=direct_sync_interval_seconds,
+                next_sync_delay_seconds=max(
+                    0.0, next_model_sync_time_s - interval_anchor_s
+                ),
+            )
         next_checkpoint_time_s = (
             interval_anchor_s + self.config.run.checkpoint_interval_seconds
         )
@@ -1567,13 +1632,14 @@ class Trainer:
                 if step_metrics:
                     latest_train_metrics = step_metrics
 
-                self._drain_model_eval_events(
-                    generator,
-                    log_to_wandb=log_to_wandb,
-                    now_s=post_step_time,
-                    interval_anchor_s=interval_anchor_s,
-                    candidate_gate_schedule=candidate_gate_schedule,
-                )
+                if candidate_gate_schedule is not None:
+                    self._drain_model_eval_events(
+                        generator,
+                        log_to_wandb=log_to_wandb,
+                        now_s=post_step_time,
+                        interval_anchor_s=interval_anchor_s,
+                        candidate_gate_schedule=candidate_gate_schedule,
+                    )
 
                 if post_step_time >= next_log_time_s:
                     if latest_train_metrics is None:
@@ -1704,86 +1770,141 @@ class Trainer:
                     )
 
                 # Export updated model for generator
-                gate_busy = generator.candidate_gate_busy()
-                if (
-                    not gate_busy
-                    and post_step_time >= candidate_gate_schedule.next_export_time_s
-                ):
-                    candidate_onnx_path = (
-                        candidate_model_dir / f"candidate_step_{self.step}.onnx"
-                    )
-                    onnx_export_start = time.perf_counter()
-                    candidate_export_model = self.ema_model or export_model
-                    full_export_ok = export_onnx(
-                        candidate_export_model,
-                        candidate_onnx_path,
-                    )
-                    split_export_ok = export_split_models(
-                        candidate_export_model,
-                        candidate_onnx_path,
-                    )
-                    if not full_export_ok:
-                        raise RuntimeError(
-                            "Candidate ONNX export failed due to missing dependencies"
+                if candidate_gate_schedule is not None:
+                    gate_busy = generator.candidate_gate_busy()
+                    if (
+                        not gate_busy
+                        and post_step_time >= candidate_gate_schedule.next_export_time_s
+                    ):
+                        candidate_onnx_path = (
+                            candidate_model_dir / f"candidate_step_{self.step}.onnx"
                         )
-                    if not split_export_ok:
-                        raise RuntimeError(
-                            "Candidate split-model export failed due to missing dependencies"
+                        candidate_export_model = self.ema_model or export_model
+                        onnx_export_ms = self._export_rust_inference_artifacts(
+                            candidate_export_model,
+                            candidate_onnx_path,
+                            export_name="Candidate",
                         )
-                    assert_rust_inference_artifacts(candidate_onnx_path)
-                    onnx_export_ms = 1000.0 * (time.perf_counter() - onnx_export_start)
-                    incumbent_nn_value_weight = generator.incumbent_nn_value_weight()
-                    candidate_nn_value_weight = self._compute_candidate_nn_value_weight(
-                        current_weight=incumbent_nn_value_weight,
-                        config=self.config,
-                    )
-                    queued = generator.queue_candidate_model(
-                        str(candidate_onnx_path),
-                        self.step,
-                        candidate_nn_value_weight,
-                    )
-                    logger.info(
-                        "Queued candidate model for evaluator",
-                        step=self.step,
-                        path=str(candidate_onnx_path),
-                        queued=queued,
-                        onnx_export_ms=onnx_export_ms,
-                        incumbent_nn_value_weight=incumbent_nn_value_weight,
-                        candidate_nn_value_weight=candidate_nn_value_weight,
-                        candidate_gate_failed_promotion_streak=(
-                            candidate_gate_schedule.failed_promotion_streak
-                        ),
-                        candidate_gate_interval_seconds=(
-                            candidate_gate_schedule.current_interval_seconds
-                        ),
-                    )
-                    if not queued:
-                        self._defer_candidate_gate_export(
-                            candidate_gate_schedule,
-                            now_s=time.perf_counter(),
+                        incumbent_nn_value_weight = (
+                            generator.incumbent_nn_value_weight()
                         )
-                    if log_to_wandb:
-                        next_candidate_export_delay_seconds = max(
-                            0.0,
-                            candidate_gate_schedule.next_export_time_s
-                            - time.perf_counter(),
+                        candidate_nn_value_weight = (
+                            self._compute_candidate_nn_value_weight(
+                                current_weight=incumbent_nn_value_weight,
+                                config=self.config,
+                            )
                         )
-                        wandb.log(
-                            {
-                                "trainer_step": self.step,
-                                "timing/onnx_export_ms": onnx_export_ms,
-                                "model_gate/queued_candidate_nn_value_weight": candidate_nn_value_weight,
-                                "model_gate/failed_promotion_streak": (
-                                    candidate_gate_schedule.failed_promotion_streak
-                                ),
-                                "model_gate/current_export_interval_seconds": (
-                                    candidate_gate_schedule.current_interval_seconds
-                                ),
-                                "model_gate/next_export_delay_seconds": (
-                                    next_candidate_export_delay_seconds
-                                ),
-                            }
+                        queued = generator.queue_candidate_model(
+                            str(candidate_onnx_path),
+                            self.step,
+                            candidate_nn_value_weight,
                         )
+                        logger.info(
+                            "Queued candidate model for evaluator",
+                            step=self.step,
+                            path=str(candidate_onnx_path),
+                            queued=queued,
+                            onnx_export_ms=onnx_export_ms,
+                            incumbent_nn_value_weight=incumbent_nn_value_weight,
+                            candidate_nn_value_weight=candidate_nn_value_weight,
+                            candidate_gate_failed_promotion_streak=(
+                                candidate_gate_schedule.failed_promotion_streak
+                            ),
+                            candidate_gate_interval_seconds=(
+                                candidate_gate_schedule.current_interval_seconds
+                            ),
+                        )
+                        if not queued:
+                            self._defer_candidate_gate_export(
+                                candidate_gate_schedule,
+                                now_s=time.perf_counter(),
+                            )
+                        if log_to_wandb:
+                            next_candidate_export_delay_seconds = max(
+                                0.0,
+                                candidate_gate_schedule.next_export_time_s
+                                - time.perf_counter(),
+                            )
+                            wandb.log(
+                                {
+                                    "trainer_step": self.step,
+                                    "timing/onnx_export_ms": onnx_export_ms,
+                                    "model_gate/queued_candidate_nn_value_weight": candidate_nn_value_weight,
+                                    "model_gate/failed_promotion_streak": (
+                                        candidate_gate_schedule.failed_promotion_streak
+                                    ),
+                                    "model_gate/current_export_interval_seconds": (
+                                        candidate_gate_schedule.current_interval_seconds
+                                    ),
+                                    "model_gate/next_export_delay_seconds": (
+                                        next_candidate_export_delay_seconds
+                                    ),
+                                }
+                            )
+                else:
+                    if next_model_sync_time_s is None:
+                        raise RuntimeError("Direct model sync schedule is unavailable")
+                    if direct_sync_interval_seconds is None:
+                        raise RuntimeError("Direct model sync interval is unavailable")
+                    if post_step_time >= next_model_sync_time_s:
+                        sync_onnx_path = (
+                            candidate_model_dir / f"sync_step_{self.step}.onnx"
+                        )
+                        sync_export_model = self.ema_model or export_model
+                        onnx_export_ms = self._export_rust_inference_artifacts(
+                            sync_export_model,
+                            sync_onnx_path,
+                            export_name="Direct sync",
+                        )
+                        incumbent_nn_value_weight = (
+                            generator.incumbent_nn_value_weight()
+                        )
+                        synced_nn_value_weight = (
+                            self._compute_candidate_nn_value_weight(
+                                current_weight=incumbent_nn_value_weight,
+                                config=self.config,
+                            )
+                        )
+                        synced = generator.sync_model_directly(
+                            str(sync_onnx_path),
+                            self.step,
+                            synced_nn_value_weight,
+                        )
+                        sync_now_s = time.perf_counter()
+                        next_model_sync_time_s = roll_interval_deadline(
+                            next_model_sync_time_s,
+                            direct_sync_interval_seconds,
+                            sync_now_s,
+                        )
+                        logger.info(
+                            "Synced model directly for self-play",
+                            step=self.step,
+                            path=str(sync_onnx_path),
+                            synced=synced,
+                            onnx_export_ms=onnx_export_ms,
+                            incumbent_nn_value_weight=incumbent_nn_value_weight,
+                            synced_nn_value_weight=synced_nn_value_weight,
+                            next_sync_delay_seconds=max(
+                                0.0, next_model_sync_time_s - sync_now_s
+                            ),
+                        )
+                        if log_to_wandb:
+                            wandb.log(
+                                {
+                                    "trainer_step": self.step,
+                                    "timing/onnx_export_ms": onnx_export_ms,
+                                    "model_sync/direct_sync_succeeded": (
+                                        1.0 if synced else 0.0
+                                    ),
+                                    "model_sync/nn_value_weight": (
+                                        synced_nn_value_weight
+                                    ),
+                                    "model_sync/next_sync_delay_seconds": max(
+                                        0.0,
+                                        next_model_sync_time_s - time.perf_counter(),
+                                    ),
+                                }
+                            )
 
                 # Queue checkpoint/export work on the background saver.
                 if post_step_time >= next_checkpoint_time_s:
