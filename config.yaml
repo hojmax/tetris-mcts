@@ -49,9 +49,9 @@ self_play:
   max_placements: 50
   death_penalty: 0.0
   overhang_penalty_weight: 0.0
-  use_candidate_gating: true
+  use_candidate_gating: false
   model_promotion_eval_games: 20
-  bootstrap_without_network: true
+  bootstrap_without_network: false
   bootstrap_num_simulations: 4000
   save_eval_trees: false
 replay:
