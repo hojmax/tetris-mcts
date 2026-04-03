@@ -34,7 +34,7 @@ Forward path:
 - Concatenate board and aux embeddings, then run the shared policy/value trunk
 
 Output:
-- Policy head: 735 outputs (734 placements + hold)
+- Policy head: 672 outputs (671 canonical placement cells + hold)
 - Value head: 1 output (scalar target)
 """
 
@@ -362,7 +362,7 @@ class TetrisNet(nn.Module):
             aux_features: Shape (batch, 80) - auxiliary features (61 piece/game + 19 board stats)
 
         Returns:
-            policy_logits: Shape (batch, 735) - raw logits (caller should apply
+            policy_logits: Shape (batch, 672) - raw logits (caller should apply
                 action mask before softmax to mask invalid actions)
             value: Shape (batch, 1) - predicted scalar value target
         """

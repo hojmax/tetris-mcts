@@ -36,7 +36,7 @@ class NetworkConfig:
     board_proj_hidden: int = 512
     fc_hidden: int = 256
     aux_hidden: int = 128
-    num_aux_hidden_layers: int = 0
+    num_aux_hidden_layers: int = 1
     fusion_hidden: int = 256
     num_fusion_blocks: int = 1
     conv_kernel_size: int = 3

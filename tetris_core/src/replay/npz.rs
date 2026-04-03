@@ -11,6 +11,10 @@ use zip::read::ZipArchive;
 use zip::write::{FileOptions, ZipWriter};
 use zip::CompressionMethod;
 
+use crate::game::action_space::{
+    get_action_space, HOLD_ACTION_INDEX, LEGACY_HOLD_ACTION_INDEX, LEGACY_NUM_ACTIONS,
+    LEGACY_NUM_PLACEMENT_ACTIONS,
+};
 use crate::game::constants::{
     BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE, ROW_FILL_FEATURE_ROWS,
 };
@@ -46,9 +50,9 @@ pub fn write_examples_to_npz(filepath: &Path, examples: &[TrainingExample]) -> R
 /// - total_blocks: (N,) float32 normalized by TOTAL_BLOCKS_NORMALIZATION_DIVISOR (uncapped)
 /// - bumpiness: (N,) float32 normalized by BUMPINESS_NORMALIZATION_DIVISOR (uncapped)
 /// - holes: (N,) float32 normalized by HOLES_NORMALIZATION_DIVISOR (uncapped)
-/// - policy_targets: (N, 735) float32
+/// - policy_targets: (N, 672) float32
 /// - value_targets: (N,) float32
-/// - action_masks: (N, 735) bool
+/// - action_masks: (N, 672) bool
 /// - overhang_fields: (N,) float32 normalized by OVERHANG_NORMALIZATION_DIVISOR (uncapped)
 /// - game_numbers: (N,) uint64 (1-indexed game IDs aligned with WandB game_number)
 /// - game_total_attacks: (N,) uint32 (raw total attack for each example's source game)
@@ -69,7 +73,7 @@ pub(crate) fn write_examples_slices_to_npz(
     let mut zip = ZipWriter::new(BufWriter::new(file));
     // Replay snapshots can exceed 4 GiB for large buffers (notably policy_targets),
     // so ZIP64 must be enabled to emit valid archives.
-    // Deflate level 1 (fastest) instead of default level 6: policy_targets (N×735 f32)
+    // Deflate level 1 (fastest) instead of default level 6: policy_targets (N×NUM_ACTIONS f32)
     // dominates the file and compresses poorly (high-entropy floats), so higher
     // levels burn hours of CPU for negligible extra compression.
     let options = FileOptions::default()
@@ -313,14 +317,28 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
     let total_blocks = read_batch_field::<f32>(&mut archive, "total_blocks", n, &[])?;
     let bumpiness = read_batch_field::<f32>(&mut archive, "bumpiness", n, &[])?;
     let holes = read_batch_field::<f32>(&mut archive, "holes", n, &[])?;
-    let policy_targets =
-        read_batch_field::<f32>(&mut archive, "policy_targets", n, &[NUM_ACTIONS as u64])?;
+    let (policy_targets, policy_width) =
+        read_dynamic_action_field::<f32>(&mut archive, "policy_targets", n)?;
     let value_targets = read_batch_field::<f32>(&mut archive, "value_targets", n, &[])?;
-    let action_masks =
-        read_bool_like_batch_field(&mut archive, "action_masks", n, &[NUM_ACTIONS as u64])?;
+    let (action_masks, action_mask_width) =
+        read_dynamic_bool_action_field(&mut archive, "action_masks", n)?;
     let overhang_fields = read_batch_field::<f32>(&mut archive, "overhang_fields", n, &[])?;
     let game_numbers = read_batch_field::<u64>(&mut archive, "game_numbers", n, &[])?;
     let game_total_attacks = read_batch_field::<u32>(&mut archive, "game_total_attacks", n, &[])?;
+
+    if policy_width != action_mask_width {
+        return Err(format!(
+            "policy_targets/action_masks width mismatch: {} vs {}",
+            policy_width, action_mask_width
+        ));
+    }
+    if policy_width != NUM_ACTIONS && policy_width != LEGACY_NUM_ACTIONS {
+        return Err(format!(
+            "policy_targets/action_masks width must be {} (current) or {} (legacy), got {}",
+            NUM_ACTIONS, LEGACY_NUM_ACTIONS, policy_width
+        ));
+    }
+    let action_space = get_action_space();
 
     let mut examples = Vec::with_capacity(n);
     let board_size = BOARD_HEIGHT * BOARD_WIDTH;
@@ -363,16 +381,33 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
             next_queue_pieces.push(argmax_index(&next_queue[slot_start..slot_end]));
         }
 
-        let policy_start = i * NUM_ACTIONS;
-        let policy_end = policy_start + NUM_ACTIONS;
-        let mask_start = i * NUM_ACTIONS;
-        let mask_end = mask_start + NUM_ACTIONS;
+        let policy_start = i * policy_width;
+        let policy_end = policy_start + policy_width;
+        let mask_start = i * action_mask_width;
+        let mask_end = mask_start + action_mask_width;
         let hidden_probs_start = i * next_hidden_piece_probs_size;
         let hidden_probs_end = hidden_probs_start + next_hidden_piece_probs_size;
         let column_heights_start = i * column_heights_size;
         let column_heights_end = column_heights_start + column_heights_size;
         let row_fill_counts_start = i * row_fill_counts_size;
         let row_fill_counts_end = row_fill_counts_start + row_fill_counts_size;
+
+        let (policy, action_mask) = if policy_width == NUM_ACTIONS {
+            (
+                policy_targets[policy_start..policy_end].to_vec(),
+                action_masks[mask_start..mask_end]
+                    .iter()
+                    .map(|value| *value != 0)
+                    .collect(),
+            )
+        } else {
+            adapt_legacy_policy_and_mask(
+                action_space,
+                current_piece,
+                &policy_targets[policy_start..policy_end],
+                &action_masks[mask_start..mask_end],
+            )?
+        };
 
         examples.push(TrainingExample {
             board: boards[board_start..board_end].to_vec(),
@@ -392,12 +427,9 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
             total_blocks: total_blocks[i],
             bumpiness: bumpiness[i],
             holes: holes[i],
-            policy: policy_targets[policy_start..policy_end].to_vec(),
+            policy,
             value: value_targets[i],
-            action_mask: action_masks[mask_start..mask_end]
-                .iter()
-                .map(|value| *value != 0)
-                .collect(),
+            action_mask,
             overhang_fields: overhang_feature,
             game_number: game_numbers[i],
             game_total_attack: game_total_attacks[i],
@@ -405,6 +437,45 @@ pub fn read_examples_from_npz(filepath: &Path) -> Result<Vec<TrainingExample>, S
     }
 
     Ok(examples)
+}
+
+fn adapt_legacy_policy_and_mask(
+    action_space: &crate::game::action_space::ActionSpace,
+    current_piece: usize,
+    legacy_policy: &[f32],
+    legacy_action_mask: &[u8],
+) -> Result<(Vec<f32>, Vec<bool>), String> {
+    if legacy_policy.len() != LEGACY_NUM_ACTIONS {
+        return Err(format!(
+            "legacy policy width mismatch: expected {}, got {}",
+            LEGACY_NUM_ACTIONS,
+            legacy_policy.len()
+        ));
+    }
+    if legacy_action_mask.len() != LEGACY_NUM_ACTIONS {
+        return Err(format!(
+            "legacy action mask width mismatch: expected {}, got {}",
+            LEGACY_NUM_ACTIONS,
+            legacy_action_mask.len()
+        ));
+    }
+
+    let mut policy = vec![0.0; NUM_ACTIONS];
+    let mut action_mask = vec![false; NUM_ACTIONS];
+    policy[HOLD_ACTION_INDEX] = legacy_policy[LEGACY_HOLD_ACTION_INDEX];
+    action_mask[HOLD_ACTION_INDEX] = legacy_action_mask[LEGACY_HOLD_ACTION_INDEX] != 0;
+
+    for legacy_action_index in 0..LEGACY_NUM_PLACEMENT_ACTIONS {
+        let Some(action_index) =
+            action_space.legacy_action_to_index(current_piece, legacy_action_index)
+        else {
+            continue;
+        };
+        policy[action_index] += legacy_policy[legacy_action_index];
+        action_mask[action_index] |= legacy_action_mask[legacy_action_index] != 0;
+    }
+
+    Ok((policy, action_mask))
 }
 
 fn argmax_index(values: &[f32]) -> usize {
@@ -521,6 +592,29 @@ fn read_dynamic_batch_field<T: npyz::Deserialize>(
     Ok((values, n))
 }
 
+fn read_dynamic_action_field<T: npyz::Deserialize>(
+    archive: &mut ZipArchive<BufReader<File>>,
+    field_name: &str,
+    n: usize,
+) -> Result<(Vec<T>, usize), String> {
+    let entry_name = format!("{field_name}.npy");
+    let (values, shape) = read_npy_array::<T>(archive, &entry_name)?;
+    if shape.len() != 2 {
+        return Err(format!(
+            "{} has rank {}, expected rank 2",
+            field_name,
+            shape.len()
+        ));
+    }
+    if shape[0] != n as u64 {
+        return Err(format!(
+            "{} has inconsistent batch dimension: {} vs {}",
+            field_name, shape[0], n
+        ));
+    }
+    Ok((values, shape[1] as usize))
+}
+
 fn read_batch_field<T: npyz::Deserialize>(
     archive: &mut ZipArchive<BufReader<File>>,
     field_name: &str,
@@ -531,6 +625,29 @@ fn read_batch_field<T: npyz::Deserialize>(
     let (values, shape) = read_npy_array::<T>(archive, &entry_name)?;
     validate_batch_shape(field_name, &shape, n, trailing_dims)?;
     Ok(values)
+}
+
+fn read_dynamic_bool_action_field(
+    archive: &mut ZipArchive<BufReader<File>>,
+    field_name: &str,
+    n: usize,
+) -> Result<(Vec<u8>, usize), String> {
+    let entry_name = format!("{field_name}.npy");
+    let (values, shape) = read_npy_array_bool_like(archive, &entry_name)?;
+    if shape.len() != 2 {
+        return Err(format!(
+            "{} has rank {}, expected rank 2",
+            field_name,
+            shape.len()
+        ));
+    }
+    if shape[0] != n as u64 {
+        return Err(format!(
+            "{} has inconsistent batch dimension: {} vs {}",
+            field_name, shape[0], n
+        ));
+    }
+    Ok((values, shape[1] as usize))
 }
 
 fn read_bool_like_batch_field(
@@ -619,6 +736,9 @@ fn stream_npy_to_zip<T: npyz::Serialize + npyz::AutoSerialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::action_space::{
+        get_action_space, HOLD_ACTION_INDEX, LEGACY_NUM_ACTIONS, LEGACY_NUM_PLACEMENT_ACTIONS,
+    };
     use crate::game::constants::ROW_FILL_FEATURE_ROWS;
     use crate::runtime::test_utils;
     use crate::search::NUM_ACTIONS;
@@ -748,5 +868,60 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].move_number, 0);
         assert_eq!(loaded[1].move_number, 88);
+    }
+
+    #[test]
+    fn test_adapt_legacy_policy_and_mask_collapses_redundant_rotations() {
+        let action_space = get_action_space();
+        let piece_type = crate::game::constants::I_PIECE;
+        let source_actions = (0..LEGACY_NUM_PLACEMENT_ACTIONS)
+            .filter_map(|legacy_action_index| {
+                action_space
+                    .legacy_action_to_index(piece_type, legacy_action_index)
+                    .map(|target_action| (legacy_action_index, target_action))
+            })
+            .collect::<Vec<_>>();
+        let target_action = source_actions
+            .iter()
+            .map(|(_, target_action)| *target_action)
+            .find(|candidate_action| {
+                source_actions
+                    .iter()
+                    .filter(|(_, target_action)| target_action == candidate_action)
+                    .count()
+                    == 2
+            })
+            .expect("expected duplicated canonical I-piece mapping");
+        let source_actions = source_actions
+            .into_iter()
+            .filter_map(|(legacy_action_index, candidate_action)| {
+                (candidate_action == target_action).then_some(legacy_action_index)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(source_actions.len(), 2);
+
+        let mut legacy_policy = vec![0.0; LEGACY_NUM_ACTIONS];
+        legacy_policy[source_actions[0]] = 0.25;
+        legacy_policy[source_actions[1]] = 0.75;
+        legacy_policy[LEGACY_HOLD_ACTION_INDEX] = 0.5;
+
+        let mut legacy_action_mask = vec![0u8; LEGACY_NUM_ACTIONS];
+        legacy_action_mask[source_actions[1]] = 1;
+        legacy_action_mask[LEGACY_HOLD_ACTION_INDEX] = 1;
+
+        let (policy, action_mask) = adapt_legacy_policy_and_mask(
+            action_space,
+            piece_type,
+            &legacy_policy,
+            &legacy_action_mask,
+        )
+        .expect("legacy adapter should succeed");
+
+        assert_eq!(policy.len(), NUM_ACTIONS);
+        assert_eq!(action_mask.len(), NUM_ACTIONS);
+        assert!((policy[target_action] - 1.0).abs() < 1e-6);
+        assert!((policy[HOLD_ACTION_INDEX] - 0.5).abs() < 1e-6);
+        assert!(action_mask[target_action]);
+        assert!(action_mask[HOLD_ACTION_INDEX]);
     }
 }

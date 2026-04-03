@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::game::action_space::HOLD_ACTION_INDEX;
+    use crate::game::action_space::{get_action_space, HOLD_ACTION_INDEX};
     use crate::game::constants::{
         BOARD_HEIGHT, BOARD_WIDTH, I_PIECE, L_PIECE, MAX_BOARD_CELLS, O_PIECE, S_PIECE, T_PIECE,
         Z_PIECE,
@@ -234,6 +234,55 @@ mod tests {
             !valid_without_hold.contains(&HOLD_ACTION_INDEX),
             "Hold action should be unavailable when hold is already used"
         );
+    }
+
+    #[test]
+    fn test_empty_board_valid_action_counts_match_expected_piece_totals() {
+        let expected_rotation_counts = [
+            [7usize, 10, 0, 0], // I
+            [9, 0, 0, 0],       // O
+            [8, 9, 8, 9],       // T
+            [8, 9, 0, 0],       // S
+            [8, 9, 0, 0],       // Z
+            [8, 9, 8, 9],       // J
+            [8, 9, 8, 9],       // L
+        ];
+        let action_space = get_action_space();
+
+        for (piece_type, expected_counts) in expected_rotation_counts.iter().enumerate() {
+            let mut env = TetrisEnv::new(10, 20);
+            env.set_current_piece_type(piece_type);
+
+            let valid_actions = env.get_cached_valid_action_indices();
+            assert!(
+                valid_actions.contains(&HOLD_ACTION_INDEX),
+                "piece {} should allow hold on an empty board",
+                piece_type
+            );
+
+            let mut actual_counts = [0usize; 4];
+            let mut placement_count = 0usize;
+            for &action_idx in &valid_actions {
+                if action_idx == HOLD_ACTION_INDEX {
+                    continue;
+                }
+                let rotation = action_space.action_to_cell[action_idx].rotation;
+                actual_counts[rotation] += 1;
+                placement_count += 1;
+            }
+
+            assert_eq!(
+                actual_counts, *expected_counts,
+                "piece {} empty-board rotation counts drifted",
+                piece_type
+            );
+            assert_eq!(
+                placement_count,
+                expected_counts.iter().sum::<usize>(),
+                "piece {} empty-board placement count drifted",
+                piece_type
+            );
+        }
     }
 
     #[test]

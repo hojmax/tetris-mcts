@@ -11,11 +11,16 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
+from tetris_bot.action_space import (
+    ACTION_TO_CANONICAL_FLAT_INDEX,
+    ACTIVE_CANONICAL_ROTATION_COUNTS,
+    FULL_GRID_PLACEMENT_SLOTS,
+    NUM_PLACEMENT_ACTIONS,
+    PIECE_VALID_ACTION_COUNTS,
+    ROTATION_LABELS,
+)
 from tetris_bot.constants import (
-    BOARD_HEIGHT,
-    BOARD_WIDTH,
     NUM_ACTIONS,
-    NUM_PIECE_TYPES,
     PIECE_NAMES,
 )
 from tetris_bot.ml.config import NetworkConfig
@@ -39,58 +44,6 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
 
 logger = structlog.get_logger()
 _DEFAULT_NETWORK = NetworkConfig()
-ROTATION_LABELS = ("0", "R", "2", "L")
-NUM_PLACEMENT_ACTIONS = NUM_ACTIONS - 1
-X_MIN = -3
-X_MAX_EXCLUSIVE = 10
-Y_MIN = -3
-Y_MAX_EXCLUSIVE = 20
-PLACEMENT_GRID_SLOTS = len(ROTATION_LABELS) * BOARD_HEIGHT * BOARD_WIDTH
-
-TETROMINO_CELLS: tuple[tuple[tuple[tuple[int, int], ...], ...], ...] = (
-    (
-        ((0, 1), (1, 1), (2, 1), (3, 1)),
-        ((2, 0), (2, 1), (2, 2), (2, 3)),
-        ((0, 2), (1, 2), (2, 2), (3, 2)),
-        ((1, 0), (1, 1), (1, 2), (1, 3)),
-    ),
-    (
-        ((1, 1), (2, 1), (1, 2), (2, 2)),
-        ((1, 1), (2, 1), (1, 2), (2, 2)),
-        ((1, 1), (2, 1), (1, 2), (2, 2)),
-        ((1, 1), (2, 1), (1, 2), (2, 2)),
-    ),
-    (
-        ((1, 0), (0, 1), (1, 1), (2, 1)),
-        ((1, 0), (1, 1), (2, 1), (1, 2)),
-        ((0, 1), (1, 1), (2, 1), (1, 2)),
-        ((1, 0), (0, 1), (1, 1), (1, 2)),
-    ),
-    (
-        ((1, 0), (2, 0), (0, 1), (1, 1)),
-        ((1, 0), (1, 1), (2, 1), (2, 2)),
-        ((1, 1), (2, 1), (0, 2), (1, 2)),
-        ((0, 0), (0, 1), (1, 1), (1, 2)),
-    ),
-    (
-        ((0, 0), (1, 0), (1, 1), (2, 1)),
-        ((2, 0), (1, 1), (2, 1), (1, 2)),
-        ((0, 1), (1, 1), (1, 2), (2, 2)),
-        ((1, 0), (0, 1), (1, 1), (0, 2)),
-    ),
-    (
-        ((0, 0), (0, 1), (1, 1), (2, 1)),
-        ((1, 0), (2, 0), (1, 1), (1, 2)),
-        ((0, 1), (1, 1), (2, 1), (2, 2)),
-        ((1, 0), (1, 1), (0, 2), (1, 2)),
-    ),
-    (
-        ((2, 0), (0, 1), (1, 1), (2, 1)),
-        ((1, 0), (1, 1), (1, 2), (2, 2)),
-        ((0, 1), (1, 1), (2, 1), (0, 2)),
-        ((0, 0), (1, 0), (1, 1), (1, 2)),
-    ),
-)
 
 
 @dataclass
@@ -140,110 +93,8 @@ class ScriptArgs:
     )
 
 
-def _piece_min_offsets(piece_type: int, rotation: int) -> tuple[int, int]:
-    cells = TETROMINO_CELLS[piece_type][rotation]
-    min_dx = min(dx for dx, _ in cells)
-    min_dy = min(dy for _, dy in cells)
-    return min_dx, min_dy
-
-
-def _is_valid_position_empty_board(
-    piece_type: int, rotation: int, x: int, y: int
-) -> bool:
-    for dx, dy in TETROMINO_CELLS[piece_type][rotation]:
-        board_x = x + dx
-        board_y = y + dy
-        if (
-            board_x < 0
-            or board_x >= BOARD_WIDTH
-            or board_y < 0
-            or board_y >= BOARD_HEIGHT
-        ):
-            return False
-    return True
-
-
-def _build_action_space_positions() -> list[tuple[int, int, int]]:
-    valid_positions: list[tuple[int, int, int]] = []
-    for y in range(Y_MIN, Y_MAX_EXCLUSIVE):
-        for x in range(X_MIN, X_MAX_EXCLUSIVE):
-            for rotation in range(len(ROTATION_LABELS)):
-                if any(
-                    _is_valid_position_empty_board(piece_type, rotation, x, y)
-                    for piece_type in range(NUM_PIECE_TYPES)
-                ):
-                    valid_positions.append((x, y, rotation))
-    valid_positions.sort(key=lambda position: (position[2], position[1], position[0]))
-    if len(valid_positions) != NUM_PLACEMENT_ACTIONS:
-        raise ValueError(
-            "Action-space position build drifted from Rust contract: "
-            f"expected {NUM_PLACEMENT_ACTIONS}, got {len(valid_positions)}"
-        )
-    return valid_positions
-
-
-def _build_piece_action_grid_maps() -> tuple[
-    torch.Tensor, torch.Tensor, list[int], list[int]
-]:
-    action_positions = _build_action_space_positions()
-    action_grid_index_by_piece = torch.zeros(
-        (NUM_PIECE_TYPES, NUM_PLACEMENT_ACTIONS), dtype=torch.long
-    )
-    action_grid_valid_by_piece = torch.zeros(
-        (NUM_PIECE_TYPES, NUM_PLACEMENT_ACTIONS), dtype=torch.bool
-    )
-    piece_valid_action_counts: list[int] = []
-
-    for piece_type in range(NUM_PIECE_TYPES):
-        unique_flat_indices: set[int] = set()
-        valid_count = 0
-        for action_idx, (x, y, rotation) in enumerate(action_positions):
-            if not _is_valid_position_empty_board(piece_type, rotation, x, y):
-                continue
-
-            min_dx, min_dy = _piece_min_offsets(piece_type, rotation)
-            grid_x = x + min_dx
-            grid_y = y + min_dy
-            if not (0 <= grid_x < BOARD_WIDTH and 0 <= grid_y < BOARD_HEIGHT):
-                raise ValueError(
-                    "Normalized spatial index is out of bounds for a valid piece/action: "
-                    f"piece={piece_type}, rotation={rotation}, x={x}, y={y}, "
-                    f"grid_x={grid_x}, grid_y={grid_y}"
-                )
-            flat_index = (
-                rotation * BOARD_HEIGHT * BOARD_WIDTH + grid_y * BOARD_WIDTH + grid_x
-            )
-            if flat_index in unique_flat_indices:
-                raise ValueError(
-                    "Structured policy mapping collided within a single piece. "
-                    f"piece={piece_type}, flat_index={flat_index}"
-                )
-
-            unique_flat_indices.add(flat_index)
-            valid_count += 1
-            action_grid_index_by_piece[piece_type, action_idx] = flat_index
-            action_grid_valid_by_piece[piece_type, action_idx] = True
-
-        piece_valid_action_counts.append(valid_count)
-
-    rotation_action_counts = [
-        sum(1 for _x, _y, rotation in action_positions if rotation == rotation_idx)
-        for rotation_idx in range(len(ROTATION_LABELS))
-    ]
-    return (
-        action_grid_index_by_piece,
-        action_grid_valid_by_piece,
-        piece_valid_action_counts,
-        rotation_action_counts,
-    )
-
-
-(
-    ACTION_GRID_INDEX_BY_PIECE,
-    ACTION_GRID_VALID_BY_PIECE,
-    PIECE_VALID_ACTION_COUNTS,
-    ROTATION_ACTION_COUNTS,
-) = _build_piece_action_grid_maps()
+PLACEMENT_GRID_SLOTS = FULL_GRID_PLACEMENT_SLOTS
+ROTATION_ACTION_COUNTS = ACTIVE_CANONICAL_ROTATION_COUNTS
 
 
 class SpatialPolicyDecoderTetrisNet(nn.Module):
@@ -325,13 +176,8 @@ class SpatialPolicyDecoderTetrisNet(nn.Module):
         self.hold_head = nn.Linear(hold_hidden, 1)
 
         self.register_buffer(
-            "action_grid_index_by_piece",
-            ACTION_GRID_INDEX_BY_PIECE.clone(),
-            persistent=False,
-        )
-        self.register_buffer(
-            "action_grid_valid_by_piece",
-            ACTION_GRID_VALID_BY_PIECE.clone(),
+            "active_flat_indices",
+            torch.from_numpy(ACTION_TO_CANONICAL_FLAT_INDEX.copy()),
             persistent=False,
         )
 
@@ -343,7 +189,6 @@ class SpatialPolicyDecoderTetrisNet(nn.Module):
         board = board.float()
         piece_aux = aux_features[:, :PIECE_AUX_FEATURES]
         board_stats = aux_features[:, PIECE_AUX_FEATURES:]
-        current_piece = piece_aux[:, :NUM_PIECE_TYPES].argmax(dim=1)
 
         board_map = F.silu(self.bn_initial(self.conv_initial(board)))
         for block in self.res_blocks:
@@ -359,18 +204,11 @@ class SpatialPolicyDecoderTetrisNet(nn.Module):
         policy_map = F.silu(self.decoder_bn(self.decoder_initial(fused_spatial)))
         for block in self.decoder_blocks:
             policy_map = block(policy_map)
+        batch_size = board.shape[0]
         placement_logits = self.policy_head(policy_map).reshape(
-            board.size(0), PLACEMENT_GRID_SLOTS
+            batch_size, PLACEMENT_GRID_SLOTS
         )
-
-        action_indices = self.action_grid_index_by_piece.index_select(0, current_piece)  # type: ignore[operator]
-        action_valid = self.action_grid_valid_by_piece.index_select(0, current_piece)  # type: ignore[operator]
-        action_logits = torch.gather(placement_logits, dim=1, index=action_indices)
-        action_logits = torch.where(
-            action_valid,
-            action_logits,
-            torch.zeros_like(action_logits),
-        )
+        action_logits = placement_logits[:, self.active_flat_indices]
 
         pooled_spatial = fused_spatial.mean(dim=(2, 3))
         pooled_features = torch.cat([pooled_spatial, aux_hidden, board_stats], dim=1)

@@ -520,7 +520,7 @@ pub fn find_all_placements(
             cursor = parents[cursor];
         }
 
-        let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
+        let Some(action_index) = action_space.placement_to_index(piece_type, x, y, rotation) else {
             debug_assert!(
                 false,
                 "BUG: valid placement ({}, {}, {}) missing from action space",
@@ -728,7 +728,7 @@ pub fn find_all_placement_params(
             seen_cells_len += 1;
         }
 
-        let Some(action_index) = action_space.placement_to_index(x, y, rotation) else {
+        let Some(action_index) = action_space.placement_to_index(piece_type, x, y, rotation) else {
             debug_assert!(
                 false,
                 "BUG: valid placement ({}, {}, {}) missing from action space",

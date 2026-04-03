@@ -125,8 +125,9 @@ Ownership split:
 
 ### Action Space
 
-- Fixed 735 actions: 734 placements + hold.
-- `ActionSpace` maps action index <-> placement params.
+- Fixed 672 actions: 671 canonical placement cells + hold.
+- Canonical placement cells come from the normalized `4 x 20 x 10` policy grid after collapsing redundant piece rotations (`O -> 0`, `I/S/Z -> 0/1`) and removing permanently inactive cells.
+- `ActionSpace` maps piece-specific `(x, y, rotation)` placements onto those canonical action indices.
 - Placement caching is heavily used; hold availability is part of cache keys.
 
 ### MCTS with Chance Nodes
@@ -142,7 +143,7 @@ Ownership split:
 - Aux split:
   - 61 piece/game features for uncached heads path.
   - 19 board-derived stats folded into cached board embedding.
-- Outputs: policy over 735 actions + scalar value.
+- Outputs: policy over 672 actions + scalar value.
 - Architecture: conv trunk + board-stats encoder + deeper cached board MLP, then concat the board embedding and auxiliary embedding before the policy/value trunk.
 
 ### Scoring Reminder
