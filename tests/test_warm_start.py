@@ -584,6 +584,7 @@ def test_train_warm_start_model_evaluates_and_snapshots_ema_weights(
         value_loss_window=4,
         seed=123,
         ema_decay=0.5,
+        mirror_augmentation_probability=0.0,
     )
 
     assert captured["eval_used_raw_model"] is False
