@@ -89,6 +89,9 @@ class OptimizerConfig:
     compute_extra_train_metrics_on_log: bool = (  # If True, run an extra forward pass at log ticks for diagnostics (policy entropy, accuracy)
         True
     )
+    mirror_augmentation_probability: float = (  # Probability of mirroring the full train batch; currently only applies to the 671+hold action space
+        0.5
+    )
     log_individual_games_to_wandb: bool = (  # If True, log one WandB row per completed game instead of aggregated replay summaries
         False
     )

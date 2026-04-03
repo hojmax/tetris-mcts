@@ -35,6 +35,7 @@ from tetris_bot.ml.config import TrainingConfig, default_training_config
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
+from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.weights import (
     export_metadata,
@@ -743,9 +744,15 @@ def train_warm_start_model(
     value_loss_window: int,
     seed: int,
     ema_decay: float,
+    mirror_augmentation_probability: float,
 ) -> WarmStartTrainingResult:
     if not 0.0 <= ema_decay < 1.0:
         raise ValueError(f"ema_decay must be in [0, 1) (got {ema_decay})")
+    if not 0.0 <= mirror_augmentation_probability <= 1.0:
+        raise ValueError(
+            "mirror_augmentation_probability must be in [0, 1] "
+            f"(got {mirror_augmentation_probability})"
+        )
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=learning_rate,
@@ -957,6 +964,13 @@ def train_warm_start_model(
                     batch_indices,
                     device,
                 )
+            )
+            boards, aux, policy_targets, action_masks = maybe_mirror_training_tensors(
+                boards,
+                aux,
+                policy_targets,
+                action_masks,
+                mirror_augmentation_probability,
             )
 
             model.train()
@@ -1323,6 +1337,9 @@ def run_warm_start(
                 ),
                 seed=args.seed,
                 ema_decay=resolved_output_config.optimizer.ema_decay,
+                mirror_augmentation_probability=(
+                    resolved_output_config.optimizer.mirror_augmentation_probability
+                ),
             )
         finally:
             npz.close()

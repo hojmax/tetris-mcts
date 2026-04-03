@@ -23,6 +23,11 @@ from tetris_bot.constants import (
     PIECE_COLORS,
     PIECE_NAMES,
 )
+from tetris_bot.ml.policy_mirroring import (
+    FLAT_MIRROR_INDEX_BY_PIECE,
+    FLAT_VALID_INDICES_BY_PIECE,
+    MIRROR_PIECE_TYPE_ORDER,
+)
 
 logger = structlog.get_logger()
 
@@ -998,6 +1003,453 @@ FLAT_TOTAL_CELLS = sum(len(cells) for cells in FLAT_ACTION_CELLS)
 FLAT_PIECE_OPTIONS = [
     {"label": name, "value": idx} for idx, name in enumerate(PIECE_NAMES)
 ]
+MIRROR_HEAT_COLORSCALE = [
+    [0.0, "#D7D9CE"],
+    [0.239, "#D7D9CE"],
+    [0.24, "#355C7D"],
+    [0.38, "#5E4FA2"],
+    [0.52, "#2C7BB6"],
+    [0.66, "#00A6CA"],
+    [0.8, "#F18F01"],
+    [0.9, "#F55D3E"],
+    [1.0, "#C51B7D"],
+]
+FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL: list[list[int]] = []
+FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX: list[tuple[int, int]] = []
+_flat_global_index = 0
+for _rotation, _cells in enumerate(FLAT_ACTION_CELLS):
+    _row_global_indices: list[int] = []
+    for _local_index, _cell in enumerate(_cells):
+        _row_global_indices.append(_flat_global_index)
+        FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX.append((_rotation, _local_index))
+        _flat_global_index += 1
+    FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL.append(_row_global_indices)
+if _flat_global_index != FLAT_TOTAL_CELLS:
+    raise ValueError(
+        "Flat action indexing drifted while building global-index tables: "
+        f"expected {FLAT_TOTAL_CELLS}, got {_flat_global_index}"
+    )
+
+MIRROR_SOURCE_RANK_BY_PIECE: list[dict[int, int]] = [
+    {global_index: rank for rank, global_index in enumerate(valid_indices)}
+    for valid_indices in FLAT_VALID_INDICES_BY_PIECE
+]
+MIRROR_SOURCE_INDEX_BY_TARGET_INDEX: list[dict[int, int]] = []
+for _source_piece, _valid_indices in enumerate(FLAT_VALID_INDICES_BY_PIECE):
+    _inverse_map: dict[int, int] = {}
+    for _source_index in _valid_indices:
+        _target_index = int(FLAT_MIRROR_INDEX_BY_PIECE[_source_piece, _source_index])
+        if _target_index in _inverse_map:
+            raise ValueError(
+                "Mirror mapping is not injective for piece "
+                f"{_source_piece}: target {_target_index}"
+            )
+        _inverse_map[_target_index] = _source_index
+    MIRROR_SOURCE_INDEX_BY_TARGET_INDEX.append(_inverse_map)
+
+
+def _piece_color_string(piece_type: int) -> str:
+    color = PIECE_COLORS[piece_type]
+    return f"rgb({color[0]}, {color[1]}, {color[2]})"
+
+
+def _empty_flat_preview_figure() -> dict:
+    return _make_flat_preview_figure([], "#EFE6D2")
+
+
+def _normalize_pair_heat(rank: int, total: int) -> float:
+    if total <= 1:
+        return 1.0
+    return 0.24 + (0.76 * (rank / (total - 1)))
+
+
+def _make_flat_row_highlight_trace(local_index: int, cell_size: int) -> go.Scatter:
+    return go.Scatter(
+        x=[local_index],
+        y=[0],
+        mode="markers",
+        marker={
+            "symbol": "square-open",
+            "size": cell_size + 6,
+            "color": "rgba(0,0,0,0)",
+            "line": {"color": "#2F241F", "width": 2.5},
+        },
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+
+def _mirror_row_figure(
+    *,
+    source_piece: int,
+    display_piece: int,
+    rotation: int,
+    side: str,
+    highlight_global_index: int | None,
+) -> go.Figure:
+    cells = FLAT_ACTION_CELLS[rotation]
+    n = len(cells)
+    if n == 0:
+        return make_flat_row_figure(rotation, None)
+
+    pair_count = len(FLAT_VALID_INDICES_BY_PIECE[source_piece])
+    source_ranks = MIRROR_SOURCE_RANK_BY_PIECE[source_piece]
+    inverse_map = MIRROR_SOURCE_INDEX_BY_TARGET_INDEX[source_piece]
+    display_valid_indices = set(FLAT_VALID_INDICES_BY_PIECE[display_piece])
+
+    z_row: list[float] = []
+    custom: list[list[int | str]] = []
+    for local_index, (grid_x, grid_y) in enumerate(cells):
+        global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[rotation][local_index]
+        if side == "left":
+            source_index = global_index if global_index in source_ranks else None
+            counterpart_index = (
+                int(FLAT_MIRROR_INDEX_BY_PIECE[source_piece, global_index])
+                if source_index is not None
+                else -1
+            )
+        else:
+            source_index = inverse_map.get(global_index)
+            counterpart_index = source_index if source_index is not None else -1
+
+        if source_index is None or global_index not in display_valid_indices:
+            z_row.append(0.0)
+            pair_rank = -1
+            status = "masked"
+        else:
+            pair_rank = source_ranks[source_index]
+            z_row.append(_normalize_pair_heat(pair_rank, pair_count))
+            status = "mapped"
+
+        custom.append(
+            [
+                grid_x,
+                grid_y,
+                global_index,
+                counterpart_index,
+                pair_rank,
+                status,
+            ]
+        )
+
+    hover_label = "Mirror idx" if side == "left" else "Source idx"
+    hover_template = (
+        "Action idx %{customdata[2]}<br>"
+        "Grid: (%{customdata[0]}, %{customdata[1]})<br>"
+        f"{hover_label}: "
+        "%{customdata[3]}<br>"
+        "Pair rank: %{customdata[4]}<br>"
+        "Status: %{customdata[5]}"
+        "<extra></extra>"
+    )
+
+    fig = go.Figure(
+        data=[
+            go.Heatmap(
+                z=[z_row],
+                x=list(range(n)),
+                y=[0],
+                customdata=[custom],
+                showscale=False,
+                xgap=1,
+                ygap=0,
+                zmin=0,
+                zmax=1,
+                colorscale=MIRROR_HEAT_COLORSCALE,
+                hovertemplate=hover_template,
+            )
+        ]
+    )
+    cell_w = max(6, min(10, 1400 // n))
+    if highlight_global_index is not None:
+        highlight_rotation, highlight_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+            highlight_global_index
+        ]
+        if highlight_rotation == rotation:
+            fig.add_trace(_make_flat_row_highlight_trace(highlight_local_index, cell_w))
+    fig.update_layout(
+        height=cell_w + 18,
+        width=n * (cell_w + 1) + 40,
+        margin=dict(l=0, r=0, t=0, b=0),
+        template="plotly_white",
+        paper_bgcolor="#F7F3E8",
+        plot_bgcolor="#F7F3E8",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+    )
+    return fig
+
+
+def _build_mirror_selection(
+    source_piece: int,
+    hover_data_by_id: dict[str, dict | None],
+) -> tuple[int | None, int | None, int | None, int | None]:
+    ctx = dash.callback_context
+    hovered_side: int | None = None
+    hovered_global_index: int | None = None
+    if ctx.triggered:
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        hover_data = hover_data_by_id.get(triggered_id)
+        if (
+            hover_data
+            and hover_data.get("points")
+            and isinstance(hover_data["points"][0].get("x"), (int, float))
+        ):
+            local_index = int(hover_data["points"][0]["x"])
+            if triggered_id.startswith("mirror-left-row-"):
+                rotation = int(triggered_id.removeprefix("mirror-left-row-"))
+                if 0 <= local_index < len(FLAT_ACTION_CELLS[rotation]):
+                    hovered_side = 0
+                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[rotation][
+                        local_index
+                    ]
+            elif triggered_id.startswith("mirror-right-row-"):
+                rotation = int(triggered_id.removeprefix("mirror-right-row-"))
+                if 0 <= local_index < len(FLAT_ACTION_CELLS[rotation]):
+                    hovered_side = 1
+                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[rotation][
+                        local_index
+                    ]
+
+    if hovered_side is None or hovered_global_index is None:
+        source_global_index = FLAT_VALID_INDICES_BY_PIECE[source_piece][0]
+        target_global_index = int(
+            FLAT_MIRROR_INDEX_BY_PIECE[source_piece, source_global_index]
+        )
+        return source_global_index, target_global_index, source_global_index, target_global_index
+
+    if hovered_side == 0:
+        source_global_index = (
+            hovered_global_index
+            if hovered_global_index in MIRROR_SOURCE_RANK_BY_PIECE[source_piece]
+            else None
+        )
+        if source_global_index is None:
+            return hovered_global_index, None, hovered_global_index, None
+        target_global_index = int(
+            FLAT_MIRROR_INDEX_BY_PIECE[source_piece, source_global_index]
+        )
+        return source_global_index, target_global_index, source_global_index, target_global_index
+
+    source_global_index = MIRROR_SOURCE_INDEX_BY_TARGET_INDEX[source_piece].get(
+        hovered_global_index
+    )
+    if source_global_index is None:
+        return None, hovered_global_index, None, hovered_global_index
+    return source_global_index, hovered_global_index, source_global_index, hovered_global_index
+
+
+def _mirror_hover_details(
+    *,
+    source_piece: int,
+    target_piece: int,
+    source_global_index: int | None,
+    target_global_index: int | None,
+) -> html.Div:
+    if source_global_index is None or target_global_index is None:
+        return html.Div(
+            [
+                html.H3("Mirror Mapping", style={"margin": "0 0 8px 0", "fontSize": "18px"}),
+                html.Div(
+                    "The hovered cell is outside the selected piece's valid logit support, so there is no mirrored partner to show.",
+                    style={"lineHeight": 1.5},
+                ),
+            ]
+        )
+
+    source_rotation, source_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+        source_global_index
+    ]
+    source_grid_x, source_grid_y = FLAT_ACTION_CELLS[source_rotation][source_local_index]
+    target_rotation, target_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+        target_global_index
+    ]
+    target_grid_x, target_grid_y = FLAT_ACTION_CELLS[target_rotation][target_local_index]
+    pair_rank = MIRROR_SOURCE_RANK_BY_PIECE[source_piece][source_global_index]
+    total_pairs = len(FLAT_VALID_INDICES_BY_PIECE[source_piece])
+    return html.Div(
+        [
+            html.H3("Mirror Mapping", style={"margin": "0 0 10px 0", "fontSize": "18px"}),
+            html.Div(
+                f"{PIECE_NAMES[source_piece]} -> {PIECE_NAMES[target_piece]} | pair rank {pair_rank + 1} / {total_pairs}",
+                style={"fontWeight": 700, "marginBottom": "8px"},
+            ),
+            html.Div(
+                f"Left: idx {source_global_index} | rot {ROTATION_LABELS[source_rotation]} | grid ({source_grid_x}, {source_grid_y})",
+                style={"marginBottom": "6px"},
+            ),
+            html.Div(
+                f"Right: idx {target_global_index} | rot {ROTATION_LABELS[target_rotation]} | grid ({target_grid_x}, {target_grid_y})"
+            ),
+        ]
+    )
+
+
+def _mirror_section_layout() -> html.Div:
+    empty_board = _empty_flat_preview_figure()
+    paired_rows: list[html.Div] = []
+    for rotation, cells in enumerate(FLAT_ACTION_CELLS):
+        paired_rows.append(
+            html.Div(
+                [
+                    html.Div(
+                        f"Rot {ROTATION_LABELS[rotation]}",
+                        style={
+                            "width": "54px",
+                            "fontWeight": 700,
+                            "fontSize": "12px",
+                            "paddingTop": "18px",
+                            "flexShrink": 0,
+                        },
+                    ),
+                    html.Div(
+                        dcc.Graph(
+                            id=f"mirror-left-row-{rotation}",
+                            clear_on_unhover=True,
+                            config={"displayModeBar": False},
+                        ),
+                        style={"overflowX": "auto", "flex": "1"},
+                    ),
+                    html.Div(
+                        dcc.Graph(
+                            id=f"mirror-right-row-{rotation}",
+                            clear_on_unhover=True,
+                            config={"displayModeBar": False},
+                        ),
+                        style={"overflowX": "auto", "flex": "1"},
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "gap": "14px",
+                    "alignItems": "start",
+                    "marginBottom": "8px",
+                },
+            )
+        )
+
+    return html.Div(
+        [
+            html.H2(
+                "Mirror Mapping",
+                style={
+                    "margin": "0 0 10px 0",
+                    "fontFamily": "Georgia, Times New Roman, serif",
+                },
+            ),
+            html.Div(
+                "Hover a colored action cell on either side. The visualizer highlights the mirrored partner, and the two board previews show the corresponding placement before and after left-right mirroring.",
+                style={"marginBottom": "14px", "lineHeight": 1.5},
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Label(
+                                "Source Piece",
+                                style={"display": "block", "marginBottom": "4px"},
+                            ),
+                            dcc.Dropdown(
+                                id="mirror-piece-dropdown",
+                                options=FLAT_PIECE_OPTIONS,  # type: ignore[arg-type]
+                                value=2,
+                                clearable=False,
+                                style={"width": "180px"},
+                            ),
+                        ],
+                        style={"display": "inline-block", "marginRight": "18px"},
+                    ),
+                    html.Div(
+                        id="mirror-piece-summary",
+                        style={
+                            "display": "inline-block",
+                            "fontWeight": 700,
+                            "fontSize": "13px",
+                            "lineHeight": "38px",
+                        },
+                    ),
+                ],
+                style={"marginBottom": "14px"},
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        "Original Logit Space",
+                        style={"fontWeight": 700, "marginLeft": "68px", "flex": "1"},
+                    ),
+                    html.Div(
+                        "Mirrored Logit Space",
+                        style={"fontWeight": 700, "flex": "1"},
+                    ),
+                ],
+                style={"display": "flex", "gap": "14px", "marginBottom": "6px"},
+            ),
+            *paired_rows,
+            html.Div(
+                [
+                    html.Div(
+                        id="mirror-hover-details",
+                        style={
+                            "padding": "14px 16px",
+                            "background": "#FFF9EE",
+                            "border": "1px solid #D0BFA2",
+                            "borderRadius": "16px",
+                            "minWidth": "300px",
+                            "flex": "1",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                "Original Placement",
+                                style={"fontWeight": 700, "marginBottom": "8px"},
+                            ),
+                            dcc.Graph(
+                                id="mirror-left-preview-graph",
+                                figure=empty_board,
+                                config={"displayModeBar": False},
+                                style={"width": "282px", "height": "540px"},
+                            ),
+                        ],
+                        style={
+                            "padding": "14px 16px",
+                            "background": "#FFF9EE",
+                            "border": "1px solid #D0BFA2",
+                            "borderRadius": "16px",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                "Mirrored Placement",
+                                style={"fontWeight": 700, "marginBottom": "8px"},
+                            ),
+                            dcc.Graph(
+                                id="mirror-right-preview-graph",
+                                figure=empty_board,
+                                config={"displayModeBar": False},
+                                style={"width": "282px", "height": "540px"},
+                            ),
+                        ],
+                        style={
+                            "padding": "14px 16px",
+                            "background": "#FFF9EE",
+                            "border": "1px solid #D0BFA2",
+                            "borderRadius": "16px",
+                        },
+                    ),
+                ],
+                style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginTop": "14px"},
+            ),
+        ],
+        style={
+            "marginTop": "18px",
+            "padding": "18px",
+            "background": "#FFF9EE",
+            "border": "1px solid #D0BFA2",
+            "borderRadius": "18px",
+        },
+    )
 
 
 def make_flat_row_figure(rotation: int, piece_type: int | None) -> go.Figure:
@@ -1252,6 +1704,7 @@ def _flat_section_layout() -> html.Div:
 
 
 FLAT_SECTION = _flat_section_layout()
+MIRROR_SECTION = _mirror_section_layout()
 
 
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
@@ -1447,6 +1900,7 @@ app.layout = html.Div(
         ),
         EXPLODED_SECTION,
         FLAT_SECTION,
+        MIRROR_SECTION,
     ],
     style={
         "minHeight": "100vh",
@@ -1622,6 +2076,144 @@ def update_flat_rows(
     piece_type: int,
 ) -> tuple[go.Figure, go.Figure, go.Figure, go.Figure]:
     return tuple(make_flat_row_figure(rot, piece_type) for rot in range(4))  # type: ignore[return-value]
+
+
+@callback(
+    Output("mirror-piece-summary", "children"),
+    Output("mirror-hover-details", "children"),
+    Output("mirror-left-preview-graph", "figure"),
+    Output("mirror-right-preview-graph", "figure"),
+    Output("mirror-left-row-0", "figure"),
+    Output("mirror-left-row-1", "figure"),
+    Output("mirror-left-row-2", "figure"),
+    Output("mirror-left-row-3", "figure"),
+    Output("mirror-right-row-0", "figure"),
+    Output("mirror-right-row-1", "figure"),
+    Output("mirror-right-row-2", "figure"),
+    Output("mirror-right-row-3", "figure"),
+    Input("mirror-piece-dropdown", "value"),
+    Input("mirror-left-row-0", "hoverData"),
+    Input("mirror-left-row-1", "hoverData"),
+    Input("mirror-left-row-2", "hoverData"),
+    Input("mirror-left-row-3", "hoverData"),
+    Input("mirror-right-row-0", "hoverData"),
+    Input("mirror-right-row-1", "hoverData"),
+    Input("mirror-right-row-2", "hoverData"),
+    Input("mirror-right-row-3", "hoverData"),
+)
+def update_mirror_section(
+    source_piece: int,
+    left_hover_0: dict | None,
+    left_hover_1: dict | None,
+    left_hover_2: dict | None,
+    left_hover_3: dict | None,
+    right_hover_0: dict | None,
+    right_hover_1: dict | None,
+    right_hover_2: dict | None,
+    right_hover_3: dict | None,
+) -> tuple[
+    str,
+    html.Div,
+    dict,
+    dict,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+]:
+    target_piece = MIRROR_PIECE_TYPE_ORDER[source_piece]
+    hover_data_by_id = {
+        "mirror-left-row-0": left_hover_0,
+        "mirror-left-row-1": left_hover_1,
+        "mirror-left-row-2": left_hover_2,
+        "mirror-left-row-3": left_hover_3,
+        "mirror-right-row-0": right_hover_0,
+        "mirror-right-row-1": right_hover_1,
+        "mirror-right-row-2": right_hover_2,
+        "mirror-right-row-3": right_hover_3,
+    }
+    (
+        source_global_index,
+        target_global_index,
+        left_highlight_global_index,
+        right_highlight_global_index,
+    ) = _build_mirror_selection(source_piece, hover_data_by_id)
+
+    if source_global_index is not None and target_global_index is not None:
+        source_rotation, source_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+            source_global_index
+        ]
+        source_grid_x, source_grid_y = FLAT_ACTION_CELLS[source_rotation][
+            source_local_index
+        ]
+        target_rotation, target_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+            target_global_index
+        ]
+        target_grid_x, target_grid_y = FLAT_ACTION_CELLS[target_rotation][
+            target_local_index
+        ]
+        source_info = build_placement_info(
+            source_piece,
+            source_rotation,
+            source_grid_x,
+            source_grid_y,
+        )
+        target_info = build_placement_info(
+            target_piece,
+            target_rotation,
+            target_grid_x,
+            target_grid_y,
+        )
+        left_preview = _make_flat_preview_figure(
+            list(source_info.in_bounds_cells),
+            _piece_color_string(source_piece),
+        )
+        right_preview = _make_flat_preview_figure(
+            list(target_info.in_bounds_cells),
+            _piece_color_string(target_piece),
+        )
+    else:
+        left_preview = _empty_flat_preview_figure()
+        right_preview = _empty_flat_preview_figure()
+
+    left_figures = tuple(
+        _mirror_row_figure(
+            source_piece=source_piece,
+            display_piece=source_piece,
+            rotation=rotation,
+            side="left",
+            highlight_global_index=left_highlight_global_index,
+        )
+        for rotation in range(4)
+    )
+    right_figures = tuple(
+        _mirror_row_figure(
+            source_piece=source_piece,
+            display_piece=target_piece,
+            rotation=rotation,
+            side="right",
+            highlight_global_index=right_highlight_global_index,
+        )
+        for rotation in range(4)
+    )
+
+    return (
+        f"{PIECE_NAMES[source_piece]} mirrors to {PIECE_NAMES[target_piece]}",
+        _mirror_hover_details(
+            source_piece=source_piece,
+            target_piece=target_piece,
+            source_global_index=source_global_index,
+            target_global_index=target_global_index,
+        ),
+        left_preview,
+        right_preview,
+        *left_figures,
+        *right_figures,
+    )
 
 
 clientside_callback(

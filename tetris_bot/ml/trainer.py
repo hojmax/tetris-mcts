@@ -47,6 +47,7 @@ from tetris_bot.ml.game_metrics import (
     average_completed_games,
     compute_batch_feature_metrics,
 )
+from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 
 from tetris_core.tetris_core import MCTSConfig, GameGenerator
 from tetris_core.tetris_core import evaluate_model
@@ -116,6 +117,12 @@ class Trainer:
             raise ValueError(
                 "config.optimizer.ema_decay must be in [0, 1) "
                 f"(got {self.config.optimizer.ema_decay})"
+            )
+        if not 0.0 <= self.config.optimizer.mirror_augmentation_probability <= 1.0:
+            raise ValueError(
+                "config.optimizer.mirror_augmentation_probability must be in [0, 1] "
+                "(got "
+                f"{self.config.optimizer.mirror_augmentation_probability})"
             )
         self._export_model = self.model
         self.ema = (
@@ -1613,6 +1620,18 @@ class Trainer:
                     batch = pending_batches.popleft()
                 self.step += 1
                 session_step = self.step - start_step
+                (
+                    batch.boards,
+                    batch.aux,
+                    batch.policy_targets,
+                    batch.masks,
+                ) = maybe_mirror_training_tensors(
+                    batch.boards,
+                    batch.aux,
+                    batch.policy_targets,
+                    batch.masks,
+                    self.config.optimizer.mirror_augmentation_probability,
+                )
 
                 # Train step
                 is_log_step = pre_step_time >= next_log_time_s

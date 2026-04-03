@@ -24,6 +24,14 @@ from tetris_bot.ml.network import (
 
 @dataclass(frozen=True)
 class AuxFeatureLayout:
+    current_piece: slice
+    hold_piece: slice
+    hold_available: int
+    next_queue: slice
+    placement_count: int
+    combo: int
+    back_to_back: int
+    next_hidden_piece_probs: slice
     column_heights: slice
     max_column_height: int
     row_fill_counts: slice
@@ -35,13 +43,23 @@ class AuxFeatureLayout:
 
 def build_aux_feature_layout() -> AuxFeatureLayout:
     aux_idx = 0
+    current_piece = slice(aux_idx, aux_idx + CURRENT_PIECE_FEATURES)
     aux_idx += CURRENT_PIECE_FEATURES
+    hold_piece = slice(aux_idx, aux_idx + HOLD_PIECE_FEATURES)
     aux_idx += HOLD_PIECE_FEATURES
+    hold_available = aux_idx
     aux_idx += HOLD_AVAILABLE_FEATURES
+    next_queue = slice(aux_idx, aux_idx + QUEUE_FEATURES)
     aux_idx += QUEUE_FEATURES
+    placement_count = aux_idx
     aux_idx += MOVE_NUMBER_FEATURES
+    combo = aux_idx
     aux_idx += COMBO_FEATURES
+    back_to_back = aux_idx
     aux_idx += BACK_TO_BACK_FEATURES
+    next_hidden_piece_probs = slice(
+        aux_idx, aux_idx + HIDDEN_PIECE_DISTRIBUTION_FEATURES
+    )
     aux_idx += HIDDEN_PIECE_DISTRIBUTION_FEATURES
 
     column_heights = slice(aux_idx, aux_idx + COLUMN_HEIGHT_FEATURES)
@@ -65,6 +83,14 @@ def build_aux_feature_layout() -> AuxFeatureLayout:
         )
 
     return AuxFeatureLayout(
+        current_piece=current_piece,
+        hold_piece=hold_piece,
+        hold_available=hold_available,
+        next_queue=next_queue,
+        placement_count=placement_count,
+        combo=combo,
+        back_to_back=back_to_back,
+        next_hidden_piece_probs=next_hidden_piece_probs,
         column_heights=column_heights,
         max_column_height=max_column_height,
         row_fill_counts=row_fill_counts,
