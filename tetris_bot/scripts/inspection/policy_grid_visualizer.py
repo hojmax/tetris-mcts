@@ -8,6 +8,15 @@ import plotly.graph_objects as go
 from simple_parsing import parse
 import structlog
 
+from tetris_bot.action_space import (
+    ACTION_TO_CANONICAL_CELL,
+    CELL_TO_ACTION_INDEX,
+    PIECES_ONE_ROTATIONS,
+    PIECES_TWO_ROTATIONS,
+    ROTATION_LABELS,
+    is_redundant_rotation,
+    placement_grid_flat_index,
+)
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -17,20 +26,7 @@ from tetris_bot.constants import (
 
 logger = structlog.get_logger()
 
-ROTATION_LABELS = ["0", "R", "2", "L"]
-# Pieces where rotations 2/3 are equivalent to rotations 0/1 (only 2 unique rotations).
-PIECES_TWO_ROTATIONS: set[int] = {0, 3, 4}  # I, S, Z
-# O has a single unique rotation (all 4 are identical).
-PIECES_ONE_ROTATION: set[int] = {1}  # O
 
-
-def _is_redundant_rotation(piece_type: int, rotation: int) -> bool:
-    """Whether *rotation* is redundant for *piece_type*."""
-    if piece_type in PIECES_ONE_ROTATION:
-        return rotation >= 1
-    if piece_type in PIECES_TWO_ROTATIONS:
-        return rotation >= 2
-    return False
 GRID_CELLS_PER_MAP = BOARD_HEIGHT * BOARD_WIDTH
 AGGREGATE_PIECE_VALUE = "D"
 AGGREGATE_PIECE_LABEL = "D (all layers)"
@@ -719,29 +715,10 @@ def make_hover_details(
 MINI_CELL_PX = 8
 MINI_GAP_PX = 1
 
-# Additional forced masks per rotation for further action-space compression.
-# These cells are treated as "never valid" even if a piece could geometrically fit.
-_EXTRA_FORCED_MASKS: dict[int, set[tuple[int, int]]] = {
-    # Rotation R: block bottom row (O-exclusive; O restricted to rot 0 only).
-    1: {
-        *((x, BOARD_HEIGHT - 2) for x in range(BOARD_WIDTH)),
-    },
-    # Rotation 2: block second-rightmost column and bottom row.
-    2: {
-        *((8, y) for y in range(BOARD_HEIGHT)),
-        *((x, BOARD_HEIGHT - 1) for x in range(BOARD_WIDTH)),
-    },
-    # Rotation L: block rightmost column and second-bottom row.
-    3: {
-        *((BOARD_WIDTH - 1, y) for y in range(BOARD_HEIGHT)),
-        *((x, BOARD_HEIGHT - 2) for x in range(BOARD_WIDTH)),
-    },
-}
 
-
-def _is_force_masked(rotation: int, x: int, y: int) -> bool:
-    masks = _EXTRA_FORCED_MASKS.get(rotation)
-    return masks is not None and (x, y) in masks
+def _is_canonical_action_cell(rotation: int, x: int, y: int) -> bool:
+    flat_index = placement_grid_flat_index(rotation, x, y)
+    return int(CELL_TO_ACTION_INDEX[flat_index]) >= 0
 
 
 def _make_mini_placement_grid(piece_type: int, rotation: int) -> html.Div:
@@ -756,8 +733,7 @@ def _make_mini_placement_grid(piece_type: int, rotation: int) -> html.Div:
     children: list[html.Div] = []
     for y in range(BOARD_HEIGHT):
         for x in range(BOARD_WIDTH):
-            forced = _is_force_masked(rotation, x, y)
-            if forced:
+            if not _is_canonical_action_cell(rotation, x, y):
                 bg = "#1A1A1A"
             elif build_placement_info(piece_type, rotation, x, y).valid:
                 bg = "#4D7C0F"
@@ -847,35 +823,39 @@ def _make_piece_preview_mini(piece_type: int) -> html.Div:
 
 def make_exploded_placement_section() -> html.Div:
     """Build a 7-row x 5-column exploded view of all piece/rotation placement grids."""
-    col_headers = [
-        html.Div(
-            "Piece",
-            style={
-                "fontWeight": 700,
-                "textAlign": "center",
-                "padding": "4px",
-            },
-        )
-    ] + [
-        html.Div(
-            f"Rot {label}",
-            style={
-                "fontWeight": 700,
-                "textAlign": "center",
-                "padding": "4px",
-            },
-        )
-        for label in ROTATION_LABELS
-    ] + [
-        html.Div(
-            "Preview",
-            style={
-                "fontWeight": 700,
-                "textAlign": "center",
-                "padding": "4px",
-            },
-        )
-    ]
+    col_headers = (
+        [
+            html.Div(
+                "Piece",
+                style={
+                    "fontWeight": 700,
+                    "textAlign": "center",
+                    "padding": "4px",
+                },
+            )
+        ]
+        + [
+            html.Div(
+                f"Rot {label}",
+                style={
+                    "fontWeight": 700,
+                    "textAlign": "center",
+                    "padding": "4px",
+                },
+            )
+            for label in ROTATION_LABELS
+        ]
+        + [
+            html.Div(
+                "Preview",
+                style={
+                    "fontWeight": 700,
+                    "textAlign": "center",
+                    "padding": "4px",
+                },
+            )
+        ]
+    )
 
     rows: list[html.Div] = []
     rows.append(
@@ -905,23 +885,14 @@ def make_exploded_placement_section() -> html.Div:
             )
         ]
         for rotation in range(4):
-            is_disabled = _is_redundant_rotation(piece_type, rotation)
+            is_disabled = is_redundant_rotation(piece_type, rotation)
             if is_disabled:
                 grid = _make_disabled_grid()
                 caption = "redundant"
             else:
                 grid = _make_mini_placement_grid(piece_type, rotation)
-                base_valid = SUMMARY_COUNTS[piece_type][rotation]["valid"]
-                force_lost = sum(
-                    1
-                    for gy in range(BOARD_HEIGHT)
-                    for gx in range(BOARD_WIDTH)
-                    if _is_force_masked(rotation, gx, gy)
-                    and build_placement_info(piece_type, rotation, gx, gy).valid
-                )
-                effective_valid = base_valid - force_lost
-                effective_masked = GRID_CELLS_PER_MAP - effective_valid
-                caption = f"{effective_valid}v / {effective_masked}m"
+                counts = SUMMARY_COUNTS[piece_type][rotation]
+                caption = f"{counts['valid']}v / {counts['masked']}m"
             row_children.append(
                 html.Div(
                     [
@@ -936,7 +907,11 @@ def make_exploded_placement_section() -> html.Div:
                             },
                         ),
                     ],
-                    style={"display": "flex", "flexDirection": "column", "alignItems": "center"},
+                    style={
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "alignItems": "center",
+                    },
                 )
             )
         row_children.append(
@@ -952,7 +927,11 @@ def make_exploded_placement_section() -> html.Div:
                         },
                     ),
                 ],
-                style={"display": "flex", "flexDirection": "column", "alignItems": "center"},
+                style={
+                    "display": "flex",
+                    "flexDirection": "column",
+                    "alignItems": "center",
+                },
             )
         )
         rows.append(
@@ -1004,16 +983,14 @@ EXPLODED_SECTION = make_exploded_placement_section()
 # For each rotation, the list of (x, y) cells that are in the action space,
 # enumerated in row-major order (top-to-bottom, left-to-right).
 FLAT_ACTION_CELLS: list[list[tuple[int, int]]] = []
-for _rot in range(4):
-    _cells: list[tuple[int, int]] = []
-    for _y in range(BOARD_HEIGHT):
-        for _x in range(BOARD_WIDTH):
-            if (
-                AGGREGATE_GRID_COUNTS_BY_ROTATION[_rot][_y][_x] > 0
-                and not _is_force_masked(_rot, _x, _y)
-            ):
-                _cells.append((_x, _y))
-    FLAT_ACTION_CELLS.append(_cells)
+for rotation in range(4):
+    FLAT_ACTION_CELLS.append(
+        [
+            (grid_x, grid_y)
+            for cell_rotation, grid_x, grid_y in ACTION_TO_CANONICAL_CELL
+            if cell_rotation == rotation
+        ]
+    )
 
 FLAT_TOTAL_CELLS = sum(len(cells) for cells in FLAT_ACTION_CELLS)
 
@@ -1023,9 +1000,7 @@ FLAT_PIECE_OPTIONS = [
 ]
 
 
-def make_flat_row_figure(
-    rotation: int, piece_type: int | None
-) -> go.Figure:
+def make_flat_row_figure(rotation: int, piece_type: int | None) -> go.Figure:
     """Build a 1-row heatmap for one rotation's flattened action cells."""
     cells = FLAT_ACTION_CELLS[rotation]
     n = len(cells)
@@ -1060,9 +1035,8 @@ def make_flat_row_figure(
     # Determine per-cell validity for the selected piece.
     z_row: list[int] = []
     custom: list[list[int]] = []
-    piece_redundant_rotation = (
-        piece_type is not None
-        and _is_redundant_rotation(piece_type, rotation)
+    piece_redundant_rotation = piece_type is not None and is_redundant_rotation(
+        piece_type, rotation
     )
     valid_count = 0
     for x, y in cells:
@@ -1198,11 +1172,10 @@ def _flat_section_layout() -> html.Div:
     precomputed = {
         "flat_cells": [[[x, y] for x, y in cells] for cells in FLAT_ACTION_CELLS],
         "tetromino_cells": [
-            [[[dx, dy] for dx, dy in rot] for rot in piece]
-            for piece in TETROMINO_CELLS
+            [[[dx, dy] for dx, dy in rot] for rot in piece] for piece in TETROMINO_CELLS
         ],
         "two_rot_pieces": sorted(PIECES_TWO_ROTATIONS),
-        "one_rot_pieces": sorted(PIECES_ONE_ROTATION),
+        "one_rot_pieces": sorted(PIECES_ONE_ROTATIONS),
         "piece_colors": [list(c) for c in PIECE_COLORS],
     }
 
@@ -1300,7 +1273,7 @@ app.layout = html.Div(
                     },
                 ),
                 html.P(
-                    "Inspect the proposed 20x10x4 placement scheme: each grid cell is a normalized translation slot for the selected piece and rotation.",
+                    "Inspect the normalized 20x10x4 placement scheme: each grid cell is a normalized translation slot for the selected piece and rotation. After collapsing redundant piece rotations and dropping permanently inactive cells, the runtime action space keeps 671 placement cells plus hold.",
                     style={"margin": "0", "maxWidth": "900px", "lineHeight": 1.5},
                 ),
             ],
@@ -1356,7 +1329,7 @@ app.layout = html.Div(
                             style={"fontWeight": 700, "marginBottom": "6px"},
                         ),
                         html.Div(
-                            "Recommended encoding: keep hold as a separate non-spatial logit from pooled fused features, then append it to the flattened placement logits.",
+                            "Recommended encoding: keep hold as a separate non-spatial logit from pooled fused features, then append it after the 671 canonical placement logits.",
                             style={"lineHeight": 1.45, "fontSize": "13px"},
                         ),
                     ],
@@ -1645,7 +1618,9 @@ def update_hover_preview(
     Output("flat-row-3", "figure"),
     Input("flat-piece-dropdown", "value"),
 )
-def update_flat_rows(piece_type: int) -> tuple[go.Figure, go.Figure, go.Figure, go.Figure]:
+def update_flat_rows(
+    piece_type: int,
+) -> tuple[go.Figure, go.Figure, go.Figure, go.Figure]:
     return tuple(make_flat_row_figure(rot, piece_type) for rot in range(4))  # type: ignore[return-value]
 
 

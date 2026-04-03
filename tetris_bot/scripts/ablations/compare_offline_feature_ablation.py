@@ -13,6 +13,7 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
+from tetris_bot.action_space import LEGACY_NUM_ACTIONS
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -26,6 +27,7 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
     ResidualFusionBlock,
     get_preload_mode,
     init_wandb_run,
+    normalize_policy_arrays,
     pick_device,
     validate_common_offline_args,
 )
@@ -332,10 +334,17 @@ def validate_shapes(
         raise ValueError("next_queue must have shape (N, 5, 7)")
     if data["next_hidden_piece_probs"].shape[1] != 7:
         raise ValueError("next_hidden_piece_probs must have shape (N, 7)")
-    if data["policy_targets"].shape[1] != NUM_ACTIONS:
-        raise ValueError(f"policy_targets must have shape (N, {NUM_ACTIONS})")
-    if data["action_masks"].shape[1] != NUM_ACTIONS:
-        raise ValueError(f"action_masks must have shape (N, {NUM_ACTIONS})")
+    policy_width = int(data["policy_targets"].shape[1])
+    if policy_width not in {NUM_ACTIONS, LEGACY_NUM_ACTIONS}:
+        raise ValueError(
+            "policy_targets must have shape "
+            f"(N, {NUM_ACTIONS}) or legacy shape (N, {LEGACY_NUM_ACTIONS})"
+        )
+    if data["action_masks"].shape[1] != policy_width:
+        raise ValueError(
+            "action_masks width must match policy_targets width "
+            f"(got {data['action_masks'].shape[1]} vs {policy_width})"
+        )
 
     for group in extra_feature_groups:
         group_shape = data[group.npz_key].shape
@@ -379,10 +388,12 @@ def validate_shapes(
 def build_base_aux_batch_from_npz(
     data: np.lib.npyio.NpzFile,
     global_indices: np.ndarray,
+    current_pieces: np.ndarray | None = None,
 ) -> np.ndarray:
-    current_pieces = data["current_pieces"][global_indices].astype(
-        np.float32, copy=False
-    )
+    if current_pieces is None:
+        current_pieces = data["current_pieces"][global_indices].astype(
+            np.float32, copy=False
+        )
     hold_pieces = data["hold_pieces"][global_indices].astype(np.float32, copy=False)
     hold_available = (
         data["hold_available"][global_indices].astype(np.float32).reshape(-1, 1)
@@ -440,8 +451,9 @@ def build_aux_batch_from_npz(
     data: np.lib.npyio.NpzFile,
     global_indices: np.ndarray,
     included_groups: tuple[ExtraFeatureGroup, ...],
+    current_pieces: np.ndarray | None = None,
 ) -> np.ndarray:
-    base_aux = build_base_aux_batch_from_npz(data, global_indices)
+    base_aux = build_base_aux_batch_from_npz(data, global_indices, current_pieces)
     extra_aux = build_extra_aux_batch_from_npz(data, global_indices, included_groups)
     if extra_aux is None:
         return base_aux
@@ -455,15 +467,24 @@ def build_torch_batch_from_npz(
     included_groups: tuple[ExtraFeatureGroup, ...],
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     boards_np = data["boards"][global_indices].astype(np.float32, copy=False)
-    aux_np = build_aux_batch_from_npz(data, global_indices, included_groups)
-    policy_targets_np = data["policy_targets"][global_indices].astype(
+    current_pieces_np = data["current_pieces"][global_indices].astype(
         np.float32, copy=False
     )
+    aux_np = build_aux_batch_from_npz(
+        data,
+        global_indices,
+        included_groups,
+        current_pieces_np,
+    )
+    raw_policy_targets_np = data["policy_targets"][global_indices]
     value_targets_np = data["value_targets"][global_indices].astype(
         np.float32, copy=False
     )
-    action_masks_np = data["action_masks"][global_indices].astype(
-        np.float32, copy=False
+    raw_action_masks_np = data["action_masks"][global_indices]
+    policy_targets_np, action_masks_np = normalize_policy_arrays(
+        current_pieces=current_pieces_np,
+        policy_targets=raw_policy_targets_np,
+        action_masks=raw_action_masks_np,
     )
 
     boards = torch.from_numpy(boards_np).unsqueeze(1).to(device, non_blocking=True)
@@ -482,17 +503,24 @@ def build_tensor_dataset(
     included_groups: tuple[ExtraFeatureGroup, ...],
 ) -> OfflineTensorDataset:
     boards_np = data["boards"][selected_global_indices].astype(np.float32, copy=False)
-    aux_np = build_aux_batch_from_npz(
-        data, selected_global_indices, included_groups
-    ).astype(np.float32, copy=False)
-    policy_targets_np = data["policy_targets"][selected_global_indices].astype(
+    current_pieces_np = data["current_pieces"][selected_global_indices].astype(
         np.float32, copy=False
     )
+    aux_np = build_aux_batch_from_npz(
+        data,
+        selected_global_indices,
+        included_groups,
+        current_pieces_np,
+    ).astype(np.float32, copy=False)
+    raw_policy_targets_np = data["policy_targets"][selected_global_indices]
     value_targets_np = data["value_targets"][selected_global_indices].astype(
         np.float32, copy=False
     )
-    action_masks_np = data["action_masks"][selected_global_indices].astype(
-        np.float32, copy=False
+    raw_action_masks_np = data["action_masks"][selected_global_indices]
+    policy_targets_np, action_masks_np = normalize_policy_arrays(
+        current_pieces=current_pieces_np,
+        policy_targets=raw_policy_targets_np,
+        action_masks=raw_action_masks_np,
     )
 
     boards = torch.from_numpy(boards_np).unsqueeze(1)

@@ -13,6 +13,11 @@ import torch.nn.functional as F
 import wandb
 from simple_parsing import parse
 
+from tetris_bot.action_space import (
+    LEGACY_NUM_ACTIONS,
+    adapt_legacy_action_masks,
+    adapt_legacy_policy_targets,
+)
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
@@ -607,10 +612,17 @@ def validate_shapes(data: np.lib.npyio.NpzFile) -> int:
         raise ValueError("holes must have shape (N,)")
     if data["overhang_fields"].shape != (n,):
         raise ValueError("overhang_fields must have shape (N,)")
-    if data["policy_targets"].shape[1] != NUM_ACTIONS:
-        raise ValueError(f"policy_targets must have shape (N, {NUM_ACTIONS})")
-    if data["action_masks"].shape[1] != NUM_ACTIONS:
-        raise ValueError(f"action_masks must have shape (N, {NUM_ACTIONS})")
+    policy_width = int(data["policy_targets"].shape[1])
+    if policy_width not in {NUM_ACTIONS, LEGACY_NUM_ACTIONS}:
+        raise ValueError(
+            "policy_targets must have shape "
+            f"(N, {NUM_ACTIONS}) or legacy shape (N, {LEGACY_NUM_ACTIONS})"
+        )
+    if data["action_masks"].shape[1] != policy_width:
+        raise ValueError(
+            "action_masks width must match policy_targets width "
+            f"(got {data['action_masks'].shape[1]} vs {policy_width})"
+        )
 
     per_example_keys = (
         "current_pieces",
@@ -653,10 +665,12 @@ def get_preload_mode(args: _PreloadArgs) -> str:
 def build_aux_batch_from_npz(
     data: np.lib.npyio.NpzFile,
     global_indices: np.ndarray,
+    current_pieces: np.ndarray | None = None,
 ) -> np.ndarray:
-    current_pieces = data["current_pieces"][global_indices].astype(
-        np.float32, copy=False
-    )
+    if current_pieces is None:
+        current_pieces = data["current_pieces"][global_indices].astype(
+            np.float32, copy=False
+        )
     hold_pieces = data["hold_pieces"][global_indices].astype(np.float32, copy=False)
     hold_available = (
         data["hold_available"][global_indices].astype(np.float32).reshape(-1, 1)
@@ -715,20 +729,52 @@ def build_aux_batch_from_npz(
     )
 
 
+def normalize_policy_arrays(
+    current_pieces: np.ndarray,
+    policy_targets: np.ndarray,
+    action_masks: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    if policy_targets.shape != action_masks.shape:
+        raise ValueError(
+            "policy_targets/action_masks shape mismatch: "
+            f"{policy_targets.shape} vs {action_masks.shape}"
+        )
+    if policy_targets.shape[1] == NUM_ACTIONS:
+        return (
+            policy_targets.astype(np.float32, copy=False),
+            action_masks.astype(np.bool_, copy=False),
+        )
+    if policy_targets.shape[1] != LEGACY_NUM_ACTIONS:
+        raise ValueError(
+            "Unsupported action width for policy_targets/action_masks: "
+            f"{policy_targets.shape[1]}"
+        )
+    return (
+        adapt_legacy_policy_targets(current_pieces, policy_targets),
+        adapt_legacy_action_masks(current_pieces, action_masks),
+    )
+
+
 def build_torch_batch_from_npz(
     data: np.lib.npyio.NpzFile,
     global_indices: np.ndarray,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     boards_np = data["boards"][global_indices]
-    aux_np = build_aux_batch_from_npz(data, global_indices)
-    policy_targets_np = data["policy_targets"][global_indices].astype(
+    current_pieces_np = data["current_pieces"][global_indices].astype(
         np.float32, copy=False
     )
+    aux_np = build_aux_batch_from_npz(data, global_indices, current_pieces_np)
+    raw_policy_targets_np = data["policy_targets"][global_indices]
     value_targets_np = data["value_targets"][global_indices].astype(
         np.float32, copy=False
     )
-    action_masks_np = data["action_masks"][global_indices].astype(np.bool_, copy=False)
+    raw_action_masks_np = data["action_masks"][global_indices]
+    policy_targets_np, action_masks_np = normalize_policy_arrays(
+        current_pieces=current_pieces_np,
+        policy_targets=raw_policy_targets_np,
+        action_masks=raw_action_masks_np,
+    )
 
     boards = torch.from_numpy(boards_np).unsqueeze(1).to(device, non_blocking=True)
     aux = torch.from_numpy(aux_np).to(device, non_blocking=True)
@@ -745,17 +791,23 @@ def build_tensor_dataset(
     train_device: torch.device,
 ) -> OfflineTensorDataset:
     boards_np = data["boards"][selected_global_indices]
-    aux_np = build_aux_batch_from_npz(data, selected_global_indices).astype(
+    current_pieces_np = data["current_pieces"][selected_global_indices].astype(
         np.float32, copy=False
     )
-    policy_targets_np = data["policy_targets"][selected_global_indices].astype(
-        np.float32, copy=False
-    )
+    aux_np = build_aux_batch_from_npz(
+        data,
+        selected_global_indices,
+        current_pieces_np,
+    ).astype(np.float32, copy=False)
+    raw_policy_targets_np = data["policy_targets"][selected_global_indices]
     value_targets_np = data["value_targets"][selected_global_indices].astype(
         np.float32, copy=False
     )
-    action_masks_np = data["action_masks"][selected_global_indices].astype(
-        np.bool_, copy=False
+    raw_action_masks_np = data["action_masks"][selected_global_indices]
+    policy_targets_np, action_masks_np = normalize_policy_arrays(
+        current_pieces=current_pieces_np,
+        policy_targets=raw_policy_targets_np,
+        action_masks=raw_action_masks_np,
     )
 
     boards = torch.from_numpy(boards_np).unsqueeze(1)

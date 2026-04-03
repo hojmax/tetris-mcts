@@ -126,9 +126,9 @@ def compute_loss(
         model: TetrisNet model
         boards: (batch, 1, 20, 10)
         aux_features: (batch, num_aux_features)
-        policy_targets: (batch, 735) - MCTS policy targets
+        policy_targets: (batch, 672) - MCTS policy targets
         value_targets: (batch,) - scalar value targets from replay data
-        action_masks: (batch, 735) - valid action masks
+        action_masks: (batch, 672) - valid action masks
         value_loss_weight: Scale factor applied to value loss in total loss
 
     Returns:
