@@ -61,8 +61,6 @@ pub struct GameGenerator {
     candidate_eval_seeds: Arc<[u64]>,
     /// Number of simulations per move before the first promoted NN model.
     non_network_num_simulations: u32,
-    /// Whether no-network bootstrap rollouts force min-max Q normalization.
-    bootstrap_use_min_max_q_normalization: bool,
     /// Shared replay buffer (accessed by both worker threads and Python)
     buffer: Arc<SharedBuffer>,
     /// Whether the generator is running

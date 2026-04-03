@@ -41,10 +41,7 @@ self_play:
   nn_value_weight_promotion_multiplier: 1.4
   nn_value_weight_promotion_max_delta: 0.1
   nn_value_weight_cap: 1.0
-  use_tanh_q_normalization: false
-  q_scale: 8.0
   use_parent_value_for_unvisited_q: true
-  bootstrap_use_min_max_q_normalization: true
   visit_sampling_epsilon: 0.1
   mcts_seed: 0
   reuse_tree: true

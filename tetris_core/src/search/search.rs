@@ -183,7 +183,6 @@ fn simulate<E: LeafEvaluator>(
 
         let action_idx = node.select_action(
             config.c_puct,
-            config.q_scale,
             *q_bounds,
             config.use_parent_value_for_unvisited_q,
         );

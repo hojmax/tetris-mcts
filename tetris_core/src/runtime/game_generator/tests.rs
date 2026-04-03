@@ -304,11 +304,9 @@ fn test_build_rollout_config_keeps_sampling_settings() {
     config.nn_value_weight = 0.123;
     config.death_penalty = 5.0;
     config.overhang_penalty_weight = 3.0;
-    config.q_scale = Some(7.5);
     config.use_parent_value_for_unvisited_q = true;
 
-    let network_config =
-        GameGenerator::build_rollout_config(&config, true, 999, true, 0.123, 5.0, 3.0);
+    let network_config = GameGenerator::build_rollout_config(&config, true, 999, 0.123, 5.0, 3.0);
     assert_eq!(network_config.num_simulations, 123);
     assert_eq!(network_config.visit_sampling_epsilon, 0.42);
     assert_eq!(network_config.temperature, 1.5);
@@ -317,11 +315,10 @@ fn test_build_rollout_config_keeps_sampling_settings() {
     assert_eq!(network_config.nn_value_weight, 0.123);
     assert_eq!(network_config.death_penalty, 5.0);
     assert_eq!(network_config.overhang_penalty_weight, 3.0);
-    assert_eq!(network_config.q_scale, Some(7.5));
     assert!(network_config.use_parent_value_for_unvisited_q);
 
     let bootstrap_config =
-        GameGenerator::build_rollout_config(&config, false, 999, true, 0.456, 5.0, 3.0);
+        GameGenerator::build_rollout_config(&config, false, 999, 0.456, 5.0, 3.0);
     assert_eq!(bootstrap_config.num_simulations, 999);
     assert_eq!(bootstrap_config.visit_sampling_epsilon, 0.42);
     assert_eq!(bootstrap_config.temperature, 1.5);
@@ -330,19 +327,12 @@ fn test_build_rollout_config_keeps_sampling_settings() {
     assert_eq!(bootstrap_config.nn_value_weight, 0.456);
     assert_eq!(bootstrap_config.death_penalty, 5.0);
     assert_eq!(bootstrap_config.overhang_penalty_weight, 3.0);
-    assert_eq!(bootstrap_config.q_scale, None);
     assert!(bootstrap_config.use_parent_value_for_unvisited_q);
 
     // Verify penalties are overridden when passed as 0
-    let zeroed_config =
-        GameGenerator::build_rollout_config(&config, true, 999, true, 1.0, 0.0, 0.0);
+    let zeroed_config = GameGenerator::build_rollout_config(&config, true, 999, 1.0, 0.0, 0.0);
     assert_eq!(zeroed_config.death_penalty, 0.0);
     assert_eq!(zeroed_config.overhang_penalty_weight, 0.0);
-
-    // When disabled, bootstrap keeps the configured q_scale.
-    let bootstrap_no_force =
-        GameGenerator::build_rollout_config(&config, false, 999, false, 0.456, 5.0, 3.0);
-    assert_eq!(bootstrap_no_force.q_scale, Some(7.5));
 }
 
 #[test]
@@ -420,7 +410,6 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
         Some(vec![0]),
         true,
         10,
-        true,
         0.0,
         1.0,
         true,

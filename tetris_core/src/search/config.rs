@@ -43,10 +43,6 @@ pub struct MCTSConfig {
     /// Scale factor applied to neural value-head output during search (0 = ignore value head)
     #[pyo3(get, set)]
     pub nn_value_weight: f32,
-    /// Scale for tanh Q squashing in PUCT selection. Some(scale) uses tanh(Q/scale),
-    /// None uses global min-max normalization. Set to None for bootstrap (no-NN) mode.
-    #[pyo3(get, set)]
-    pub q_scale: Option<f32>,
     /// If true, unvisited action children start with the parent node's initial backed-up
     /// total-value estimate instead of zero Q (first-play urgency).
     #[pyo3(get, set)]
@@ -93,7 +89,6 @@ impl MCTSConfig {
             death_penalty: 0.0,
             overhang_penalty_weight: 0.0,
             nn_value_weight: 1.0,
-            q_scale: Some(8.0),
             use_parent_value_for_unvisited_q: false,
             reuse_tree: true,
             policy_noise_mean: 0.0,
@@ -130,7 +125,6 @@ mod tests {
         assert_eq!(config.death_penalty, 0.0);
         assert_eq!(config.overhang_penalty_weight, 0.0);
         assert_eq!(config.nn_value_weight, 1.0);
-        assert_eq!(config.q_scale, Some(8.0));
         assert!(!config.use_parent_value_for_unvisited_q);
         assert!(config.reuse_tree);
         assert_eq!(config.policy_noise_mean, 0.0);

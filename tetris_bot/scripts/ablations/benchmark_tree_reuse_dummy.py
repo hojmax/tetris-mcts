@@ -40,9 +40,7 @@ def build_config(num_simulations: int, reuse_tree: bool) -> MCTSConfig:
     config = MCTSConfig()
     config.num_simulations = num_simulations
     config.reuse_tree = reuse_tree
-    # Match training bootstrap settings (game_generator.rs build_rollout_config):
-    # bootstrap mode forces q_scale=None (min-max normalization, not tanh)
-    config.q_scale = None
+    # Match training bootstrap settings.
     config.dirichlet_alpha = 0.02  # training default (not MCTSConfig default 0.15)
     # death_penalty: negative signal for topout, discoverable with 1-2 levels of lookahead
     config.death_penalty = 5.0

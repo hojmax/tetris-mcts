@@ -48,7 +48,6 @@ class ScriptArgs:
     c_puct: float = _DEFAULT_SELF_PLAY.c_puct
     reuse_tree: bool = True
     add_noise: bool = False
-    q_scale: float | None = None
     death_penalty: float = 5.0
     overhang_penalty_weight: float = 5.0
     dirichlet_alpha: float = 0.02
@@ -111,7 +110,6 @@ def build_mcts_config(args: ScriptArgs) -> MCTSConfig:
     config.seed = args.mcts_seed
     config.c_puct = args.c_puct
     config.reuse_tree = args.reuse_tree
-    config.q_scale = args.q_scale
     config.death_penalty = args.death_penalty
     config.overhang_penalty_weight = args.overhang_penalty_weight
     config.dirichlet_alpha = args.dirichlet_alpha
@@ -280,7 +278,6 @@ def main(args: ScriptArgs) -> None:
             "c_puct": args.c_puct,
             "reuse_tree": args.reuse_tree,
             "add_noise": args.add_noise,
-            "q_scale": args.q_scale,
             "death_penalty": args.death_penalty,
             "overhang_penalty_weight": args.overhang_penalty_weight,
             "dirichlet_alpha": args.dirichlet_alpha,

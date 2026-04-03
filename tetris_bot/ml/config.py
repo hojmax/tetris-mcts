@@ -99,10 +99,7 @@ class SelfPlayConfig(ConfigModel):
     nn_value_weight_promotion_multiplier: float
     nn_value_weight_promotion_max_delta: float
     nn_value_weight_cap: float
-    use_tanh_q_normalization: bool
-    q_scale: float
     use_parent_value_for_unvisited_q: bool
-    bootstrap_use_min_max_q_normalization: bool
     visit_sampling_epsilon: float
     mcts_seed: int | None
     reuse_tree: bool

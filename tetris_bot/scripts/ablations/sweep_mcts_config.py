@@ -23,7 +23,6 @@ from tetris_bot.scripts.utils.plot_utils import text_size
 logger = structlog.get_logger()
 
 SWEEPABLE_FLOAT_PARAMS = {
-    "q_scale",
     "nn_value_weight",
     "c_puct",
     "death_penalty",
@@ -37,13 +36,10 @@ SWEEPABLE_FLOAT_PARAMS = {
 @dataclass
 class ScriptArgs:
     run_dir: Path  # Training run to evaluate
-    sweep_param: str = "q_scale"  # MCTSConfig field to sweep
+    sweep_param: str = "c_puct"  # MCTSConfig field to sweep
     sweep_values: list[float] = field(
-        default_factory=lambda: [2.0, 4.0, 8.0, 16.0, 32.0]
+        default_factory=lambda: [0.75, 1.0, 1.5, 2.0, 2.5]
     )  # Values to sweep
-    include_minmax: bool = (
-        False  # Include min-max Q normalization baseline (q_scale sweep only)
-    )
     num_games: int = 50  # Games per sweep value
     seed_start: int = 1  # First env seed
 
@@ -53,7 +49,6 @@ class ScriptArgs:
     max_placements: int | None = None  # Override from run config
     overhang_penalty_weight: float | None = None  # Override from run config
     nn_value_weight: float | None = None  # Override from run config
-    q_scale: float | None = None  # Override from run config
     mcts_seed: int | None = None  # Override from run config
 
     num_workers: int = 1  # Parallel evaluation threads (each loads its own model)
@@ -73,11 +68,6 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError(
             f"sweep_param must be one of {sorted(SWEEPABLE_FLOAT_PARAMS)}, "
             f"got {args.sweep_param!r}"
-        )
-    if args.include_minmax and args.sweep_param != "q_scale":
-        raise ValueError(
-            "include_minmax is only supported when sweep_param='q_scale', "
-            f"got sweep_param={args.sweep_param!r}"
         )
 
     seen: set[float] = set()
@@ -122,9 +112,6 @@ def build_base_mcts_config(
     config.nn_value_weight = float(
         resolve_config_value(args.nn_value_weight, run_config, "nn_value_weight", 0.01)
     )
-    config.q_scale = float(
-        resolve_config_value(args.q_scale, run_config, "q_scale", 8.0)
-    )
     config.visit_sampling_epsilon = 0.0
     config.temperature = 0.0
 
@@ -141,27 +128,13 @@ def build_sweep_mcts_config(
     sweep_value: float,
 ) -> MCTSConfig:
     config = build_base_mcts_config(args, run_config)
-
-    if args.sweep_param == "q_scale":
-        config.q_scale = sweep_value
-    else:
-        setattr(config, args.sweep_param, sweep_value)
-
-    return config
-
-
-def build_minmax_mcts_config(
-    args: ScriptArgs,
-    run_config: dict,
-) -> MCTSConfig:
-    config = build_base_mcts_config(args, run_config)
-    config.q_scale = None
+    setattr(config, args.sweep_param, sweep_value)
     return config
 
 
 def aggregate_eval_result(
     label: str,
-    sweep_value: float | None,
+    sweep_value: float,
     seeds: list[int],
     result: object,
 ) -> dict:
@@ -211,28 +184,6 @@ def evaluate_sweep_value(
     )
 
 
-def evaluate_minmax(
-    model_path: Path,
-    seeds: list[int],
-    args: ScriptArgs,
-    run_config: dict,
-) -> dict:
-    config = build_minmax_mcts_config(args, run_config)
-    result = evaluate_model(
-        model_path=str(model_path),
-        seeds=[int(s) for s in seeds],
-        config=config,
-        max_placements=config.max_placements,
-        num_workers=args.num_workers,
-    )
-    return aggregate_eval_result(
-        label="minmax",
-        sweep_value=None,
-        seeds=seeds,
-        result=result,
-    )
-
-
 def create_plot(
     results: list[dict],
     sweep_param: str,
@@ -251,13 +202,7 @@ def create_plot(
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default()
 
-    # Order: minmax first (if present), then tanh values sorted ascending
-    minmax_rows = [r for r in results if r["sweep_value"] is None]
-    tanh_rows = sorted(
-        [r for r in results if r["sweep_value"] is not None],
-        key=lambda r: r["sweep_value"],
-    )
-    ordered = minmax_rows + tanh_rows
+    ordered = sorted(results, key=lambda row: row["sweep_value"])
 
     y_values = [float(row["avg_attack"]) for row in ordered]
     y_min = min(y_values)
@@ -312,21 +257,8 @@ def create_plot(
         (x_coord(i), y_coord(float(row["avg_attack"]))) for i, row in enumerate(ordered)
     ]
 
-    # Draw lines between tanh points only (skip minmax for the connecting line)
-    tanh_points = [
-        points[i] for i, row in enumerate(ordered) if row["sweep_value"] is not None
-    ]
-    if len(tanh_points) > 1:
-        draw.line(tanh_points, fill=(39, 91, 166), width=3)
-
-    # Draw minmax horizontal reference line if present
-    if minmax_rows:
-        minmax_y = y_coord(float(minmax_rows[0]["avg_attack"]))
-        draw.line(
-            [(margin_left, minmax_y), (margin_left + plot_width, minmax_y)],
-            fill=(180, 60, 60),
-            width=1,
-        )
+    if len(points) > 1:
+        draw.line(points, fill=(39, 91, 166), width=3)
 
     for i, row in enumerate(ordered):
         x, y = points[i]
@@ -334,13 +266,13 @@ def create_plot(
         if std > 0:
             y_low = y_coord(float(row["avg_attack"]) - std)
             y_high = y_coord(float(row["avg_attack"]) + std)
-            color = (180, 60, 60) if row["sweep_value"] is None else (39, 91, 166)
+            color = (39, 91, 166)
             draw.line([(x, y_low), (x, y_high)], fill=color, width=2)
             draw.line([(x - 5, y_low), (x + 5, y_low)], fill=color, width=2)
             draw.line([(x - 5, y_high), (x + 5, y_high)], fill=color, width=2)
 
         r = 5
-        fill_color = (180, 180, 180) if row["sweep_value"] is None else (218, 64, 82)
+        fill_color = (218, 64, 82)
         draw.ellipse([(x - r, y - r), (x + r, y + r)], fill=fill_color, outline="black")
 
         x_label = row["label"]
@@ -356,7 +288,7 @@ def create_plot(
         yw, yh = text_size(draw, y_label, font)
         draw.text((x - yw / 2, y - yh - 10), y_label, fill="black", font=font)
 
-    title = f"Average Attack vs {sweep_param} (Q normalization)"
+    title = f"Average Attack vs {sweep_param}"
     tw, th = text_size(draw, title, font)
     draw.text(((width - tw) / 2, 20), title, fill="black", font=font)
 
@@ -393,7 +325,6 @@ def main(args: ScriptArgs) -> None:
         "Starting MCTS config sweep",
         sweep_param=args.sweep_param,
         sweep_values=args.sweep_values,
-        include_minmax=args.include_minmax,
         run_dir=str(run_dir),
         model_path=str(model_path),
         num_games=args.num_games,
@@ -403,24 +334,6 @@ def main(args: ScriptArgs) -> None:
 
     results: list[dict] = []
 
-    # Run min-max baseline first if requested
-    if args.include_minmax:
-        logger.info("Evaluating min-max Q normalization baseline")
-        minmax_result = evaluate_minmax(
-            model_path=model_path,
-            seeds=seeds,
-            args=args,
-            run_config=run_config,
-        )
-        results.append(minmax_result)
-        logger.info(
-            "Completed min-max baseline",
-            avg_attack=minmax_result["avg_attack"],
-            attack_std=minmax_result["attack_std"],
-            max_attack=minmax_result["max_attack"],
-        )
-
-    # Run tanh sweep values
     for sweep_value in args.sweep_values:
         logger.info(
             "Evaluating sweep value",
@@ -453,7 +366,6 @@ def main(args: ScriptArgs) -> None:
         "run_dir": str(run_dir),
         "model_path": str(model_path),
         "sweep_param": args.sweep_param,
-        "include_minmax": args.include_minmax,
         "num_games": args.num_games,
         "seed_start": args.seed_start,
         "seeds": seeds,
@@ -463,7 +375,6 @@ def main(args: ScriptArgs) -> None:
             "max_placements": base_config.max_placements,
             "overhang_penalty_weight": base_config.overhang_penalty_weight,
             "nn_value_weight": base_config.nn_value_weight,
-            "q_scale": base_config.q_scale,
             "mcts_seed": base_config.seed,
         },
         "sweep_values": [float(v) for v in args.sweep_values],

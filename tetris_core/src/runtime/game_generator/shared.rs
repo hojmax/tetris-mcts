@@ -225,7 +225,6 @@ pub(super) struct WorkerSettings {
     pub(super) num_workers: usize,
     pub(super) candidate_eval_seeds: Arc<[u64]>,
     pub(super) non_network_num_simulations: u32,
-    pub(super) bootstrap_use_min_max_q_normalization: bool,
     pub(super) nn_value_weight_cap: f32,
     pub(super) save_eval_trees: bool,
 }
