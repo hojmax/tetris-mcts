@@ -147,6 +147,43 @@ def test_restore_trainer_can_use_latest_checkpoint_model_as_incumbent(
     assert trainer.recompute_initial_incumbent_eval_avg_attack is True
 
 
+def test_restore_trainer_skips_baseline_recompute_when_candidate_gating_disabled(
+    tmp_path: Path,
+) -> None:
+    trainer, config = _make_trainer(tmp_path)
+    config.self_play.use_candidate_gating = False
+    checkpoint = tmp_path / "latest.pt"
+    incumbent_path = tmp_path / "incumbent.onnx"
+    incumbent_path.write_text("placeholder")
+    save_checkpoint(
+        trainer.model,
+        trainer.ema_model,
+        trainer.optimizer,
+        trainer.scheduler,
+        step=789,
+        filepath=checkpoint,
+        incumbent_uses_network=True,
+        incumbent_nn_value_weight=1.0,
+        incumbent_eval_avg_attack=42.0,
+    )
+
+    restore_trainer_from_checkpoint(
+        trainer,
+        ScriptArgs(
+            training=config,
+            resume_dir=None,
+            resume_latest_as_incumbent=True,
+        ),
+        config,
+        checkpoint,
+        incumbent_model_path=incumbent_path,
+    )
+
+    assert trainer.initial_incumbent_model_path is None
+    assert trainer.initial_incumbent_eval_avg_attack == 0.0
+    assert trainer.recompute_initial_incumbent_eval_avg_attack is False
+
+
 def test_evaluate_starting_incumbent_avg_attack_uses_candidate_gate_settings(
     tmp_path: Path,
     monkeypatch,

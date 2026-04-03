@@ -53,6 +53,8 @@ pub struct GameGenerator {
     save_interval_seconds: f64,
     /// Number of worker threads
     num_workers: usize,
+    /// Whether one worker is reserved for candidate evaluation before promotion.
+    candidate_gating_enabled: bool,
     /// Background snapshot writer for replay buffer persistence.
     snapshot_persister: Option<Arc<SnapshotPersister>>,
     /// Fixed seeds used by the evaluator worker for candidate games.
@@ -72,10 +74,13 @@ pub struct GameGenerator {
     /// Completed game stats queue for per-game logging
     completed_games: Arc<RwLock<VecDeque<LastGameInfo>>>,
     /// Most recent pending candidate model (latest wins, older pending models are dropped).
+    /// Used only when candidate gating is enabled.
     pending_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
     /// Candidate currently under evaluation by the evaluator worker.
+    /// Used only when candidate gating is enabled.
     evaluating_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
     /// Queue of evaluator decisions for Python-side logging.
+    /// Used only when candidate gating is enabled.
     model_eval_events: Arc<RwLock<VecDeque<ModelEvalEvent>>>,
     /// Shared incumbent model path used by all non-evaluator workers.
     incumbent_model_path: Arc<RwLock<PathBuf>>,
@@ -95,7 +100,7 @@ pub struct GameGenerator {
     nn_value_weight_cap: f32,
     /// Average attack from the evaluation that promoted the current incumbent.
     incumbent_eval_avg_attack: Arc<AtomicU32>,
-    /// Whether to persist worst-case eval game trees to disk.
+    /// Whether to persist worst-case eval game trees to disk when candidate gating runs.
     save_eval_trees: bool,
     /// Thread handles (for joining on stop)
     thread_handles: Vec<JoinHandle<()>>,

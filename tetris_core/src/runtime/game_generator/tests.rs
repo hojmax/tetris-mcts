@@ -424,6 +424,7 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
         0.0,
         1.0,
         true,
+        true,
     )
     .expect("generator should construct");
 
@@ -463,4 +464,70 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
     }
     assert!(generator.pending_candidate.read().unwrap().is_none());
     assert!(generator.evaluating_candidate.read().unwrap().is_none());
+}
+
+#[test]
+fn test_sync_model_directly_updates_incumbent_when_candidate_gating_disabled() {
+    let bootstrap_path = unique_temp_path("direct_sync_bootstrap").with_extension("onnx");
+    fs::write(&bootstrap_path, b"bootstrap").expect("bootstrap write should succeed");
+    let training_data_path = unique_temp_path("direct_sync_training_data");
+
+    let mut config = MCTSConfig::default();
+    config.death_penalty = 5.0;
+    config.overhang_penalty_weight = 3.0;
+
+    let generator = GameGenerator::new(
+        bootstrap_path.to_string_lossy().to_string(),
+        training_data_path.to_string_lossy().to_string(),
+        Some(config),
+        100,
+        true,
+        16,
+        1.0,
+        3,
+        0,
+        Some(vec![]),
+        false,
+        10,
+        true,
+        0.0,
+        1.0,
+        false,
+        false,
+    )
+    .expect("generator should construct");
+
+    assert!(!generator.candidate_gate_busy());
+    assert!(!generator.incumbent_uses_network());
+
+    let synced_path = unique_temp_path("direct_sync_model").with_extension("onnx");
+    fs::write(&synced_path, b"synced").expect("synced model write should succeed");
+    let synced = generator
+        .sync_model_directly(synced_path.to_string_lossy().to_string(), 5, 0.75)
+        .expect("direct sync should succeed");
+
+    assert!(synced);
+    assert_eq!(generator.incumbent_model_step(), 5);
+    assert!(generator.incumbent_uses_network());
+    assert_eq!(
+        generator.incumbent_model_path(),
+        synced_path.to_string_lossy().to_string()
+    );
+    assert_eq!(generator.incumbent_nn_value_weight(), 0.75);
+    assert_eq!(generator.incumbent_death_penalty(), 5.0);
+    assert_eq!(generator.incumbent_overhang_penalty_weight(), 3.0);
+    assert_eq!(generator.incumbent_eval_avg_attack(), 0.0);
+    assert!(!generator.candidate_gate_busy());
+
+    let stale_path = unique_temp_path("direct_sync_stale").with_extension("onnx");
+    fs::write(&stale_path, b"stale").expect("stale model write should succeed");
+    let stale_synced = generator
+        .sync_model_directly(stale_path.to_string_lossy().to_string(), 4, 0.8)
+        .expect("stale direct sync should return cleanly");
+
+    assert!(!stale_synced);
+    assert!(
+        !stale_path.exists(),
+        "stale direct sync artifacts should be removed"
+    );
 }

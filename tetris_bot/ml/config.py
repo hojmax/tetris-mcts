@@ -149,6 +149,9 @@ class SelfPlayConfig:
     overhang_penalty_weight: float = (  # Search-time weight for normalized overhang penalty
         0.0
     )
+    use_candidate_gating: bool = (  # If True, reserve one worker to fixed-seed gate/promote self-play models before syncing them to all workers
+        True
+    )
     model_promotion_eval_games: int = (  # Candidate games to average before promoting a new self-play model
         20
     )
@@ -197,13 +200,13 @@ class RunConfig:
 
     # Intervals (seconds)
     model_sync_interval_seconds: float = (
-        120  # Base seconds between candidate model exports/queues
+        120  # Base seconds between self-play model sync attempts
     )
     model_sync_failure_backoff_seconds: float = (
-        120  # Extra seconds added after each failed candidate promotion
+        120  # Extra seconds added after each failed candidate promotion when candidate gating is enabled
     )
     model_sync_max_interval_seconds: float = (
-        0.0  # Hard cap for adaptive candidate export interval (0 disables cap)
+        0.0  # Hard cap for the adaptive gated export interval (0 disables cap)
     )
     checkpoint_interval_seconds: float = 10800  # Seconds between checkpoints
     log_interval_seconds: float = 10  # Seconds between logging
