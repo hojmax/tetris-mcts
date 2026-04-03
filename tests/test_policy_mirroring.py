@@ -4,7 +4,14 @@ import numpy as np
 import torch
 
 import tetris_core.tetris_core as tetris_core
-from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, NUM_PIECE_TYPES, QUEUE_SIZE
+from tetris_bot.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    HOLD_ACTION_INDEX,
+    NUM_ACTIONS,
+    NUM_PIECE_TYPES,
+    QUEUE_SIZE,
+)
 from tetris_bot.ml.aux_features import AUX_FEATURE_LAYOUT
 from tetris_bot.ml.network import build_aux_features
 from tetris_bot.ml.policy_mirroring import (
@@ -51,13 +58,17 @@ def _mirror_queue(queue: list[int]) -> list[int]:
 
 
 def _flat_mask_from_env(env: tetris_core.TetrisEnv) -> torch.Tensor:
-    legacy_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
+    action_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
+    if action_mask.shape == (NUM_ACTIONS,):
+        return torch.from_numpy(action_mask.copy())
+    if action_mask.shape != (LEGACY_NUM_ACTIONS,):
+        raise AssertionError(f"Unexpected env action-mask width: {action_mask.shape}")
     current_piece = env.get_current_piece()
     if current_piece is None:
         raise AssertionError("Expected env to have a current piece")
     current_pieces = torch.tensor([current_piece.piece_type], dtype=torch.long)
     return legacy_action_masks_to_flat(
-        torch.from_numpy(legacy_mask).unsqueeze(0),
+        torch.from_numpy(action_mask).unsqueeze(0),
         current_pieces,
     )[0]
 
@@ -90,12 +101,20 @@ def _collect_reachable_env_states(target_count: int) -> list[tetris_core.TetrisE
             states.append(env.clone_state())
             if len(states) >= target_count:
                 break
-            legacy_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
-            valid_actions = np.flatnonzero(legacy_mask)
+            action_mask = np.asarray(tetris_core.debug_get_action_mask(env), dtype=bool)
+            valid_actions = np.flatnonzero(action_mask)
             if valid_actions.size == 0:
                 break
-            if legacy_mask[LEGACY_HOLD_ACTION_INDEX] and rng.random() < 0.3:
-                action = LEGACY_HOLD_ACTION_INDEX
+            if action_mask.shape == (NUM_ACTIONS,):
+                hold_action_index = HOLD_ACTION_INDEX
+            elif action_mask.shape == (LEGACY_NUM_ACTIONS,):
+                hold_action_index = LEGACY_HOLD_ACTION_INDEX
+            else:
+                raise AssertionError(
+                    f"Unexpected env action-mask width while stepping: {action_mask.shape}"
+                )
+            if action_mask[hold_action_index] and rng.random() < 0.3:
+                action = hold_action_index
             else:
                 action = int(rng.choice(valid_actions))
             attack = env.execute_action_index(action)
