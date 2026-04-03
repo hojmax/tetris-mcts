@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH
-from tetris_bot.ml.config import default_network_config
+from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, DEFAULT_CONFIG_PATH
+from tetris_bot.ml.config import load_training_config
 from tetris_bot.ml.network import AUX_FEATURES, TetrisNet
 from tetris_bot.ml.weights import (
     AsyncCheckpointSaver,
@@ -14,9 +14,11 @@ from tetris_bot.ml.weights import (
     capture_checkpoint_snapshot,
 )
 
+_DEFAULT_NETWORK = load_training_config(DEFAULT_CONFIG_PATH).network
+
 
 def _make_model() -> TetrisNet:
-    return TetrisNet(**default_network_config().to_model_kwargs())
+    return TetrisNet(**_DEFAULT_NETWORK.to_model_kwargs())
 
 
 def test_capture_checkpoint_snapshot_clones_state_to_cpu() -> None:

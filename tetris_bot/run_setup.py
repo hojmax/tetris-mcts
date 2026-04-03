@@ -3,25 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import torch
 import wandb
 
-from tetris_bot.ml.config import (
-    TrainingConfig,
-    save_training_config,
-    training_config_to_dict,
-)
 from tetris_bot.constants import CHECKPOINT_DIRNAME, CONFIG_FILENAME, TRAINING_RUNS_DIR
-
-
-def config_to_dict(config: TrainingConfig) -> dict[str, Any]:
-    return training_config_to_dict(config)
-
-
-def save_config(config: TrainingConfig, path: Path) -> None:
-    save_training_config(config, path)
+from tetris_bot.ml.config import TrainingConfig, save_training_config
 
 
 def get_next_version(base_dir: Path) -> int:
@@ -56,7 +43,7 @@ def setup_run_directory(
     if config.run.run_name is None:
         config.run.run_name = run_dir.name
 
-    save_config(config, run_dir / CONFIG_FILENAME)
+    save_training_config(config, run_dir / CONFIG_FILENAME)
 
     return config
 
@@ -72,7 +59,7 @@ def get_best_device() -> str:
 def initialize_or_update_wandb(
     config: TrainingConfig, device: str, resume_dir: Path | None = None
 ) -> None:
-    wandb_config = config_to_dict(config)
+    wandb_config = config.model_dump(mode="json")
     wandb_config["device"] = device
     if resume_dir is not None:
         wandb_config["resume_dir"] = str(resume_dir)

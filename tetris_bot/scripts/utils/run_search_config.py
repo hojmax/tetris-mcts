@@ -13,14 +13,14 @@ from tetris_bot.constants import (
     INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
 )
-from tetris_bot.ml.config import load_training_config, training_config_to_dict
+from tetris_bot.ml.config import load_training_config
 
 
 def load_run_config(run_dir: Path) -> dict[str, Any]:
     config_path = run_dir / CONFIG_FILENAME
     if not config_path.exists():
         raise FileNotFoundError(f"Run config not found: {config_path}")
-    return training_config_to_dict(load_training_config(config_path))
+    return load_training_config(config_path).model_dump(mode="json")
 
 
 def load_self_play_config(run_dir: Path) -> dict[str, Any]:

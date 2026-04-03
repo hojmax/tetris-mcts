@@ -20,6 +20,7 @@ from tetris_bot.constants import (
     BENCHMARKS_DIR,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
+    DEFAULT_CONFIG_PATH,
     INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
     LATEST_METADATA_FILENAME,
@@ -31,7 +32,11 @@ from tetris_bot.ml.artifacts import (
     assert_rust_inference_artifacts,
     copy_model_artifact_bundle,
 )
-from tetris_bot.ml.config import TrainingConfig, default_training_config
+from tetris_bot.ml.config import (
+    TrainingConfig,
+    load_training_config,
+    save_training_config,
+)
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
@@ -42,7 +47,7 @@ from tetris_bot.ml.weights import (
     load_optimizer_state_dict,
     save_checkpoint,
 )
-from tetris_bot.run_setup import config_to_dict, save_config, setup_run_directory
+from tetris_bot.run_setup import setup_run_directory
 from tetris_bot.scripts.inspection.optimize_machine import (
     machine_profile,
     machine_type_fingerprint,
@@ -707,7 +712,7 @@ def build_output_config(
     config = (
         base_config.model_copy(deep=True)
         if base_config is not None
-        else default_training_config()
+        else load_training_config(DEFAULT_CONFIG_PATH)
     )
     config.self_play.nn_value_weight = 1.0
     config.self_play.death_penalty = 0.0
@@ -1115,7 +1120,7 @@ def build_wandb_config(
     grad_clip_norm: float,
     eval_worker_resolution: EvalWorkerResolution,
 ) -> dict[str, object]:
-    serialized_output_config = config_to_dict(resolved_output_config)
+    serialized_output_config = resolved_output_config.model_dump(mode="json")
     return {
         "source_run_dir": str(source_run_dir),
         "source_config_path": str(source_config_path),
@@ -1191,7 +1196,7 @@ def run_warm_start(
         raise RuntimeError("Output run directory was not set by setup_run_directory")
     if resolved_output_config.run.data_dir is None:
         raise RuntimeError("Output data directory was not set by setup_run_directory")
-    save_config(
+    save_training_config(
         resolved_output_config,
         resolved_output_config.run.run_dir / CONFIG_FILENAME,
     )
@@ -1558,7 +1563,7 @@ def run_warm_start(
                 "warm_start_eval": eval_metrics,
                 "offline_best": training_result.best_record,
             },
-            config=config_to_dict(resolved_output_config),
+            config=resolved_output_config.model_dump(mode="json"),
         )
 
         summary = {

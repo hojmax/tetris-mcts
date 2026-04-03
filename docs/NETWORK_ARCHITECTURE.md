@@ -21,18 +21,18 @@ The network instantiated from the repo-root `config.yaml` defaults is:
 - Auxiliary split: `61` piece/game features + `19` board-stat features
 - Outputs: `735` policy logits + `1` scalar value
 - Default hyperparameters:
-  - `trunk_channels=16`
-  - `num_conv_residual_blocks=3`
+  - `trunk_channels=32`
+  - `num_conv_residual_blocks=5`
   - `reduction_channels=32`
   - `board_stats_hidden=32`
-  - `board_proj_hidden=256`
+  - `board_proj_hidden=512`
   - `fc_hidden=256`
-  - `aux_hidden=64`
+  - `aux_hidden=128`
   - `fusion_hidden=256`
   - `num_fusion_blocks=1`
   - `conv_kernel_size=3`
   - `conv_padding=1`
-- Total trainable parameters: `1,265,120`
+- Total trainable parameters: `1,837,953`
 
 ## High-Level Design
 

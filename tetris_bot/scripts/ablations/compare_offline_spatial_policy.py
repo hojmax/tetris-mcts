@@ -20,10 +20,11 @@ from tetris_bot.action_space import (
     ROTATION_LABELS,
 )
 from tetris_bot.constants import (
+    DEFAULT_CONFIG_PATH,
     NUM_ACTIONS,
     PIECE_NAMES,
 )
-from tetris_bot.ml.config import default_network_config
+from tetris_bot.ml.config import load_training_config
 from tetris_bot.ml.network import (
     BOARD_STATS_FEATURES,
     PIECE_AUX_FEATURES,
@@ -43,7 +44,7 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
 )
 
 logger = structlog.get_logger()
-_DEFAULT_NETWORK = default_network_config()
+_DEFAULT_NETWORK = load_training_config(DEFAULT_CONFIG_PATH).network
 PLACEMENT_GRID_SLOTS = FULL_GRID_PLACEMENT_SLOTS
 ROTATION_ACTION_COUNTS = ACTIVE_CANONICAL_ROTATION_COUNTS
 

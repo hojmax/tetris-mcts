@@ -6,16 +6,17 @@ import torch
 import yaml
 
 import tetris_bot.scripts.warm_start as warm_start_module
-from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, CONFIG_FILENAME, NUM_ACTIONS
-from tetris_bot.ml.config import (
-    default_network_config,
-    default_training_config,
-    load_training_config,
+from tetris_bot.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    CONFIG_FILENAME,
+    DEFAULT_CONFIG_PATH,
+    NUM_ACTIONS,
 )
+from tetris_bot.ml.config import load_training_config
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer
 from tetris_bot.ml.network import TetrisNet
-from tetris_bot.run_setup import config_to_dict
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
 )
@@ -40,11 +41,14 @@ from tetris_bot.scripts.warm_start import (
     warm_start_selection_metric,
 )
 
+_DEFAULT_CONFIG = load_training_config(DEFAULT_CONFIG_PATH)
+_DEFAULT_NETWORK = _DEFAULT_CONFIG.network
+
 
 def test_load_training_config_round_trips_complete_yaml(
     tmp_path: Path,
 ) -> None:
-    config = default_training_config()
+    config = _DEFAULT_CONFIG.model_copy(deep=True)
     config.network = config.network.model_copy(
         update={
             "trunk_channels": 4,
@@ -62,7 +66,9 @@ def test_load_training_config_round_trips_complete_yaml(
         }
     )
     config_path = tmp_path / CONFIG_FILENAME
-    config_path.write_text(yaml.safe_dump(config_to_dict(config), sort_keys=False))
+    config_path.write_text(
+        yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False)
+    )
 
     loaded = load_training_config(config_path)
 
@@ -80,7 +86,7 @@ def test_load_training_config_round_trips_complete_yaml(
 def test_build_output_config_uses_current_repo_defaults_for_new_run(
     tmp_path: Path,
 ) -> None:
-    default_config = default_training_config()
+    default_config = _DEFAULT_CONFIG
     output_run_dir = tmp_path / "training_runs" / "v4"
 
     output_config = build_output_config(
@@ -212,7 +218,7 @@ def test_build_wandb_config_includes_full_resolved_training_config(
         eval_worker_resolution=eval_worker_resolution,
     )
 
-    serialized_output_config = config_to_dict(resolved_output_config)
+    serialized_output_config = resolved_output_config.model_dump(mode="json")
     assert wandb_config["output_config"] == serialized_output_config
     assert wandb_config["training_config"] == serialized_output_config
     assert wandb_config["warmup_epochs"] == args.warmup_epochs
@@ -381,7 +387,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     tmp_path: Path,
 ) -> None:
     checkpoint_path = offline_resume_checkpoint_path(tmp_path / "training_runs" / "v5")
-    model = TetrisNet(**default_network_config().to_model_kwargs())
+    model = TetrisNet(**_DEFAULT_NETWORK.to_model_kwargs())
     ema = ExponentialMovingAverage(model, decay=0.5)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
     scheduler = build_warm_start_lr_scheduler(
@@ -442,7 +448,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
         rng_state=rng_state,
     )
 
-    restored_model = TetrisNet(**default_network_config().to_model_kwargs())
+    restored_model = TetrisNet(**_DEFAULT_NETWORK.to_model_kwargs())
     restored_ema = ExponentialMovingAverage(restored_model, decay=0.5)
     restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=5e-4)
     restored_scheduler = build_warm_start_lr_scheduler(
@@ -500,7 +506,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
 def test_train_warm_start_model_evaluates_and_snapshots_ema_weights(
     monkeypatch,
 ) -> None:
-    model = TetrisNet(**default_network_config().to_model_kwargs())
+    model = TetrisNet(**_DEFAULT_NETWORK.to_model_kwargs())
     dataset_setup = WarmStartDatasetSetup(
         source=OfflineDataSource(
             npz=cast(np.lib.npyio.NpzFile, object()),

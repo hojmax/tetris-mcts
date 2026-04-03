@@ -153,13 +153,13 @@ Ownership split:
 
 ## Important Defaults (TrainingConfig)
 
-- Network: `trunk_channels=16`, `num_conv_residual_blocks=3`, `reduction_channels=32`, `board_stats_hidden=32`, `board_proj_hidden=256`, `fc_hidden=256`, `aux_hidden=64`, `fusion_hidden=256`, `num_fusion_blocks=1`.
-- MCTS: `num_simulations=2000`, `c_puct=1.5`, `temperature=0.8`, `reuse_tree=true`, `max_placements=50`.
-- Training: `batch_size=512`, `learning_rate=7e-4` with linear decay to `1.4e-4`, `weight_decay=5e-5`, `grad_clip_norm=0.0`.
-- Workers/buffer: `num_workers=7`, replay ring buffer size `2_000_000`.
+- Network: `trunk_channels=32`, `num_conv_residual_blocks=5`, `reduction_channels=32`, `board_stats_hidden=32`, `board_proj_hidden=512`, `fc_hidden=256`, `aux_hidden=128`, `fusion_hidden=256`, `num_fusion_blocks=1`.
+- MCTS: `num_simulations=2000`, `c_puct=1.5`, `temperature=1.0`, `reuse_tree=true`, `max_placements=50`.
+- Training: `batch_size=2048`, `learning_rate=5e-4` with linear decay to `1e-4`, `weight_decay=5e-5`, `grad_clip_norm=10.0`.
+- Workers/buffer: `num_workers=7`, replay ring buffer size `7_000_000`.
 - Bootstrap: starts no-network, typically `bootstrap_num_simulations=4000` until first promotion.
 - Candidate gate: deterministic fixed-seed eval window (default 20 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average. Fixed-seed eval trajectories are not added to the replay buffer. Candidate export timing now uses `run.model_sync_interval_seconds` as the base interval, adds `run.model_sync_failure_backoff_seconds` after each failed promotion (optionally capped by `run.model_sync_max_interval_seconds`), measures the cooldown from eval start, and suppresses exports while a candidate is pending/evaluating so long evals do not churn throwaway ONNX bundles. Set `self_play.use_candidate_gating=false` to disable the evaluator worker entirely; in that mode all workers stay on generation and the trainer directly syncs a freshly exported incumbent to everyone every `run.model_sync_interval_seconds`.
-- NN value scaling: `nn_value_weight=0.01` default with promotion-based ramp and cap.
+- NN value scaling: defaults start at cap (`nn_value_weight=1.0`, `nn_value_weight_cap=1.0`).
 - Q normalization: search uses global min-max normalization for PUCT Q terms.
 
 Memory note:

@@ -16,14 +16,15 @@ from tetris_core.tetris_core import MCTSAgent, MCTSConfig, TetrisEnv
 from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
+    DEFAULT_CONFIG_PATH,
     NUM_ACTIONS,
     PIECE_NAMES,
     QUEUE_SIZE,
 )
-from tetris_bot.ml.config import default_self_play_config
+from tetris_bot.ml.config import load_training_config
 
 logger = structlog.get_logger()
-_DEFAULT_SELF_PLAY = default_self_play_config()
+_DEFAULT_SELF_PLAY = load_training_config(DEFAULT_CONFIG_PATH).self_play
 HOLD_ACTION_INDEX = NUM_ACTIONS - 1
 
 

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, TypedDict, cast
+from typing import Any, Mapping, TypedDict
 
 import yaml
 from pydantic import BaseModel, ConfigDict
-
-from tetris_bot.constants import DEFAULT_CONFIG_PATH
 
 
 class ModelKwargs(TypedDict):
@@ -165,53 +163,12 @@ def _coerce_mapping(
     return raw_value
 
 
-def training_config_from_dict(data: Mapping[str, Any]) -> TrainingConfig:
-    return TrainingConfig.model_validate(_coerce_mapping(data, field_name="config"))
-
-
-def training_config_to_dict(config: TrainingConfig) -> dict[str, Any]:
-    return cast(dict[str, Any], config.model_dump(mode="json"))
-
-
-def training_config_to_yaml(config: TrainingConfig) -> str:
-    return yaml.safe_dump(
-        training_config_to_dict(config),
-        sort_keys=False,
-    )
-
-
 def save_training_config(config: TrainingConfig, path: Path) -> None:
-    path.write_text(training_config_to_yaml(config))
+    path.write_text(yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False))
 
 
 def load_training_config(path: Path) -> TrainingConfig:
     raw_data = yaml.safe_load(path.read_text())
-    return training_config_from_dict(_coerce_mapping(raw_data, field_name=str(path)))
-
-
-def default_training_config(config_path: Path = DEFAULT_CONFIG_PATH) -> TrainingConfig:
-    return load_training_config(config_path)
-
-
-def default_network_config(config_path: Path = DEFAULT_CONFIG_PATH) -> NetworkConfig:
-    return default_training_config(config_path).network
-
-
-def default_optimizer_config(
-    config_path: Path = DEFAULT_CONFIG_PATH,
-) -> OptimizerConfig:
-    return default_training_config(config_path).optimizer
-
-
-def default_self_play_config(
-    config_path: Path = DEFAULT_CONFIG_PATH,
-) -> SelfPlayConfig:
-    return default_training_config(config_path).self_play
-
-
-def default_replay_config(config_path: Path = DEFAULT_CONFIG_PATH) -> ReplayConfig:
-    return default_training_config(config_path).replay
-
-
-def default_run_config(config_path: Path = DEFAULT_CONFIG_PATH) -> RunConfig:
-    return default_training_config(config_path).run
+    return TrainingConfig.model_validate(
+        _coerce_mapping(raw_data, field_name=str(path))
+    )

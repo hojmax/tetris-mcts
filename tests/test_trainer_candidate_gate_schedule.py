@@ -4,16 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from tetris_bot.ml.config import (
-    TrainingConfig,
-    default_training_config,
-)
+from tetris_bot.constants import DEFAULT_CONFIG_PATH
+from tetris_bot.ml.config import TrainingConfig, load_training_config
 from tetris_bot.ml.trainer import CandidateGateSchedule, Trainer
 from tetris_bot.scripts.train import ScriptArgs, restore_trainer_from_checkpoint
 
 
 def _make_config(tmp_path: Path) -> TrainingConfig:
-    config = default_training_config()
+    config = load_training_config(DEFAULT_CONFIG_PATH)
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
     config.run = config.run.model_copy(

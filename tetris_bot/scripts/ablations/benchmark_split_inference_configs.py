@@ -28,19 +28,16 @@ from tetris_core.tetris_core import (
     TetrisEnv,
     debug_get_action_mask,
 )
-from tetris_bot.constants import BENCHMARKS_DIR
-from tetris_bot.ml.config import (
-    NetworkConfig,
-    default_network_config,
-    default_self_play_config,
-)
+from tetris_bot.constants import BENCHMARKS_DIR, DEFAULT_CONFIG_PATH
+from tetris_bot.ml.config import NetworkConfig, load_training_config
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import export_split_models, split_model_paths
 
 logger = structlog.get_logger()
-_DEFAULT_SELF_PLAY = default_self_play_config()
-_LARGE_CONFIG = default_network_config().model_copy(update={"fc_hidden": 128})
-_SMALL_CONFIG = default_network_config().model_copy(
+_DEFAULT_CONFIG = load_training_config(DEFAULT_CONFIG_PATH)
+_DEFAULT_SELF_PLAY = _DEFAULT_CONFIG.self_play
+_LARGE_CONFIG = _DEFAULT_CONFIG.network.model_copy(update={"fc_hidden": 128})
+_SMALL_CONFIG = _DEFAULT_CONFIG.network.model_copy(
     update={
         "trunk_channels": 8,
         "num_conv_residual_blocks": 2,

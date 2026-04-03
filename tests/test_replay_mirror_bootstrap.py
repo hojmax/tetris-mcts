@@ -5,11 +5,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS
-from tetris_bot.ml.config import (
-    TrainingConfig,
-    default_training_config,
+from tetris_bot.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    DEFAULT_CONFIG_PATH,
+    NUM_ACTIONS,
 )
+from tetris_bot.ml.config import TrainingConfig, load_training_config
 from tetris_bot.ml.network import AUX_FEATURES
 from tetris_bot.ml.trainer import Trainer
 
@@ -77,7 +79,7 @@ class FakeReplayMirrorGenerator:
 
 
 def _make_config(tmp_path: Path) -> TrainingConfig:
-    config = default_training_config()
+    config = load_training_config(DEFAULT_CONFIG_PATH)
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
     config.replay = config.replay.model_copy(

@@ -15,11 +15,11 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_bot.constants import BENCHMARKS_DIR, PROJECT_ROOT
-from tetris_bot.ml.config import default_self_play_config
+from tetris_bot.constants import BENCHMARKS_DIR, DEFAULT_CONFIG_PATH, PROJECT_ROOT
+from tetris_bot.ml.config import load_training_config
 
 logger = structlog.get_logger()
-_DEFAULT_SELF_PLAY = default_self_play_config()
+_DEFAULT_SELF_PLAY = load_training_config(DEFAULT_CONFIG_PATH).self_play
 _OPTIMIZER_VERSION = 1
 _SUPPORTED_BACKENDS = {"tract", "ort"}
 _WORKER_SEARCH_MODES = {"adaptive", "grid"}

@@ -5,10 +5,8 @@ import structlog
 import wandb
 from simple_parsing import parse
 
-from tetris_bot.ml.config import (
-    TrainingConfig,
-    default_training_config,
-)
+from tetris_bot.constants import DEFAULT_CONFIG_PATH
+from tetris_bot.ml.config import TrainingConfig, load_training_config
 from tetris_bot.scripts.train import ScriptArgs as TrainScriptArgs
 from tetris_bot.scripts.train import main as train_main
 
@@ -126,7 +124,7 @@ def build_training_config(
     model_size = str(sampled["model_size"])
     learning_rate = float(sampled["learning_rate"])
     model_preset = MODEL_SIZE_PRESETS[model_size]
-    config = default_training_config()
+    config = load_training_config(DEFAULT_CONFIG_PATH)
     config.network = config.network.model_copy(
         update={
             "trunk_channels": int(model_preset["trunk_channels"]),

@@ -24,13 +24,13 @@ Short version of the current implementation:
   - `aux_features`: `80 = 61 piece/game + 19 board stats`
 - The current model uses a cached board path plus a separate piece/game auxiliary path that are concatenated before the policy/value trunk.
 - The default hyperparameters are:
-  - `trunk_channels=16`
-  - `num_conv_residual_blocks=3`
+  - `trunk_channels=32`
+  - `num_conv_residual_blocks=5`
   - `reduction_channels=32`
   - `board_stats_hidden=32`
-  - `board_proj_hidden=256`
+  - `board_proj_hidden=512`
   - `fc_hidden=256`
-  - `aux_hidden=64`
+  - `aux_hidden=128`
   - `fusion_hidden=256`
   - `num_fusion_blocks=1`
 - The current conv path uses `GroupNorm + SiLU` and residual conv blocks.

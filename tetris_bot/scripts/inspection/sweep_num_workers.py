@@ -16,11 +16,15 @@ from tetris_core.tetris_core import (
     evaluate_model,
     evaluate_model_without_nn,
 )
-from tetris_bot.constants import BENCHMARKS_DIR, PARALLEL_ONNX_FILENAME
-from tetris_bot.ml.config import default_self_play_config
+from tetris_bot.constants import (
+    BENCHMARKS_DIR,
+    DEFAULT_CONFIG_PATH,
+    PARALLEL_ONNX_FILENAME,
+)
+from tetris_bot.ml.config import load_training_config
 
 logger = structlog.get_logger()
-_DEFAULT_SELF_PLAY = default_self_play_config()
+_DEFAULT_SELF_PLAY = load_training_config(DEFAULT_CONFIG_PATH).self_play
 
 
 def default_worker_candidates() -> list[int]:

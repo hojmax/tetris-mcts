@@ -16,14 +16,15 @@ import torch
 from simple_parsing import parse
 
 from tetris_core.tetris_core import MCTSConfig, evaluate_model
-from tetris_bot.constants import BENCHMARKS_DIR
-from tetris_bot.ml.config import default_network_config, default_self_play_config
+from tetris_bot.constants import BENCHMARKS_DIR, DEFAULT_CONFIG_PATH
+from tetris_bot.ml.config import load_training_config
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import export_split_models
 
 logger = structlog.get_logger()
-_DEFAULT_NETWORK = default_network_config()
-_DEFAULT_SELF_PLAY = default_self_play_config()
+_DEFAULT_CONFIG = load_training_config(DEFAULT_CONFIG_PATH)
+_DEFAULT_NETWORK = _DEFAULT_CONFIG.network
+_DEFAULT_SELF_PLAY = _DEFAULT_CONFIG.self_play
 
 
 @dataclass

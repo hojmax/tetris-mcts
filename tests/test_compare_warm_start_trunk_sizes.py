@@ -2,12 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from tetris_bot.ml.config import (
-    NetworkConfig,
-    TrainingConfig,
-    default_network_config,
-    default_training_config,
-)
+from tetris_bot.constants import DEFAULT_CONFIG_PATH
+from tetris_bot.ml.config import NetworkConfig, TrainingConfig, load_training_config
 from tetris_bot.scripts.ablations.compare_warm_start_trunk_sizes import (
     BenchmarkAggregate,
     ScriptArgs,
@@ -18,13 +14,15 @@ from tetris_bot.scripts.ablations.compare_warm_start_trunk_sizes import (
     resolve_trunk_channels,
 )
 
+_DEFAULT_CONFIG = load_training_config(DEFAULT_CONFIG_PATH)
+
 
 def _source_config(network: NetworkConfig | None = None) -> TrainingConfig:
-    config = default_training_config()
+    config = _DEFAULT_CONFIG.model_copy(deep=True)
     config.network = (
         network
         if network is not None
-        else default_network_config().model_copy(update={"fc_hidden": 128})
+        else _DEFAULT_CONFIG.network.model_copy(update={"fc_hidden": 128})
     )
     return config
 
@@ -35,11 +33,11 @@ def test_build_variants_defaults_to_half_source_and_double_source() -> None:
     variants = build_variants(_source_config(), args)
 
     assert [variant.label for variant in variants] == [
-        "trunk8_blocks2_reduce16",
-        "trunk16_blocks3_reduce32",
-        "trunk32_blocks4_reduce64",
+        "trunk16_blocks4_reduce16",
+        "trunk32_blocks5_reduce32",
+        "trunk64_blocks6_reduce64",
     ]
-    assert [variant.num_conv_residual_blocks for variant in variants] == [2, 3, 4]
+    assert [variant.num_conv_residual_blocks for variant in variants] == [4, 5, 6]
     assert [variant.matches_source for variant in variants] == [False, True, False]
 
 
@@ -54,7 +52,7 @@ def test_resolve_trunk_channels_requires_two_unique_values() -> None:
 
 
 def test_build_variant_network_config_only_changes_trunk_and_reduction() -> None:
-    source_network = default_network_config().model_copy(
+    source_network = _DEFAULT_CONFIG.network.model_copy(
         update={
             "trunk_channels": 16,
             "num_conv_residual_blocks": 4,
@@ -97,9 +95,9 @@ def test_build_variants_accepts_explicit_residual_block_override() -> None:
 
     assert [variant.num_conv_residual_blocks for variant in variants] == [1, 4, 6]
     assert [variant.label for variant in variants] == [
-        "trunk12_blocks1_reduce24",
-        "trunk16_blocks4_reduce32",
-        "trunk24_blocks6_reduce48",
+        "trunk12_blocks1_reduce12",
+        "trunk16_blocks4_reduce16",
+        "trunk24_blocks6_reduce24",
     ]
 
 
