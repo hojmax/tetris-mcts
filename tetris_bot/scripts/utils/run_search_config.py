@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 from pathlib import Path
 from typing import Any
@@ -14,17 +13,14 @@ from tetris_bot.constants import (
     INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
 )
+from tetris_bot.ml.config import load_training_config, training_config_to_dict
 
 
 def load_run_config(run_dir: Path) -> dict[str, Any]:
     config_path = run_dir / CONFIG_FILENAME
     if not config_path.exists():
         raise FileNotFoundError(f"Run config not found: {config_path}")
-
-    data = json.loads(config_path.read_text())
-    if not isinstance(data, dict):
-        raise ValueError(f"Run config must be a JSON object: {config_path}")
-    return data
+    return training_config_to_dict(load_training_config(config_path))
 
 
 def load_self_play_config(run_dir: Path) -> dict[str, Any]:
@@ -32,7 +28,7 @@ def load_self_play_config(run_dir: Path) -> dict[str, Any]:
     self_play = data.get("self_play", data)
     if not isinstance(self_play, dict):
         raise ValueError(
-            f"self_play config must be a JSON object: {run_dir / CONFIG_FILENAME}"
+            f"self_play config must be a mapping: {run_dir / CONFIG_FILENAME}"
         )
     return dict(self_play)
 

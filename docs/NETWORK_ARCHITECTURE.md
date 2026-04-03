@@ -13,7 +13,7 @@ The code is the source of truth. If this document and the code disagree, trust:
 
 ## Current Model at a Glance
 
-The network instantiated by `NetworkConfig()` is:
+The network instantiated from the repo-root `config.yaml` defaults is:
 
 - Architecture: cached board path plus separate piece/game aux path, concatenated before the shared trunk
 - Board input: `1 x 20 x 10`

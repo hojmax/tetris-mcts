@@ -5,34 +5,28 @@ from pathlib import Path
 import pytest
 
 from tetris_bot.ml.config import (
-    NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_training_config,
 )
 from tetris_bot.ml.trainer import CandidateGateSchedule, Trainer
 from tetris_bot.scripts.train import ScriptArgs, restore_trainer_from_checkpoint
 
 
 def _make_config(tmp_path: Path) -> TrainingConfig:
+    config = default_training_config()
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
-    return TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(
-            run_dir=tmp_path,
-            checkpoint_dir=checkpoint_dir,
-            data_dir=data_dir,
-            model_sync_interval_seconds=120.0,
-            model_sync_failure_backoff_seconds=120.0,
-            model_sync_max_interval_seconds=0.0,
-        ),
+    config.run = config.run.model_copy(
+        update={
+            "run_dir": tmp_path,
+            "checkpoint_dir": checkpoint_dir,
+            "data_dir": data_dir,
+            "model_sync_interval_seconds": 120.0,
+            "model_sync_failure_backoff_seconds": 120.0,
+            "model_sync_max_interval_seconds": 0.0,
+        }
     )
+    return config
 
 
 def _make_trainer(tmp_path: Path) -> Trainer:
@@ -84,7 +78,7 @@ def test_restore_trainer_from_checkpoint_restores_candidate_gate_state(
     monkeypatch,
 ) -> None:
     trainer = _make_trainer(tmp_path)
-    args = ScriptArgs(training=trainer.config, resume_dir=None)
+    args = ScriptArgs(config=tmp_path / "config.yaml", resume_dir=None)
 
     monkeypatch.setattr(
         "tetris_bot.scripts.train.load_checkpoint",

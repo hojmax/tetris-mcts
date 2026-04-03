@@ -119,7 +119,9 @@ def _cells_are_in_bounds(cells: tuple[tuple[int, int], ...]) -> bool:
     return all(0 <= x < BOARD_WIDTH and 0 <= y < BOARD_HEIGHT for x, y in cells)
 
 
-def _is_valid_grid_position(piece_type: int, rotation: int, grid_x: int, grid_y: int) -> bool:
+def _is_valid_grid_position(
+    piece_type: int, rotation: int, grid_x: int, grid_y: int
+) -> bool:
     return _cells_are_in_bounds(
         _occupied_cells_for_grid(piece_type, rotation, grid_x, grid_y)
     )
@@ -220,7 +222,9 @@ def _build_flat_lookup_by_piece() -> tuple[
     return index_by_cells, valid_indices_by_piece
 
 
-FLAT_INDEX_BY_CELLS_BY_PIECE, FLAT_VALID_INDICES_BY_PIECE = _build_flat_lookup_by_piece()
+FLAT_INDEX_BY_CELLS_BY_PIECE, FLAT_VALID_INDICES_BY_PIECE = (
+    _build_flat_lookup_by_piece()
+)
 
 
 def _build_legacy_to_flat_maps() -> tuple[torch.Tensor, torch.Tensor]:
@@ -318,9 +322,9 @@ def mirror_aux_features(aux: torch.Tensor) -> torch.Tensor:
     mirrored[:, layout.hold_piece] = mirrored_hold
 
     next_queue = aux[:, layout.next_queue].reshape(-1, QUEUE_SIZE, NUM_PIECE_TYPES)
-    mirrored[:, layout.next_queue] = next_queue.index_select(
-        2, permutation
-    ).reshape(-1, QUEUE_SIZE * NUM_PIECE_TYPES)
+    mirrored[:, layout.next_queue] = next_queue.index_select(2, permutation).reshape(
+        -1, QUEUE_SIZE * NUM_PIECE_TYPES
+    )
     mirrored[:, layout.next_hidden_piece_probs] = aux[
         :, layout.next_hidden_piece_probs
     ].index_select(1, permutation)
@@ -477,8 +481,7 @@ def maybe_mirror_training_tensors(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     if not 0.0 <= probability <= 1.0:
         raise ValueError(
-            "mirror augmentation probability must be in [0, 1] "
-            f"(got {probability})"
+            f"mirror augmentation probability must be in [0, 1] (got {probability})"
         )
     if probability == 0.0:
         return boards, aux, policy_targets, action_masks

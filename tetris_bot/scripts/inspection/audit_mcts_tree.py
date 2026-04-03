@@ -20,10 +20,10 @@ from tetris_bot.constants import (
     PIECE_NAMES,
     QUEUE_SIZE,
 )
-from tetris_bot.ml.config import SelfPlayConfig
+from tetris_bot.ml.config import default_self_play_config
 
 logger = structlog.get_logger()
-_DEFAULT_SELF_PLAY = SelfPlayConfig()
+_DEFAULT_SELF_PLAY = default_self_play_config()
 HOLD_ACTION_INDEX = NUM_ACTIONS - 1
 
 

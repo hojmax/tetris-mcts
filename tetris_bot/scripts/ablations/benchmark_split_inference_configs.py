@@ -29,31 +29,24 @@ from tetris_core.tetris_core import (
     debug_get_action_mask,
 )
 from tetris_bot.constants import BENCHMARKS_DIR
-from tetris_bot.ml.config import NetworkConfig, SelfPlayConfig
+from tetris_bot.ml.config import (
+    NetworkConfig,
+    default_network_config,
+    default_self_play_config,
+)
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import export_split_models, split_model_paths
 
 logger = structlog.get_logger()
-_DEFAULT_SELF_PLAY = SelfPlayConfig()
-_LARGE_CONFIG = NetworkConfig(
-    trunk_channels=16,
-    num_conv_residual_blocks=3,
-    reduction_channels=32,
-    fc_hidden=128,
-    aux_hidden=64,
-    num_fusion_blocks=1,
-    conv_kernel_size=3,
-    conv_padding=1,
-)
-_SMALL_CONFIG = NetworkConfig(
-    trunk_channels=8,
-    num_conv_residual_blocks=2,
-    reduction_channels=16,
-    fc_hidden=128,
-    aux_hidden=64,
-    num_fusion_blocks=1,
-    conv_kernel_size=3,
-    conv_padding=1,
+_DEFAULT_SELF_PLAY = default_self_play_config()
+_LARGE_CONFIG = default_network_config().model_copy(update={"fc_hidden": 128})
+_SMALL_CONFIG = default_network_config().model_copy(
+    update={
+        "trunk_channels": 8,
+        "num_conv_residual_blocks": 2,
+        "reduction_channels": 16,
+        "fc_hidden": 128,
+    }
 )
 
 
@@ -355,7 +348,7 @@ def main(args: ScriptArgs) -> None:
         "variants": [
             {
                 "label": exported.label,
-                "network": asdict(exported.network),
+                "network": exported.network.model_dump(mode="json"),
                 "onnx_path": str(exported.onnx_path),
                 "total_params": exported.total_params,
                 "split_bytes": exported.split_bytes,

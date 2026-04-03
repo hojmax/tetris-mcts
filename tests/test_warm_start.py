@@ -1,21 +1,21 @@
-import json
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 import torch
+import yaml
 
 import tetris_bot.scripts.warm_start as warm_start_module
 from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, CONFIG_FILENAME, NUM_ACTIONS
 from tetris_bot.ml.config import (
+    default_network_config,
     default_training_config,
-    NetworkConfig,
-    load_training_config_json,
+    load_training_config,
 )
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer
 from tetris_bot.ml.network import TetrisNet
-from tetris_bot.run_setup import config_to_json
+from tetris_bot.run_setup import config_to_dict
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
 )
@@ -41,51 +41,37 @@ from tetris_bot.scripts.warm_start import (
 )
 
 
-def test_load_training_config_json_fills_missing_network_defaults(
+def test_load_training_config_round_trips_complete_yaml(
     tmp_path: Path,
 ) -> None:
-    config_path = tmp_path / CONFIG_FILENAME
-    config_path.write_text(
-        json.dumps(
-            {
-                "network": {
-                    "trunk_channels": 4,
-                    "num_conv_residual_blocks": 1,
-                    "reduction_channels": 8,
-                    "fc_hidden": 128,
-                    "conv_kernel_size": 3,
-                    "conv_padding": 1,
-                },
-                "optimizer": {
-                    "total_steps": 1000,
-                    "batch_size": 512,
-                },
-                "self_play": {
-                    "nn_value_weight": 0.01,
-                    "nn_value_weight_cap": 1.0,
-                    "death_penalty": 5.0,
-                    "overhang_penalty_weight": 5.0,
-                },
-                "replay": {
-                    "buffer_size": 10_000,
-                },
-                "run": {
-                    "run_name": "v3",
-                    "run_dir": "/tmp/example/v3",
-                    "checkpoint_dir": "/tmp/example/v3/checkpoints",
-                    "data_dir": "/tmp/example/v3",
-                },
-            }
-        )
+    config = default_training_config()
+    config.network = config.network.model_copy(
+        update={
+            "trunk_channels": 4,
+            "num_conv_residual_blocks": 1,
+            "reduction_channels": 8,
+            "fc_hidden": 128,
+        }
     )
+    config.run = config.run.model_copy(
+        update={
+            "run_name": "v3",
+            "run_dir": Path("/tmp/example/v3"),
+            "checkpoint_dir": Path("/tmp/example/v3/checkpoints"),
+            "data_dir": Path("/tmp/example/v3"),
+        }
+    )
+    config_path = tmp_path / CONFIG_FILENAME
+    config_path.write_text(yaml.safe_dump(config_to_dict(config), sort_keys=False))
 
-    loaded = load_training_config_json(config_path)
+    loaded = load_training_config(config_path)
 
-    assert loaded.network.board_stats_hidden == NetworkConfig().board_stats_hidden
-    assert loaded.network.board_proj_hidden == NetworkConfig().board_proj_hidden
-    assert loaded.network.aux_hidden == NetworkConfig().aux_hidden
-    assert loaded.network.fusion_hidden == NetworkConfig().fusion_hidden
-    assert loaded.network.num_fusion_blocks == NetworkConfig().num_fusion_blocks
+    assert loaded.network.trunk_channels == 4
+    assert loaded.network.board_stats_hidden == config.network.board_stats_hidden
+    assert loaded.network.board_proj_hidden == config.network.board_proj_hidden
+    assert loaded.network.aux_hidden == config.network.aux_hidden
+    assert loaded.network.fusion_hidden == config.network.fusion_hidden
+    assert loaded.network.num_fusion_blocks == config.network.num_fusion_blocks
     assert loaded.run.run_dir == Path("/tmp/example/v3")
     assert loaded.run.checkpoint_dir == Path("/tmp/example/v3/checkpoints")
     assert loaded.run.data_dir == Path("/tmp/example/v3")
@@ -163,7 +149,7 @@ def test_build_output_config_uses_current_repo_defaults_for_new_run(
     assert output_config.run.checkpoint_dir == output_run_dir / "checkpoints"
     assert output_config.run.data_dir == output_run_dir
 
-    saved_config = json.loads((output_run_dir / CONFIG_FILENAME).read_text())
+    saved_config = yaml.safe_load((output_run_dir / CONFIG_FILENAME).read_text())
     assert (
         saved_config["network"]["trunk_channels"]
         == default_config.network.trunk_channels
@@ -226,7 +212,7 @@ def test_build_wandb_config_includes_full_resolved_training_config(
         eval_worker_resolution=eval_worker_resolution,
     )
 
-    serialized_output_config = json.loads(config_to_json(resolved_output_config))
+    serialized_output_config = config_to_dict(resolved_output_config)
     assert wandb_config["output_config"] == serialized_output_config
     assert wandb_config["training_config"] == serialized_output_config
     assert wandb_config["warmup_epochs"] == args.warmup_epochs
@@ -371,7 +357,7 @@ def test_validate_args_requires_offline_resume_checkpoint_when_requested(
 ) -> None:
     source_run_dir = tmp_path / "training_runs" / "v5"
     source_run_dir.mkdir(parents=True)
-    (source_run_dir / CONFIG_FILENAME).write_text(json.dumps({}))
+    (source_run_dir / CONFIG_FILENAME).write_text(yaml.safe_dump({}))
     (source_run_dir / "training_data.npz").write_bytes(b"placeholder")
 
     args = ScriptArgs(
@@ -395,7 +381,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     tmp_path: Path,
 ) -> None:
     checkpoint_path = offline_resume_checkpoint_path(tmp_path / "training_runs" / "v5")
-    model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    model = TetrisNet(**default_network_config().to_model_kwargs())
     ema = ExponentialMovingAverage(model, decay=0.5)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
     scheduler = build_warm_start_lr_scheduler(
@@ -456,7 +442,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
         rng_state=rng_state,
     )
 
-    restored_model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    restored_model = TetrisNet(**default_network_config().to_model_kwargs())
     restored_ema = ExponentialMovingAverage(restored_model, decay=0.5)
     restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=5e-4)
     restored_scheduler = build_warm_start_lr_scheduler(
@@ -514,7 +500,7 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
 def test_train_warm_start_model_evaluates_and_snapshots_ema_weights(
     monkeypatch,
 ) -> None:
-    model = TetrisNet(**NetworkConfig().to_model_kwargs())
+    model = TetrisNet(**default_network_config().to_model_kwargs())
     dataset_setup = WarmStartDatasetSetup(
         source=OfflineDataSource(
             npz=cast(np.lib.npyio.NpzFile, object()),

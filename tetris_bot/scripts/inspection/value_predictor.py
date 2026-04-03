@@ -1,5 +1,3 @@
-import dataclasses
-import json
 from pathlib import Path
 
 import numpy as np
@@ -10,18 +8,11 @@ from tetris_bot.constants import (
     BOARD_HEIGHT,
     BOARD_WIDTH,
 )
-from tetris_bot.ml.config import TrainingConfig
+from tetris_bot.ml.config import load_training_config
 from tetris_bot.ml.network import TetrisNet, build_aux_features
 from tetris_bot.ml.weights import load_checkpoint
 
 logger = structlog.get_logger()
-
-
-def load_training_config(config_path: Path) -> TrainingConfig:
-    config_data = json.loads(config_path.read_text())
-    known_fields = {f.name for f in dataclasses.fields(TrainingConfig)}
-    config_data = {k: v for k, v in config_data.items() if k in known_fields}
-    return TrainingConfig(**config_data)
 
 
 def try_load_value_predictor(
@@ -50,14 +41,7 @@ class ValuePredictor:
 
     def _load_model(self, checkpoint_path: Path, config_path: Path) -> TetrisNet:
         config = load_training_config(config_path)
-        model = TetrisNet(
-            trunk_channels=config.trunk_channels,
-            num_conv_residual_blocks=config.num_conv_residual_blocks,
-            reduction_channels=config.reduction_channels,
-            fc_hidden=config.fc_hidden,
-            conv_kernel_size=config.conv_kernel_size,
-            conv_padding=config.conv_padding,
-        )
+        model = TetrisNet(**config.network.to_model_kwargs())
         load_checkpoint(checkpoint_path, model=model, ema_model=None)
         model.eval()
         return model

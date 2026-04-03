@@ -1200,23 +1200,28 @@ def _build_mirror_selection(
                 rotation = int(triggered_id.removeprefix("mirror-left-row-"))
                 if 0 <= local_index < len(FLAT_ACTION_CELLS[rotation]):
                     hovered_side = 0
-                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[rotation][
-                        local_index
-                    ]
+                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[
+                        rotation
+                    ][local_index]
             elif triggered_id.startswith("mirror-right-row-"):
                 rotation = int(triggered_id.removeprefix("mirror-right-row-"))
                 if 0 <= local_index < len(FLAT_ACTION_CELLS[rotation]):
                     hovered_side = 1
-                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[rotation][
-                        local_index
-                    ]
+                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[
+                        rotation
+                    ][local_index]
 
     if hovered_side is None or hovered_global_index is None:
         source_global_index = FLAT_VALID_INDICES_BY_PIECE[source_piece][0]
         target_global_index = int(
             FLAT_MIRROR_INDEX_BY_PIECE[source_piece, source_global_index]
         )
-        return source_global_index, target_global_index, source_global_index, target_global_index
+        return (
+            source_global_index,
+            target_global_index,
+            source_global_index,
+            target_global_index,
+        )
 
     if hovered_side == 0:
         source_global_index = (
@@ -1229,14 +1234,24 @@ def _build_mirror_selection(
         target_global_index = int(
             FLAT_MIRROR_INDEX_BY_PIECE[source_piece, source_global_index]
         )
-        return source_global_index, target_global_index, source_global_index, target_global_index
+        return (
+            source_global_index,
+            target_global_index,
+            source_global_index,
+            target_global_index,
+        )
 
     source_global_index = MIRROR_SOURCE_INDEX_BY_TARGET_INDEX[source_piece].get(
         hovered_global_index
     )
     if source_global_index is None:
         return None, hovered_global_index, None, hovered_global_index
-    return source_global_index, hovered_global_index, source_global_index, hovered_global_index
+    return (
+        source_global_index,
+        hovered_global_index,
+        source_global_index,
+        hovered_global_index,
+    )
 
 
 def _mirror_hover_details(
@@ -1249,7 +1264,9 @@ def _mirror_hover_details(
     if source_global_index is None or target_global_index is None:
         return html.Div(
             [
-                html.H3("Mirror Mapping", style={"margin": "0 0 8px 0", "fontSize": "18px"}),
+                html.H3(
+                    "Mirror Mapping", style={"margin": "0 0 8px 0", "fontSize": "18px"}
+                ),
                 html.Div(
                     "The hovered cell is outside the selected piece's valid logit support, so there is no mirrored partner to show.",
                     style={"lineHeight": 1.5},
@@ -1260,16 +1277,22 @@ def _mirror_hover_details(
     source_rotation, source_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
         source_global_index
     ]
-    source_grid_x, source_grid_y = FLAT_ACTION_CELLS[source_rotation][source_local_index]
+    source_grid_x, source_grid_y = FLAT_ACTION_CELLS[source_rotation][
+        source_local_index
+    ]
     target_rotation, target_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
         target_global_index
     ]
-    target_grid_x, target_grid_y = FLAT_ACTION_CELLS[target_rotation][target_local_index]
+    target_grid_x, target_grid_y = FLAT_ACTION_CELLS[target_rotation][
+        target_local_index
+    ]
     pair_rank = MIRROR_SOURCE_RANK_BY_PIECE[source_piece][source_global_index]
     total_pairs = len(FLAT_VALID_INDICES_BY_PIECE[source_piece])
     return html.Div(
         [
-            html.H3("Mirror Mapping", style={"margin": "0 0 10px 0", "fontSize": "18px"}),
+            html.H3(
+                "Mirror Mapping", style={"margin": "0 0 10px 0", "fontSize": "18px"}
+            ),
             html.Div(
                 f"{PIECE_NAMES[source_piece]} -> {PIECE_NAMES[target_piece]} | pair rank {pair_rank + 1} / {total_pairs}",
                 style={"fontWeight": 700, "marginBottom": "8px"},
@@ -1439,7 +1462,12 @@ def _mirror_section_layout() -> html.Div:
                         },
                     ),
                 ],
-                style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginTop": "14px"},
+                style={
+                    "display": "flex",
+                    "gap": "16px",
+                    "flexWrap": "wrap",
+                    "marginTop": "14px",
+                },
             ),
         ],
         style={
@@ -2211,8 +2239,14 @@ def update_mirror_section(
         ),
         left_preview,
         right_preview,
-        *left_figures,
-        *right_figures,
+        left_figures[0],
+        left_figures[1],
+        left_figures[2],
+        left_figures[3],
+        right_figures[0],
+        right_figures[1],
+        right_figures[2],
+        right_figures[3],
     )
 
 

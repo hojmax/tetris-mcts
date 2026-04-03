@@ -40,21 +40,18 @@ from tetris_bot.constants import (
     LATEST_CHECKPOINT_FILENAME,
     TRAINING_DATA_FILENAME,
 )
-from tetris_bot.ml.config import TrainingConfig, load_training_config_json
+from tetris_bot.ml.config import TrainingConfig, load_training_config
 from tetris_bot.ml.loss import apply_action_mask
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import (
     export_onnx,
     export_split_models,
-    load_checkpoint,
-    split_model_paths,
 )
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
     build_tensor_dataset,
     build_torch_batch,
     ensure_required_keys,
-    select_subset,
     validate_shapes,
 )
 from tetris_bot.scripts.utils.eval_utils import compute_attack_stats
@@ -143,7 +140,7 @@ class AnalysisSummary(BaseModel):
 class ScriptArgs:
     run_dir: Path = sp_field(
         positional=True
-    )  # Training run directory with checkpoints/, config.json, training_data.npz
+    )  # Training run directory with checkpoints/, config.yaml, training_data.npz
     policy_noise_stds: list[float] = field(
         default_factory=lambda: [0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0]
     )
@@ -171,7 +168,9 @@ class ScriptArgs:
     device: str = "auto"
     seed: int = 42
     output_dir: Path | None = None
-    reanalyze: Path | None = None  # Path to existing output dir with sensitivity_points.json
+    reanalyze: Path | None = (
+        None  # Path to existing output dir with sensitivity_points.json
+    )
 
     def __post_init__(self) -> None:
         self.policy_noise_stds = normalize_noise_stds(
@@ -271,13 +270,9 @@ def _patch_legacy_forward(model: TetrisNet) -> None:
     def _forward_no_board_proj_activation(
         conv_out: torch.Tensor, board_stats: torch.Tensor
     ) -> torch.Tensor:
-        board_stats_h = F.silu(
-            model.board_stats_ln(model.board_stats_fc(board_stats))
-        )
+        board_stats_h = F.silu(model.board_stats_ln(model.board_stats_fc(board_stats)))
         board_hidden = torch.cat([conv_out, board_stats_h], dim=1)
-        board_hidden = F.silu(
-            model.board_proj_ln1(model.board_proj_fc1(board_hidden))
-        )
+        board_hidden = F.silu(model.board_proj_ln1(model.board_proj_fc1(board_hidden)))
         return model.board_proj_fc2(board_hidden)
 
     model.forward_board_embedding_from_parts = _forward_no_board_proj_activation  # type: ignore[assignment]
@@ -341,9 +336,7 @@ def load_analysis_model(
     # Prefer incumbent ONNX (the promoted best model)
     incumbent_path = run_dir / CHECKPOINT_DIRNAME / INCUMBENT_ONNX_FILENAME
     if incumbent_path.exists():
-        logger.info(
-            "Loading incumbent ONNX model", incumbent_path=str(incumbent_path)
-        )
+        logger.info("Loading incumbent ONNX model", incumbent_path=str(incumbent_path))
         return OnnxModel(incumbent_path), "incumbent_onnx", incumbent_path
 
     # Fall back to latest.pt
@@ -366,9 +359,7 @@ def load_analysis_model(
                 state["model_state_dict"]
             )
         if "ema_state_dict" in state:
-            state["ema_state_dict"] = _remap_legacy_state_dict(
-                state["ema_state_dict"]
-            )
+            state["ema_state_dict"] = _remap_legacy_state_dict(state["ema_state_dict"])
 
     raw_model = TetrisNet(**model_kwargs).to(device)
     ema_model = TetrisNet(**model_kwargs).to(device)
@@ -385,7 +376,9 @@ def load_analysis_model(
 
     if is_legacy:
         _patch_legacy_forward(analysis_model)
-        logger.info("Patched board_proj forward to omit final SiLU for legacy checkpoint")
+        logger.info(
+            "Patched board_proj forward to omit final SiLU for legacy checkpoint"
+        )
 
     analysis_model.eval()
     return analysis_model, model_source, None
@@ -421,7 +414,13 @@ def sample_noise_tensor(
 class CachedPredictions:
     """Base model outputs cached once, reused for all noise levels."""
 
-    __slots__ = ("policy_logits", "value_pred", "policy_targets", "value_targets", "action_masks")
+    __slots__ = (
+        "policy_logits",
+        "value_pred",
+        "policy_targets",
+        "value_targets",
+        "action_masks",
+    )
 
     def __init__(
         self,
@@ -635,9 +634,7 @@ def fit_sigmoid(losses: np.ndarray, attacks: np.ndarray) -> SigmoidFit | None:
     # so k_orig = k_norm / x_range, x0_orig = x0_norm * x_range + x_min
     k_orig = float(params[1]) / x_range
     x0_orig = float(params[2]) * x_range + x_min
-    return SigmoidFit(
-        L=float(params[0]), k=k_orig, x0=x0_orig, b=float(params[3])
-    )
+    return SigmoidFit(L=float(params[0]), k=k_orig, x0=x0_orig, b=float(params[3]))
 
 
 def noise_seed_for_point(
@@ -911,14 +908,16 @@ def run_sweep(
                     noise_std=noise_std,
                     noise_seed=noise_seed,
                 )
-                jobs.append({
-                    "noise_type": noise_type,
-                    "noise_std": noise_std,
-                    "repeat_index": repeat_index,
-                    "noise_seed": noise_seed,
-                    "policy_loss": policy_loss,
-                    "value_loss": value_loss,
-                })
+                jobs.append(
+                    {
+                        "noise_type": noise_type,
+                        "noise_std": noise_std,
+                        "repeat_index": repeat_index,
+                        "noise_seed": noise_seed,
+                        "policy_loss": policy_loss,
+                        "value_loss": value_loss,
+                    }
+                )
 
     logger.info(
         "Pre-computed all losses; running game evals",
@@ -993,7 +992,7 @@ def main(args: ScriptArgs) -> None:
     config_path = run_dir / CONFIG_FILENAME
     data_path = run_dir / TRAINING_DATA_FILENAME
     for path, label in [
-        (config_path, "config.json"),
+        (config_path, "config.yaml"),
         (data_path, "training_data.npz"),
     ]:
         if not path.exists():
@@ -1006,7 +1005,7 @@ def main(args: ScriptArgs) -> None:
         output_dir = BENCHMARKS_DIR / "loss_sensitivity" / f"{run_dir.name}_{timestamp}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    config = load_training_config_json(config_path)
+    config = load_training_config(config_path)
     device = torch.device(pick_device(args.device))
     logger.info("Loading analysis model", run_dir=str(run_dir), device=str(device))
     model, model_source, existing_onnx_path = load_analysis_model(
@@ -1255,9 +1254,7 @@ def reanalyze(args: ScriptArgs) -> None:
         baseline=baseline,
         policy=policy_analysis,
         value=value_analysis,
-        recommended_weighting=recommended_weighting(
-            policy_analysis, value_analysis
-        ),
+        recommended_weighting=recommended_weighting(policy_analysis, value_analysis),
     )
 
     summary_path = output_dir / "sensitivity_summary.json"

@@ -31,8 +31,8 @@ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
 ## Resume Training
 
 ```bash
-uv run python tetris_bot/scripts/train.py --resume_dir training_runs/v46
-uv run python tetris_bot/scripts/train.py --resume_wandb entity/project/run_id
+uv run python tetris_bot/scripts/train.py --config config.yaml --resume_dir training_runs/v46
+uv run python tetris_bot/scripts/train.py --config config.yaml --resume_wandb entity/project/run_id
 uv run python tetris_bot/scripts/inspection/download_wandb_training_data.py --reference entity/project/run_id --run_dir training_runs/v2 --overwrite true
 ```
 

@@ -6,12 +6,8 @@ import wandb
 from simple_parsing import parse
 
 from tetris_bot.ml.config import (
-    NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_training_config,
 )
 from tetris_bot.scripts.train import ScriptArgs as TrainScriptArgs
 from tetris_bot.scripts.train import main as train_main
@@ -130,29 +126,32 @@ def build_training_config(
     model_size = str(sampled["model_size"])
     learning_rate = float(sampled["learning_rate"])
     model_preset = MODEL_SIZE_PRESETS[model_size]
-
-    return TrainingConfig(
-        network=NetworkConfig(
-            trunk_channels=int(model_preset["trunk_channels"]),
-            num_conv_residual_blocks=int(model_preset["num_conv_residual_blocks"]),
-            reduction_channels=int(model_preset["reduction_channels"]),
-            fc_hidden=int(model_preset["fusion_hidden"]),
-        ),
-        optimizer=OptimizerConfig(
-            total_steps=args.total_steps,
-            batch_size=args.batch_size,
-            learning_rate=learning_rate,
-            lr_schedule=args.lr_schedule,
-            lr_decay_steps=args.lr_decay_steps,
-            lr_min_factor=args.lr_min_factor,
-        ),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(
-            project_name=args.project_name,
-            run_name=f"{args.run_name_prefix}-{run_name}",
-        ),
+    config = default_training_config()
+    config.network = config.network.model_copy(
+        update={
+            "trunk_channels": int(model_preset["trunk_channels"]),
+            "num_conv_residual_blocks": int(model_preset["num_conv_residual_blocks"]),
+            "reduction_channels": int(model_preset["reduction_channels"]),
+            "fc_hidden": int(model_preset["fusion_hidden"]),
+        }
     )
+    config.optimizer = config.optimizer.model_copy(
+        update={
+            "total_steps": args.total_steps,
+            "batch_size": args.batch_size,
+            "learning_rate": learning_rate,
+            "lr_schedule": args.lr_schedule,
+            "lr_decay_steps": args.lr_decay_steps,
+            "lr_min_factor": args.lr_min_factor,
+        }
+    )
+    config.run = config.run.model_copy(
+        update={
+            "project_name": args.project_name,
+            "run_name": f"{args.run_name_prefix}-{run_name}",
+        }
+    )
+    return config
 
 
 def run_single_trial(args: SweepArgs) -> None:
@@ -199,14 +198,13 @@ def run_single_trial(args: SweepArgs) -> None:
         )
 
         train_args = TrainScriptArgs(
-            training=training_config,
             device=args.device,
             resume_dir=args.resume_dir,
             resume_restore_optimizer_scheduler=args.resume_restore_optimizer_scheduler,
             init_checkpoint=args.init_checkpoint,
             no_wandb=False,
         )
-        train_main(train_args)
+        train_main(train_args, config=training_config)
 
 
 def create_sweep(args: SweepArgs) -> str:

@@ -1,7 +1,7 @@
 """Export a full-game saved playback artifact for one run/seed.
 
 This resolves rollout settings from the saved checkpoint state first, then
-falls back to `config.json`, so exported trees match the model's effective
+falls back to `config.yaml`, so exported trees match the model's effective
 search-time configuration at the time of save.
 """
 

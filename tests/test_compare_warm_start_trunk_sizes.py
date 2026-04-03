@@ -4,11 +4,9 @@ import pytest
 
 from tetris_bot.ml.config import (
     NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_network_config,
+    default_training_config,
 )
 from tetris_bot.scripts.ablations.compare_warm_start_trunk_sizes import (
     BenchmarkAggregate,
@@ -22,22 +20,13 @@ from tetris_bot.scripts.ablations.compare_warm_start_trunk_sizes import (
 
 
 def _source_config(network: NetworkConfig | None = None) -> TrainingConfig:
-    return TrainingConfig(
-        network=network
+    config = default_training_config()
+    config.network = (
+        network
         if network is not None
-        else NetworkConfig(
-            trunk_channels=16,
-            num_conv_residual_blocks=3,
-            reduction_channels=32,
-            fc_hidden=128,
-            aux_hidden=64,
-            num_fusion_blocks=1,
-        ),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(),
-        run=RunConfig(),
+        else default_network_config().model_copy(update={"fc_hidden": 128})
     )
+    return config
 
 
 def test_build_variants_defaults_to_half_source_and_double_source() -> None:
@@ -65,15 +54,17 @@ def test_resolve_trunk_channels_requires_two_unique_values() -> None:
 
 
 def test_build_variant_network_config_only_changes_trunk_and_reduction() -> None:
-    source_network = NetworkConfig(
-        trunk_channels=16,
-        num_conv_residual_blocks=4,
-        reduction_channels=32,
-        fc_hidden=192,
-        aux_hidden=48,
-        num_fusion_blocks=2,
-        conv_kernel_size=5,
-        conv_padding=2,
+    source_network = default_network_config().model_copy(
+        update={
+            "trunk_channels": 16,
+            "num_conv_residual_blocks": 4,
+            "reduction_channels": 32,
+            "fc_hidden": 192,
+            "aux_hidden": 48,
+            "num_fusion_blocks": 2,
+            "conv_kernel_size": 5,
+            "conv_padding": 2,
+        }
     )
     variant = build_variants(
         _source_config(source_network),

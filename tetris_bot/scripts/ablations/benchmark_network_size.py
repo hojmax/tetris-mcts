@@ -17,13 +17,13 @@ from simple_parsing import parse
 
 from tetris_core.tetris_core import MCTSConfig, evaluate_model
 from tetris_bot.constants import BENCHMARKS_DIR
-from tetris_bot.ml.config import NetworkConfig, SelfPlayConfig
+from tetris_bot.ml.config import default_network_config, default_self_play_config
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import export_split_models
 
 logger = structlog.get_logger()
-_DEFAULT_NETWORK = NetworkConfig()
-_DEFAULT_SELF_PLAY = SelfPlayConfig()
+_DEFAULT_NETWORK = default_network_config()
+_DEFAULT_SELF_PLAY = default_self_play_config()
 
 
 @dataclass

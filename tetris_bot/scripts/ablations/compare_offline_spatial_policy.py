@@ -23,7 +23,7 @@ from tetris_bot.constants import (
     NUM_ACTIONS,
     PIECE_NAMES,
 )
-from tetris_bot.ml.config import NetworkConfig
+from tetris_bot.ml.config import default_network_config
 from tetris_bot.ml.network import (
     BOARD_STATS_FEATURES,
     PIECE_AUX_FEATURES,
@@ -43,7 +43,9 @@ from tetris_bot.scripts.ablations.compare_offline_architectures import (
 )
 
 logger = structlog.get_logger()
-_DEFAULT_NETWORK = NetworkConfig()
+_DEFAULT_NETWORK = default_network_config()
+PLACEMENT_GRID_SLOTS = FULL_GRID_PLACEMENT_SLOTS
+ROTATION_ACTION_COUNTS = ACTIVE_CANONICAL_ROTATION_COUNTS
 
 
 @dataclass
@@ -91,10 +93,6 @@ class ScriptArgs:
     wandb_tags: list[str] = field(
         default_factory=lambda: ["offline", "spatial-policy-compare"]
     )
-
-
-PLACEMENT_GRID_SLOTS = FULL_GRID_PLACEMENT_SLOTS
-ROTATION_ACTION_COUNTS = ACTIVE_CANONICAL_ROTATION_COUNTS
 
 
 class SpatialPolicyDecoderTetrisNet(nn.Module):

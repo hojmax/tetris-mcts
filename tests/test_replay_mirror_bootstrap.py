@@ -7,12 +7,8 @@ import torch
 
 from tetris_bot.constants import BOARD_HEIGHT, BOARD_WIDTH, NUM_ACTIONS
 from tetris_bot.ml.config import (
-    NetworkConfig,
-    OptimizerConfig,
-    ReplayConfig,
-    RunConfig,
-    SelfPlayConfig,
     TrainingConfig,
+    default_training_config,
 )
 from tetris_bot.ml.network import AUX_FEATURES
 from tetris_bot.ml.trainer import Trainer
@@ -81,22 +77,23 @@ class FakeReplayMirrorGenerator:
 
 
 def _make_config(tmp_path: Path) -> TrainingConfig:
+    config = default_training_config()
     checkpoint_dir = tmp_path / "checkpoints"
     data_dir = tmp_path / "data"
-    return TrainingConfig(
-        network=NetworkConfig(),
-        optimizer=OptimizerConfig(),
-        self_play=SelfPlayConfig(),
-        replay=ReplayConfig(
-            buffer_size=8,
-            replay_mirror_delta_chunk_examples=2,
-        ),
-        run=RunConfig(
-            run_dir=tmp_path,
-            checkpoint_dir=checkpoint_dir,
-            data_dir=data_dir,
-        ),
+    config.replay = config.replay.model_copy(
+        update={
+            "buffer_size": 8,
+            "replay_mirror_delta_chunk_examples": 2,
+        }
     )
+    config.run = config.run.model_copy(
+        update={
+            "run_dir": tmp_path,
+            "checkpoint_dir": checkpoint_dir,
+            "data_dir": data_dir,
+        }
+    )
+    return config
 
 
 def test_load_replay_mirror_bootstraps_from_deltas_without_snapshot(

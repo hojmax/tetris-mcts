@@ -2,27 +2,26 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import torch
 import wandb
 
-from tetris_bot.ml.config import TrainingConfig
+from tetris_bot.ml.config import (
+    TrainingConfig,
+    save_training_config,
+    training_config_to_dict,
+)
 from tetris_bot.constants import CHECKPOINT_DIRNAME, CONFIG_FILENAME, TRAINING_RUNS_DIR
 
 
-def config_to_json(config: TrainingConfig) -> str:
-    d = asdict(config)
-    for key in ["run_dir", "checkpoint_dir", "data_dir"]:
-        if d["run"][key] is not None:
-            d["run"][key] = str(d["run"][key])
-    return json.dumps(d, indent=2)
+def config_to_dict(config: TrainingConfig) -> dict[str, Any]:
+    return training_config_to_dict(config)
 
 
 def save_config(config: TrainingConfig, path: Path) -> None:
-    path.write_text(config_to_json(config))
+    save_training_config(config, path)
 
 
 def get_next_version(base_dir: Path) -> int:
@@ -73,7 +72,7 @@ def get_best_device() -> str:
 def initialize_or_update_wandb(
     config: TrainingConfig, device: str, resume_dir: Path | None = None
 ) -> None:
-    wandb_config = json.loads(config_to_json(config))
+    wandb_config = config_to_dict(config)
     wandb_config["device"] = device
     if resume_dir is not None:
         wandb_config["resume_dir"] = str(resume_dir)

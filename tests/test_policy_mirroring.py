@@ -84,7 +84,9 @@ def _mirror_env_for_action_mask(env: tetris_core.TetrisEnv) -> tetris_core.Tetri
     mirrored.set_current_piece_type(MIRROR_PIECE_TYPE_ORDER[current_piece.piece_type])
 
     hold_piece = env.get_hold_piece()
-    mirrored.set_hold_piece_type(_mirror_piece_type(None if hold_piece is None else hold_piece.piece_type))
+    mirrored.set_hold_piece_type(
+        _mirror_piece_type(None if hold_piece is None else hold_piece.piece_type)
+    )
     mirrored.set_hold_used(env.is_hold_used())
     mirrored.set_queue(_mirror_queue(env.get_queue(QUEUE_SIZE)))
     return mirrored
@@ -162,7 +164,9 @@ def test_mirror_aux_features_remaps_piece_planes_and_is_involution() -> None:
     assert current_piece_indices_from_aux(mirrored).tolist() == [4, 4]
     assert mirrored[0, layout.hold_piece].argmax().item() == 5
     mirrored_queue = (
-        mirrored[0, layout.next_queue].reshape(QUEUE_SIZE, NUM_PIECE_TYPES).argmax(dim=1)
+        mirrored[0, layout.next_queue]
+        .reshape(QUEUE_SIZE, NUM_PIECE_TYPES)
+        .argmax(dim=1)
     )
     assert mirrored_queue.tolist() == [0, 4, 3, 6, 5]
     assert torch.allclose(
@@ -173,14 +177,16 @@ def test_mirror_aux_features_remaps_piece_planes_and_is_involution() -> None:
         mirrored[0, layout.column_heights],
         aux_batch[0, layout.column_heights].flip(dims=(0,)),
     )
-    assert mirrored[0, layout.max_column_height].item() == aux_batch[
-        0, layout.max_column_height
-    ].item()
+    assert (
+        mirrored[0, layout.max_column_height].item()
+        == aux_batch[0, layout.max_column_height].item()
+    )
     assert mirrored[0, layout.bumpiness].item() == aux_batch[0, layout.bumpiness].item()
     assert mirrored[0, layout.holes].item() == aux_batch[0, layout.holes].item()
-    assert mirrored[0, layout.overhang_fields].item() == aux_batch[
-        0, layout.overhang_fields
-    ].item()
+    assert (
+        mirrored[0, layout.overhang_fields].item()
+        == aux_batch[0, layout.overhang_fields].item()
+    )
 
     assert torch.allclose(mirror_aux_features(mirrored), aux_batch)
 
