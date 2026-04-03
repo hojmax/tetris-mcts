@@ -11,6 +11,7 @@ Short-term operational memory for this repo. Read this file at the start of ever
 
 ## Notes
 
+- 2026-04-03: After the `GameGenerator::new(...)` API changed to drop the bootstrap Q-normalization arg and keep `candidate_gating_enabled`, `tetris_core/src/runtime/game_generator/tests.rs::test_sync_model_directly_updates_incumbent_when_candidate_gating_disabled` needed one positional `true` removed. If `cargo test` reports “takes 16 arguments but 17 were supplied” there, the test callsite is stale, not the constructor.
 - 2026-04-03: Self-play now has `self_play.use_candidate_gating`. When false, `GameGenerator` does not reserve an evaluator worker, candidate gate metrics/events are skipped, and the trainer exports a fresh sync artifact every `run.model_sync_interval_seconds` and switches all workers to it immediately.
 - 2026-04-03: Training config defaults now live in the repo-root `config.yaml`, not in `tetris_bot/ml/config.py`. `tetris_bot/ml/config.py` uses required Pydantic models with no field defaults, `tetris_bot/scripts/train.py` loads config from `--config` (defaulting to that root YAML), and per-run saved configs are now `config.yaml` instead of `config.json`.
 - 2026-04-03: MCTS no longer supports tanh/Q-scale normalization. Search now always min-max normalizes Q values in PUCT, the `q_scale` / `use_tanh_q_normalization` / `bootstrap_use_min_max_q_normalization` config surface was removed from Rust + Python, and inspection/playback tooling now reads only per-search `q_min`/`q_max` bounds.

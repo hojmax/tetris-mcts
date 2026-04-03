@@ -478,7 +478,6 @@ fn test_sync_model_directly_updates_incumbent_when_candidate_gating_disabled() {
         Some(vec![]),
         false,
         10,
-        true,
         0.0,
         1.0,
         false,
