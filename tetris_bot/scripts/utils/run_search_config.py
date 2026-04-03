@@ -153,12 +153,6 @@ def build_mcts_config(
         config_data.get("visit_sampling_epsilon", 0.0)
     )
     config.max_placements = int(config_data["max_placements"])
-    config.q_scale = (
-        float(config_data["q_scale"])
-        if config_data.get("use_tanh_q_normalization", True)
-        and config_data.get("q_scale") is not None
-        else None
-    )
     config.reuse_tree = bool(config_data.get("reuse_tree", True))
     config.nn_value_weight = float(
         config_data.get("nn_value_weight", config.nn_value_weight)

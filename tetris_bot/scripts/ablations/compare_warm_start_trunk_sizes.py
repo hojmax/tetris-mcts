@@ -483,11 +483,6 @@ def build_benchmark_config(
     config.dirichlet_epsilon = source_config.self_play.dirichlet_epsilon
     config.visit_sampling_epsilon = 0.0
     config.max_placements = max_placements
-    config.q_scale = (
-        source_config.self_play.q_scale
-        if source_config.self_play.use_tanh_q_normalization
-        else None
-    )
     config.reuse_tree = source_config.self_play.reuse_tree
     config.use_parent_value_for_unvisited_q = (
         source_config.self_play.use_parent_value_for_unvisited_q

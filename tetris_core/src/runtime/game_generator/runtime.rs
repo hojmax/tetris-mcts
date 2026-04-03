@@ -408,7 +408,6 @@ impl GameGenerator {
             &settings.config,
             target_uses_network,
             settings.non_network_num_simulations,
-            settings.bootstrap_use_min_max_q_normalization,
             target_nn_value_weight,
             target_death_penalty,
             target_overhang_penalty_weight,
@@ -475,7 +474,6 @@ impl GameGenerator {
             &eval_config,
             true,
             settings.non_network_num_simulations,
-            settings.bootstrap_use_min_max_q_normalization,
             candidate.nn_value_weight,
             candidate_death_penalty,
             candidate_overhang_penalty_weight,
@@ -484,7 +482,6 @@ impl GameGenerator {
             &eval_config,
             true,
             settings.non_network_num_simulations,
-            settings.bootstrap_use_min_max_q_normalization,
             candidate.nn_value_weight,
             candidate_death_penalty,
             candidate_overhang_penalty_weight,
@@ -652,7 +649,6 @@ impl GameGenerator {
                 &eval_config,
                 true,
                 settings.non_network_num_simulations,
-                settings.bootstrap_use_min_max_q_normalization,
                 incumbent_nn_value_weight_before,
                 candidate_death_penalty,
                 candidate_overhang_penalty_weight,
@@ -838,7 +834,6 @@ impl GameGenerator {
         base_config: &MCTSConfig,
         uses_network: bool,
         non_network_num_simulations: u32,
-        bootstrap_use_min_max_q_normalization: bool,
         nn_value_weight: f32,
         death_penalty: f32,
         overhang_penalty_weight: f32,
@@ -852,9 +847,6 @@ impl GameGenerator {
         rollout_config.nn_value_weight = nn_value_weight;
         rollout_config.death_penalty = death_penalty;
         rollout_config.overhang_penalty_weight = overhang_penalty_weight;
-        if !uses_network && bootstrap_use_min_max_q_normalization {
-            rollout_config.q_scale = None;
-        }
         rollout_config
     }
 
@@ -862,7 +854,6 @@ impl GameGenerator {
         base_config: &MCTSConfig,
         uses_network: bool,
         non_network_num_simulations: u32,
-        bootstrap_use_min_max_q_normalization: bool,
         nn_value_weight: f32,
         death_penalty: f32,
         overhang_penalty_weight: f32,
@@ -876,7 +867,6 @@ impl GameGenerator {
             base_config,
             uses_network,
             non_network_num_simulations,
-            bootstrap_use_min_max_q_normalization,
             nn_value_weight,
             death_penalty,
             overhang_penalty_weight,

@@ -1425,9 +1425,6 @@ def run_warm_start(
         mcts_config.dirichlet_epsilon = eval_config.dirichlet_epsilon
         mcts_config.visit_sampling_epsilon = 0.0
         mcts_config.max_placements = eval_max_placements
-        mcts_config.q_scale = (
-            eval_config.q_scale if eval_config.use_tanh_q_normalization else None
-        )
         mcts_config.reuse_tree = eval_config.reuse_tree
         mcts_config.use_parent_value_for_unvisited_q = (
             eval_config.use_parent_value_for_unvisited_q

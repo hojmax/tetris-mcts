@@ -501,11 +501,6 @@ class Trainer:
             self.config.self_play.overhang_penalty_weight
         )
         mcts_config.nn_value_weight = self.config.self_play.nn_value_weight
-        mcts_config.q_scale = (
-            self.config.self_play.q_scale
-            if self.config.self_play.use_tanh_q_normalization
-            else None
-        )
         mcts_config.use_parent_value_for_unvisited_q = (
             self.config.self_play.use_parent_value_for_unvisited_q
         )
@@ -1374,7 +1369,6 @@ class Trainer:
             ),
             start_with_network=not self.config.self_play.bootstrap_without_network,
             non_network_num_simulations=self.config.self_play.bootstrap_num_simulations,
-            bootstrap_use_min_max_q_normalization=self.config.self_play.bootstrap_use_min_max_q_normalization,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
             nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
             save_eval_trees=self.config.self_play.save_eval_trees,
@@ -1394,7 +1388,6 @@ class Trainer:
             candidate_eval_seeds=self.config.self_play.model_promotion_eval_games,
             bootstrap_without_network=self.config.self_play.bootstrap_without_network,
             bootstrap_num_simulations=self.config.self_play.bootstrap_num_simulations,
-            bootstrap_use_min_max_q_normalization=self.config.self_play.bootstrap_use_min_max_q_normalization,
             incumbent_nn_value_weight=self.config.self_play.nn_value_weight,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
             nn_value_weight_promotion_multiplier=self.config.self_play.nn_value_weight_promotion_multiplier,

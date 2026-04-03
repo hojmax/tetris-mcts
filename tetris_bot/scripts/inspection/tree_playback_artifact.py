@@ -37,7 +37,6 @@ def _search_config_payload(config: MCTSConfig) -> dict[str, Any]:
         "dirichlet_epsilon": float(config.dirichlet_epsilon),
         "visit_sampling_epsilon": float(config.visit_sampling_epsilon),
         "max_placements": int(config.max_placements),
-        "q_scale": float(config.q_scale) if config.q_scale is not None else None,
         "reuse_tree": bool(config.reuse_tree),
         "use_parent_value_for_unvisited_q": bool(
             config.use_parent_value_for_unvisited_q
@@ -398,7 +397,6 @@ def build_tree_dict_from_saved_playback(
         ),
         "num_simulations": search_config["num_simulations"],
         "c_puct": search_config["c_puct"],
-        "q_scale": search_config["q_scale"],
         "use_parent_value_for_unvisited_q": search_config[
             "use_parent_value_for_unvisited_q"
         ],

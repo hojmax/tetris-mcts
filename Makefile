@@ -230,8 +230,8 @@ sweep-lr-model: $(RELEASE_MARKER)
 eval-nn-value-weight: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/ablations/evaluate_nn_value_weight_sweep.py $(ARGS)
 
-# Sweep an MCTS config parameter (e.g. q_scale, nn_value_weight, c_puct) over multiple values
-# Usage: make sweep-mcts-config ARGS="--run_dir training_runs/v32 --sweep_param q_scale --sweep_values '[2,4,8,16,32]'"
+# Sweep an MCTS config parameter (e.g. c_puct, nn_value_weight, death_penalty) over multiple values
+# Usage: make sweep-mcts-config ARGS="--run_dir training_runs/v32 --sweep_param c_puct --sweep_values '[0.75,1.0,1.5,2.0,2.5]'"
 sweep-mcts-config: $(RELEASE_MARKER)
 	$(PYTHON) tetris_bot/scripts/ablations/sweep_mcts_config.py $(ARGS)
 

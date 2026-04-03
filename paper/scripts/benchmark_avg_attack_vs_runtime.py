@@ -196,12 +196,6 @@ def build_eval_config(
     )
     config.visit_sampling_epsilon = 0.0
     config.max_placements = int(effective_self_play_config["max_placements"])
-    config.q_scale = (
-        float(effective_self_play_config["q_scale"])
-        if effective_self_play_config.get("use_tanh_q_normalization", True)
-        and effective_self_play_config.get("q_scale") is not None
-        else None
-    )
     config.reuse_tree = bool(effective_self_play_config.get("reuse_tree", True))
     config.use_parent_value_for_unvisited_q = bool(
         effective_self_play_config.get("use_parent_value_for_unvisited_q", False)
@@ -332,7 +326,6 @@ def build_summary_payload(
             "dirichlet_epsilon": representative_config.dirichlet_epsilon,
             "visit_sampling_epsilon": representative_config.visit_sampling_epsilon,
             "max_placements": representative_config.max_placements,
-            "q_scale": representative_config.q_scale,
             "reuse_tree": representative_config.reuse_tree,
             "use_parent_value_for_unvisited_q": (
                 representative_config.use_parent_value_for_unvisited_q

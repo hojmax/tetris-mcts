@@ -75,8 +75,6 @@ def build_bootstrap_config_from_values(
     config.max_placements = max_placements
     config.reuse_tree = True
 
-    # Keep bootstrap behavior aligned with training no-NN rollout defaults.
-    config.q_scale = None
     config.dirichlet_alpha = 0.02
     config.death_penalty = 5.0
     config.overhang_penalty_weight = 5.0
@@ -317,7 +315,6 @@ def main(args: ScriptArgs) -> None:
             "num_workers_used": worker_count,
             "add_noise": args.add_noise,
             "reuse_tree": True,
-            "q_scale": None,
             "dirichlet_alpha": 0.02,
             "death_penalty": 5.0,
             "overhang_penalty_weight": 5.0,

@@ -13,7 +13,6 @@ import base64
 import io
 import importlib.util
 import json
-import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -158,9 +157,6 @@ def load_viz_defaults(
             "dirichlet_alpha": float(config["dirichlet_alpha"]),
             "dirichlet_epsilon": float(config["dirichlet_epsilon"]),
             "max_placements": int(config["max_placements"]),
-            "q_scale": (
-                float(config["q_scale"]) if config.get("q_scale") is not None else None
-            ),
             "use_dummy_network": args.use_dummy_network,
         }
 
@@ -190,9 +186,6 @@ def load_viz_defaults(
             f"Run config missing required keys: {', '.join(sorted(missing_keys))}"
         )
 
-    use_tanh = config.get("use_tanh_q_normalization", True)
-    q_scale = float(config["q_scale"]) if use_tanh and "q_scale" in config else None
-
     return {
         "model_path": str(model_path),
         "num_simulations": int(config["num_simulations"]),
@@ -201,7 +194,6 @@ def load_viz_defaults(
         "dirichlet_alpha": float(config["dirichlet_alpha"]),
         "dirichlet_epsilon": float(config["dirichlet_epsilon"]),
         "max_placements": int(config["max_placements"]),
-        "q_scale": q_scale,
         "use_dummy_network": args.use_dummy_network,
     }
 
@@ -378,15 +370,7 @@ def normalize_q_value(q: float, q_min: float, q_max: float) -> float:
     return (q - q_min) / q_range
 
 
-def squash_q_value(q: float, q_scale: float) -> float:
-    return math.tanh(q / q_scale)
-
-
-def transform_q(
-    raw_q: float, q_scale: float | None, q_min: float, q_max: float
-) -> float:
-    if q_scale is not None:
-        return squash_q_value(raw_q, q_scale)
+def transform_q(raw_q: float, q_min: float, q_max: float) -> float:
     return normalize_q_value(raw_q, q_min, q_max)
 
 
@@ -471,7 +455,9 @@ def get_possible_chance_outcomes_for_env(env: TetrisEnv) -> list[int]:
 
 
 def build_decision_action_stats(
-    decision_node: dict, tree_dict: dict, c_puct: float, q_scale: float | None
+    decision_node: dict,
+    tree_dict: dict,
+    c_puct: float,
 ) -> list[dict]:
     if not decision_node["valid_actions"]:
         return []
@@ -519,7 +505,7 @@ def build_decision_action_stats(
         child = child_by_action.get(action_idx)
         visits = child["visit_count"] if child is not None else 0
         raw_q = raw_q_by_action[action_idx]
-        transformed_q = transform_q(raw_q, q_scale, q_min, q_max)
+        transformed_q = transform_q(raw_q, q_min, q_max)
         u_value = c_puct * prior * sqrt_parent / (1 + visits)
         puct_total = transformed_q + u_value
 
@@ -844,7 +830,6 @@ def build_env_cache_for_tree(tree) -> dict[int, TetrisEnv]:
 def tree_export_to_dict(
     tree,
     c_puct: float,
-    q_scale: float | None,
     use_parent_value_for_unvisited_q: bool,
     search_step: int = 0,
     is_reuse_root: bool = False,
@@ -905,7 +890,6 @@ def tree_export_to_dict(
         "q_min": q_bounds["q_min"],
         "q_max": q_bounds["q_max"],
         "c_puct": c_puct,
-        "q_scale": q_scale,
         "use_parent_value_for_unvisited_q": use_parent_value_for_unvisited_q,
         "mode": "single_search",
         "counter_label": f"Sims: {tree.num_simulations}",
@@ -979,7 +963,6 @@ def find_selected_path_targets(
 def build_full_game_tree_dict(
     playback,
     c_puct: float,
-    q_scale: float | None,
     use_parent_value_for_unvisited_q: bool,
 ) -> dict:
     combined_nodes: list[dict] = []
@@ -994,7 +977,6 @@ def build_full_game_tree_dict(
         step_tree = tree_export_to_dict(
             step.tree,
             c_puct=c_puct,
-            q_scale=q_scale,
             use_parent_value_for_unvisited_q=use_parent_value_for_unvisited_q,
             search_step=step_index,
             is_reuse_root=step_index > 0,
@@ -1052,7 +1034,6 @@ def build_full_game_tree_dict(
         if playback.steps
         else 0,
         "c_puct": c_puct,
-        "q_scale": q_scale,
         "mode": "full_game",
         "counter_label": (
             f"Full game: {playback.num_moves} placements, {playback.num_frames} frames, "
@@ -1214,7 +1195,7 @@ def apply_custom_state(
     return None
 
 
-def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
+def display_virtual_node(node_data, tree_dict, c_puct):
     """Display details for a virtual (unvisited) node."""
     # Parse virtual node ID: v_parentid_actionidx
     parts = node_data["id"].split("_")
@@ -1228,7 +1209,7 @@ def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
         return "Parent not found", "", ""
 
     parent = tree_dict["nodes"][parent_id]
-    action_stats = build_decision_action_stats(parent, tree_dict, c_puct, q_scale)
+    action_stats = build_decision_action_stats(parent, tree_dict, c_puct)
     stats_by_action = {row["action"]: row for row in action_stats}
     if action_idx not in stats_by_action:
         return "Action not found in parent valid actions", "", ""
@@ -1258,13 +1239,9 @@ def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
         html.P(f"Prior (P): {action_row['prior']:.4f}", style={"fontWeight": "bold"}),
         html.P(f"Q (raw): {action_row['raw_q']:.6f}"),
         html.P(
-            f"Q_tanh: tanh({action_row['raw_q']:.4f}/{q_scale:.1f}) = {action_row['q_transformed']:.6f}"
-            if q_scale is not None
-            else (
-                "Q_norm: "
-                f"{action_row['q_transformed']:.6f} "
-                f"({describe_q_bounds_source(action_row['q_bounds_source'], action_row['q_min'], action_row['q_max'])})"
-            )
+            "Q_norm: "
+            f"{action_row['q_transformed']:.6f} "
+            f"({describe_q_bounds_source(action_row['q_bounds_source'], action_row['q_min'], action_row['q_max'])})"
         ),
         html.P(
             f"Exploration (U): {action_row['u']:.3f}",
@@ -1272,7 +1249,7 @@ def display_virtual_node(node_data, tree_dict, c_puct, q_scale):
         ),
         html.P(
             (
-                f"PUCT = Q_{'tanh' if q_scale is not None else 'norm'} + U = "
+                "PUCT = Q_norm + U = "
                 f"{action_row['q_transformed']:.6f} + {action_row['u']:.6f} = {action_row['puct']:.6f}"
             ),
             style={"fontWeight": "bold"},
@@ -1696,8 +1673,7 @@ def _virtual_action_node_data(tree_dict: dict, node_id_str: str) -> dict | None:
         return None
 
     c_puct = tree_dict.get("c_puct", 1.0)
-    q_scale = tree_dict.get("q_scale")
-    action_stats = build_decision_action_stats(parent, tree_dict, c_puct, q_scale)
+    action_stats = build_decision_action_stats(parent, tree_dict, c_puct)
     stats_by_action = {row["action"]: row for row in action_stats}
     action_row = stats_by_action.get(action_idx)
     if action_row is None:
@@ -1849,7 +1825,6 @@ def resolve_best_child_target(tree_dict: dict, node_id_str: str) -> str | None:
             node,
             tree_dict,
             tree_dict.get("c_puct", 1.0),
-            tree_dict.get("q_scale"),
         )
         if action_stats:
             best_action = max(
@@ -2068,14 +2043,6 @@ app.layout = html.Div(
                     type="number",
                     value=VIZ_DEFAULTS["c_puct"],
                     step=0.1,
-                    style={"width": "70px", "marginRight": "15px"},
-                ),
-                html.Label("q_scale:", style={"marginRight": "5px"}),
-                dcc.Input(
-                    id="q-scale",
-                    type="number",
-                    value=VIZ_DEFAULTS["q_scale"],
-                    step=1.0,
                     style={"width": "70px", "marginRight": "15px"},
                 ),
                 html.Label("Seed:", style={"marginRight": "5px"}),
@@ -2402,7 +2369,6 @@ def build_error_elements(error_label: str) -> list[dict]:
     State("use-dummy-network", "value"),
     State("num-simulations", "value"),
     State("c-puct", "value"),
-    State("q-scale", "value"),
     State("seed", "value"),
     State("move-number", "value"),
     State("add-noise", "value"),
@@ -2431,7 +2397,6 @@ def run_mcts(
     use_dummy_network_value,
     num_sims,
     c_puct,
-    q_scale_input,
     seed,
     move_number,
     add_noise_value,
@@ -2532,11 +2497,9 @@ def run_mcts(
         )
 
     # Create config with current number of simulations
-    q_scale = float(q_scale_input) if q_scale_input is not None else None
     config = MCTSConfig()
     config.num_simulations = sims_to_run
     config.c_puct = c_puct
-    config.q_scale = q_scale
     config.temperature = temperature
     config.dirichlet_alpha = dirichlet_alpha
     config.dirichlet_epsilon = dirichlet_epsilon
@@ -2641,7 +2604,6 @@ def run_mcts(
         tree_dict = build_full_game_tree_dict(
             playback,
             config.c_puct,
-            config.q_scale,
             config.use_parent_value_for_unvisited_q,
         )
         elements = build_cytoscape_elements(tree_dict, None, show_unvisited)
@@ -2678,7 +2640,6 @@ def run_mcts(
     tree_dict = tree_export_to_dict(
         tree,
         config.c_puct,
-        config.q_scale,
         config.use_parent_value_for_unvisited_q,
     )
     tree_dict["counter_label"] = f"Sims: {sims_to_run}"
@@ -2723,12 +2684,11 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
         return "Click a node to see details", "", ""
 
     c_puct = tree_dict.get("c_puct", 1.0)
-    q_scale = tree_dict.get("q_scale")
     node_id_str = str(node_data["id"])
 
     # Handle virtual (unvisited) chance nodes (from decision node actions)
     if node_id_str.startswith("v_") and not node_id_str.startswith("vp_"):
-        return display_virtual_node(node_data, tree_dict, c_puct, q_scale)
+        return display_virtual_node(node_data, tree_dict, c_puct)
 
     # Handle virtual (unvisited) decision nodes (from chance node piece outcomes)
     if node_id_str.startswith("vp_"):
@@ -2765,8 +2725,8 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
                 html.P(f"Valid Actions: {len(node['valid_actions'])}"),
             ]
         )
-        action_stats = build_decision_action_stats(node, tree_dict, c_puct, q_scale)
-        q_col = "Qtanh" if q_scale is not None else "Qnorm"
+        action_stats = build_decision_action_stats(node, tree_dict, c_puct)
+        q_col = "Qnorm"
 
         if action_stats:
             q_min = float(action_stats[0]["q_min"])
@@ -2774,12 +2734,8 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
             q_bounds_source = str(action_stats[0]["q_bounds_source"])
             details.append(html.Hr())
             q_desc = (
-                f"PUCT = Q_tanh + U, where Q_tanh = tanh(Q/{q_scale:.1f})"
-                if q_scale is not None
-                else (
-                    "PUCT = Q_norm + U, where Q_norm is min-max normalized "
-                    f"using {describe_q_bounds_source(q_bounds_source, q_min, q_max)}"
-                )
+                "PUCT = Q_norm + U, where Q_norm is min-max normalized "
+                f"using {describe_q_bounds_source(q_bounds_source, q_min, q_max)}"
             )
             details.append(
                 html.P(
@@ -2822,7 +2778,7 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
             edge = node.get("edge_from_parent")
             if edge is not None and parent["action_priors"]:
                 parent_action_stats = build_decision_action_stats(
-                    parent, tree_dict, c_puct, q_scale
+                    parent, tree_dict, c_puct
                 )
                 selection_row = next(
                     (row for row in parent_action_stats if row["action"] == edge), None
@@ -2846,13 +2802,9 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
                     )
                     details.append(
                         html.P(
-                            f"Q_tanh: tanh({selection_row['raw_q']:.4f}/{q_scale:.1f}) = {selection_row['q_transformed']:.6f}"
-                            if q_scale is not None
-                            else (
-                                "Q_norm: "
-                                f"{selection_row['q_transformed']:.6f} "
-                                f"({describe_q_bounds_source(selection_row['q_bounds_source'], selection_row['q_min'], selection_row['q_max'])})"
-                            ),
+                            "Q_norm: "
+                            f"{selection_row['q_transformed']:.6f} "
+                            f"({describe_q_bounds_source(selection_row['q_bounds_source'], selection_row['q_min'], selection_row['q_max'])})",
                         )
                     )
                     details.append(
@@ -2871,11 +2823,10 @@ def display_node_details(tap_node_data, selected_node_id, tree_dict):
                             style={"fontFamily": "monospace", "fontSize": "12px"},
                         )
                     )
-                    q_label = "Q_tanh" if q_scale is not None else "Q_norm"
                     details.append(
                         html.P(
                             (
-                                f"PUCT = {q_label} + U = "
+                                "PUCT = Q_norm + U = "
                                 f"{selection_row['q_transformed']:.6f} + {selection_row['u']:.6f} = "
                                 f"{selection_row['puct']:.6f}"
                             ),
