@@ -196,3 +196,85 @@ Board:
 LL...LLLLL
 LLL.LLLLLL
 ```
+
+# Good Instances For Workload
+
+1. Training Workload:
+
+   ```
+   1x RTX 5090
+   Verified
+   89.22.197.55
+
+   1 mon 1d
+   1 mon 26d
+   $0.009/hr
+   Instance ID: 32315723
+   Host: 56505
+   Machine ID: 37025
+   Vol:
+   No Volumes
+   Max CUDA: 13.0
+   108.1 TFLOPS
+   VRAM 0.5/31.8 GB
+   1452.9 GB/s
+   DLPerf
+   202.8 DLPerf
+   374.0 DLP/$/hr
+   Network
+   125 ports
+   364.2 Mbps
+   845.6 Mbps
+   CPU
+   AMD EPYC 9754 128-Core Processor
+   64.0/512 CPU
+   4 / 129.0 GB
+   Disk
+   Predator SSD GM7 4TB
+   14028.8 MB/s
+   22.0 / 32.0 GB
+   Motherboard
+   GENOA2D24G-2L
+   PCIE 5.0/16x
+   54.2 GB/s
+   ```
+
+2. Experimentation Workload:
+
+   ```
+   4x RTX 3090
+   Verified
+   175.155.64.175
+
+   2m 2s
+   3 mon
+   $0.548/hr
+   Instance ID: 34144369
+   Host: 124072
+   Machine ID: 37162
+   Vol:
+   No Volumes
+   Max CUDA: 12.8
+   141.1 TFLOPS
+   VRAM 1.8/96.0 GB
+   825.1 GB/s
+   DLPerf
+   162.4 DLPerf
+   296.7 DLP/$/hr
+   Network
+   500 ports
+   70.1 Mbps
+   264.0 Mbps
+   CPU
+   Xeon® Gold 6330
+   56.0/112 CPU
+   1 / 257.8 GB
+   Disk
+   SAMSUNG MZQLB3T8HALS-00007
+   2408.8 MB/s
+   0.0 / 16.0 GB
+   Motherboard
+   JIUTIAN
+   PCIE 4.0/16x
+   17.6 GB/s
+   ```
