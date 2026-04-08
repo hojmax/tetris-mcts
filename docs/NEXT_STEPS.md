@@ -1,5 +1,11 @@
 # Next Steps
 
+- [ ]  Auxiliary loss
+    - [ ]  Predict next move logits
+    - [ ]  Predict value sum over next 1,2,3,4,5 moves
+    - [ ]  See offline loss
+- [ ]  Check loss on input augmentation
+
 - [ ] Change network to do spatial policy. 4 x 20 x 10
 - [ ] Adding in coords into input layer
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actions are always masked out.
