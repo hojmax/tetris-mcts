@@ -107,6 +107,7 @@ def test_restore_trainer_can_use_latest_checkpoint_model_as_incumbent(
     tmp_path: Path,
 ) -> None:
     trainer, config = _make_trainer(tmp_path)
+    config.self_play.use_candidate_gating = True
     checkpoint = tmp_path / "latest.pt"
     incumbent_path = tmp_path / "incumbent.onnx"
     incumbent_path.write_text("placeholder")
