@@ -37,7 +37,7 @@ class ScriptArgs:
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
     resume_dir: (  # Bootstrap a new run from existing run dir
         Path | None
-    ) = Path(__file__).parent.parent.parent / "training_runs" / "v30"
+    ) = None  # Path(__file__).parent.parent.parent / "training_runs" / "v30"
     resume_restore_optimizer_scheduler: bool = True  # If True, restore optimizer and scheduler from checkpoint when using resume_dir; if False, restore optimizer only and rebuild scheduler from current config
     resume_latest_as_incumbent: bool = False  # If True, resumed runs start self-play from the restored latest checkpoint model instead of the source run's saved incumbent bundle, and recompute the incumbent gate baseline on fixed seeds
     resume_wandb: (  # Resume from WandB run/artifact reference (entity/project/run_id or entity/project/artifact:alias)
