@@ -28,7 +28,8 @@ Training data packs all 80 aux features together; the model splits internally.
 Rust inference encodes board stats separately for the cached board embedding path.
 
 Forward path:
-- Conv trunk over the board tensor
+- CoordConv: concatenate normalized row/col coordinate channels to board (1ch -> 3ch)
+- Conv trunk over the augmented board tensor
 - Board-stats encoder + cached board MLP
 - Separate piece/game aux MLP
 - Concatenate board and aux embeddings, then run the shared policy/value trunk
@@ -237,9 +238,18 @@ class TetrisNet(nn.Module):
         fusion_hidden: int,
         num_fusion_blocks: int,
     ) -> None:
+        # Positional encoding: normalized row/col coordinate channels (CoordConv)
+        row_coords = torch.linspace(0.0, 1.0, BOARD_HEIGHT).view(1, 1, BOARD_HEIGHT, 1)
+        row_coords = row_coords.expand(1, 1, BOARD_HEIGHT, BOARD_WIDTH).contiguous()
+        col_coords = torch.linspace(0.0, 1.0, BOARD_WIDTH).view(1, 1, 1, BOARD_WIDTH)
+        col_coords = col_coords.expand(1, 1, BOARD_HEIGHT, BOARD_WIDTH).contiguous()
+        self.register_buffer("row_coords", row_coords)
+        self.register_buffer("col_coords", col_coords)
+
         # Conv backbone: initial -> res blocks -> stride-2 reduction
+        # 3 input channels: board + row_coords + col_coords
         self.conv_initial = nn.Conv2d(
-            1, trunk_channels, kernel_size=conv_kernel_size, padding=conv_padding
+            3, trunk_channels, kernel_size=conv_kernel_size, padding=conv_padding
         )
         self.bn_initial = _make_group_norm(trunk_channels)
         self.res_blocks = nn.ModuleList(
@@ -368,7 +378,16 @@ class TetrisNet(nn.Module):
         """
         piece_aux = aux_features[:, :PIECE_AUX_FEATURES]
         board_stats = aux_features[:, PIECE_AUX_FEATURES:]
-        x = F.silu(self.bn_initial(self.conv_initial(board)))
+        batch_size = board.size(0)
+        board_with_coords = torch.cat(
+            [
+                board,
+                self.row_coords.expand(batch_size, -1, -1, -1),
+                self.col_coords.expand(batch_size, -1, -1, -1),
+            ],
+            dim=1,
+        )
+        x = F.silu(self.bn_initial(self.conv_initial(board_with_coords)))
         for block in self.res_blocks:
             x = block(x)
         x = F.silu(self.bn_reduce(self.conv_reduce(x)))
@@ -401,6 +420,8 @@ class ConvBackbone(nn.Module):
 
     def __init__(self, parent: TetrisNet):
         super().__init__()
+        self.register_buffer("row_coords", parent.row_coords)
+        self.register_buffer("col_coords", parent.col_coords)
         self.conv_initial = parent.conv_initial
         self.bn_initial = parent.bn_initial
         self.res_blocks = parent.res_blocks
@@ -408,7 +429,16 @@ class ConvBackbone(nn.Module):
         self.bn_reduce = parent.bn_reduce
 
     def forward(self, board: torch.Tensor) -> torch.Tensor:
-        x = F.silu(self.bn_initial(self.conv_initial(board)))
+        batch_size = board.size(0)
+        board_with_coords = torch.cat(
+            [
+                board,
+                self.row_coords.expand(batch_size, -1, -1, -1),
+                self.col_coords.expand(batch_size, -1, -1, -1),
+            ],
+            dim=1,
+        )
+        x = F.silu(self.bn_initial(self.conv_initial(board_with_coords)))
         for block in self.res_blocks:
             x = block(x)
         x = F.silu(self.bn_reduce(self.conv_reduce(x)))
