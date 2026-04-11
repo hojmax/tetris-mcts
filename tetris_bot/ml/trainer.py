@@ -111,7 +111,7 @@ class Trainer:
 
         # Create model
         if model is None:
-            model = TetrisNet(**config.network.to_model_kwargs())
+            model = TetrisNet(**config.network.model_dump())
         self.model = model.to(self.device)
         if not 0.0 <= self.config.optimizer.ema_decay < 1.0:
             raise ValueError(
@@ -1957,7 +1957,7 @@ class Trainer:
                     )
                     self._async_checkpoint_saver.submit(
                         snapshot=checkpoint_snapshot,
-                        model_kwargs=dict(self.config.network.to_model_kwargs()),
+                        model_kwargs=self.config.network.model_dump(),
                     )
                     logger.info("Queued async checkpoint save", step=self.step)
                     next_checkpoint_time_s = roll_interval_deadline(

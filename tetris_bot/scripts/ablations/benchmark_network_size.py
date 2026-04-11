@@ -42,7 +42,7 @@ class BenchmarkArgs:
 
 
 def export_model(fc_hidden: int, label: str, output_dir: Path) -> Path:
-    model_kwargs = _DEFAULT_NETWORK.to_model_kwargs()
+    model_kwargs = _DEFAULT_NETWORK.model_dump()
     model_kwargs["fc_hidden"] = fc_hidden
     model = TetrisNet(**model_kwargs)
     model.eval()

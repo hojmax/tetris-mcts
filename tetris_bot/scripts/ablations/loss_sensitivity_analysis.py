@@ -350,7 +350,7 @@ def load_analysis_model(
     probe_sd = state.get("ema_state_dict") or state.get("model_state_dict", {})
     is_legacy = _is_legacy_aux(probe_sd)
 
-    model_kwargs = config.network.to_model_kwargs()
+    model_kwargs = config.network.model_dump()
     if is_legacy:
         model_kwargs["num_aux_hidden_layers"] = 0
         logger.info("Detected legacy aux_fc checkpoint; remapping keys")

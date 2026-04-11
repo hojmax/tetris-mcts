@@ -1298,7 +1298,7 @@ def run_warm_start(
 
     torch.manual_seed(args.seed)
     torch.set_float32_matmul_precision("high")
-    model = TetrisNet(**resolved_output_config.network.to_model_kwargs()).to(device)
+    model = TetrisNet(**resolved_output_config.network.model_dump()).to(device)
 
     try:
         npz = np.load(source_training_data_path, mmap_mode="r")

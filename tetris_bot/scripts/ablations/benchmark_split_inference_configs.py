@@ -105,7 +105,7 @@ def count_parameters(model: TetrisNet) -> int:
 
 
 def export_variant(spec: VariantSpec, output_dir: Path) -> ExportedVariant:
-    model = TetrisNet(**spec.network.to_model_kwargs())
+    model = TetrisNet(**spec.network.model_dump())
     model.eval()
 
     onnx_path = output_dir / f"{spec.label}.onnx"

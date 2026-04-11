@@ -409,7 +409,7 @@ def build_variant_network_config(
 
 
 def count_parameters(network: NetworkConfig) -> int:
-    model = TetrisNet(**network.to_model_kwargs())
+    model = TetrisNet(**network.model_dump())
     return sum(parameter.numel() for parameter in model.parameters())
 
 

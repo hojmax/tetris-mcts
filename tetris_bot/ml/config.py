@@ -3,25 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, TypedDict
 
 import yaml
 from pydantic import BaseModel, ConfigDict
-
-
-class ModelKwargs(TypedDict):
-    trunk_channels: int
-    num_conv_residual_blocks: int
-    reduction_channels: int
-    board_stats_hidden: int
-    board_proj_hidden: int
-    fc_hidden: int
-    aux_hidden: int
-    num_aux_hidden_layers: int
-    fusion_hidden: int
-    num_fusion_blocks: int
-    conv_kernel_size: int
-    conv_padding: int
 
 
 class ConfigModel(BaseModel):
@@ -43,22 +27,6 @@ class NetworkConfig(ConfigModel):
     num_fusion_blocks: int
     conv_kernel_size: int
     conv_padding: int
-
-    def to_model_kwargs(self) -> ModelKwargs:
-        return {
-            "trunk_channels": self.trunk_channels,
-            "num_conv_residual_blocks": self.num_conv_residual_blocks,
-            "reduction_channels": self.reduction_channels,
-            "board_stats_hidden": self.board_stats_hidden,
-            "board_proj_hidden": self.board_proj_hidden,
-            "fc_hidden": self.fc_hidden,
-            "aux_hidden": self.aux_hidden,
-            "num_aux_hidden_layers": self.num_aux_hidden_layers,
-            "fusion_hidden": self.fusion_hidden,
-            "num_fusion_blocks": self.num_fusion_blocks,
-            "conv_kernel_size": self.conv_kernel_size,
-            "conv_padding": self.conv_padding,
-        }
 
 
 class OptimizerConfig(ConfigModel):
@@ -151,24 +119,9 @@ class TrainingConfig(ConfigModel):
     run: RunConfig
 
 
-def _coerce_mapping(
-    raw_value: object,
-    *,
-    field_name: str,
-) -> Mapping[str, Any]:
-    if not isinstance(raw_value, Mapping):
-        raise TypeError(
-            f"{field_name} must be a mapping (got {type(raw_value).__name__})"
-        )
-    return raw_value
-
-
 def save_training_config(config: TrainingConfig, path: Path) -> None:
     path.write_text(yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False))
 
 
 def load_training_config(path: Path) -> TrainingConfig:
-    raw_data = yaml.safe_load(path.read_text())
-    return TrainingConfig.model_validate(
-        _coerce_mapping(raw_data, field_name=str(path))
-    )
+    return TrainingConfig.model_validate(yaml.safe_load(path.read_text()))

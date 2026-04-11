@@ -41,7 +41,7 @@ class ValuePredictor:
 
     def _load_model(self, checkpoint_path: Path, config_path: Path) -> TetrisNet:
         config = load_training_config(config_path)
-        model = TetrisNet(**config.network.to_model_kwargs())
+        model = TetrisNet(**config.network.model_dump())
         load_checkpoint(checkpoint_path, model=model, ema_model=None)
         model.eval()
         return model
