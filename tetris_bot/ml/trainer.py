@@ -5,11 +5,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import random
 import signal
 import tempfile
 import time
 from typing import cast
 
+from pydantic import BaseModel, ConfigDict
 import structlog
 import torch
 import wandb
@@ -57,7 +59,7 @@ from tetris_bot.ml.game_metrics import (
 )
 from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 
-from tetris_core.tetris_core import MCTSConfig, GameGenerator
+from tetris_core.tetris_core import GameGenerator, GameReplay, MCTSConfig
 from tetris_core.tetris_core import evaluate_model
 
 logger = structlog.get_logger()
@@ -78,6 +80,19 @@ class CandidateGateSchedule:
     current_interval_seconds: float
     failed_promotion_streak: int
     next_export_time_s: float
+
+
+class CompletedGameLogEntry(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    game_number: int
+    stats: dict[str, float]
+    completed_time_s: float
+    replay: object | None = None
+
+    @property
+    def total_attack(self) -> int:
+        return int(self.stats["total_attack"])
 
 
 def _candidate_gate_interval_seconds(
@@ -209,6 +224,90 @@ class Trainer:
                 f"(got {model_sync_interval_seconds})"
             )
         return model_sync_interval_seconds
+
+    def _drain_completed_games(
+        self, generator: GameGenerator
+    ) -> list[CompletedGameLogEntry]:
+        return [
+            CompletedGameLogEntry.model_validate(payload)
+            for payload in generator.drain_completed_games()
+        ]
+
+    @staticmethod
+    def _prune_recent_completed_replays(
+        recent_completed_replays: deque[CompletedGameLogEntry],
+        min_completed_time_s: float,
+    ) -> None:
+        retained_replays = [
+            replay
+            for replay in recent_completed_replays
+            if replay.completed_time_s >= min_completed_time_s
+        ]
+        recent_completed_replays.clear()
+        recent_completed_replays.extend(retained_replays)
+
+    def _remember_recent_completed_replays(
+        self,
+        recent_completed_replays: deque[CompletedGameLogEntry],
+        completed_games: list[CompletedGameLogEntry],
+        *,
+        min_completed_time_s: float,
+    ) -> None:
+        for completed_game in completed_games:
+            if completed_game.replay is not None:
+                recent_completed_replays.append(completed_game)
+        self._prune_recent_completed_replays(
+            recent_completed_replays,
+            min_completed_time_s,
+        )
+
+    def _build_direct_sync_recent_game_wandb_data(
+        self,
+        recent_completed_replays: deque[CompletedGameLogEntry],
+        *,
+        now_s: float,
+        window_s: float,
+    ) -> dict[str, object]:
+        self._prune_recent_completed_replays(
+            recent_completed_replays,
+            now_s - window_s,
+        )
+        if not recent_completed_replays:
+            return {}
+
+        selected_replay = random.choice(list(recent_completed_replays))
+        replay_payload = selected_replay.replay
+        if replay_payload is None:
+            return {}
+        replay = cast(GameReplay, replay_payload)
+
+        frames = render_replay(replay)
+        video, _ = self._create_wandb_gif_video(
+            frames,
+            attack=selected_replay.total_attack,
+            gif_stem=(
+                "direct_sync"
+                f"_step{self.step}"
+                f"_game{selected_replay.game_number}"
+                f"_attack{selected_replay.total_attack}"
+            ),
+        )
+        if video is None:
+            return {}
+
+        return {
+            "model_sync/random_recent_game": video,
+            "model_sync/random_recent_game_number": float(
+                selected_replay.game_number
+            ),
+            "model_sync/random_recent_game_attack": float(
+                selected_replay.total_attack
+            ),
+            "model_sync/random_recent_game_age_seconds": max(
+                0.0, now_s - selected_replay.completed_time_s
+            ),
+            "model_sync/random_recent_game_window_seconds": window_s,
+        }
 
     def _current_runtime_override_state(self) -> ResolvedRuntimeOverrides:
         return ResolvedRuntimeOverrides(
@@ -883,14 +982,22 @@ class Trainer:
             if best_replay is not None:
                 frames = render_replay(best_replay)
                 video, _ = self._create_wandb_gif_video(
-                    frames, attack=best_replay.total_attack
+                    frames,
+                    attack=best_replay.total_attack,
+                    gif_stem=(
+                        f"eval_best_step{self.step}_attack{best_replay.total_attack}"
+                    ),
                 )
                 if video is not None:
                     wandb_data["eval/best_trajectory"] = video
             if worst_replay is not None:
                 frames = render_replay(worst_replay)
                 video, _ = self._create_wandb_gif_video(
-                    frames, attack=worst_replay.total_attack
+                    frames,
+                    attack=worst_replay.total_attack,
+                    gif_stem=(
+                        f"eval_worst_step{self.step}_attack{worst_replay.total_attack}"
+                    ),
                 )
                 if video is not None:
                     wandb_data["eval/worst_trajectory"] = video
@@ -1446,13 +1553,15 @@ class Trainer:
         self,
         frames: list,
         attack: int,
+        *,
+        gif_stem: str | None = None,
     ) -> tuple[wandb.Video | None, Path | None]:
         if not frames:
             return None, None
 
-        gif_path = (
-            Path(tempfile.gettempdir()) / f"eval_step{self.step}_attack{attack}.gif"
-        )
+        if gif_stem is None:
+            gif_stem = f"eval_step{self.step}_attack{attack}"
+        gif_path = Path(tempfile.gettempdir()) / f"{gif_stem}.gif"
 
         try:
             create_trajectory_gif(
@@ -1911,6 +2020,7 @@ class Trainer:
         candidate_gate_schedule: CandidateGateSchedule | None = None
         direct_sync_interval_seconds: float | None = None
         next_model_sync_time_s: float | None = None
+        recent_completed_replays: deque[CompletedGameLogEntry] = deque()
         if candidate_gating_enabled:
             candidate_gate_schedule = self._initialize_candidate_gate_schedule(
                 now_s=interval_anchor_s
@@ -2114,7 +2224,19 @@ class Trainer:
                     )
                     # Always drain completed games so Rust-side queue doesn't
                     # grow unbounded when WandB logging is disabled.
-                    completed_games = generator.drain_completed_game_stats()
+                    completed_games = self._drain_completed_games(generator)
+                    completed_game_stats = [
+                        (completed_game.game_number, completed_game.stats)
+                        for completed_game in completed_games
+                    ]
+                    if direct_sync_interval_seconds is not None:
+                        self._remember_recent_completed_replays(
+                            recent_completed_replays,
+                            completed_games,
+                            min_completed_time_s=(
+                                post_step_time - direct_sync_interval_seconds
+                            ),
+                        )
                     if log_to_wandb:
                         metrics["trainer_step"] = self.step
                         wandb.log(metrics)
@@ -2122,7 +2244,7 @@ class Trainer:
                             for (
                                 game_number,
                                 game_stats,
-                            ) in completed_games:
+                            ) in completed_game_stats:
                                 game_metrics = {
                                     "game_number": game_number,
                                     "game/number": game_number,
@@ -2155,7 +2277,9 @@ class Trainer:
                                 # a subset to appear in history.
                                 wandb.log(game_metrics)
                         else:
-                            game_avg_metrics = average_completed_games(completed_games)
+                            game_avg_metrics = average_completed_games(
+                                completed_game_stats
+                            )
                             if game_avg_metrics:
                                 game_avg_metrics["trainer_step"] = self.step
                                 game_avg_metrics["wall_time_hours"] = wall_time_hours
@@ -2308,22 +2432,26 @@ class Trainer:
                             ),
                         )
                         if log_to_wandb:
-                            wandb.log(
-                                {
-                                    "trainer_step": self.step,
-                                    "timing/onnx_export_ms": onnx_export_ms,
-                                    "model_sync/direct_sync_succeeded": (
-                                        1.0 if synced else 0.0
-                                    ),
-                                    "model_sync/nn_value_weight": (
-                                        synced_nn_value_weight
-                                    ),
-                                    "model_sync/next_sync_delay_seconds": max(
-                                        0.0,
-                                        next_model_sync_time_s - time.perf_counter(),
-                                    ),
-                                }
+                            sync_wandb_data: dict[str, object] = {
+                                "trainer_step": self.step,
+                                "timing/onnx_export_ms": onnx_export_ms,
+                                "model_sync/direct_sync_succeeded": (
+                                    1.0 if synced else 0.0
+                                ),
+                                "model_sync/nn_value_weight": synced_nn_value_weight,
+                                "model_sync/next_sync_delay_seconds": max(
+                                    0.0,
+                                    next_model_sync_time_s - time.perf_counter(),
+                                ),
+                            }
+                            sync_wandb_data.update(
+                                self._build_direct_sync_recent_game_wandb_data(
+                                    recent_completed_replays,
+                                    now_s=sync_now_s,
+                                    window_s=direct_sync_interval_seconds,
+                                )
                             )
+                            wandb.log(sync_wandb_data)
 
                 # Queue checkpoint/export work on the background saver.
                 if post_step_time >= next_checkpoint_time_s:

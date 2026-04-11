@@ -261,7 +261,8 @@ impl GameGenerator {
         let mut loaded_model_version = u64::MAX;
         let mut loaded_model_step = 0u64;
         let mut loaded_with_network = !shared.incumbent.uses_network.load(Ordering::SeqCst);
-        let mut pending_results: Vec<GameResult> = Vec::with_capacity(GAME_COMMIT_BATCH_SIZE);
+        let mut pending_results: Vec<CompletedGameResult> =
+            Vec::with_capacity(GAME_COMMIT_BATCH_SIZE);
 
         while shared.running.load(Ordering::SeqCst)
             && !Self::sync_incumbent_agent_if_needed(
@@ -349,8 +350,26 @@ impl GameGenerator {
             }
 
             // Play one game
-            if let Some(result) = agent.play_game(settings.max_placements, settings.add_noise) {
-                pending_results.push(result);
+            let env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
+            let replay_seed = env.seed;
+            if let Some((result, replay_moves)) =
+                agent.play_game_on_env(env, settings.max_placements, settings.add_noise)
+            {
+                let total_attack = result.total_attack;
+                let num_moves = result.num_moves;
+                pending_results.push(CompletedGameResult {
+                    result,
+                    completed_time_s: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("system time should be after Unix epoch")
+                        .as_secs_f64(),
+                    replay: Some(GameReplay {
+                        seed: replay_seed,
+                        moves: replay_moves,
+                        total_attack,
+                        num_moves,
+                    }),
+                });
                 if pending_results.len() >= GAME_COMMIT_BATCH_SIZE {
                     let to_commit = std::mem::take(&mut pending_results);
                     Self::commit_game_results_batch(to_commit, &shared);
@@ -891,7 +910,7 @@ impl GameGenerator {
     }
 
     pub(super) fn commit_game_results_batch(
-        results: Vec<GameResult>,
+        results: Vec<CompletedGameResult>,
         shared: &WorkerSharedState,
     ) -> usize {
         if results.is_empty() {
@@ -902,7 +921,12 @@ impl GameGenerator {
         let mut total_examples = 0u64;
         let mut completed_infos: Vec<LastGameInfo> = Vec::with_capacity(results.len());
 
-        for result in results {
+        for completed in results {
+            let CompletedGameResult {
+                result,
+                completed_time_s,
+                replay,
+            } = completed;
             let GameResult {
                 mut examples,
                 total_attack,
@@ -943,6 +967,7 @@ impl GameGenerator {
 
             completed_infos.push(LastGameInfo {
                 game_number,
+                completed_time_s,
                 stats,
                 total_attack,
                 avg_overhang_fields,
@@ -967,6 +992,7 @@ impl GameGenerator {
                 trajectory_predicted_total_attack_variance,
                 trajectory_predicted_total_attack_std,
                 trajectory_predicted_total_attack_rmse,
+                replay,
             });
         }
 

@@ -541,6 +541,21 @@ impl GameGenerator {
         drained
     }
 
+    /// Drain completed games with optional replay payloads in generation order.
+    pub fn drain_completed_games(&self, py: Python<'_>) -> Vec<HashMap<String, PyObject>> {
+        let mut queue = self.completed_games.write().unwrap();
+        let mut drained = Vec::with_capacity(queue.len());
+        while let Some(info) = queue.pop_front() {
+            let mut d: HashMap<String, PyObject> = HashMap::new();
+            d.insert("game_number".into(), info.game_number.into_py(py));
+            d.insert("stats".into(), info.to_dict().into_py(py));
+            d.insert("completed_time_s".into(), info.completed_time_s.into_py(py));
+            d.insert("replay".into(), info.replay.into_py(py));
+            drained.push(d);
+        }
+        drained
+    }
+
     /// Drain evaluator decision events in generation order.
     pub fn drain_model_eval_events(&self, py: Python<'_>) -> Vec<HashMap<String, PyObject>> {
         let mut queue = self.model_eval_events.write().unwrap();

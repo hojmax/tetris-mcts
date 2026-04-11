@@ -176,6 +176,32 @@ fn make_game_result(
     }
 }
 
+fn make_completed_game_result(
+    seed: u64,
+    completed_time_s: f64,
+    total_attack: u32,
+    total_lines: u32,
+    max_combo: u32,
+    move_numbers: &[u32],
+) -> CompletedGameResult {
+    CompletedGameResult {
+        replay: Some(GameReplay {
+            seed,
+            moves: move_numbers
+                .iter()
+                .map(|move_number| ReplayMove {
+                    action: 0,
+                    attack: *move_number,
+                })
+                .collect(),
+            total_attack,
+            num_moves: move_numbers.len() as u32,
+        }),
+        completed_time_s,
+        result: make_game_result(total_attack, total_lines, max_combo, move_numbers),
+    }
+}
+
 #[test]
 fn test_commit_game_results_batch_tags_examples_and_queues_completed_games() {
     let buffer = Arc::new(SharedBuffer::new(8));
@@ -205,8 +231,8 @@ fn test_commit_game_results_batch_tags_examples_and_queues_completed_games() {
 
     let committed = GameGenerator::commit_game_results_batch(
         vec![
-            make_game_result(7, 4, 2, &[1, 2]),
-            make_game_result(3, 1, 1, &[3]),
+            make_completed_game_result(11, 10.5, 7, 4, 2, &[1, 2]),
+            make_completed_game_result(22, 11.5, 3, 1, 1, &[3]),
         ],
         &shared,
     );
@@ -232,7 +258,9 @@ fn test_commit_game_results_batch_tags_examples_and_queues_completed_games() {
     let completed_games = completed_games.read().unwrap();
     assert_eq!(completed_games.len(), 2);
     assert_eq!(completed_games[0].game_number, 1);
+    assert_eq!(completed_games[0].completed_time_s, 10.5);
     assert_eq!(completed_games[0].total_attack, 7);
+    assert_eq!(completed_games[0].replay.as_ref().unwrap().seed, 11);
     assert_eq!(completed_games[0].stats.total_lines, 4);
     assert_eq!(completed_games[1].game_number, 2);
     assert_eq!(completed_games[1].total_attack, 3);

@@ -3,6 +3,7 @@ use super::*;
 /// Info about the last completed game (for per-game logging).
 pub(super) struct LastGameInfo {
     pub(super) game_number: u64,
+    pub(super) completed_time_s: f64,
     pub(super) stats: GameStats,
     pub(super) total_attack: u32,
     pub(super) avg_overhang_fields: f32,
@@ -27,6 +28,7 @@ pub(super) struct LastGameInfo {
     pub(super) trajectory_predicted_total_attack_variance: f32,
     pub(super) trajectory_predicted_total_attack_std: f32,
     pub(super) trajectory_predicted_total_attack_rmse: f32,
+    pub(super) replay: Option<GameReplay>,
 }
 
 impl LastGameInfo {
@@ -149,6 +151,12 @@ impl LastGameInfo {
         );
         metrics
     }
+}
+
+pub(super) struct CompletedGameResult {
+    pub(super) result: GameResult,
+    pub(super) completed_time_s: f64,
+    pub(super) replay: Option<GameReplay>,
 }
 
 #[derive(Clone)]
