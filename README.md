@@ -31,7 +31,9 @@ uv run python tetris_bot/scripts/inspection/sweep_num_workers.py
 ```
 
 `make optimize` behavior:
-- If no `training_runs/v*/checkpoints/latest.onnx` split bundle exists yet, it auto-generates a baseline bundle at `benchmarks/models/optimize_bootstrap.onnx` and proceeds.
+- It prefers the checked-in benchmark bundle at `benchmarks/models/v3_latest.onnx` when that split bundle is compatible with the current runtime.
+- If that benchmark bundle is missing or stale (for example, its `fc.bin` predates the current `TCM2` cached-board-path format), it falls back to the newest compatible `training_runs/v*/checkpoints/latest.onnx` bundle.
+- If no compatible split bundle exists yet, it auto-generates a baseline bundle at `benchmarks/models/optimize_bootstrap.onnx` and proceeds.
 
 ## Resume Training
 

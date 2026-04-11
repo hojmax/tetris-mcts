@@ -7,6 +7,7 @@ import platform
 import shlex
 import shutil
 import socket
+import string
 import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -15,8 +16,15 @@ from pathlib import Path
 import structlog
 from simple_parsing import parse
 
-from tetris_bot.constants import BENCHMARKS_DIR, DEFAULT_CONFIG_PATH, PROJECT_ROOT
+from tetris_bot.constants import (
+    BENCHMARKS_DIR,
+    DEFAULT_CONFIG_PATH,
+    PROJECT_ROOT,
+    TRAINING_RUNS_DIR,
+)
 from tetris_bot.ml.config import load_training_config
+from tetris_bot.ml.network import TetrisNet
+from tetris_bot.ml.weights import FC_BINARY_MAGIC, export_onnx, export_split_models
 
 logger = structlog.get_logger()
 _DEFAULT_SELF_PLAY = load_training_config(DEFAULT_CONFIG_PATH).self_play
@@ -25,6 +33,7 @@ _SUPPORTED_BACKENDS = {"tract", "ort"}
 _WORKER_SEARCH_MODES = {"adaptive", "grid"}
 _BACKEND_STRATEGIES = {"staged", "exhaustive"}
 _BENCHMARK_MODEL_PATH = BENCHMARKS_DIR / "models" / "v3_latest.onnx"
+_AUTO_MODEL_PATH = BENCHMARKS_DIR / "models" / "optimize_bootstrap.onnx"
 
 
 @dataclass(frozen=True)
@@ -90,7 +99,10 @@ def default_worker_candidates() -> list[int]:
 def resolve_model_path(model_path_arg: Path | None) -> Path:
     if model_path_arg is not None:
         return model_path_arg
-    return _BENCHMARK_MODEL_PATH
+    model_path = default_model_path()
+    if model_path is not None:
+        return model_path
+    return ensure_auto_model_path()
 
 
 def has_split_model_bundle(model_path: Path) -> bool:
@@ -102,6 +114,96 @@ def has_split_model_bundle(model_path: Path) -> bool:
         base.with_suffix(".fc.bin"),
     ]
     return all(path.exists() for path in required)
+
+
+def _format_magic_for_error(magic: bytes) -> str:
+    if magic and all(chr(byte) in string.printable and byte >= 32 for byte in magic):
+        return magic.decode("ascii", errors="replace")
+    return magic.hex()
+
+
+def split_model_bundle_error(model_path: Path) -> str | None:
+    base = model_path.with_suffix("")
+    conv_path = base.with_suffix(".conv.onnx")
+    heads_path = base.with_suffix(".heads.onnx")
+    fc_path = base.with_suffix(".fc.bin")
+    required = [model_path, conv_path, heads_path, fc_path]
+    missing = [path for path in required if not path.exists()]
+    if missing:
+        missing_display = ", ".join(str(path) for path in missing)
+        return (
+            f"Model bundle incomplete for {model_path} "
+            f"(missing {missing_display})"
+        )
+
+    magic = fc_path.read_bytes()[: len(FC_BINARY_MAGIC)]
+    if magic != FC_BINARY_MAGIC:
+        got_magic = _format_magic_for_error(magic)
+        expected_magic = FC_BINARY_MAGIC.decode("ascii")
+        return (
+            f"Incompatible cached board-path binary in {fc_path} "
+            f"(expected magic {expected_magic}, got {got_magic})"
+        )
+    return None
+
+
+def has_compatible_split_model_bundle(model_path: Path) -> bool:
+    return split_model_bundle_error(model_path) is None
+
+
+def _latest_compatible_training_bundle() -> Path | None:
+    checkpoints = sorted(
+        TRAINING_RUNS_DIR.glob("v*/checkpoints/latest.onnx"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for model_path in checkpoints:
+        if has_compatible_split_model_bundle(model_path):
+            return model_path
+    return None
+
+
+def default_model_path() -> Path | None:
+    benchmark_error = split_model_bundle_error(_BENCHMARK_MODEL_PATH)
+    if benchmark_error is None:
+        return _BENCHMARK_MODEL_PATH
+    if _BENCHMARK_MODEL_PATH.exists():
+        logger.warning(
+            "Skipping incompatible benchmark optimize bundle",
+            model_path=str(_BENCHMARK_MODEL_PATH),
+            error=benchmark_error,
+        )
+
+    training_model_path = _latest_compatible_training_bundle()
+    if training_model_path is not None:
+        logger.info(
+            "Using latest compatible training bundle for optimization",
+            model_path=str(training_model_path),
+        )
+        return training_model_path
+    return None
+
+
+def ensure_auto_model_path() -> Path:
+    if has_compatible_split_model_bundle(_AUTO_MODEL_PATH):
+        return _AUTO_MODEL_PATH
+
+    logger.info(
+        "Generating bootstrap optimize bundle",
+        model_path=str(_AUTO_MODEL_PATH),
+    )
+    _AUTO_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    model = TetrisNet(**load_training_config(DEFAULT_CONFIG_PATH).network.model_dump())
+    model.eval()
+    onnx_export_ok = export_onnx(model, _AUTO_MODEL_PATH)
+    split_export_ok = export_split_models(model, _AUTO_MODEL_PATH)
+    bundle_error = split_model_bundle_error(_AUTO_MODEL_PATH)
+    if not onnx_export_ok or not split_export_ok or bundle_error is not None:
+        raise RuntimeError(
+            "Failed to auto-generate a compatible optimize model bundle at "
+            f"{_AUTO_MODEL_PATH}: {bundle_error or 'ONNX export failed'}"
+        )
+    return _AUTO_MODEL_PATH
 
 
 def split_model_signature(model_path: Path) -> dict[str, int]:
@@ -343,10 +445,9 @@ def ensure_valid_args(
     args: ScriptArgs,
 ) -> tuple[Path, list[int], list[str], list[str], str, str]:
     model_path = resolve_model_path(args.model_path)
-    if not has_split_model_bundle(model_path):
-        raise FileNotFoundError(
-            f"Model bundle incomplete for {model_path} (expected .conv.onnx, .heads.onnx, .fc.bin)"
-        )
+    bundle_error = split_model_bundle_error(model_path)
+    if bundle_error is not None:
+        raise ValueError(bundle_error)
     if args.num_games <= 0:
         raise ValueError(f"num_games must be > 0 (got {args.num_games})")
     if args.num_repeats <= 0:
