@@ -33,8 +33,8 @@ mod shared;
 mod tests;
 
 use shared::{
-    CandidateModelRequest, IncumbentState, LastGameInfo, ModelEvalEvent, SharedBuffer,
-    SnapshotPersister, WorkerContext, WorkerSettings, WorkerSharedState,
+    CandidateModelRequest, CompletedGameResult, IncumbentState, LastGameInfo, ModelEvalEvent,
+    SharedBuffer, SnapshotPersister, WorkerContext, WorkerSettings, WorkerSharedState,
 };
 
 #[pyclass]

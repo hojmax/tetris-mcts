@@ -159,6 +159,7 @@ Ownership split:
 - Workers/buffer: `num_workers=7`, replay ring buffer size `7_000_000`.
 - Bootstrap: starts no-network, typically `bootstrap_num_simulations=4000` until first promotion.
 - Candidate gate: deterministic fixed-seed eval window (default 20 games, no Dirichlet noise, `visit_sampling_epsilon=0`, fixed MCTS seed), promote only if candidate beats the stored incumbent evaluation average. Fixed-seed eval trajectories are not added to the replay buffer. Candidate export timing now uses `run.model_sync_interval_seconds` as the base interval, adds `run.model_sync_failure_backoff_seconds` after each failed promotion (optionally capped by `run.model_sync_max_interval_seconds`), measures the cooldown from eval start, and suppresses exports while a candidate is pending/evaluating so long evals do not churn throwaway ONNX bundles. Set `self_play.use_candidate_gating=false` to disable the evaluator worker entirely; in that mode all workers stay on generation and the trainer directly syncs a freshly exported incumbent to everyone every `run.model_sync_interval_seconds`.
+- When `self_play.use_candidate_gating=false`, WandB direct-sync logs now also attach `model_sync/random_recent_game`: a GIF sampled from completed replays whose completion timestamps fall within the last `run.model_sync_interval_seconds`.
 - NN value scaling: defaults start at cap (`nn_value_weight=1.0`, `nn_value_weight_cap=1.0`).
 - Q normalization: search uses global min-max normalization for PUCT Q terms.
 
