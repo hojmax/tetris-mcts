@@ -39,6 +39,8 @@ Output:
 - Value head: 1 output (scalar target)
 """
 
+from typing import cast
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -379,11 +381,13 @@ class TetrisNet(nn.Module):
         piece_aux = aux_features[:, :PIECE_AUX_FEATURES]
         board_stats = aux_features[:, PIECE_AUX_FEATURES:]
         batch_size = board.size(0)
+        row_coords = cast(torch.Tensor, self.row_coords)
+        col_coords = cast(torch.Tensor, self.col_coords)
         board_with_coords = torch.cat(
             [
                 board,
-                self.row_coords.expand(batch_size, -1, -1, -1),
-                self.col_coords.expand(batch_size, -1, -1, -1),
+                row_coords.expand(batch_size, -1, -1, -1),
+                col_coords.expand(batch_size, -1, -1, -1),
             ],
             dim=1,
         )
@@ -420,8 +424,8 @@ class ConvBackbone(nn.Module):
 
     def __init__(self, parent: TetrisNet):
         super().__init__()
-        self.register_buffer("row_coords", parent.row_coords)
-        self.register_buffer("col_coords", parent.col_coords)
+        self.register_buffer("row_coords", cast(torch.Tensor, parent.row_coords))
+        self.register_buffer("col_coords", cast(torch.Tensor, parent.col_coords))
         self.conv_initial = parent.conv_initial
         self.bn_initial = parent.bn_initial
         self.res_blocks = parent.res_blocks
@@ -430,11 +434,13 @@ class ConvBackbone(nn.Module):
 
     def forward(self, board: torch.Tensor) -> torch.Tensor:
         batch_size = board.size(0)
+        row_coords = cast(torch.Tensor, self.row_coords)
+        col_coords = cast(torch.Tensor, self.col_coords)
         board_with_coords = torch.cat(
             [
                 board,
-                self.row_coords.expand(batch_size, -1, -1, -1),
-                self.col_coords.expand(batch_size, -1, -1, -1),
+                row_coords.expand(batch_size, -1, -1, -1),
+                col_coords.expand(batch_size, -1, -1, -1),
             ],
             dim=1,
         )

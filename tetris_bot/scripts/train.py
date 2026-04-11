@@ -15,9 +15,16 @@ from tetris_bot.constants import (
     DEFAULT_CONFIG_PATH,
     INCUMBENT_ONNX_FILENAME,
     LATEST_CHECKPOINT_FILENAME,
+    RUNTIME_OVERRIDES_FILENAME,
     TRAINING_DATA_FILENAME,
 )
-from tetris_bot.ml.config import TrainingConfig, load_training_config
+from tetris_bot.ml.config import (
+    ResolvedRuntimeOptimizerOverrides,
+    ResolvedRuntimeOverrides,
+    ResolvedRuntimeRunOverrides,
+    TrainingConfig,
+    load_training_config,
+)
 from tetris_bot.run_setup import configure_wandb, get_best_device, setup_run_directory
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.artifacts import copy_model_artifact_bundle
@@ -37,7 +44,7 @@ class ScriptArgs:
     device: str = "auto"  # Device to use (auto/cpu/cuda/mps)
     resume_dir: (  # Bootstrap a new run from existing run dir
         Path | None
-    ) = Path(__file__).parent.parent.parent / "training_runs" / "v30"
+    ) = None
     resume_restore_optimizer_scheduler: bool = True  # If True, restore optimizer and scheduler from checkpoint when using resume_dir; if False, restore optimizer only and rebuild scheduler from current config
     resume_latest_as_incumbent: bool = False  # If True, resumed runs start self-play from the restored latest checkpoint model instead of the source run's saved incumbent bundle, and recompute the incumbent gate baseline on fixed seeds
     resume_wandb: (  # Resume from WandB run/artifact reference (entity/project/run_id or entity/project/artifact:alias)
@@ -94,6 +101,17 @@ def setup_run(
             expected_path=str(source_training_data),
         )
 
+    source_runtime_overrides = source_run_dir / RUNTIME_OVERRIDES_FILENAME
+    if source_runtime_overrides.exists():
+        assert config.run.run_dir is not None
+        destination_runtime_overrides = config.run.run_dir / RUNTIME_OVERRIDES_FILENAME
+        shutil.copy2(source_runtime_overrides, destination_runtime_overrides)
+        logger.info(
+            "Copied runtime overrides file",
+            source=str(source_runtime_overrides),
+            destination=str(destination_runtime_overrides),
+        )
+
     resume_incumbent_model_path: Path | None = None
     if args.resume_latest_as_incumbent:
         logger.info(
@@ -146,6 +164,58 @@ def restore_trainer_from_checkpoint(
 
     if trainer.scheduler is not None and not args.resume_restore_optimizer_scheduler:
         trainer.align_scheduler_to_step(trainer.step)
+
+    runtime_override_lr_multiplier = state.get("runtime_override_lr_multiplier")
+    runtime_override_grad_clip_norm = state.get("runtime_override_grad_clip_norm")
+    runtime_override_weight_decay = state.get("runtime_override_weight_decay")
+    runtime_override_mirror_augmentation_probability = state.get(
+        "runtime_override_mirror_augmentation_probability"
+    )
+    runtime_override_log_interval_seconds = state.get(
+        "runtime_override_log_interval_seconds"
+    )
+    runtime_override_checkpoint_interval_seconds = state.get(
+        "runtime_override_checkpoint_interval_seconds"
+    )
+    if (
+        runtime_override_lr_multiplier is not None
+        and runtime_override_grad_clip_norm is not None
+        and runtime_override_weight_decay is not None
+        and runtime_override_mirror_augmentation_probability is not None
+        and runtime_override_log_interval_seconds is not None
+        and runtime_override_checkpoint_interval_seconds is not None
+    ):
+        trainer.restore_runtime_override_state(
+            ResolvedRuntimeOverrides(
+                optimizer=ResolvedRuntimeOptimizerOverrides(
+                    lr_multiplier=float(runtime_override_lr_multiplier),
+                    grad_clip_norm=float(runtime_override_grad_clip_norm),
+                    weight_decay=float(runtime_override_weight_decay),
+                    mirror_augmentation_probability=float(
+                        runtime_override_mirror_augmentation_probability
+                    ),
+                ),
+                run=ResolvedRuntimeRunOverrides(
+                    log_interval_seconds=float(runtime_override_log_interval_seconds),
+                    checkpoint_interval_seconds=float(
+                        runtime_override_checkpoint_interval_seconds
+                    ),
+                ),
+            ),
+            lrs_already_scaled=args.resume_restore_optimizer_scheduler,
+        )
+        logger.info(
+            "Restored runtime override state from checkpoint",
+            checkpoint=str(checkpoint),
+            lr_multiplier=runtime_override_lr_multiplier,
+            grad_clip_norm=runtime_override_grad_clip_norm,
+            weight_decay=runtime_override_weight_decay,
+            mirror_augmentation_probability=(
+                runtime_override_mirror_augmentation_probability
+            ),
+            log_interval_seconds=runtime_override_log_interval_seconds,
+            checkpoint_interval_seconds=(runtime_override_checkpoint_interval_seconds),
+        )
 
     incumbent_uses_network = state.get("incumbent_uses_network")
     if incumbent_uses_network is None:

@@ -20,6 +20,7 @@ NUM_ACTIONS = HOLD_ACTION_INDEX + 1
 CHECKPOINT_DIRNAME = "checkpoints"
 MODEL_CANDIDATES_DIRNAME = "model_candidates"
 CONFIG_FILENAME = "config.yaml"
+RUNTIME_OVERRIDES_FILENAME = "runtime_overrides.yaml"
 PARALLEL_ONNX_FILENAME = "parallel.onnx"
 INCUMBENT_ONNX_FILENAME = "incumbent.onnx"
 TRAINING_DATA_FILENAME = "training_data.npz"

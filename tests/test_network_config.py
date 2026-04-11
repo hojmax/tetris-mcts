@@ -22,7 +22,7 @@ def _make_config(tmp_path: Path, network: NetworkConfig) -> TrainingConfig:
     return config
 
 
-def test_network_config_to_model_kwargs_includes_full_model_surface() -> None:
+def test_network_config_model_dump_includes_full_model_surface() -> None:
     network = _DEFAULT_CONFIG.network.model_copy(
         update={
             "trunk_channels": 9,
@@ -39,7 +39,7 @@ def test_network_config_to_model_kwargs_includes_full_model_surface() -> None:
         }
     )
 
-    assert network.to_model_kwargs() == {
+    assert network.model_dump() == {
         "trunk_channels": 9,
         "num_conv_residual_blocks": 3,
         "reduction_channels": 18,

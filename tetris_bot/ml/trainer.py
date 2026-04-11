@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import signal
 import tempfile
@@ -21,9 +22,16 @@ from tetris_bot.constants import (
     LATEST_ONNX_FILENAME,
     MODEL_CANDIDATES_DIRNAME,
     PARALLEL_ONNX_FILENAME,
+    RUNTIME_OVERRIDES_FILENAME,
     TRAINING_DATA_FILENAME,
 )
-from tetris_bot.ml.config import TrainingConfig
+from tetris_bot.ml.config import (
+    ResolvedRuntimeOptimizerOverrides,
+    ResolvedRuntimeOverrides,
+    ResolvedRuntimeRunOverrides,
+    TrainingConfig,
+    load_runtime_overrides,
+)
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.network import TetrisNet
 from tetris_bot.ml.weights import (
@@ -53,6 +61,7 @@ from tetris_core.tetris_core import MCTSConfig, GameGenerator
 from tetris_core.tetris_core import evaluate_model
 
 logger = structlog.get_logger()
+RUNTIME_OVERRIDES_POLL_INTERVAL_SECONDS = 15.0
 
 
 def roll_interval_deadline(deadline_s: float, interval_s: float, now_s: float) -> float:
@@ -103,9 +112,13 @@ class Trainer:
         self.device = torch.device(device)
 
         # Validate paths are set (should be done by setup_run_directory)
-        if config.run.checkpoint_dir is None or config.run.data_dir is None:
+        if (
+            config.run.run_dir is None
+            or config.run.checkpoint_dir is None
+            or config.run.data_dir is None
+        ):
             raise ValueError(
-                "checkpoint_dir and data_dir must be set. "
+                "run_dir, checkpoint_dir, and data_dir must be set. "
                 "Call setup_run_directory() before creating Trainer."
             )
 
@@ -162,6 +175,24 @@ class Trainer:
         self.initial_candidate_gate_next_export_delay_seconds: float | None = None
         self.recompute_initial_incumbent_eval_avg_attack = False
         self._logged_live_optimizer_step_sanitization = False
+        self._lr_multiplier = 1.0
+        self._runtime_override_defaults = ResolvedRuntimeOverrides(
+            optimizer=ResolvedRuntimeOptimizerOverrides(
+                lr_multiplier=1.0,
+                grad_clip_norm=self.config.optimizer.grad_clip_norm,
+                weight_decay=self.config.optimizer.weight_decay,
+                mirror_augmentation_probability=(
+                    self.config.optimizer.mirror_augmentation_probability
+                ),
+            ),
+            run=ResolvedRuntimeRunOverrides(
+                log_interval_seconds=self.config.run.log_interval_seconds,
+                checkpoint_interval_seconds=self.config.run.checkpoint_interval_seconds,
+            ),
+        )
+        self._runtime_overrides_path = config.run.run_dir / RUNTIME_OVERRIDES_FILENAME
+        self._runtime_overrides_last_mtime_ns: int | None = None
+        self._next_runtime_overrides_check_time_s: float | None = None
 
         # Create directories
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +209,332 @@ class Trainer:
                 f"(got {model_sync_interval_seconds})"
             )
         return model_sync_interval_seconds
+
+    def _current_runtime_override_state(self) -> ResolvedRuntimeOverrides:
+        return ResolvedRuntimeOverrides(
+            optimizer=ResolvedRuntimeOptimizerOverrides(
+                lr_multiplier=self._lr_multiplier,
+                grad_clip_norm=self.config.optimizer.grad_clip_norm,
+                weight_decay=self.config.optimizer.weight_decay,
+                mirror_augmentation_probability=(
+                    self.config.optimizer.mirror_augmentation_probability
+                ),
+            ),
+            run=ResolvedRuntimeRunOverrides(
+                log_interval_seconds=self.config.run.log_interval_seconds,
+                checkpoint_interval_seconds=self.config.run.checkpoint_interval_seconds,
+            ),
+        )
+
+    def _resolved_runtime_overrides(
+        self, override_file_values: ResolvedRuntimeOverrides | None = None
+    ) -> ResolvedRuntimeOverrides:
+        if override_file_values is not None:
+            return override_file_values
+        return self._runtime_override_defaults
+
+    @staticmethod
+    def _validate_runtime_override_value(
+        name: str,
+        value: float,
+        *,
+        min_value: float | None = None,
+        max_value: float | None = None,
+        strictly_positive: bool = False,
+    ) -> None:
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite (got {value})")
+        if strictly_positive and value <= 0.0:
+            raise ValueError(f"{name} must be > 0 (got {value})")
+        if min_value is not None and value < min_value:
+            raise ValueError(f"{name} must be >= {min_value} (got {value})")
+        if max_value is not None and value > max_value:
+            raise ValueError(f"{name} must be <= {max_value} (got {value})")
+
+    def _read_runtime_overrides_file(
+        self,
+    ) -> tuple[int | None, ResolvedRuntimeOverrides]:
+        if not self._runtime_overrides_path.exists():
+            return None, self._runtime_override_defaults
+
+        file_mtime_ns = self._runtime_overrides_path.stat().st_mtime_ns
+        overrides = load_runtime_overrides(self._runtime_overrides_path)
+        resolved = ResolvedRuntimeOverrides(
+            optimizer=ResolvedRuntimeOptimizerOverrides(
+                lr_multiplier=(
+                    self._runtime_override_defaults.optimizer.lr_multiplier
+                    if overrides.optimizer.lr_multiplier is None
+                    else overrides.optimizer.lr_multiplier
+                ),
+                grad_clip_norm=(
+                    self._runtime_override_defaults.optimizer.grad_clip_norm
+                    if overrides.optimizer.grad_clip_norm is None
+                    else overrides.optimizer.grad_clip_norm
+                ),
+                weight_decay=(
+                    self._runtime_override_defaults.optimizer.weight_decay
+                    if overrides.optimizer.weight_decay is None
+                    else overrides.optimizer.weight_decay
+                ),
+                mirror_augmentation_probability=(
+                    self._runtime_override_defaults.optimizer.mirror_augmentation_probability
+                    if overrides.optimizer.mirror_augmentation_probability is None
+                    else overrides.optimizer.mirror_augmentation_probability
+                ),
+            ),
+            run=ResolvedRuntimeRunOverrides(
+                log_interval_seconds=(
+                    self._runtime_override_defaults.run.log_interval_seconds
+                    if overrides.run.log_interval_seconds is None
+                    else overrides.run.log_interval_seconds
+                ),
+                checkpoint_interval_seconds=(
+                    self._runtime_override_defaults.run.checkpoint_interval_seconds
+                    if overrides.run.checkpoint_interval_seconds is None
+                    else overrides.run.checkpoint_interval_seconds
+                ),
+            ),
+        )
+        return file_mtime_ns, resolved
+
+    @staticmethod
+    def _reschedule_runtime_deadline(
+        *,
+        current_deadline_s: float | None,
+        previous_interval_s: float,
+        new_interval_s: float,
+        now_s: float,
+    ) -> float | None:
+        if current_deadline_s is None or previous_interval_s == new_interval_s:
+            return current_deadline_s
+        previous_event_time_s = current_deadline_s - previous_interval_s
+        next_deadline_s = previous_event_time_s + new_interval_s
+        if next_deadline_s <= now_s:
+            return now_s
+        return next_deadline_s
+
+    def _set_lr_multiplier(self, lr_multiplier: float) -> None:
+        if lr_multiplier == self._lr_multiplier:
+            return
+        ratio = lr_multiplier / self._lr_multiplier
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] *= ratio
+        self._lr_multiplier = lr_multiplier
+
+    def _apply_lr_multiplier_after_scheduler_step(self) -> None:
+        if self._lr_multiplier == 1.0:
+            return
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] *= self._lr_multiplier
+
+    def restore_runtime_override_state(
+        self,
+        state: ResolvedRuntimeOverrides,
+        *,
+        lrs_already_scaled: bool,
+    ) -> None:
+        self._validate_runtime_override_value(
+            "runtime override optimizer.lr_multiplier",
+            state.optimizer.lr_multiplier,
+            strictly_positive=True,
+        )
+        self._validate_runtime_override_value(
+            "runtime override optimizer.grad_clip_norm",
+            state.optimizer.grad_clip_norm,
+            min_value=0.0,
+        )
+        self._validate_runtime_override_value(
+            "runtime override optimizer.weight_decay",
+            state.optimizer.weight_decay,
+            min_value=0.0,
+        )
+        self._validate_runtime_override_value(
+            "runtime override optimizer.mirror_augmentation_probability",
+            state.optimizer.mirror_augmentation_probability,
+            min_value=0.0,
+            max_value=1.0,
+        )
+        self._validate_runtime_override_value(
+            "runtime override run.log_interval_seconds",
+            state.run.log_interval_seconds,
+            strictly_positive=True,
+        )
+        self._validate_runtime_override_value(
+            "runtime override run.checkpoint_interval_seconds",
+            state.run.checkpoint_interval_seconds,
+            strictly_positive=True,
+        )
+
+        self.config.optimizer.grad_clip_norm = state.optimizer.grad_clip_norm
+        self.config.optimizer.weight_decay = state.optimizer.weight_decay
+        self.config.optimizer.mirror_augmentation_probability = (
+            state.optimizer.mirror_augmentation_probability
+        )
+        for param_group in self.optimizer.param_groups:
+            param_group["weight_decay"] = state.optimizer.weight_decay
+        self.config.run.log_interval_seconds = state.run.log_interval_seconds
+        self.config.run.checkpoint_interval_seconds = (
+            state.run.checkpoint_interval_seconds
+        )
+        if lrs_already_scaled:
+            self._lr_multiplier = state.optimizer.lr_multiplier
+        else:
+            self._set_lr_multiplier(state.optimizer.lr_multiplier)
+
+    def _maybe_reload_runtime_overrides(
+        self,
+        *,
+        now_s: float,
+        next_log_time_s: float | None,
+        next_checkpoint_time_s: float | None,
+        force: bool = False,
+    ) -> tuple[float | None, float | None]:
+        if (
+            not force
+            and self._next_runtime_overrides_check_time_s is not None
+            and now_s < self._next_runtime_overrides_check_time_s
+        ):
+            return next_log_time_s, next_checkpoint_time_s
+        self._next_runtime_overrides_check_time_s = (
+            now_s + RUNTIME_OVERRIDES_POLL_INTERVAL_SECONDS
+        )
+
+        try:
+            file_mtime_ns, resolved = self._read_runtime_overrides_file()
+        except Exception:
+            logger.warning(
+                "Failed to reload runtime overrides; keeping previous values",
+                runtime_overrides_path=str(self._runtime_overrides_path),
+                exc_info=True,
+            )
+            return next_log_time_s, next_checkpoint_time_s
+
+        if not force and file_mtime_ns == self._runtime_overrides_last_mtime_ns:
+            return next_log_time_s, next_checkpoint_time_s
+
+        current_state = self._current_runtime_override_state()
+        changes: dict[str, tuple[float, float]] = {}
+
+        self._validate_runtime_override_value(
+            "runtime override optimizer.lr_multiplier",
+            resolved.optimizer.lr_multiplier,
+            strictly_positive=True,
+        )
+        self._validate_runtime_override_value(
+            "runtime override optimizer.grad_clip_norm",
+            resolved.optimizer.grad_clip_norm,
+            min_value=0.0,
+        )
+        self._validate_runtime_override_value(
+            "runtime override optimizer.weight_decay",
+            resolved.optimizer.weight_decay,
+            min_value=0.0,
+        )
+        self._validate_runtime_override_value(
+            "runtime override optimizer.mirror_augmentation_probability",
+            resolved.optimizer.mirror_augmentation_probability,
+            min_value=0.0,
+            max_value=1.0,
+        )
+        self._validate_runtime_override_value(
+            "runtime override run.log_interval_seconds",
+            resolved.run.log_interval_seconds,
+            strictly_positive=True,
+        )
+        self._validate_runtime_override_value(
+            "runtime override run.checkpoint_interval_seconds",
+            resolved.run.checkpoint_interval_seconds,
+            strictly_positive=True,
+        )
+
+        if resolved.optimizer.lr_multiplier != current_state.optimizer.lr_multiplier:
+            changes["optimizer.lr_multiplier"] = (
+                current_state.optimizer.lr_multiplier,
+                resolved.optimizer.lr_multiplier,
+            )
+            self._set_lr_multiplier(resolved.optimizer.lr_multiplier)
+
+        if resolved.optimizer.grad_clip_norm != current_state.optimizer.grad_clip_norm:
+            changes["optimizer.grad_clip_norm"] = (
+                current_state.optimizer.grad_clip_norm,
+                resolved.optimizer.grad_clip_norm,
+            )
+            self.config.optimizer.grad_clip_norm = resolved.optimizer.grad_clip_norm
+
+        if resolved.optimizer.weight_decay != current_state.optimizer.weight_decay:
+            changes["optimizer.weight_decay"] = (
+                current_state.optimizer.weight_decay,
+                resolved.optimizer.weight_decay,
+            )
+            self.config.optimizer.weight_decay = resolved.optimizer.weight_decay
+            for param_group in self.optimizer.param_groups:
+                param_group["weight_decay"] = resolved.optimizer.weight_decay
+
+        if (
+            resolved.optimizer.mirror_augmentation_probability
+            != current_state.optimizer.mirror_augmentation_probability
+        ):
+            changes["optimizer.mirror_augmentation_probability"] = (
+                current_state.optimizer.mirror_augmentation_probability,
+                resolved.optimizer.mirror_augmentation_probability,
+            )
+            self.config.optimizer.mirror_augmentation_probability = (
+                resolved.optimizer.mirror_augmentation_probability
+            )
+
+        previous_log_interval_s = current_state.run.log_interval_seconds
+        if resolved.run.log_interval_seconds != previous_log_interval_s:
+            changes["run.log_interval_seconds"] = (
+                previous_log_interval_s,
+                resolved.run.log_interval_seconds,
+            )
+            self.config.run.log_interval_seconds = resolved.run.log_interval_seconds
+            next_log_time_s = self._reschedule_runtime_deadline(
+                current_deadline_s=next_log_time_s,
+                previous_interval_s=previous_log_interval_s,
+                new_interval_s=resolved.run.log_interval_seconds,
+                now_s=now_s,
+            )
+
+        previous_checkpoint_interval_s = current_state.run.checkpoint_interval_seconds
+        if resolved.run.checkpoint_interval_seconds != previous_checkpoint_interval_s:
+            changes["run.checkpoint_interval_seconds"] = (
+                previous_checkpoint_interval_s,
+                resolved.run.checkpoint_interval_seconds,
+            )
+            self.config.run.checkpoint_interval_seconds = (
+                resolved.run.checkpoint_interval_seconds
+            )
+            next_checkpoint_time_s = self._reschedule_runtime_deadline(
+                current_deadline_s=next_checkpoint_time_s,
+                previous_interval_s=previous_checkpoint_interval_s,
+                new_interval_s=resolved.run.checkpoint_interval_seconds,
+                now_s=now_s,
+            )
+
+        self._runtime_overrides_last_mtime_ns = file_mtime_ns
+        if changes:
+            flattened_changes = {
+                key.replace(".", "_"): {"old": old, "new": new}
+                for key, (old, new) in changes.items()
+            }
+            logger.info(
+                "Applied runtime overrides",
+                runtime_overrides_path=str(self._runtime_overrides_path),
+                changes=flattened_changes,
+            )
+            if wandb.run is not None:
+                wandb.log(
+                    {
+                        "trainer_step": self.step,
+                        **{
+                            f"runtime_override/{key.replace('.', '_')}": new
+                            for key, (_, new) in changes.items()
+                        },
+                    }
+                )
+
+        return next_log_time_s, next_checkpoint_time_s
 
     def _export_rust_inference_artifacts(
         self,
@@ -283,6 +640,27 @@ class Trainer:
                 candidate_gate_schedule.failed_promotion_streak
             ),
             "candidate_gate_next_export_delay_seconds": next_export_delay_seconds,
+        }
+
+    def _runtime_override_checkpoint_state(self) -> dict[str, object]:
+        runtime_overrides = self._current_runtime_override_state()
+        return {
+            "runtime_override_lr_multiplier": (
+                runtime_overrides.optimizer.lr_multiplier
+            ),
+            "runtime_override_grad_clip_norm": (
+                runtime_overrides.optimizer.grad_clip_norm
+            ),
+            "runtime_override_weight_decay": runtime_overrides.optimizer.weight_decay,
+            "runtime_override_mirror_augmentation_probability": (
+                runtime_overrides.optimizer.mirror_augmentation_probability
+            ),
+            "runtime_override_log_interval_seconds": (
+                runtime_overrides.run.log_interval_seconds
+            ),
+            "runtime_override_checkpoint_interval_seconds": (
+                runtime_overrides.run.checkpoint_interval_seconds
+            ),
         }
 
     def _update_candidate_gate_schedule_from_eval(
@@ -983,6 +1361,7 @@ class Trainer:
             self.ema.update(self._export_model)
         if self.scheduler:
             self.scheduler.step()
+            self._apply_lr_multiplier_after_scheduler_step()
 
         if not collect_metrics:
             return {}
@@ -1313,6 +1692,7 @@ class Trainer:
                         else None
                     ),
                 }
+                extra_checkpoint_state.update(self._runtime_override_checkpoint_state())
                 extra_checkpoint_state.update(
                     self._candidate_gate_checkpoint_state(
                         candidate_gate_schedule,
@@ -1360,6 +1740,12 @@ class Trainer:
         onnx_path = self.config.run.checkpoint_dir / PARALLEL_ONNX_FILENAME
         candidate_model_dir = self.config.run.checkpoint_dir / MODEL_CANDIDATES_DIRNAME
         candidate_model_dir.mkdir(parents=True, exist_ok=True)
+        self._maybe_reload_runtime_overrides(
+            now_s=time.perf_counter(),
+            next_log_time_s=None,
+            next_checkpoint_time_s=None,
+            force=True,
+        )
         candidate_gating_enabled = self._candidate_gating_enabled()
 
         # Export initial model (full ONNX + split models for cached Rust inference)
@@ -1564,6 +1950,17 @@ class Trainer:
             while self.step < num_steps:
                 self._drain_async_checkpoint_saver()
                 pre_step_time = time.perf_counter()
+                next_log_time_s, next_checkpoint_time_s = (
+                    self._maybe_reload_runtime_overrides(
+                        now_s=pre_step_time,
+                        next_log_time_s=next_log_time_s,
+                        next_checkpoint_time_s=next_checkpoint_time_s,
+                    )
+                )
+                if next_log_time_s is None:
+                    raise RuntimeError("Training log deadline is unavailable")
+                if next_checkpoint_time_s is None:
+                    raise RuntimeError("Training checkpoint deadline is unavailable")
 
                 if use_device_replay_mirror:
                     should_refresh_mirror = (
@@ -1950,6 +2347,7 @@ class Trainer:
                                 else None
                             ),
                         }
+                        | self._runtime_override_checkpoint_state()
                         | self._candidate_gate_checkpoint_state(
                             candidate_gate_schedule,
                             now_s=time.perf_counter(),
