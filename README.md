@@ -12,6 +12,11 @@ AlphaZero-style Tetris with:
 make install
 ```
 
+Python note:
+- The repo currently supports Python `3.12` and `3.13`.
+- Python `3.14` is not supported yet because `onnxruntime` does not publish compatible wheels there.
+- `.python-version` pins the project default to `3.12`, and the project metadata rejects `3.14+`.
+
 `make install` bootstraps:
 - `uv` (if missing)
 - Rust toolchain via `rustup` (if missing)
@@ -133,3 +138,19 @@ To skip system package auto-install during bootstrap: `make install AUTO_INSTALL
 ### `WARNING: Running pip as the 'root' user ...`
 
 This warning comes from `maturin` invoking `pip` internally and is expected in root containers. If installation completed, it is not a blocker.
+
+### `onnxruntime` can't be installed on Python 3.14
+
+Symptom:
+- `uv sync --frozen` fails with an error saying `onnxruntime` has no wheel for `cp314`
+
+Cause:
+- The repo depends on `onnxruntime`, which currently supports Python `3.12` and `3.13`, but not `3.14`.
+
+Fix:
+
+```bash
+uv python install 3.12
+uv venv --python 3.12 .venv
+uv sync --frozen
+```
