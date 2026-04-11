@@ -176,7 +176,7 @@ build-dev: $(DEV_MARKER)
 
 # Run the game (builds first if needed)
 play: $(RELEASE_MARKER)
-	$(PYTHON) tetris_bot/scripts/tetris_game.py
+	$(PYTHON) tetris_bot/scripts/inspection/tetris_game.py
 
 # Run the MCTS visualizer (builds first if needed)
 # Usage: make viz RUN_DIR=training_runs/v15
