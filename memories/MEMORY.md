@@ -11,6 +11,7 @@ Short-term operational memory for this repo. Read this file at the start of ever
 
 ## Notes
 
+- 2026-04-11: Early `Buffer fill progress` logs can stay at `0` and then jump sharply because the trainer polls once per second while Rust workers only increment `games_generated` when they commit finished games. In `tetris_core/src/runtime/game_generator/runtime.rs`, non-save workers batch commits in groups of `GAME_COMMIT_BATCH_SIZE = 4`; worker `0` flushes partial batches every loop because it also handles periodic snapshot duties. `buffer_size` is replay example count (`self.buffer.len()`), not game count, so jumps are roughly `games_committed * examples_per_game`.
 - 2026-04-11: Training now defines a separate `game_time/*` WandB namespace keyed by `wall_time_hours`. Use it for time-on-x game plots such as `game_time/total_attack`; keep the existing `game/*` namespace for plots keyed by `game_number`.
 - 2026-04-11: Fresh Linux/container installs can fail at `make train` during `uv sync --frozen` if the base interpreter is Python 3.14. The repo declares only `requires-python >=3.12`, so `uv` may create `.venv` with `cp314`, but locked dependency `onnxruntime==1.23.2` has wheels for `cp312`, `cp313`, and `cp313t` only. Use Python 3.12 or 3.13 for this repo until `onnxruntime` publishes `cp314` wheels or the dependency is changed.
 - 2026-04-11: The manual Pygame play tool now lives at `tetris_bot/scripts/inspection/tetris_game.py`; keep `make play` and docs pointed at that path instead of the old top-level `tetris_bot/scripts/tetris_game.py`.
