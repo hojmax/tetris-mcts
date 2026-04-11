@@ -37,7 +37,7 @@ self_play:
   dirichlet_alpha: 0.02
   dirichlet_epsilon: 0.25
   add_noise: true
-  nn_value_weight: 1.0
+  nn_value_weight: 0.01
   nn_value_weight_promotion_multiplier: 1.4
   nn_value_weight_promotion_max_delta: 0.1
   nn_value_weight_cap: 1.0
@@ -45,18 +45,18 @@ self_play:
   visit_sampling_epsilon: 0.2
   mcts_seed: 0
   reuse_tree: true
-  num_workers: 7
+  num_workers: 32
   max_placements: 50
-  death_penalty: 0.0
-  overhang_penalty_weight: 0.0
+  death_penalty: 10.0
+  overhang_penalty_weight: 10.0
   use_candidate_gating: false
   model_promotion_eval_games: 20
-  bootstrap_without_network: false
+  bootstrap_without_network: true
   bootstrap_num_simulations: 4000
   save_eval_trees: false
 replay:
   buffer_size: 7000000
-  min_buffer_size: 100
+  min_buffer_size: 200000
   prefetch_batches: 1
   staged_batch_cache_batches: 1
   mirror_replay_on_accelerator: true

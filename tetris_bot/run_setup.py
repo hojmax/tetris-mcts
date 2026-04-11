@@ -109,3 +109,4 @@ def configure_wandb(
     wandb.define_metric("model_gate_time/*", step_metric="wall_time_hours")
     wandb.define_metric("game_number")
     wandb.define_metric("game/*", step_metric="game_number")
+    wandb.define_metric("game_time/*", step_metric="wall_time_hours")

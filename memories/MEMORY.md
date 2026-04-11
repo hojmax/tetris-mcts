@@ -11,6 +11,7 @@ Short-term operational memory for this repo. Read this file at the start of ever
 
 ## Notes
 
+- 2026-04-11: Training now defines a separate `game_time/*` WandB namespace keyed by `wall_time_hours`. Use it for time-on-x game plots such as `game_time/total_attack`; keep the existing `game/*` namespace for plots keyed by `game_number`.
 - 2026-04-11: Fresh Linux/container installs can fail at `make train` during `uv sync --frozen` if the base interpreter is Python 3.14. The repo declares only `requires-python >=3.12`, so `uv` may create `.venv` with `cp314`, but locked dependency `onnxruntime==1.23.2` has wheels for `cp312`, `cp313`, and `cp313t` only. Use Python 3.12 or 3.13 for this repo until `onnxruntime` publishes `cp314` wheels or the dependency is changed.
 - 2026-04-11: The manual Pygame play tool now lives at `tetris_bot/scripts/inspection/tetris_game.py`; keep `make play` and docs pointed at that path instead of the old top-level `tetris_bot/scripts/tetris_game.py`.
 - 2026-04-11: `make train` can fail before Python starts because the target depends on `$(INSTALL_MARKER)`, which runs `uv sync --frozen`. The locked Linux `torch==2.9.1` package comes from PyPI, pulls CUDA-related `nvidia-*` deps on x86_64 Linux, and the wheel itself is large (~900 MB in `uv.lock`), so fresh/container installs need several GB free on the filesystem backing `/tmp` and `.venv` or extraction fails with `No space left on device` while unpacking `libtorch_cuda.so`.

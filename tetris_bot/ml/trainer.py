@@ -2056,6 +2056,8 @@ class Trainer:
                             "No collected train metrics are available for logging"
                         )
                     metrics = dict(latest_train_metrics)
+                    wall_time_hours = (post_step_time - interval_anchor_s) / 3600.0
+                    metrics["wall_time_hours"] = wall_time_hours
                     if self.config.optimizer.compute_extra_train_metrics_on_log:
                         extra_metrics_start = time.perf_counter()
                         metrics.update(self._compute_extra_train_metrics(batch))
@@ -2125,9 +2127,13 @@ class Trainer:
                                     "game_number": game_number,
                                     "game/number": game_number,
                                     "trainer_step": self.step,
+                                    "wall_time_hours": wall_time_hours,
                                 }
                                 for key, value in game_stats.items():
                                     game_metrics[f"game/{key}"] = value
+                                game_metrics["game_time/total_attack"] = game_stats[
+                                    "total_attack"
+                                ]
                                 episode_length = game_stats["episode_length"]
                                 if episode_length <= 0:
                                     raise ValueError(
@@ -2152,6 +2158,10 @@ class Trainer:
                             game_avg_metrics = average_completed_games(completed_games)
                             if game_avg_metrics:
                                 game_avg_metrics["trainer_step"] = self.step
+                                game_avg_metrics["wall_time_hours"] = wall_time_hours
+                                game_avg_metrics["game_time/total_attack"] = (
+                                    game_avg_metrics["game/total_attack"]
+                                )
                                 wandb.log(game_avg_metrics)
                     sample_batch_time_s = 0.0
                     sample_batch_count = 0
