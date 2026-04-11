@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ConfigModel(BaseModel):
@@ -119,9 +119,62 @@ class TrainingConfig(ConfigModel):
     run: RunConfig
 
 
+class RuntimeOptimizerOverrides(ConfigModel):
+    """Live-tunable optimizer overrides loaded from runtime_overrides.yaml."""
+
+    lr_multiplier: float | None = 1.0
+    grad_clip_norm: float | None = None
+    weight_decay: float | None = None
+    mirror_augmentation_probability: float | None = None
+
+
+class RuntimeRunOverrides(ConfigModel):
+    """Live-tunable run interval overrides loaded from runtime_overrides.yaml."""
+
+    log_interval_seconds: float | None = None
+    checkpoint_interval_seconds: float | None = None
+
+
+class RuntimeOverrides(ConfigModel):
+    """Whitelisted runtime overrides that can change during training."""
+
+    optimizer: RuntimeOptimizerOverrides = Field(
+        default_factory=RuntimeOptimizerOverrides
+    )
+    run: RuntimeRunOverrides = Field(default_factory=RuntimeRunOverrides)
+
+
+class ResolvedRuntimeOptimizerOverrides(ConfigModel):
+    lr_multiplier: float
+    grad_clip_norm: float
+    weight_decay: float
+    mirror_augmentation_probability: float
+
+
+class ResolvedRuntimeRunOverrides(ConfigModel):
+    log_interval_seconds: float
+    checkpoint_interval_seconds: float
+
+
+class ResolvedRuntimeOverrides(ConfigModel):
+    optimizer: ResolvedRuntimeOptimizerOverrides
+    run: ResolvedRuntimeRunOverrides
+
+
 def save_training_config(config: TrainingConfig, path: Path) -> None:
     path.write_text(yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False))
 
 
 def load_training_config(path: Path) -> TrainingConfig:
     return TrainingConfig.model_validate(yaml.safe_load(path.read_text()))
+
+
+def save_runtime_overrides(overrides: RuntimeOverrides, path: Path) -> None:
+    path.write_text(yaml.safe_dump(overrides.model_dump(mode="json"), sort_keys=False))
+
+
+def load_runtime_overrides(path: Path) -> RuntimeOverrides:
+    raw_data = yaml.safe_load(path.read_text())
+    if raw_data is None:
+        return RuntimeOverrides()
+    return RuntimeOverrides.model_validate(raw_data)

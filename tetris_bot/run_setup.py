@@ -7,8 +7,18 @@ from pathlib import Path
 import torch
 import wandb
 
-from tetris_bot.constants import CHECKPOINT_DIRNAME, CONFIG_FILENAME, TRAINING_RUNS_DIR
-from tetris_bot.ml.config import TrainingConfig, save_training_config
+from tetris_bot.constants import (
+    CHECKPOINT_DIRNAME,
+    CONFIG_FILENAME,
+    RUNTIME_OVERRIDES_FILENAME,
+    TRAINING_RUNS_DIR,
+)
+from tetris_bot.ml.config import (
+    RuntimeOverrides,
+    TrainingConfig,
+    save_runtime_overrides,
+    save_training_config,
+)
 
 
 def get_next_version(base_dir: Path) -> int:
@@ -44,6 +54,9 @@ def setup_run_directory(
         config.run.run_name = run_dir.name
 
     save_training_config(config, run_dir / CONFIG_FILENAME)
+    runtime_overrides_path = run_dir / RUNTIME_OVERRIDES_FILENAME
+    if not runtime_overrides_path.exists():
+        save_runtime_overrides(RuntimeOverrides(), runtime_overrides_path)
 
     return config
 
@@ -90,6 +103,7 @@ def configure_wandb(
         "throughput/*",
         "incumbent/*",
         "model_gate/*",
+        "runtime_override/*",
     ]:
         wandb.define_metric(ns, step_metric="trainer_step")
     wandb.define_metric("model_gate_time/*", step_metric="wall_time_hours")
