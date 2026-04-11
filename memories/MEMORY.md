@@ -11,6 +11,7 @@ Short-term operational memory for this repo. Read this file at the start of ever
 
 ## Notes
 
+- 2026-04-11: `config.yaml` / `TrainingConfig` is not the whole settings surface. Important non-YAML knobs include Rust `MCTSConfig` fields that are only code-level (`track_value_history`, `policy_noise_mean/std`, `value_noise_mean/std`, `prediction_noise_seed`), runtime constants like cache sizes / lock delay / normalization divisors in `tetris_core/src/game/constants.rs`, candidate-eval fixed seeds (`seed=0`, `list(range(model_promotion_eval_games))`, `CANDIDATE_EVAL_MCTS_SEED=0`), env overrides (`TETRIS_OPT_NUM_WORKERS`, `TETRIS_NN_BACKEND`), and script-local defaults such as `tetris_bot/scripts/train.py` defaulting `resume_dir` to `training_runs/v30` plus separate warm-start/benchmark defaults.
 - 2026-04-11: Pyright sees `nn.Module` buffers like `row_coords` / `col_coords` as `Tensor | Module` at attribute access sites. In `tetris_bot/ml/network.py`, cast those buffer attributes to `torch.Tensor` before calling tensor methods like `.expand(...)` or passing them to `register_buffer(...)`.
 - 2026-04-11: `load_training_config(...)` now passes `yaml.safe_load(...)` straight into `TrainingConfig.model_validate(...)`; the old `_coerce_mapping(...)` helper was redundant because Pydantic already rejects non-mapping inputs.
 - 2026-04-11: `tetris_bot/ml/config.py` no longer has `ModelKwargs` or `NetworkConfig.to_model_kwargs()`. When constructing or tweaking `TetrisNet` kwargs from config, use `network.model_dump()` directly.
