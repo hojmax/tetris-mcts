@@ -34,7 +34,7 @@
     "111111.111"
   ],
   "metadata": {
-    "source_npz": "/Users/axelhojmark/Desktop/tetris-mcts/training_data (1).npz",
+    "source_npz": "training_data (1).npz",
     "wandb_game_number": 721,
     "game_start_index": 39423,
     "game_end_index_exclusive": 39481,

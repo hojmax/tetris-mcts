@@ -1,6 +1,0 @@
-{"label": "current_128", "run": 0, "total_time_sec": 29.751568667001266, "num_games": 20, "total_moves": 495, "avg_moves": 24.75, "avg_attack": 0.0, "moves_per_sec": 16.637778180382995, "ms_per_move": 60.10417912525509}
-{"label": "half_64", "run": 0, "total_time_sec": 21.37873995799964, "num_games": 20, "total_moves": 422, "avg_moves": 21.100000381469727, "avg_attack": 0.0, "moves_per_sec": 19.739236308082468, "ms_per_move": 50.6605212274873}
-{"label": "current_128", "run": 0, "total_time_sec": 27.709861999999703, "num_games": 20, "total_moves": 495, "avg_moves": 24.75, "avg_attack": 0.0, "moves_per_sec": 17.863676116467317, "ms_per_move": 55.97951919191859}
-{"label": "half_64", "run": 0, "total_time_sec": 20.63557375000164, "num_games": 20, "total_moves": 422, "avg_moves": 21.100000381469727, "avg_attack": 0.0, "moves_per_sec": 20.450121964743843, "ms_per_move": 48.89946386256313}
-{"label": "current_128", "run": 0, "total_time_sec": 27.422836166002526, "num_games": 20, "total_moves": 495, "avg_moves": 24.75, "avg_attack": 0.0, "moves_per_sec": 18.05064935674584, "ms_per_move": 55.39966902222732}
-{"label": "half_64", "run": 0, "total_time_sec": 20.605034416999843, "num_games": 20, "total_moves": 422, "avg_moves": 21.100000381469727, "avg_attack": 0.0, "moves_per_sec": 20.48043169740284, "ms_per_move": 48.827095774881144}
