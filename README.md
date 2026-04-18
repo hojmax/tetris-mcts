@@ -1,12 +1,12 @@
 # tetris-mcts
 
 An AlphaZero-style reinforcement learning system for Tetris. A neural network
-guides a Monte Carlo Tree Search that plays the game, generates its own training
-data through self-play, and improves by learning from it.
+guides a Monte Carlo Tree Search that plays the game, generates its own
+training data through self-play, and improves by learning from it.
 
-- **Rust** for the game engine, MCTS, and inference hot path.
-- **Python / PyTorch** for the network, training loop, and analysis tooling.
-- **PyO3 + ONNX** bridge the two: Python trains, Rust plays.
+- **Rust** — game engine, MCTS, and inference hot path.
+- **Python / PyTorch** — network, training loop, and analysis tooling.
+- **PyO3 + ONNX** — bridge the two: Python trains, Rust plays.
 
 ## How it fits together
 
@@ -21,22 +21,21 @@ data through self-play, and improves by learning from it.
                  (boards, MCTS visit policies, values)
 ```
 
-Workers play self-play games in Rust using an ONNX copy of the current network.
-Each game writes `(board, aux features, MCTS visit distribution, value target)`
-tuples into a shared ring buffer. The Python trainer samples from that buffer,
-updates the policy + value heads, and periodically exports a new ONNX
-candidate. The candidate only replaces the incumbent used by workers if it
-wins a fixed-seed evaluation window against the current incumbent — so
-regressions never poison the replay buffer.
+Workers play self-play games in Rust using an ONNX copy of the current
+network. Each game writes `(board, aux features, MCTS visit distribution,
+value target)` tuples into a shared ring buffer. The Python trainer samples
+from that buffer, updates the policy + value heads, and periodically exports
+a new ONNX candidate. The candidate only replaces the incumbent used by
+workers if it wins a fixed-seed evaluation window against the current
+incumbent, so regressions never poison the replay buffer.
 
 ## MCTS
 
-Tetris is single-player and stochastic, so the search tree alternates two node
-types:
+Tetris is single-player and stochastic, so the search tree alternates two
+node types:
 
-- **Decision nodes** where the agent picks an action (a placement cell or
-  hold).
-- **Chance nodes** where the 7-bag draws the next piece.
+- **Decision nodes** — the agent picks an action (a placement cell or hold).
+- **Chance nodes** — the 7-bag draws the next piece.
 
 Selection at decision nodes uses the standard **PUCT** rule from AlphaZero:
 
@@ -67,7 +66,7 @@ everything else should be cheap to recompute**.
 - **Self-play workers** (Rust) play full games to game-over and write tuples
   into a ring buffer (default size ~7M).
 - **Trainer** (Python) samples mini-batches (default `2048`) and minimizes
-  `policy_loss + value_loss`
+  `policy_loss + value_loss`.
 - **Candidate gating.** The trainer periodically exports an ONNX candidate
   and runs a fixed-seed eval window (default 20 games, no Dirichlet noise,
   fixed MCTS seed) against the current incumbent. The candidate promotes
@@ -88,8 +87,8 @@ make test        # Rust + Python test suites
 make check       # ruff + pyright + rustfmt + clippy
 ```
 
-`make install` bootstraps `uv`, a Rust toolchain via `rustup`, Python deps, and
-a debug PyO3 extension. On Linux it also tries to install ORT build
+`make install` bootstraps `uv`, a Rust toolchain via `rustup`, Python deps,
+and a debug PyO3 extension. On Linux it also tries to install ORT build
 prerequisites (`pkg-config`, OpenSSL headers, `patchelf`); pass
 `AUTO_INSTALL_SYSTEM_DEPS=0` to skip.
 
