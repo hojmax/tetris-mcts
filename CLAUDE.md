@@ -23,12 +23,10 @@ Treat this document as a living guide.
 ### Feature Worktrees
 
 - Small edits (tiny bug fixes, docs tweaks, narrowly scoped changes) can be done directly on `main`.
-- Feature work or risky changes must use a dedicated worktree under:
-  `/Users/axelhojmark/Desktop/tetris-mcts-worktrees/`
-- Do not implement large feature work directly in:
-  `/Users/axelhojmark/Desktop/tetris-mcts`
+- Feature work or risky changes must use a dedicated worktree located outside of the primary checkout (sibling directory).
+- Do not implement large feature work directly in the primary checkout of this repo.
 - Create isolated feature work with:
-  `git worktree add -b <branch-name> /Users/axelhojmark/Desktop/tetris-mcts-worktrees/<worktree-name> <base-ref>`
+  `git worktree add -b <branch-name> ../tetris-mcts-worktrees/<worktree-name> <base-ref>`
 - After merge, immediately remove the feature worktree and delete the branch.
 
 ### Parallel Game Generation/Evaluation
