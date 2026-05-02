@@ -5,6 +5,7 @@
     - [ ]  Predict value sum over next 1,2,3,4,5 moves
     - [ ]  See offline loss
 - [ ]  Check loss on input augmentation
+- [ ] Add final finetuning phase with no random piece placements and lower LR.
 
 - [ ] Change network to do spatial policy. 4 x 20 x 10
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actions are always masked out.
