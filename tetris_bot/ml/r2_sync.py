@@ -20,10 +20,12 @@ Background threads keep the network off the trainer/generator hot paths:
 - GameStatsDownloader: lists new keys -> downloads -> sink callback
 - ModelDownloader: polls pointer -> downloads bundle -> `sync_model_directly`
 
-Game-number namespacing: each remote machine_id has a deterministic
-`machine_offset_for(machine_id)` that high-bit-shifts the local game_number
-into a unique u64 range, so trainer-side W&B per-game logging stays unique
-across machines without coordination. Trainer's local games keep offset 0.
+Game-number namespacing: each remote machine_id is assigned a 1B-sized
+block on first sight by the trainer-side `MachineOffsetTable`; the
+mapping persists in the run dir so the same machine keeps the same
+block across resumes. Trainer's local games occupy block 0 (game numbers
+1, 2, 3, …). The first remote machine occupies block 1 (1_000_000_001,
+1_000_000_002, …), etc., so per-game W&B X-axes stay readable.
 
 Auth: credentials come from `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` env
 vars. The R2SyncConfig only carries non-secret fields.
@@ -31,7 +33,6 @@ vars. The R2SyncConfig only carries non-secret fields.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -51,22 +52,55 @@ logger = structlog.get_logger(__name__)
 # ---- Per-machine game-number offset --------------------------------------
 
 
-def machine_offset_for(machine_id: str) -> int:
-    """Deterministic non-zero u64 offset that namespaces a machine's game_numbers.
+# 1 billion game-numbers per machine block. Block 0 is reserved for the
+# trainer's own local games (its `games_generated` AtomicU64 grows naturally
+# inside [0, BLOCK_SIZE) and cannot realistically reach 1B in a run). Each
+# new remote machine_id gets the next sequential block, so game numbers
+# stay readable in W&B (laptop's first game is 1_000_000_001, not a 17-digit
+# blake2 hash).
+MACHINE_OFFSET_BLOCK_SIZE = 1_000_000_000
 
-    The high 32 bits encode a stable hash of machine_id (forced non-zero so it
-    cannot collide with the trainer's local games at offset 0). The low 32
-    bits stay free for the machine's local game counter, giving each machine
-    up to ~4 billion games before the namespace wraps.
+
+class MachineOffsetTable:
+    """Persistent first-sight allocator that maps `machine_id` to a 1B block.
+
+    Block 0 is reserved for the trainer; remote machines are assigned blocks
+    1, 2, 3, … in the order they first appear. The mapping is persisted as
+    JSON so resumed runs reuse the same numbering for the same machines, and
+    so cursor-tracked re-ingests of old chunks land back in the same block.
+
+    Thread-safe: looked up from the chunk and game-stats download threads.
     """
-    if not machine_id:
-        raise ValueError("machine_id must be a non-empty string")
-    digest = hashlib.blake2b(machine_id.encode("utf-8"), digest_size=4).digest()
-    high = int.from_bytes(digest, "big")
-    if high == 0:
-        # Astronomically unlikely; preserve the trainer's exclusive 0-prefix.
-        high = 1
-    return high << 32
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+        raw = _load_json_cursor(path)
+        blocks = raw.get("blocks", {})
+        if not isinstance(blocks, dict):
+            blocks = {}
+        self._blocks: dict[str, int] = {
+            str(k): int(v) for k, v in blocks.items() if int(v) > 0
+        }
+        self._next_block = (
+            max(self._blocks.values()) + 1 if self._blocks else 1
+        )
+
+    def offset_for(self, machine_id: str) -> int:
+        if not machine_id:
+            raise ValueError("machine_id must be a non-empty string")
+        with self._lock:
+            block = self._blocks.get(machine_id)
+            if block is None:
+                block = self._next_block
+                self._next_block += 1
+                self._blocks[machine_id] = block
+                _save_json_cursor(self._path, {"blocks": self._blocks})
+        return block * MACHINE_OFFSET_BLOCK_SIZE
+
+    def known_machines(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._blocks)
 
 
 # ---- Settings -------------------------------------------------------------
@@ -329,12 +363,14 @@ class ChunkDownloader:
         settings: R2Settings,
         cursor_path: Path,
         poll_interval_seconds: float,
+        offset_table: MachineOffsetTable,
         client_factory: Callable[[], S3LikeClient] | None = None,
     ):
         self._generator = generator
         self._settings = settings
         self._cursor_path = cursor_path
         self._poll_interval = poll_interval_seconds
+        self._offset_table = offset_table
         self._client_factory = client_factory or (lambda: make_s3_client(settings))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -434,7 +470,7 @@ class ChunkDownloader:
     def _download_and_ingest(
         self, client: S3LikeClient, key: str, machine_id: str
     ) -> None:
-        offset = machine_offset_for(machine_id)
+        offset = self._offset_table.offset_for(machine_id)
         with tempfile.TemporaryDirectory(prefix="r2-ingest-") as tmp_dir:
             tmp_path = Path(tmp_dir) / "chunk.npz"
             client.download_file(self._settings.bucket, key, str(tmp_path))
@@ -579,12 +615,14 @@ class GameStatsDownloader:
         settings: R2Settings,
         cursor_path: Path,
         poll_interval_seconds: float,
+        offset_table: MachineOffsetTable,
         client_factory: Callable[[], S3LikeClient] | None = None,
     ):
         self._sink = sink
         self._settings = settings
         self._cursor_path = cursor_path
         self._poll_interval = poll_interval_seconds
+        self._offset_table = offset_table
         self._client_factory = client_factory or (lambda: make_s3_client(settings))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -655,7 +693,7 @@ class GameStatsDownloader:
     def _pull_machine_new_batches(
         self, client: S3LikeClient, machine_id: str
     ) -> None:
-        offset = machine_offset_for(machine_id)
+        offset = self._offset_table.offset_for(machine_id)
         prefix = self._settings.game_stats_machine_prefix(machine_id)
         start_after = self._cursor.get(machine_id)
         continuation: str | None = None
