@@ -94,9 +94,15 @@ def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch
 
     Returns:
         masked_logits: Shape (batch, num_actions) - logits with invalid actions set to -inf
+    """
+    bool_masks = _as_bool_mask(action_masks)
+    return logits.masked_fill(~bool_masks, float("-inf"))
 
-    Raises:
-        ValueError: If any sample has no valid actions (indicates terminal state in training data)
+
+def validate_action_masks_have_valid_rows(action_masks: torch.Tensor) -> None:
+    """
+    Assert every row has at least one valid action. Forces a host-device sync;
+    do not call from the per-step training hot path.
     """
     bool_masks = _as_bool_mask(action_masks)
     valid_counts = bool_masks.sum(dim=1)
@@ -106,8 +112,6 @@ def apply_action_mask(logits: torch.Tensor, action_masks: torch.Tensor) -> torch
             f"Samples at indices {invalid_indices} have no valid actions. "
             "Terminal states should not be in training data."
         )
-
-    return logits.masked_fill(~bool_masks, float("-inf"))
 
 
 def compute_loss(

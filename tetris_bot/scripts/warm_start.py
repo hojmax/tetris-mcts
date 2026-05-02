@@ -192,9 +192,9 @@ def validate_args(args: ScriptArgs) -> None:
         raise ValueError(
             f"weight_decay must be >= 0 when set (got {args.weight_decay})"
         )
-    if args.grad_clip_norm is not None and args.grad_clip_norm <= 0.0:
+    if args.grad_clip_norm is not None and args.grad_clip_norm < 0.0:
         raise ValueError(
-            f"grad_clip_norm must be > 0 when set (got {args.grad_clip_norm})"
+            f"grad_clip_norm must be >= 0 when set (got {args.grad_clip_norm})"
         )
     if args.eval_examples <= 0:
         raise ValueError(f"eval_examples must be > 0 (got {args.eval_examples})")
@@ -990,9 +990,12 @@ def train_warm_start_model(
                 value_loss_weight=current_value_loss_weight,
             )
             total_loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), grad_clip_norm
-            )
+            if grad_clip_norm > 0.0:
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), grad_clip_norm
+                )
+            else:
+                grad_norm = None
             optimizer.step()
             scheduler.step()
             if ema is not None:
@@ -1021,7 +1024,11 @@ def train_warm_start_model(
                     policy_loss=policy_loss_scalar,
                     value_loss=value_loss_scalar,
                     value_loss_weight=current_value_loss_weight,
-                    grad_norm=float(grad_norm.item()),
+                    grad_norm=(
+                        float(grad_norm.item())
+                        if grad_norm is not None
+                        else float("nan")
+                    ),
                     learning_rate=optimizer.param_groups[0]["lr"],
                     elapsed_sec=elapsed_sec,
                 )
@@ -1035,7 +1042,11 @@ def train_warm_start_model(
                         "warm_start/train_batch_policy_loss": policy_loss_scalar,
                         "warm_start/train_batch_value_loss": value_loss_scalar,
                         "warm_start/value_loss_weight": current_value_loss_weight,
-                        "warm_start/grad_norm": float(grad_norm.item()),
+                        "warm_start/grad_norm": (
+                            float(grad_norm.item())
+                            if grad_norm is not None
+                            else float("nan")
+                        ),
                         "warm_start/learning_rate": optimizer.param_groups[0]["lr"],
                         "warm_start/elapsed_sec": elapsed_sec,
                         "warm_start/train_round_progress_fraction": (

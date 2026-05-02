@@ -161,12 +161,18 @@ class Trainer:
             else None
         )
 
+        # torch.compile is slower than eager on Apple Silicon (MPS); auto-disable
+        # there so optimizer + train loop both use the eager fast path.
+        self._effective_use_torch_compile = (
+            config.optimizer.use_torch_compile and self.device.type != "mps"
+        )
+
         # Create optimizer
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=config.optimizer.learning_rate,
             weight_decay=config.optimizer.weight_decay,
-            foreach=not config.optimizer.use_torch_compile,
+            foreach=not self._effective_use_torch_compile,
         )
 
         # Create scheduler
@@ -1450,10 +1456,15 @@ class Trainer:
         )
         total_loss.backward()
 
-        # Gradient clipping
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.config.optimizer.grad_clip_norm
-        )
+        # Gradient clipping. Treat <=0 as disabled; passing 0.0 to
+        # clip_grad_norm_ would zero the gradients and freeze training.
+        grad_clip_norm = self.config.optimizer.grad_clip_norm
+        if grad_clip_norm > 0.0:
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(), grad_clip_norm
+            )
+        else:
+            grad_norm = None
 
         normalized_steps = sanitize_optimizer_state_steps(self.optimizer)
         if normalized_steps > 0 and not self._logged_live_optimizer_step_sanitization:
@@ -1491,7 +1502,7 @@ class Trainer:
             "train/policy_loss_avg": policy_loss_avg,
             "train/value_loss_avg": value_loss_avg,
             "train/value_loss_weight": value_loss_weight,
-            "train/grad_norm": grad_norm.item(),
+            "train/grad_norm": grad_norm.item() if grad_norm is not None else float("nan"),
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
         }
         metrics.update(
@@ -1867,9 +1878,15 @@ class Trainer:
 
         # Optionally compile model for faster training forward/backward
         export_model = self._export_model
-        if self.config.optimizer.use_torch_compile:
+        if self._effective_use_torch_compile:
             logger.info("Compiling model with torch.compile")
             self.model = cast(TetrisNet, torch.compile(self.model))
+        elif (
+            self.config.optimizer.use_torch_compile and self.device.type == "mps"
+        ):
+            logger.info(
+                "Skipping torch.compile on MPS device (eager is faster on Apple Silicon)"
+            )
 
         generator_model_path = onnx_path
         if self.initial_incumbent_model_path is not None:

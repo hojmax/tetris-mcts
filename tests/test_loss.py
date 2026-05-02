@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tetris_bot.ml.loss import apply_action_mask
+from tetris_bot.ml.loss import apply_action_mask, validate_action_masks_have_valid_rows
 
 
 def test_apply_action_mask_accepts_boolean_masks() -> None:
@@ -18,9 +18,14 @@ def test_apply_action_mask_accepts_boolean_masks() -> None:
     assert torch.isneginf(masked_logits[1, 2])
 
 
-def test_apply_action_mask_rejects_empty_boolean_rows() -> None:
-    logits = torch.tensor([[1.0, 2.0, 3.0]])
+def test_validate_action_masks_have_valid_rows_rejects_empty_rows() -> None:
     action_masks = torch.tensor([[False, False, False]])
 
     with pytest.raises(ValueError, match="have no valid actions"):
-        apply_action_mask(logits, action_masks)
+        validate_action_masks_have_valid_rows(action_masks)
+
+
+def test_validate_action_masks_have_valid_rows_accepts_nonempty_rows() -> None:
+    action_masks = torch.tensor([[True, False, True], [False, True, False]])
+
+    validate_action_masks_have_valid_rows(action_masks)

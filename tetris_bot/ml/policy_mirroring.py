@@ -493,6 +493,8 @@ def maybe_mirror_training_tensors(
             f"augmentation: policy={policy_targets.shape[1]}, "
             f"masks={action_masks.shape[1]}"
         )
-    if torch.rand((), device=boards.device).item() >= probability:
+    # Sample on CPU to avoid forcing a host/device sync per training step on
+    # accelerator backends like CUDA/MPS.
+    if torch.rand(()).item() >= probability:
         return boards, aux, policy_targets, action_masks
     return mirror_training_tensors(boards, aux, policy_targets, action_masks)
