@@ -109,6 +109,32 @@ class RunConfig(ConfigModel):
     data_dir: Path | None
 
 
+class R2SyncConfig(ConfigModel):
+    """Cloudflare R2 (S3-compatible) sync configuration for multi-machine training.
+
+    Auth credentials are sourced from `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
+    environment variables; the config object only carries non-secret fields.
+
+    Roles:
+    - "trainer": pushes ONNX bundles, ingests replay chunks
+    - "generator": pushes replay chunks, pulls ONNX bundles
+    - "both": runs trainer locally and also ingests remote chunks (default for
+      Vast.ai trainer that still wants its own local generation alongside remote)
+    - "off": R2 sync disabled (default; existing single-machine workflow)
+    """
+
+    role: str = "off"
+    endpoint_url: str | None = None
+    bucket: str | None = None
+    prefix: str = "tetris-mcts"
+    sync_run_id: str | None = None
+    chunk_max_examples: int = 4096
+    chunk_upload_interval_seconds: float = 15.0
+    chunk_download_poll_interval_seconds: float = 10.0
+    model_pointer_poll_interval_seconds: float = 20.0
+    request_timeout_seconds: float = 30.0
+
+
 class TrainingConfig(ConfigModel):
     """Training hyperparameters."""
 
@@ -117,6 +143,7 @@ class TrainingConfig(ConfigModel):
     self_play: SelfPlayConfig
     replay: ReplayConfig
     run: RunConfig
+    r2_sync: R2SyncConfig = Field(default_factory=R2SyncConfig)
 
 
 class RuntimeOptimizerOverrides(ConfigModel):
