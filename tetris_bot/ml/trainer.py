@@ -8,6 +8,7 @@ from pathlib import Path
 import random
 import signal
 import tempfile
+import threading
 import time
 from typing import cast
 
@@ -61,6 +62,7 @@ from tetris_bot.ml.game_metrics import (
 from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 from tetris_bot.ml.r2_sync import (
     ChunkDownloader,
+    GameStatsDownloader,
     R2Settings,
     upload_model_bundle,
 )
@@ -222,7 +224,10 @@ class Trainer:
         self._next_runtime_overrides_check_time_s: float | None = None
         self._r2_settings: R2Settings | None = None
         self._r2_chunk_downloader: ChunkDownloader | None = None
+        self._r2_game_stats_downloader: GameStatsDownloader | None = None
         self._r2_last_uploaded_step: int = -1
+        self._remote_completed_games_lock = threading.Lock()
+        self._remote_completed_games: deque[CompletedGameLogEntry] = deque()
 
         # Create directories
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -243,10 +248,45 @@ class Trainer:
     def _drain_completed_games(
         self, generator: GameGenerator
     ) -> list[CompletedGameLogEntry]:
-        return [
+        local = [
             CompletedGameLogEntry.model_validate(payload)
             for payload in generator.drain_completed_games()
         ]
+        remote = self._drain_remote_completed_games()
+        return local + remote
+
+    def _drain_remote_completed_games(self) -> list[CompletedGameLogEntry]:
+        with self._remote_completed_games_lock:
+            if not self._remote_completed_games:
+                return []
+            drained = list(self._remote_completed_games)
+            self._remote_completed_games.clear()
+        return drained
+
+    def push_remote_completed_games(
+        self, entries: list[dict], game_number_offset: int
+    ) -> None:
+        """Sink for `GameStatsDownloader` — applies offset and queues entries.
+
+        Called from the downloader background thread; the lock keeps reads
+        from the trainer main loop consistent.
+        """
+        validated: list[CompletedGameLogEntry] = []
+        for entry in entries:
+            try:
+                logged = CompletedGameLogEntry.model_validate(entry)
+            except Exception:
+                logger.exception(
+                    "trainer.remote_completed_game_invalid",
+                    entry_keys=list(entry.keys()) if isinstance(entry, dict) else None,
+                )
+                continue
+            logged.game_number = logged.game_number + game_number_offset
+            validated.append(logged)
+        if not validated:
+            return
+        with self._remote_completed_games_lock:
+            self._remote_completed_games.extend(validated)
 
     @staticmethod
     def _prune_recent_completed_replays(
@@ -1571,6 +1611,9 @@ class Trainer:
             self._r2_settings = None
             return
         cursor_path = self.config.run.run_dir / "r2_ingest_cursor.json"
+        game_stats_cursor_path = (
+            self.config.run.run_dir / "r2_game_stats_ingest_cursor.json"
+        )
         self._r2_chunk_downloader = ChunkDownloader(
             generator=generator,
             settings=self._r2_settings,
@@ -1580,6 +1623,15 @@ class Trainer:
             ),
         )
         self._r2_chunk_downloader.start()
+        self._r2_game_stats_downloader = GameStatsDownloader(
+            sink=self,
+            settings=self._r2_settings,
+            cursor_path=game_stats_cursor_path,
+            poll_interval_seconds=(
+                self.config.r2_sync.chunk_download_poll_interval_seconds
+            ),
+        )
+        self._r2_game_stats_downloader.start()
         logger.info(
             "trainer.r2_sync_initialized",
             role=role,
@@ -1589,15 +1641,20 @@ class Trainer:
         )
 
     def _shutdown_r2_sync(self) -> None:
-        downloader = self._r2_chunk_downloader
-        if downloader is None:
-            return
-        try:
-            downloader.stop()
-        except Exception:
-            logger.exception("trainer.r2_chunk_downloader_stop_failed")
-        finally:
-            self._r2_chunk_downloader = None
+        chunk_downloader = self._r2_chunk_downloader
+        game_stats_downloader = self._r2_game_stats_downloader
+        if chunk_downloader is not None:
+            try:
+                chunk_downloader.stop()
+            except Exception:
+                logger.exception("trainer.r2_chunk_downloader_stop_failed")
+        if game_stats_downloader is not None:
+            try:
+                game_stats_downloader.stop()
+            except Exception:
+                logger.exception("trainer.r2_game_stats_downloader_stop_failed")
+        self._r2_chunk_downloader = None
+        self._r2_game_stats_downloader = None
 
     def _upload_to_r2_if_enabled(
         self,

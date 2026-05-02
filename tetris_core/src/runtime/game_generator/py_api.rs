@@ -793,21 +793,35 @@ impl GameGenerator {
     /// Read training examples from an NPZ file and append them to the replay buffer.
     ///
     /// Used by trainer-side ingestion of remote replay chunks fetched from R2.
+    /// `game_number_offset` is added to each example's `game_number` before
+    /// insertion so cross-machine W&B per-game logging stays unique. Local
+    /// (non-remote) ingest paths pass 0 (the default).
     /// Returns the number of examples ingested.
-    #[pyo3(signature = (filepath))]
-    pub fn ingest_examples_from_npz(&self, filepath: String) -> PyResult<usize> {
-        let examples = read_examples_from_npz(Path::new(&filepath)).map_err(|e| {
+    #[pyo3(signature = (filepath, game_number_offset = 0))]
+    pub fn ingest_examples_from_npz(
+        &self,
+        filepath: String,
+        game_number_offset: u64,
+    ) -> PyResult<usize> {
+        let mut examples = read_examples_from_npz(Path::new(&filepath)).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Failed to read replay chunk from {}: {}",
                 filepath, e
             ))
         })?;
         let count = examples.len();
-        if count > 0 {
-            self.buffer.add_examples(examples);
-            self.examples_generated
-                .fetch_add(count as u64, Ordering::SeqCst);
+        if count == 0 {
+            return Ok(0);
         }
+        if game_number_offset != 0 {
+            for example in examples.iter_mut() {
+                example.game_number =
+                    example.game_number.saturating_add(game_number_offset);
+            }
+        }
+        self.buffer.add_examples(examples);
+        self.examples_generated
+            .fetch_add(count as u64, Ordering::SeqCst);
         Ok(count)
     }
 

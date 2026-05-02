@@ -41,10 +41,11 @@ from tetris_bot.ml.config import (
 )
 from tetris_bot.ml.r2_sync import (
     ChunkUploader,
+    GameStatsUploader,
     ModelDownloader,
     R2Settings,
-    fetch_model_pointer,
     download_model_bundle,
+    fetch_model_pointer,
     make_s3_client,
 )
 
@@ -120,6 +121,7 @@ def main(args: GeneratorArgs) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     models_dir = workspace / "models"
     cursor_path = workspace / "r2_upload_cursor.json"
+    game_stats_cursor_path = workspace / "r2_game_stats_cursor.json"
     training_data_path = workspace / TRAINING_DATA_FILENAME
 
     logger.info(
@@ -189,6 +191,13 @@ def main(args: GeneratorArgs) -> None:
         chunk_max_examples=config.r2_sync.chunk_max_examples,
         upload_interval_seconds=config.r2_sync.chunk_upload_interval_seconds,
     )
+    game_stats_uploader = GameStatsUploader(
+        generator=generator,
+        settings=settings,
+        machine_id=machine_id,
+        cursor_path=game_stats_cursor_path,
+        upload_interval_seconds=config.r2_sync.chunk_upload_interval_seconds,
+    )
     downloader = ModelDownloader(
         generator=generator,
         settings=settings,
@@ -197,6 +206,7 @@ def main(args: GeneratorArgs) -> None:
         initial_model_step=pointer.step,
     )
     uploader.start()
+    game_stats_uploader.start()
     downloader.start()
 
     stop_event_handled = False
@@ -221,6 +231,7 @@ def main(args: GeneratorArgs) -> None:
         except Exception:
             logger.exception("run_generator.generator_stop_failed")
         downloader.stop()
+        game_stats_uploader.stop()
         uploader.stop()
         logger.info(
             "run_generator.shutdown_complete",

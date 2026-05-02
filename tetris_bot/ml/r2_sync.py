@@ -2,20 +2,28 @@
 
 Architecture:
 - One trainer machine (Vast.ai/GPU) runs the trainer, exports ONNX bundles, and
-  ingests replay chunks produced by remote generators.
+  ingests replay chunks + per-game stats produced by remote generators.
 - Zero or more generator machines (e.g., a personal laptop) run self-play
-  workers, upload completed games as small NPZ chunks, and pull new ONNX
-  bundles when promoted.
+  workers, upload completed games as small NPZ chunks plus per-game stats
+  JSON, and pull new ONNX bundles when promoted.
 
 Sync layer (R2 keys):
 - `<prefix>/<run_id>/replay/<machine_id>/<slice_start:020d>.npz` — replay chunks
+- `<prefix>/<run_id>/games/<machine_id>/<seq:020d>.json` — per-game stats
 - `<prefix>/<run_id>/models/<step:020d>/bundle.onnx` (+ `.conv.onnx`, `.heads.onnx`, `.fc.bin`)
 - `<prefix>/<run_id>/models/incumbent.json` — atomic pointer to current model
 
 Background threads keep the network off the trainer/generator hot paths:
 - ChunkUploader: drains `replay_buffer_delta` -> NPZ -> R2 PUT
+- GameStatsUploader: drains `drain_completed_games` -> JSON -> R2 PUT
 - ChunkDownloader: lists new keys -> downloads -> `ingest_examples_from_npz`
+- GameStatsDownloader: lists new keys -> downloads -> sink callback
 - ModelDownloader: polls pointer -> downloads bundle -> `sync_model_directly`
+
+Game-number namespacing: each remote machine_id has a deterministic
+`machine_offset_for(machine_id)` that high-bit-shifts the local game_number
+into a unique u64 range, so trainer-side W&B per-game logging stays unique
+across machines without coordination. Trainer's local games keep offset 0.
 
 Auth: credentials come from `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` env
 vars. The R2SyncConfig only carries non-secret fields.
@@ -23,6 +31,7 @@ vars. The R2SyncConfig only carries non-secret fields.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -37,6 +46,27 @@ import structlog
 from tetris_bot.ml.config import R2SyncConfig
 
 logger = structlog.get_logger(__name__)
+
+
+# ---- Per-machine game-number offset --------------------------------------
+
+
+def machine_offset_for(machine_id: str) -> int:
+    """Deterministic non-zero u64 offset that namespaces a machine's game_numbers.
+
+    The high 32 bits encode a stable hash of machine_id (forced non-zero so it
+    cannot collide with the trainer's local games at offset 0). The low 32
+    bits stay free for the machine's local game counter, giving each machine
+    up to ~4 billion games before the namespace wraps.
+    """
+    if not machine_id:
+        raise ValueError("machine_id must be a non-empty string")
+    digest = hashlib.blake2b(machine_id.encode("utf-8"), digest_size=4).digest()
+    high = int.from_bytes(digest, "big")
+    if high == 0:
+        # Astronomically unlikely; preserve the trainer's exclusive 0-prefix.
+        high = 1
+    return high << 32
 
 
 # ---- Settings -------------------------------------------------------------
@@ -91,6 +121,15 @@ class R2Settings:
 
     def replay_chunk_key(self, machine_id: str, slice_start: int) -> str:
         return f"{self.replay_machine_prefix(machine_id)}{slice_start:020d}.npz"
+
+    def game_stats_prefix(self) -> str:
+        return f"{self.prefix}/{self.sync_run_id}/games/"
+
+    def game_stats_machine_prefix(self, machine_id: str) -> str:
+        return f"{self.game_stats_prefix()}{machine_id}/"
+
+    def game_stats_chunk_key(self, machine_id: str, seq: int) -> str:
+        return f"{self.game_stats_machine_prefix(machine_id)}{seq:020d}.json"
 
     def model_prefix(self) -> str:
         return f"{self.prefix}/{self.sync_run_id}/models/"
@@ -271,7 +310,9 @@ class ChunkUploader:
 
 
 class ReplayIngestSink(Protocol):
-    def ingest_examples_from_npz(self, filepath: str) -> int: ...
+    def ingest_examples_from_npz(
+        self, filepath: str, game_number_offset: int = 0
+    ) -> int: ...
 
 
 class ChunkDownloader:
@@ -393,14 +434,282 @@ class ChunkDownloader:
     def _download_and_ingest(
         self, client: S3LikeClient, key: str, machine_id: str
     ) -> None:
+        offset = machine_offset_for(machine_id)
         with tempfile.TemporaryDirectory(prefix="r2-ingest-") as tmp_dir:
             tmp_path = Path(tmp_dir) / "chunk.npz"
             client.download_file(self._settings.bucket, key, str(tmp_path))
-            count = self._generator.ingest_examples_from_npz(str(tmp_path))
+            count = self._generator.ingest_examples_from_npz(
+                str(tmp_path), offset
+            )
         self._cursor[machine_id] = key
         self._save_cursor()
         logger.info(
             "r2_sync.chunk_ingested", key=key, machine_id=machine_id, count=count
+        )
+
+
+# ---- Game-stats uploader (generator side) -------------------------------
+
+
+class CompletedGamesSource(Protocol):
+    """Adapter for the bits of GameGenerator we need on the upload side."""
+
+    def drain_completed_games(self) -> list[dict[str, Any]]: ...
+
+
+def _strip_replay_field(entry: dict[str, Any]) -> dict[str, Any]:
+    """Drop the non-JSON-serializable `replay` field; everything else is plain.
+
+    Replay frames are a Rust PyClass that doesn't round-trip through JSON;
+    skipping them here means remote games appear in W&B per-game logs without
+    a GIF. Per-game numeric stats survive round-trip cleanly.
+    """
+    return {k: v for k, v in entry.items() if k != "replay"}
+
+
+class GameStatsUploader:
+    """Background thread that uploads completed-game stats as JSON.
+
+    Drains `drain_completed_games()` periodically, strips `replay` (not JSON
+    friendly), and PUTs each batch under
+    `<prefix>/<run_id>/games/<machine_id>/<seq:020d>.json`. The batch is also
+    skipped when the drain returns empty.
+    """
+
+    def __init__(
+        self,
+        *,
+        generator: CompletedGamesSource,
+        settings: R2Settings,
+        machine_id: str,
+        cursor_path: Path,
+        upload_interval_seconds: float,
+        client_factory: Callable[[], S3LikeClient] | None = None,
+    ):
+        self._generator = generator
+        self._settings = settings
+        self._machine_id = machine_id
+        self._cursor_path = cursor_path
+        self._upload_interval = upload_interval_seconds
+        self._client_factory = client_factory or (lambda: make_s3_client(settings))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._next_seq = self._load_cursor()
+
+    def _load_cursor(self) -> int:
+        data = _load_json_cursor(self._cursor_path)
+        return int(data.get("next_seq", 0))
+
+    def _save_cursor(self) -> None:
+        _save_json_cursor(self._cursor_path, {"next_seq": self._next_seq})
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._run, name="r2-game-stats-uploader", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self, timeout: float = 30.0) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+            self._thread = None
+
+    def _run(self) -> None:
+        client = self._client_factory()
+        while not self._stop.is_set():
+            try:
+                self._upload_one_batch(client)
+            except Exception:
+                logger.exception("r2_sync.game_stats_upload_failed")
+            self._stop.wait(self._upload_interval)
+
+    def _upload_one_batch(self, client: S3LikeClient) -> None:
+        drained = self._generator.drain_completed_games()
+        if not drained:
+            return
+        payload = [_strip_replay_field(entry) for entry in drained]
+        body = json.dumps(payload, sort_keys=False).encode("utf-8")
+        key = self._settings.game_stats_chunk_key(self._machine_id, self._next_seq)
+        client.put_object(
+            Bucket=self._settings.bucket,
+            Key=key,
+            Body=body,
+            ContentType="application/json",
+        )
+        self._next_seq += 1
+        self._save_cursor()
+        logger.info(
+            "r2_sync.game_stats_uploaded",
+            key=key,
+            count=len(payload),
+            seq=self._next_seq - 1,
+        )
+
+
+# ---- Game-stats downloader (trainer side) -------------------------------
+
+
+class GameStatsSink(Protocol):
+    """Trainer-side handler for batches of remote completed-game payloads.
+
+    Implementations should apply `game_number_offset` to each entry's
+    `game_number` and stash the entries on a thread-safe queue that the
+    trainer's main loop drains alongside local games.
+    """
+
+    def push_remote_completed_games(
+        self, entries: list[dict[str, Any]], game_number_offset: int
+    ) -> None: ...
+
+
+class GameStatsDownloader:
+    """Background thread that fetches per-game stats JSON from R2.
+
+    Per-machine cursor records the alphabetically-greatest key already pushed
+    to the sink. Listing uses `StartAfter` so we never re-pull old batches.
+    """
+
+    def __init__(
+        self,
+        *,
+        sink: GameStatsSink,
+        settings: R2Settings,
+        cursor_path: Path,
+        poll_interval_seconds: float,
+        client_factory: Callable[[], S3LikeClient] | None = None,
+    ):
+        self._sink = sink
+        self._settings = settings
+        self._cursor_path = cursor_path
+        self._poll_interval = poll_interval_seconds
+        self._client_factory = client_factory or (lambda: make_s3_client(settings))
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._cursor: dict[str, str] = self._load_cursor()
+
+    def _load_cursor(self) -> dict[str, str]:
+        data = _load_json_cursor(self._cursor_path)
+        per_machine = data.get("per_machine", {})
+        if not isinstance(per_machine, dict):
+            return {}
+        return {str(k): str(v) for k, v in per_machine.items()}
+
+    def _save_cursor(self) -> None:
+        _save_json_cursor(self._cursor_path, {"per_machine": self._cursor})
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._run, name="r2-game-stats-downloader", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self, timeout: float = 30.0) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=timeout)
+            self._thread = None
+
+    def _run(self) -> None:
+        client = self._client_factory()
+        while not self._stop.is_set():
+            try:
+                self._poll_once(client)
+            except Exception:
+                logger.exception("r2_sync.game_stats_download_failed")
+            self._stop.wait(self._poll_interval)
+
+    def _poll_once(self, client: S3LikeClient) -> None:
+        for machine_id in self._discover_machine_ids(client):
+            self._pull_machine_new_batches(client, machine_id)
+
+    def _discover_machine_ids(self, client: S3LikeClient) -> list[str]:
+        prefix = self._settings.game_stats_prefix()
+        machine_ids: set[str] = set()
+        continuation: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "Bucket": self._settings.bucket,
+                "Prefix": prefix,
+                "Delimiter": "/",
+            }
+            if continuation is not None:
+                kwargs["ContinuationToken"] = continuation
+            response = client.list_objects_v2(**kwargs)
+            for entry in response.get("CommonPrefixes", []) or []:
+                sub_prefix = entry.get("Prefix")
+                if not sub_prefix:
+                    continue
+                rel = sub_prefix[len(prefix) :].rstrip("/")
+                if rel:
+                    machine_ids.add(rel)
+            if not response.get("IsTruncated"):
+                break
+            continuation = response.get("NextContinuationToken")
+        return sorted(machine_ids)
+
+    def _pull_machine_new_batches(
+        self, client: S3LikeClient, machine_id: str
+    ) -> None:
+        offset = machine_offset_for(machine_id)
+        prefix = self._settings.game_stats_machine_prefix(machine_id)
+        start_after = self._cursor.get(machine_id)
+        continuation: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "Bucket": self._settings.bucket,
+                "Prefix": prefix,
+            }
+            if start_after is not None:
+                kwargs["StartAfter"] = start_after
+            if continuation is not None:
+                kwargs["ContinuationToken"] = continuation
+            response = client.list_objects_v2(**kwargs)
+            for obj in response.get("Contents", []) or []:
+                if self._stop.is_set():
+                    return
+                key = obj.get("Key")
+                if not key or not key.endswith(".json"):
+                    continue
+                self._download_and_push(client, key, machine_id, offset)
+                start_after = key
+            if not response.get("IsTruncated"):
+                break
+            continuation = response.get("NextContinuationToken")
+
+    def _download_and_push(
+        self,
+        client: S3LikeClient,
+        key: str,
+        machine_id: str,
+        game_number_offset: int,
+    ) -> None:
+        response = client.get_object(Bucket=self._settings.bucket, Key=key)
+        body = response["Body"].read()
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            logger.exception("r2_sync.game_stats_payload_parse_failed", key=key)
+            return
+        if not isinstance(payload, list):
+            logger.warning(
+                "r2_sync.game_stats_payload_not_list",
+                key=key,
+                payload_type=type(payload).__name__,
+            )
+            return
+        self._sink.push_remote_completed_games(payload, game_number_offset)
+        self._cursor[machine_id] = key
+        self._save_cursor()
+        logger.info(
+            "r2_sync.game_stats_ingested",
+            key=key,
+            machine_id=machine_id,
+            count=len(payload),
         )
 
 

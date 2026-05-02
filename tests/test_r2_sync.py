@@ -17,10 +17,13 @@ import pytest
 from tetris_bot.ml.r2_sync import (
     ChunkDownloader,
     ChunkUploader,
+    GameStatsDownloader,
+    GameStatsUploader,
     ModelDownloader,
     R2Settings,
     download_model_bundle,
     fetch_model_pointer,
+    machine_offset_for,
     upload_model_bundle,
 )
 
@@ -190,14 +193,48 @@ class FakeReplaySink:
     """Pretends to be a GameGenerator for download-side tests."""
 
     def __init__(self) -> None:
-        self.ingested: list[tuple[int, int]] = []
+        self.ingested: list[tuple[int, int, int]] = []
         self._lock = threading.Lock()
 
-    def ingest_examples_from_npz(self, filepath: str) -> int:
+    def ingest_examples_from_npz(
+        self, filepath: str, game_number_offset: int = 0
+    ) -> int:
         payload = json.loads(Path(filepath).read_bytes())
         with self._lock:
-            self.ingested.append((int(payload["slice_start"]), int(payload["n"])))
+            self.ingested.append(
+                (
+                    int(payload["slice_start"]),
+                    int(payload["n"]),
+                    int(game_number_offset),
+                )
+            )
         return int(payload["n"])
+
+
+class FakeCompletedGamesSource:
+    """Pretends to be a GameGenerator for game-stats upload tests."""
+
+    def __init__(self, batches: list[list[dict]]) -> None:
+        self._batches = list(batches)
+
+    def drain_completed_games(self) -> list[dict]:
+        if not self._batches:
+            return []
+        return self._batches.pop(0)
+
+
+class FakeGameStatsSink:
+    """Captures pushed game-stats batches with their applied offsets."""
+
+    def __init__(self) -> None:
+        self.batches: list[tuple[list[dict], int]] = []
+        self._lock = threading.Lock()
+
+    def push_remote_completed_games(
+        self, entries: list[dict], game_number_offset: int
+    ) -> None:
+        with self._lock:
+            self.batches.append((entries, game_number_offset))
 
 
 class FakeModelSink:
@@ -306,7 +343,17 @@ def test_chunk_downloader_ingests_new_keys(tmp_path: Path, settings: R2Settings)
     )
     downloader._poll_once(s3)  # type: ignore[arg-type]
 
-    assert sorted(sink.ingested) == [(0, 4), (0, 4), (4, 4), (4, 4), (8, 4)]
+    laptop_offset = machine_offset_for("laptop")
+    desktop_offset = machine_offset_for("desktop")
+    assert sorted(sink.ingested) == sorted(
+        [
+            (0, 4, laptop_offset),
+            (4, 4, laptop_offset),
+            (8, 4, laptop_offset),
+            (0, 4, desktop_offset),
+            (4, 4, desktop_offset),
+        ]
+    )
     saved = json.loads(cursor.read_text())["per_machine"]
     assert saved["laptop"].endswith("00000000000000000008.npz")
     assert saved["desktop"].endswith("00000000000000000004.npz")
@@ -320,7 +367,7 @@ def test_chunk_downloader_ingests_new_keys(tmp_path: Path, settings: R2Settings)
         Body=json.dumps({"slice_start": 12, "n": 4}).encode(),
     )
     downloader._poll_once(s3)  # type: ignore[arg-type]
-    assert sink.ingested == [(12, 4)]
+    assert sink.ingested == [(12, 4, laptop_offset)]
 
 
 def test_uploader_then_downloader_round_trip(tmp_path: Path, settings: R2Settings) -> None:
@@ -349,7 +396,12 @@ def test_uploader_then_downloader_round_trip(tmp_path: Path, settings: R2Setting
         uploader._upload_one_chunk(s3)  # type: ignore[arg-type]
     downloader._poll_once(s3)  # type: ignore[arg-type]
 
-    assert sink.ingested == [(0, 4), (4, 4), (8, 4)]
+    laptop_offset = machine_offset_for("laptop")
+    assert sink.ingested == [
+        (0, 4, laptop_offset),
+        (4, 4, laptop_offset),
+        (8, 4, laptop_offset),
+    ]
 
 
 def test_model_bundle_round_trip(tmp_path: Path, settings: R2Settings) -> None:
@@ -424,3 +476,127 @@ def test_model_downloader_calls_sink_once_per_step(tmp_path: Path, settings: R2S
     downloader._poll_once(s3)  # type: ignore[arg-type]
     assert len(sink.calls) == 2
     assert sink.calls[1][1] == 11
+
+
+def test_machine_offset_is_deterministic_and_distinct() -> None:
+    laptop = machine_offset_for("laptop")
+    laptop_again = machine_offset_for("laptop")
+    desktop = machine_offset_for("desktop")
+    assert laptop == laptop_again
+    assert laptop != desktop
+    # High 32 bits are the hash, low 32 bits are zero so generators have a
+    # full 32-bit local-game-number space inside their reserved range.
+    assert (laptop >> 32) != 0
+    assert laptop & 0xFFFFFFFF == 0
+
+
+def test_machine_offset_rejects_empty_id() -> None:
+    with pytest.raises(ValueError):
+        machine_offset_for("")
+
+
+def test_game_stats_uploader_writes_json_per_batch(
+    tmp_path: Path, settings: R2Settings
+) -> None:
+    s3 = InMemoryS3()
+    source = FakeCompletedGamesSource(
+        batches=[
+            [
+                {
+                    "game_number": 1,
+                    "stats": {"total_attack": 12.0, "episode_length": 30.0},
+                    "completed_time_s": 100.0,
+                    "replay": "<should be stripped>",
+                },
+                {
+                    "game_number": 2,
+                    "stats": {"total_attack": 7.0, "episode_length": 25.0},
+                    "completed_time_s": 102.0,
+                },
+            ],
+            [],  # empty drain — uploader should skip
+            [
+                {
+                    "game_number": 3,
+                    "stats": {"total_attack": 20.0, "episode_length": 40.0},
+                    "completed_time_s": 110.0,
+                }
+            ],
+        ]
+    )
+    uploader = GameStatsUploader(
+        generator=source,
+        settings=settings,
+        machine_id="laptop",
+        cursor_path=tmp_path / "cursor.json",
+        upload_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    uploader._upload_one_batch(s3)  # type: ignore[arg-type]
+    uploader._upload_one_batch(s3)  # type: ignore[arg-type]  # empty
+    uploader._upload_one_batch(s3)  # type: ignore[arg-type]
+
+    listing = s3.list_objects_v2(
+        Bucket="bucket", Prefix=settings.game_stats_prefix()
+    )
+    keys = [obj["Key"] for obj in listing["Contents"]]
+    assert keys == [
+        f"{settings.game_stats_machine_prefix('laptop')}{0:020d}.json",
+        f"{settings.game_stats_machine_prefix('laptop')}{1:020d}.json",
+    ]
+    body0 = s3.get_object(Bucket="bucket", Key=keys[0])["Body"].read()
+    payload0 = json.loads(body0)
+    assert [entry["game_number"] for entry in payload0] == [1, 2]
+    # `replay` field must be stripped from the upload.
+    assert all("replay" not in entry for entry in payload0)
+
+
+def test_game_stats_round_trip_applies_machine_offset(
+    tmp_path: Path, settings: R2Settings
+) -> None:
+    s3 = InMemoryS3()
+    source = FakeCompletedGamesSource(
+        batches=[
+            [
+                {
+                    "game_number": 1,
+                    "stats": {"total_attack": 5.0, "episode_length": 10.0},
+                    "completed_time_s": 10.0,
+                },
+                {
+                    "game_number": 2,
+                    "stats": {"total_attack": 6.0, "episode_length": 11.0},
+                    "completed_time_s": 11.0,
+                },
+            ]
+        ]
+    )
+    uploader = GameStatsUploader(
+        generator=source,
+        settings=settings,
+        machine_id="laptop",
+        cursor_path=tmp_path / "u_cursor.json",
+        upload_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    uploader._upload_one_batch(s3)  # type: ignore[arg-type]
+
+    sink = FakeGameStatsSink()
+    downloader = GameStatsDownloader(
+        sink=sink,
+        settings=settings,
+        cursor_path=tmp_path / "d_cursor.json",
+        poll_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+
+    laptop_offset = machine_offset_for("laptop")
+    assert len(sink.batches) == 1
+    entries, offset = sink.batches[0]
+    assert offset == laptop_offset
+    assert [e["game_number"] for e in entries] == [1, 2]
+
+    # Re-poll: cursor should suppress already-ingested keys.
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+    assert len(sink.batches) == 1
