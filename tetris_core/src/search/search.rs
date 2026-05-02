@@ -136,6 +136,45 @@ fn update_q_bounds(q_bounds: &mut (f32, f32), value: f32) {
     q_bounds.1 = q_bounds.1.max(value);
 }
 
+/// Seed q_bounds from existing visited descendants of a search root.
+///
+/// run_search updates q_bounds online from each backed-up `total_value`, but a
+/// reused subtree carries old visit/value stats whose mean values would be
+/// normalized against degenerate `(0, 0)` bounds for the first few simulations,
+/// collapsing every visited child's Q to 0.5. Walking the carried tree once
+/// before the first simulation puts every existing mean value inside the
+/// initial bounds. For a fresh root with no visits this returns `(0.0, 0.0)`,
+/// matching the previous unconditional initialization.
+pub(super) fn seed_q_bounds_from_tree(root: &DecisionNode) -> (f32, f32) {
+    let mut lo = f32::INFINITY;
+    let mut hi = f32::NEG_INFINITY;
+
+    if root.visit_count > 0 {
+        let v = root.mean_value();
+        lo = lo.min(v);
+        hi = hi.max(v);
+    }
+
+    let mut stack: Vec<&MCTSNode> = root.children.values().collect();
+    while let Some(node) = stack.pop() {
+        if node.visit_count() > 0 {
+            let v = node.mean_value();
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+        match node {
+            MCTSNode::Decision(d) => stack.extend(d.children.values()),
+            MCTSNode::Chance(c) => stack.extend(c.children.values()),
+        }
+    }
+
+    if lo.is_finite() && hi.is_finite() {
+        (lo, hi)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
 /// Run a single MCTS simulation using the provided leaf evaluator.
 ///
 /// Uses raw pointers for tree traversal to track the path from root to leaf.
@@ -601,7 +640,7 @@ pub(super) fn run_search<E: LeafEvaluator>(
     }
 
     let mut traversal_stats = TraversalStats::default();
-    let mut q_bounds = (0.0_f32, 0.0_f32);
+    let mut q_bounds = seed_q_bounds_from_tree(&root);
     for _ in 0..config.num_simulations {
         match simulate(config, evaluator, &mut root, &mut rng, &mut q_bounds) {
             SimulationOutcome::Expansion => traversal_stats.expansions += 1,
@@ -1161,6 +1200,128 @@ mod tests {
 
         assert_eq!(first, SimulationOutcome::Expansion);
         assert_eq!(second, SimulationOutcome::TerminalEnd);
+    }
+
+    #[test]
+    fn test_seed_q_bounds_from_tree_returns_zero_for_fresh_root() {
+        let env = TetrisEnv::new(10, 20);
+        let mut root = DecisionNode::new(env);
+        let policy = uniform_action_priors_for_valid_actions(root.valid_actions.len());
+        root.set_nn_output_for_valid_actions(&policy, 0.0);
+
+        let bounds = seed_q_bounds_from_tree(&root);
+        assert_eq!(bounds, (0.0, 0.0));
+    }
+
+    #[test]
+    fn test_seed_q_bounds_from_tree_covers_visited_node_means_after_search() {
+        let env = TetrisEnv::new(10, 20);
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 80;
+        config.max_placements = 8;
+
+        let evaluator = ConstantEvaluator { value: 3.5 };
+        let policy = uniform_action_priors_for_valid_actions(
+            env.get_cached_valid_action_indices_arc().len(),
+        );
+        let mut root = DecisionNode::new(env);
+        root.set_nn_output_for_valid_actions(&policy, evaluator.value);
+
+        // Drive q_bounds online via direct simulate calls so we know the exact
+        // online bounds the prior `(0.0, 0.0)` initialization would have produced.
+        let mut rng = StdRng::seed_from_u64(7);
+        let mut online_bounds = (0.0_f32, 0.0_f32);
+        for _ in 0..config.num_simulations {
+            simulate(&config, &evaluator, &mut root, &mut rng, &mut online_bounds);
+        }
+
+        let seeded = seed_q_bounds_from_tree(&root);
+        assert!(
+            seeded.0 <= seeded.1,
+            "lo {} must not exceed hi {}",
+            seeded.0,
+            seeded.1
+        );
+        // Mean values are inside the per-sample online bounds, so seeding from
+        // means must produce a tighter (or equal) range.
+        assert!(
+            seeded.0 >= online_bounds.0 - 1e-5,
+            "seeded lo {} must be >= online lo {}",
+            seeded.0,
+            online_bounds.0
+        );
+        assert!(
+            seeded.1 <= online_bounds.1 + 1e-5,
+            "seeded hi {} must be <= online hi {}",
+            seeded.1,
+            online_bounds.1
+        );
+
+        // The visited root and its visited children all sit inside the seeded bounds.
+        let root_mean = root.mean_value();
+        assert!(
+            root_mean >= seeded.0 - 1e-5 && root_mean <= seeded.1 + 1e-5,
+            "root mean {} must lie inside seeded bounds {:?}",
+            root_mean,
+            seeded
+        );
+        for child in root.children.values() {
+            if child.visit_count() > 0 {
+                let m = child.mean_value();
+                assert!(
+                    m >= seeded.0 - 1e-5 && m <= seeded.1 + 1e-5,
+                    "child mean {} must lie inside seeded bounds {:?}",
+                    m,
+                    seeded
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_run_search_seeds_q_bounds_from_reused_subtree() {
+        let env = TetrisEnv::with_seed(10, 20, 5);
+        let mut config = MCTSConfig::default();
+        config.num_simulations = 60;
+        config.max_placements = 8;
+        // Non-zero overhang penalty causes leaf values to vary by board state, so
+        // mean values differ across visited children rather than all collapsing to a
+        // single constant.
+        config.overhang_penalty_weight = 1.0;
+
+        let evaluator = ConstantEvaluator { value: 2.0 };
+        let policy = uniform_action_priors_for_valid_actions(
+            env.get_cached_valid_action_indices_arc().len(),
+        );
+        let mut root = DecisionNode::new(env);
+        root.set_nn_output_for_valid_actions(&policy, evaluator.value);
+
+        // First search: builds up children with non-zero mean values.
+        let (_result, root_after, _tree_stats, _traversal_stats, _q_bounds) =
+            run_search(&config, &evaluator, root, false);
+        let seeded_bounds = seed_q_bounds_from_tree(&root_after);
+        assert!(
+            seeded_bounds.0 < seeded_bounds.1,
+            "Expected non-degenerate seeded bounds after first search, got {:?}",
+            seeded_bounds
+        );
+
+        // Second search reuses the tree. Final q_bounds must enclose the seeded range
+        // because run_search seeds from the carried tree before running new sims.
+        let (_result, _root, _tree_stats, _traversal_stats, final_bounds) =
+            run_search(&config, &evaluator, root_after, false);
+        assert!(
+            final_bounds.0 <= seeded_bounds.0 + 1e-5,
+            "Reused-search final lo {} must not exceed seeded lo {}",
+            final_bounds.0,
+            seeded_bounds.0
+        );
+        assert!(
+            final_bounds.1 >= seeded_bounds.1 - 1e-5,
+            "Reused-search final hi {} must not be below seeded hi {}",
+            final_bounds.1,
+            seeded_bounds.1
+        );
     }
 
     #[test]

@@ -7,7 +7,6 @@
 - [ ]  Check loss on input augmentation
 
 - [ ] Change network to do spatial policy. 4 x 20 x 10
-- [ ] Adding in coords into input layer
 - [ ] Are we actually using the whole action space? I guess we should log a bit about whether some actions are always masked out.
   - Actually would be great to see for all 7 pieces, how often each type of action is chosen. so would be like a vector of 7 x 732 + one number for holds. Maybe actually 7 x 323 where the last entry is for holds. Also will be less than 732 for all of them, more like 6XX. Could be cool to visualize the heatmap here.
 - [ ] Simplify code and drop all the bootstrapping and weighting logic
