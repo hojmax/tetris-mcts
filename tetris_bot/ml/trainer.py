@@ -63,6 +63,7 @@ from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 from tetris_bot.ml.r2_sync import (
     ChunkDownloader,
     GameStatsDownloader,
+    MachineOffsetTable,
     R2Settings,
     upload_model_bundle,
 )
@@ -1614,6 +1615,10 @@ class Trainer:
         game_stats_cursor_path = (
             self.config.run.run_dir / "r2_game_stats_ingest_cursor.json"
         )
+        offset_table_path = (
+            self.config.run.run_dir / "r2_machine_id_offsets.json"
+        )
+        offset_table = MachineOffsetTable(offset_table_path)
         self._r2_chunk_downloader = ChunkDownloader(
             generator=generator,
             settings=self._r2_settings,
@@ -1621,6 +1626,7 @@ class Trainer:
             poll_interval_seconds=(
                 self.config.r2_sync.chunk_download_poll_interval_seconds
             ),
+            offset_table=offset_table,
         )
         self._r2_chunk_downloader.start()
         self._r2_game_stats_downloader = GameStatsDownloader(
@@ -1630,6 +1636,7 @@ class Trainer:
             poll_interval_seconds=(
                 self.config.r2_sync.chunk_download_poll_interval_seconds
             ),
+            offset_table=offset_table,
         )
         self._r2_game_stats_downloader.start()
         logger.info(

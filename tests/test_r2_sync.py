@@ -15,15 +15,16 @@ from typing import Any
 import pytest
 
 from tetris_bot.ml.r2_sync import (
+    MACHINE_OFFSET_BLOCK_SIZE,
     ChunkDownloader,
     ChunkUploader,
     GameStatsDownloader,
     GameStatsUploader,
+    MachineOffsetTable,
     ModelDownloader,
     R2Settings,
     download_model_bundle,
     fetch_model_pointer,
-    machine_offset_for,
     upload_model_bundle,
 )
 
@@ -334,17 +335,19 @@ def test_chunk_downloader_ingests_new_keys(tmp_path: Path, settings: R2Settings)
 
     sink = FakeReplaySink()
     cursor = tmp_path / "download_cursor.json"
+    offset_table = MachineOffsetTable(tmp_path / "offsets.json")
     downloader = ChunkDownloader(
         generator=sink,
         settings=settings,
         cursor_path=cursor,
         poll_interval_seconds=10.0,
+        offset_table=offset_table,
         client_factory=lambda: s3,
     )
     downloader._poll_once(s3)  # type: ignore[arg-type]
 
-    laptop_offset = machine_offset_for("laptop")
-    desktop_offset = machine_offset_for("desktop")
+    laptop_offset = offset_table.offset_for("laptop")
+    desktop_offset = offset_table.offset_for("desktop")
     assert sorted(sink.ingested) == sorted(
         [
             (0, 4, laptop_offset),
@@ -384,11 +387,13 @@ def test_uploader_then_downloader_round_trip(tmp_path: Path, settings: R2Setting
         upload_interval_seconds=10.0,
         client_factory=lambda: s3,
     )
+    offset_table = MachineOffsetTable(tmp_path / "offsets.json")
     downloader = ChunkDownloader(
         generator=sink,
         settings=settings,
         cursor_path=tmp_path / "d_cursor.json",
         poll_interval_seconds=10.0,
+        offset_table=offset_table,
         client_factory=lambda: s3,
     )
 
@@ -396,7 +401,7 @@ def test_uploader_then_downloader_round_trip(tmp_path: Path, settings: R2Setting
         uploader._upload_one_chunk(s3)  # type: ignore[arg-type]
     downloader._poll_once(s3)  # type: ignore[arg-type]
 
-    laptop_offset = machine_offset_for("laptop")
+    laptop_offset = offset_table.offset_for("laptop")
     assert sink.ingested == [
         (0, 4, laptop_offset),
         (4, 4, laptop_offset),
@@ -478,21 +483,38 @@ def test_model_downloader_calls_sink_once_per_step(tmp_path: Path, settings: R2S
     assert sink.calls[1][1] == 11
 
 
-def test_machine_offset_is_deterministic_and_distinct() -> None:
-    laptop = machine_offset_for("laptop")
-    laptop_again = machine_offset_for("laptop")
-    desktop = machine_offset_for("desktop")
-    assert laptop == laptop_again
-    assert laptop != desktop
-    # High 32 bits are the hash, low 32 bits are zero so generators have a
-    # full 32-bit local-game-number space inside their reserved range.
-    assert (laptop >> 32) != 0
-    assert laptop & 0xFFFFFFFF == 0
+def test_offset_table_assigns_sequential_blocks(tmp_path: Path) -> None:
+    table = MachineOffsetTable(tmp_path / "offsets.json")
+    laptop = table.offset_for("laptop")
+    desktop = table.offset_for("desktop")
+    laptop_again = table.offset_for("laptop")
+
+    assert laptop == 1 * MACHINE_OFFSET_BLOCK_SIZE  # block 0 is reserved
+    assert desktop == 2 * MACHINE_OFFSET_BLOCK_SIZE
+    assert laptop_again == laptop  # idempotent
+    # First remote game on laptop is a clean 10-digit number.
+    assert laptop + 1 == 1_000_000_001
 
 
-def test_machine_offset_rejects_empty_id() -> None:
+def test_offset_table_persists_across_instances(tmp_path: Path) -> None:
+    path = tmp_path / "offsets.json"
+    table1 = MachineOffsetTable(path)
+    laptop = table1.offset_for("laptop")
+    desktop = table1.offset_for("desktop")
+
+    # Reload from disk; existing assignments must be preserved and the next
+    # newly-seen machine must continue from the previous max+1.
+    table2 = MachineOffsetTable(path)
+    assert table2.offset_for("laptop") == laptop
+    assert table2.offset_for("desktop") == desktop
+    server = table2.offset_for("server")
+    assert server == 3 * MACHINE_OFFSET_BLOCK_SIZE
+
+
+def test_offset_table_rejects_empty_id(tmp_path: Path) -> None:
+    table = MachineOffsetTable(tmp_path / "offsets.json")
     with pytest.raises(ValueError):
-        machine_offset_for("")
+        table.offset_for("")
 
 
 def test_game_stats_uploader_writes_json_per_batch(
@@ -582,16 +604,18 @@ def test_game_stats_round_trip_applies_machine_offset(
     uploader._upload_one_batch(s3)  # type: ignore[arg-type]
 
     sink = FakeGameStatsSink()
+    offset_table = MachineOffsetTable(tmp_path / "offsets.json")
     downloader = GameStatsDownloader(
         sink=sink,
         settings=settings,
         cursor_path=tmp_path / "d_cursor.json",
         poll_interval_seconds=10.0,
+        offset_table=offset_table,
         client_factory=lambda: s3,
     )
     downloader._poll_once(s3)  # type: ignore[arg-type]
 
-    laptop_offset = machine_offset_for("laptop")
+    laptop_offset = offset_table.offset_for("laptop")
     assert len(sink.batches) == 1
     entries, offset = sink.batches[0]
     assert offset == laptop_offset
