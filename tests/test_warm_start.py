@@ -17,6 +17,7 @@ from tetris_bot.ml.config import load_training_config
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer
 from tetris_bot.ml.network import TetrisNet
+from tetris_bot.ml.optimizer import OptimizerBundle
 from tetris_bot.scripts.ablations.compare_offline_architectures import (
     OfflineDataSource,
 )
@@ -231,7 +232,9 @@ def test_compute_training_steps_rounds_up_epochs() -> None:
 
 def test_build_warm_start_lr_scheduler_matches_reference_curve() -> None:
     model = torch.nn.Linear(1, 1)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1.0)
+    optimizer = OptimizerBundle(
+        model, learning_rate=1.0, weight_decay=0.0, adamw_foreach=True
+    )
     scheduler = build_warm_start_lr_scheduler(
         optimizer,
         warmup_steps=3,
@@ -259,7 +262,9 @@ def test_build_warm_start_lr_scheduler_matches_reference_curve() -> None:
 
 def test_align_warm_start_lr_scheduler_to_step_restores_lr() -> None:
     model = torch.nn.Linear(1, 1)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2.0)
+    optimizer = OptimizerBundle(
+        model, learning_rate=2.0, weight_decay=0.0, adamw_foreach=True
+    )
     scheduler = build_warm_start_lr_scheduler(
         optimizer,
         warmup_steps=3,
@@ -389,7 +394,9 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
     checkpoint_path = offline_resume_checkpoint_path(tmp_path / "training_runs" / "v5")
     model = TetrisNet(**_DEFAULT_NETWORK.to_model_kwargs())
     ema = ExponentialMovingAverage(model, decay=0.5)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4)
+    optimizer = OptimizerBundle(
+        model, learning_rate=5e-4, weight_decay=0.0, adamw_foreach=True
+    )
     scheduler = build_warm_start_lr_scheduler(
         optimizer,
         warmup_steps=4,
@@ -450,7 +457,9 @@ def test_offline_resume_checkpoint_round_trip_restores_optimizer_and_history(
 
     restored_model = TetrisNet(**_DEFAULT_NETWORK.to_model_kwargs())
     restored_ema = ExponentialMovingAverage(restored_model, decay=0.5)
-    restored_optimizer = torch.optim.AdamW(restored_model.parameters(), lr=5e-4)
+    restored_optimizer = OptimizerBundle(
+        restored_model, learning_rate=5e-4, weight_decay=0.0, adamw_foreach=True
+    )
     restored_scheduler = build_warm_start_lr_scheduler(
         restored_optimizer,
         warmup_steps=4,

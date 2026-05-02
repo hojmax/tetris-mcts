@@ -82,7 +82,9 @@ def test_resolve_model_path_generates_bootstrap_bundle_when_needed(
 
     monkeypatch.setattr(optimize_machine, "TetrisNet", DummyModel)
     monkeypatch.setattr(optimize_machine, "export_onnx", fake_export_onnx)
-    monkeypatch.setattr(optimize_machine, "export_split_models", fake_export_split_models)
+    monkeypatch.setattr(
+        optimize_machine, "export_split_models", fake_export_split_models
+    )
 
     assert optimize_machine.resolve_model_path(None) == auto_path
     assert optimize_machine.split_model_bundle_error(auto_path) is None

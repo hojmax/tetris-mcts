@@ -36,6 +36,7 @@ from tetris_bot.ml.config import (
 )
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.network import TetrisNet
+from tetris_bot.ml.optimizer import OptimizerBundle, SchedulerBundle
 from tetris_bot.ml.weights import (
     AsyncCheckpointSaver,
     WeightManager,
@@ -167,12 +168,12 @@ class Trainer:
             config.optimizer.use_torch_compile and self.device.type != "mps"
         )
 
-        # Create optimizer
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=config.optimizer.learning_rate,
+        # Create hybrid Muon (2D hidden Linear weights) + AdamW (everything else).
+        self.optimizer = OptimizerBundle(
+            self.model,
+            learning_rate=config.optimizer.learning_rate,
             weight_decay=config.optimizer.weight_decay,
-            foreach=not self._effective_use_torch_compile,
+            adamw_foreach=not self._effective_use_torch_compile,
         )
 
         # Create scheduler
@@ -303,12 +304,8 @@ class Trainer:
 
         return {
             "model_sync/random_recent_game": video,
-            "model_sync/random_recent_game_number": float(
-                selected_replay.game_number
-            ),
-            "model_sync/random_recent_game_attack": float(
-                selected_replay.total_attack
-            ),
+            "model_sync/random_recent_game_number": float(selected_replay.game_number),
+            "model_sync/random_recent_game_attack": float(selected_replay.total_attack),
             "model_sync/random_recent_game_age_seconds": max(
                 0.0, now_s - selected_replay.completed_time_s
             ),
@@ -1081,29 +1078,35 @@ class Trainer:
         return float(eval_result.avg_attack)
 
     def _create_scheduler(self):
-        if self.config.optimizer.lr_schedule == "linear":
-            return torch.optim.lr_scheduler.LinearLR(
-                self.optimizer,
-                start_factor=1.0,
-                end_factor=self.config.optimizer.lr_min_factor,
-                total_iters=self.config.optimizer.lr_decay_steps,
-            )
-        elif self.config.optimizer.lr_schedule == "cosine":
-            return torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=self.config.optimizer.lr_decay_steps,
-                eta_min=self.config.optimizer.learning_rate
-                * self.config.optimizer.lr_min_factor,
-            )
-        elif self.config.optimizer.lr_schedule == "step":
+        schedule = self.config.optimizer.lr_schedule
+        if schedule not in {"linear", "cosine", "step"}:
+            return None
+
+        def build_for(inner_optimizer: torch.optim.Optimizer):
+            if schedule == "linear":
+                return torch.optim.lr_scheduler.LinearLR(
+                    inner_optimizer,
+                    start_factor=1.0,
+                    end_factor=self.config.optimizer.lr_min_factor,
+                    total_iters=self.config.optimizer.lr_decay_steps,
+                )
+            if schedule == "cosine":
+                return torch.optim.lr_scheduler.CosineAnnealingLR(
+                    inner_optimizer,
+                    T_max=self.config.optimizer.lr_decay_steps,
+                    eta_min=self.config.optimizer.learning_rate
+                    * self.config.optimizer.lr_min_factor,
+                )
             return torch.optim.lr_scheduler.StepLR(
-                self.optimizer,
+                inner_optimizer,
                 step_size=self.config.optimizer.lr_decay_steps
                 // self.config.optimizer.lr_step_divisor,
                 gamma=self.config.optimizer.lr_step_gamma,
             )
-        else:
-            return None
+
+        return SchedulerBundle(
+            tuple(build_for(opt) for opt in self.optimizer.inner_optimizers)
+        )
 
     def align_scheduler_to_step(self, step: int) -> None:
         if step < 0:
@@ -1115,15 +1118,16 @@ class Trainer:
         # LR settings while keeping global step alignment.
         self.scheduler.last_epoch = step
 
+        first_scheduler = self.scheduler.first
         if self.config.optimizer.lr_schedule == "linear":
-            assert isinstance(self.scheduler, torch.optim.lr_scheduler.LinearLR)
+            assert isinstance(first_scheduler, torch.optim.lr_scheduler.LinearLR)
             total_iters = self.config.optimizer.lr_decay_steps
             progress = min(step, total_iters) / total_iters
             factor = 1.0 + (self.config.optimizer.lr_min_factor - 1.0) * progress
             lrs = [base_lr * factor for base_lr in self.scheduler.base_lrs]
         elif self.config.optimizer.lr_schedule == "cosine":
             assert isinstance(
-                self.scheduler, torch.optim.lr_scheduler.CosineAnnealingLR
+                first_scheduler, torch.optim.lr_scheduler.CosineAnnealingLR
             )
             t_max = self.config.optimizer.lr_decay_steps
             eta_min = (
@@ -1138,7 +1142,7 @@ class Trainer:
                 for base_lr in self.scheduler.base_lrs
             ]
         elif self.config.optimizer.lr_schedule == "step":
-            assert isinstance(self.scheduler, torch.optim.lr_scheduler.StepLR)
+            assert isinstance(first_scheduler, torch.optim.lr_scheduler.StepLR)
             step_size = (
                 self.config.optimizer.lr_decay_steps
                 // self.config.optimizer.lr_step_divisor
@@ -1502,7 +1506,9 @@ class Trainer:
             "train/policy_loss_avg": policy_loss_avg,
             "train/value_loss_avg": value_loss_avg,
             "train/value_loss_weight": value_loss_weight,
-            "train/grad_norm": grad_norm.item() if grad_norm is not None else float("nan"),
+            "train/grad_norm": grad_norm.item()
+            if grad_norm is not None
+            else float("nan"),
             "train/learning_rate": self.optimizer.param_groups[0]["lr"],
         }
         metrics.update(
@@ -1881,9 +1887,7 @@ class Trainer:
         if self._effective_use_torch_compile:
             logger.info("Compiling model with torch.compile")
             self.model = cast(TetrisNet, torch.compile(self.model))
-        elif (
-            self.config.optimizer.use_torch_compile and self.device.type == "mps"
-        ):
+        elif self.config.optimizer.use_torch_compile and self.device.type == "mps":
             logger.info(
                 "Skipping torch.compile on MPS device (eager is faster on Apple Silicon)"
             )

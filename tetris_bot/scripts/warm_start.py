@@ -40,9 +40,12 @@ from tetris_bot.ml.config import (
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.loss import RunningLossBalancer, compute_loss
 from tetris_bot.ml.network import TetrisNet
+from tetris_bot.ml.optimizer import OptimizerBundle, SchedulerBundle
 from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 from tetris_bot.ml.trainer import Trainer
 from tetris_bot.ml.weights import (
+    OptimizerLike,
+    SchedulerLike,
     export_metadata,
     load_optimizer_state_dict,
     save_checkpoint,
@@ -127,7 +130,7 @@ class WarmStartTrainingResult:
     history: list[dict[str, float | int | bool | str]]
     ema_state_dict: dict[str, torch.Tensor] | None
     optimizer_state_dict: dict[str, object]
-    scheduler_state_dict: dict[str, object]
+    scheduler_state_dict: dict[str, object] | list[dict[str, object]]
     loss_balancer_state: dict[str, object]
     current_value_loss_weight: float
     rng_state: dict[str, object]
@@ -359,7 +362,7 @@ def save_offline_resume_checkpoint(
     model: TetrisNet,
     ema_state_dict: dict[str, torch.Tensor] | None,
     optimizer_state_dict: dict[str, object],
-    scheduler_state_dict: dict[str, object],
+    scheduler_state_dict: dict[str, object] | list[dict[str, object]],
     best_state_dict: dict[str, torch.Tensor],
     best_ema_state_dict: dict[str, torch.Tensor] | None,
     best_record: dict[str, float | int | bool | str],
@@ -399,8 +402,8 @@ def load_offline_resume_checkpoint(
     *,
     model: TetrisNet,
     ema_model: torch.nn.Module | None,
-    optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
+    optimizer: OptimizerLike,
+    scheduler: SchedulerLike | None,
     loss_balancer: RunningLossBalancer,
     lr_schedule_total_steps: int,
     lr_warmup_steps: int,
@@ -437,9 +440,9 @@ def load_offline_resume_checkpoint(
         scheduler_state_dict = state.get("scheduler_state_dict")
         if scheduler_state_dict is not None:
             scheduler.load_state_dict(scheduler_state_dict)
-            apply_scheduler_lrs(optimizer, scheduler.get_last_lr())
+            apply_scheduler_lrs(optimizer, scheduler._last_lr)
         else:
-            assert isinstance(scheduler, torch.optim.lr_scheduler.LambdaLR)
+            assert isinstance(scheduler, SchedulerBundle)
             align_warm_start_lr_scheduler_to_step(
                 optimizer=optimizer,
                 scheduler=scheduler,
@@ -518,7 +521,7 @@ def compute_warmup_cosine_lr_factor(
 
 
 def apply_scheduler_lrs(
-    optimizer: torch.optim.Optimizer,
+    optimizer: OptimizerLike,
     lrs: list[float],
 ) -> None:
     if len(optimizer.param_groups) != len(lrs):
@@ -529,36 +532,36 @@ def apply_scheduler_lrs(
 
 def align_warm_start_lr_scheduler_to_step(
     *,
-    optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler.LambdaLR,
+    optimizer: OptimizerLike,
+    scheduler: SchedulerBundle,
     step: int,
     warmup_steps: int,
     total_steps: int,
     lr_min_factor: float,
 ) -> None:
-    lrs = [
-        base_lr
-        * compute_warmup_cosine_lr_factor(
-            step=step,
-            warmup_steps=warmup_steps,
-            total_steps=total_steps,
-            lr_min_factor=lr_min_factor,
-        )
-        for base_lr in scheduler.base_lrs
-    ]
-    scheduler.last_epoch = step
-    scheduler._step_count = max(step + 1, 1)
-    scheduler._last_lr = lrs
-    apply_scheduler_lrs(optimizer, lrs)
+    factor = compute_warmup_cosine_lr_factor(
+        step=step,
+        warmup_steps=warmup_steps,
+        total_steps=total_steps,
+        lr_min_factor=lr_min_factor,
+    )
+    for inner in scheduler.inner_schedulers:
+        assert isinstance(inner, torch.optim.lr_scheduler.LambdaLR)
+        inner_lrs = [base_lr * factor for base_lr in inner.base_lrs]
+        inner.last_epoch = step
+        inner._step_count = max(step + 1, 1)
+        inner._last_lr = inner_lrs
+        for param_group, lr in zip(inner.optimizer.param_groups, inner_lrs):
+            param_group["lr"] = lr
 
 
 def build_warm_start_lr_scheduler(
-    optimizer: torch.optim.Optimizer,
+    optimizer: OptimizerBundle,
     *,
     warmup_steps: int,
     total_steps: int,
     lr_min_factor: float,
-) -> torch.optim.lr_scheduler.LambdaLR:
+) -> SchedulerBundle:
     if total_steps <= 0:
         raise ValueError(f"total_steps must be > 0 (got {total_steps})")
 
@@ -570,7 +573,12 @@ def build_warm_start_lr_scheduler(
             lr_min_factor=lr_min_factor,
         )
 
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+    return SchedulerBundle(
+        tuple(
+            torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lr_lambda)
+            for opt in optimizer.inner_optimizers
+        )
+    )
 
 
 def warm_start_selection_metric(policy_loss: float, value_loss: float) -> float:
@@ -758,10 +766,11 @@ def train_warm_start_model(
             "mirror_augmentation_probability must be in [0, 1] "
             f"(got {mirror_augmentation_probability})"
         )
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=learning_rate,
+    optimizer = OptimizerBundle(
+        model,
+        learning_rate=learning_rate,
         weight_decay=weight_decay,
+        adamw_foreach=True,
     )
     ema = ExponentialMovingAverage(model, ema_decay) if ema_decay > 0.0 else None
     loss_balancer = RunningLossBalancer(value_loss_window)

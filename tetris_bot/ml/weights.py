@@ -32,6 +32,10 @@ from tetris_bot.ml.network import (
     HeadsModel,
     TetrisNet,
 )
+from tetris_bot.ml.optimizer import OptimizerBundle, SchedulerBundle
+
+OptimizerLike = torch.optim.Optimizer | OptimizerBundle
+SchedulerLike = torch.optim.lr_scheduler.LRScheduler | SchedulerBundle
 
 logger = structlog.get_logger()
 FC_BINARY_MAGIC = b"TCM2"
@@ -78,8 +82,11 @@ def _optimizer_step_scalar_dtype(*, fused: bool) -> torch.dtype:
     )
 
 
-def sanitize_optimizer_state_steps(optimizer: torch.optim.Optimizer) -> int:
+def sanitize_optimizer_state_steps(optimizer: object) -> int:
     """Normalize per-parameter optimizer step counters to PyTorch's tensor form."""
+    inner_optimizers = getattr(optimizer, "inner_optimizers", None)
+    if inner_optimizers is not None:
+        return sum(sanitize_optimizer_state_steps(inner) for inner in inner_optimizers)
     normalized_steps = 0
     cpu_device = torch.device("cpu")
     for group in optimizer.param_groups:
@@ -107,7 +114,7 @@ def sanitize_optimizer_state_steps(optimizer: torch.optim.Optimizer) -> int:
 
 
 def load_optimizer_state_dict(
-    optimizer: torch.optim.Optimizer,
+    optimizer: OptimizerLike,
     optimizer_state_dict: dict[str, Any],
     *,
     source: str | Path | None = None,
@@ -128,7 +135,9 @@ class CheckpointSnapshot:
     model_state_dict: dict[str, Any]
     ema_state_dict: dict[str, Any] | None
     optimizer_state_dict: dict[str, Any] | None
-    scheduler_state_dict: dict[str, Any] | None
+    # SchedulerBundle.state_dict returns a list (one entry per inner scheduler);
+    # plain torch schedulers return a dict. Both are accepted.
+    scheduler_state_dict: dict[str, Any] | list[dict[str, Any]] | None
     extra_state: dict[str, object]
 
 
@@ -157,8 +166,8 @@ def _clone_state_value_to_cpu(value: Any) -> Any:
 def capture_checkpoint_snapshot(
     model: nn.Module,
     ema_model: nn.Module | None,
-    optimizer: torch.optim.Optimizer | None,
-    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
+    optimizer: OptimizerLike | None,
+    scheduler: SchedulerLike | None,
     step: int,
     extra_checkpoint_state: dict[str, object] | None = None,
 ) -> CheckpointSnapshot:
@@ -204,8 +213,8 @@ def save_checkpoint_snapshot(
 def save_checkpoint(
     model: nn.Module,
     ema_model: nn.Module | None,
-    optimizer: torch.optim.Optimizer | None,
-    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
+    optimizer: OptimizerLike | None,
+    scheduler: SchedulerLike | None,
     step: int,
     filepath: str | Path,
     **extra_state,
@@ -231,8 +240,8 @@ def load_checkpoint(
     filepath: str | Path,
     model: nn.Module | None = None,
     ema_model: nn.Module | None = None,
-    optimizer: torch.optim.Optimizer | None = None,
-    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+    optimizer: OptimizerLike | None = None,
+    scheduler: SchedulerLike | None = None,
 ) -> dict:
     state = torch.load(filepath, map_location="cpu", weights_only=True)
 
@@ -432,8 +441,8 @@ class WeightManager:
         self,
         model: TetrisNet,
         ema_model: TetrisNet | None,
-        optimizer: torch.optim.Optimizer | None,
-        scheduler: torch.optim.lr_scheduler.LRScheduler | None,
+        optimizer: OptimizerLike | None,
+        scheduler: SchedulerLike | None,
         step: int,
         eval_metrics: dict | None = None,
         export_for_rust: bool = True,
@@ -506,8 +515,8 @@ class WeightManager:
     def load_latest(
         self,
         model: TetrisNet,
-        optimizer: torch.optim.Optimizer | None = None,
-        scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+        optimizer: OptimizerLike | None = None,
+        scheduler: SchedulerLike | None = None,
     ) -> int | None:
         latest_path = self.checkpoint_dir / LATEST_CHECKPOINT_FILENAME
         if not latest_path.exists():

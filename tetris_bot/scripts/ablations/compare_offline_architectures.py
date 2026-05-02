@@ -30,6 +30,7 @@ from tetris_bot.ml.network import (
     PIECE_AUX_FEATURES,
     ROW_FILL_COUNT_FEATURES,
 )
+from tetris_bot.ml.optimizer import OptimizerBundle
 
 logger = structlog.get_logger()
 
@@ -1075,10 +1076,11 @@ def train_offline_model(
     device: torch.device,
     schedule_seed: int,
 ) -> dict:
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=args.learning_rate,
+    optimizer = OptimizerBundle(
+        model,
+        learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
+        adamw_foreach=True,
     )
     history: list[dict[str, float | int]] = []
     rng = np.random.default_rng(schedule_seed)

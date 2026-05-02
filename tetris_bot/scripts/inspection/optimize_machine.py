@@ -131,10 +131,7 @@ def split_model_bundle_error(model_path: Path) -> str | None:
     missing = [path for path in required if not path.exists()]
     if missing:
         missing_display = ", ".join(str(path) for path in missing)
-        return (
-            f"Model bundle incomplete for {model_path} "
-            f"(missing {missing_display})"
-        )
+        return f"Model bundle incomplete for {model_path} (missing {missing_display})"
 
     magic = fc_path.read_bytes()[: len(FC_BINARY_MAGIC)]
     if magic != FC_BINARY_MAGIC:
