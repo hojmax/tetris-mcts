@@ -134,14 +134,13 @@ def test_train_step_sanitizes_live_float_optimizer_steps(tmp_path: Path) -> None
 
     trainer.train_step(batch, collect_metrics=False)
 
-    first_parameter = next(iter(trainer.optimizer.state))
-    trainer.optimizer.state[first_parameter]["step"] = float(
-        trainer.optimizer.state[first_parameter]["step"]
-    )
+    adamw_state = trainer.optimizer.adamw.state
+    first_parameter = next(iter(adamw_state))
+    adamw_state[first_parameter]["step"] = float(adamw_state[first_parameter]["step"])
 
     trainer.train_step(batch, collect_metrics=False)
 
-    assert torch.is_tensor(trainer.optimizer.state[first_parameter]["step"])
+    assert torch.is_tensor(adamw_state[first_parameter]["step"])
 
 
 def test_train_step_updates_ema_weights(tmp_path: Path) -> None:

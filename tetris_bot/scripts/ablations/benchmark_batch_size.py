@@ -20,6 +20,7 @@ from tetris_bot.constants import (
 )
 from tetris_bot.ml.loss import compute_loss
 from tetris_bot.ml.network import AUX_FEATURES, TetrisNet
+from tetris_bot.ml.optimizer import OptimizerBundle
 
 logger = structlog.get_logger()
 
@@ -100,7 +101,12 @@ def benchmark_batch_size(
         conv_kernel_size=3,
         conv_padding=1,
     ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-4)
+    optimizer = OptimizerBundle(
+        model,
+        learning_rate=0.0005,
+        weight_decay=1e-4,
+        adamw_foreach=True,
+    )
     model.train()
 
     boards, aux, policy_targets, value_targets, masks = batch
