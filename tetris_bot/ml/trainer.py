@@ -815,7 +815,7 @@ class Trainer:
         *,
         log_to_wandb: bool,
         now_s: float,
-        interval_anchor_s: float,
+        wall_time_anchor_s: float,
         candidate_gate_schedule: CandidateGateSchedule,
     ) -> None:
         for event in generator.drain_model_eval_events():
@@ -906,7 +906,7 @@ class Trainer:
             if not log_to_wandb:
                 continue
 
-            wall_time_hours = (now_s - interval_anchor_s) / 3600.0
+            wall_time_hours = (now_s - wall_time_anchor_s) / 3600.0
             wandb_data: dict[str, object] = {
                 "trainer_step": self.step,
                 "wall_time_hours": wall_time_hours,
@@ -1942,6 +1942,7 @@ class Trainer:
             "Starting game generator replay preload if training data exists",
             training_data_path=str(training_data_path),
         )
+        wall_time_anchor_s = time.perf_counter()
         generator.start()
         generator_log_fields: dict[str, object] = {
             "model_path": str(generator_model_path),
@@ -2177,7 +2178,7 @@ class Trainer:
                         generator,
                         log_to_wandb=log_to_wandb,
                         now_s=post_step_time,
-                        interval_anchor_s=interval_anchor_s,
+                        wall_time_anchor_s=wall_time_anchor_s,
                         candidate_gate_schedule=candidate_gate_schedule,
                     )
 
@@ -2187,7 +2188,7 @@ class Trainer:
                             "No collected train metrics are available for logging"
                         )
                     metrics = dict(latest_train_metrics)
-                    wall_time_hours = (post_step_time - interval_anchor_s) / 3600.0
+                    wall_time_hours = (post_step_time - wall_time_anchor_s) / 3600.0
                     metrics["wall_time_hours"] = wall_time_hours
                     if self.config.optimizer.compute_extra_train_metrics_on_log:
                         extra_metrics_start = time.perf_counter()
