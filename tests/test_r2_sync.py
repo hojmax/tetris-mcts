@@ -1,0 +1,426 @@
+"""Tests for tetris_bot.ml.r2_sync.
+
+These tests exercise the threading + cursor + key-layout logic with an
+in-memory S3 mock and fake generator adapters; they do not require real R2
+credentials or boto3 transport.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tetris_bot.ml.r2_sync import (
+    ChunkDownloader,
+    ChunkUploader,
+    ModelDownloader,
+    R2Settings,
+    download_model_bundle,
+    fetch_model_pointer,
+    upload_model_bundle,
+)
+
+
+# ---------------------------------------------------------------------------
+# In-memory S3 mock
+# ---------------------------------------------------------------------------
+
+
+class _MockClientError(Exception):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
+@pytest.fixture(autouse=True)
+def _patch_botocore_clienterror(monkeypatch):
+    """Make `botocore.exceptions.ClientError` reachable from r2_sync.
+
+    r2_sync imports ClientError lazily inside functions; we patch botocore so
+    `isinstance(_MockClientError(...), ClientError)` works in those branches.
+    """
+
+    class _DummyBotocore:
+        class exceptions:
+            ClientError = _MockClientError
+
+    import sys
+
+    sys.modules.setdefault("botocore", _DummyBotocore)  # type: ignore[arg-type]
+    sys.modules.setdefault(  # type: ignore[arg-type]
+        "botocore.exceptions", _DummyBotocore.exceptions
+    )
+    yield
+
+
+class InMemoryS3:
+    """Tiny in-memory S3 (per-bucket key-value store)."""
+
+    def __init__(self) -> None:
+        self._objects: dict[tuple[str, str], bytes] = {}
+        self._lock = threading.Lock()
+
+    def put_object(self, *, Bucket: str, Key: str, Body, **_: Any) -> dict[str, Any]:
+        if isinstance(Body, (bytes, bytearray)):
+            data = bytes(Body)
+        elif hasattr(Body, "read"):
+            data = Body.read()
+        else:
+            data = bytes(Body)
+        with self._lock:
+            self._objects[(Bucket, Key)] = data
+        return {}
+
+    def get_object(self, *, Bucket: str, Key: str, **_: Any) -> dict[str, Any]:
+        with self._lock:
+            data = self._objects.get((Bucket, Key))
+        if data is None:
+            raise _MockClientError("NoSuchKey")
+
+        class _Body:
+            def __init__(self, payload: bytes) -> None:
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload
+
+        return {"Body": _Body(data)}
+
+    def head_object(self, *, Bucket: str, Key: str, **_: Any) -> dict[str, Any]:
+        with self._lock:
+            if (Bucket, Key) not in self._objects:
+                raise _MockClientError("404")
+        return {}
+
+    def list_objects_v2(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str = "",
+        Delimiter: str | None = None,
+        StartAfter: str | None = None,
+        ContinuationToken: str | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        with self._lock:
+            keys = sorted(
+                key
+                for (bucket, key) in self._objects
+                if bucket == Bucket and key.startswith(Prefix)
+            )
+        if StartAfter is not None:
+            keys = [k for k in keys if k > StartAfter]
+        contents: list[dict[str, Any]] = []
+        common_prefixes: dict[str, None] = {}
+        for key in keys:
+            if Delimiter:
+                rel = key[len(Prefix) :]
+                if Delimiter in rel:
+                    sub = Prefix + rel.split(Delimiter, 1)[0] + Delimiter
+                    common_prefixes.setdefault(sub, None)
+                    continue
+            contents.append({"Key": key})
+        return {
+            "Contents": contents,
+            "CommonPrefixes": [{"Prefix": p} for p in common_prefixes.keys()],
+            "IsTruncated": False,
+        }
+
+    def upload_file(
+        self, Filename: str, Bucket: str, Key: str, **_: Any
+    ) -> None:
+        data = Path(Filename).read_bytes()
+        with self._lock:
+            self._objects[(Bucket, Key)] = data
+
+    def download_file(
+        self, Bucket: str, Key: str, Filename: str, **_: Any
+    ) -> None:
+        with self._lock:
+            data = self._objects.get((Bucket, Key))
+        if data is None:
+            raise _MockClientError("NoSuchKey")
+        Path(Filename).parent.mkdir(parents=True, exist_ok=True)
+        Path(Filename).write_bytes(data)
+
+
+# ---------------------------------------------------------------------------
+# Fake generator adapters
+# ---------------------------------------------------------------------------
+
+
+class FakeReplaySource:
+    """Pretends to be a GameGenerator for upload-side tests.
+
+    Each `dump_replay_delta_to_npz` call writes `count_per_call` placeholder
+    bytes to disk and advances the logical window.
+    """
+
+    def __init__(self, total_examples: int, count_per_call: int) -> None:
+        self._total = total_examples
+        self._count_per_call = count_per_call
+        self._produced = 0
+
+    def buffer_size(self) -> int:
+        return max(self._total - self._produced, 0)
+
+    def dump_replay_delta_to_npz(
+        self, filepath: str, from_index: int, max_examples: int
+    ) -> tuple[int, int, int, int] | None:
+        if self._total == 0:
+            return None
+        window_start = 0
+        window_end = self._total
+        slice_start = max(from_index, window_start)
+        if slice_start >= window_end:
+            return (window_start, window_end, slice_start, 0)
+        n = min(self._count_per_call, max_examples, window_end - slice_start)
+        Path(filepath).write_bytes(
+            json.dumps({"slice_start": slice_start, "n": n}).encode("utf-8")
+        )
+        self._produced = max(self._produced, slice_start + n)
+        return (window_start, window_end, slice_start, n)
+
+
+class FakeReplaySink:
+    """Pretends to be a GameGenerator for download-side tests."""
+
+    def __init__(self) -> None:
+        self.ingested: list[tuple[int, int]] = []
+        self._lock = threading.Lock()
+
+    def ingest_examples_from_npz(self, filepath: str) -> int:
+        payload = json.loads(Path(filepath).read_bytes())
+        with self._lock:
+            self.ingested.append((int(payload["slice_start"]), int(payload["n"])))
+        return int(payload["n"])
+
+
+class FakeModelSink:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, float]] = []
+        self._return_value = True
+
+    def sync_model_directly(
+        self, model_path: str, model_step: int, nn_value_weight: float
+    ) -> bool:
+        self.calls.append((model_path, model_step, nn_value_weight))
+        return self._return_value
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def settings() -> R2Settings:
+    return R2Settings(
+        endpoint_url="https://mock.r2",
+        bucket="bucket",
+        prefix="tetris-mcts",
+        sync_run_id="v9",
+        access_key_id="key",
+        secret_access_key="secret",
+        request_timeout_seconds=5.0,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_uploader_uploads_and_advances_cursor(tmp_path: Path, settings: R2Settings) -> None:
+    s3 = InMemoryS3()
+    source = FakeReplaySource(total_examples=10, count_per_call=4)
+    cursor = tmp_path / "upload_cursor.json"
+
+    uploader = ChunkUploader(
+        generator=source,
+        settings=settings,
+        machine_id="laptop",
+        cursor_path=cursor,
+        chunk_max_examples=4,
+        upload_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    client = s3
+    # Drive three iterations directly to avoid sleeping in the test thread.
+    uploader._upload_one_chunk(client)  # type: ignore[arg-type]
+    uploader._upload_one_chunk(client)  # type: ignore[arg-type]
+    uploader._upload_one_chunk(client)  # type: ignore[arg-type]
+
+    listing = s3.list_objects_v2(Bucket="bucket", Prefix=settings.replay_prefix())
+    keys = [obj["Key"] for obj in listing["Contents"]]
+    assert keys == [
+        f"{settings.replay_machine_prefix('laptop')}{0:020d}.npz",
+        f"{settings.replay_machine_prefix('laptop')}{4:020d}.npz",
+        f"{settings.replay_machine_prefix('laptop')}{8:020d}.npz",
+    ]
+    assert json.loads(cursor.read_text())["next_from_index"] == 10
+
+
+def test_chunk_uploader_skips_when_buffer_empty(tmp_path: Path, settings: R2Settings) -> None:
+    s3 = InMemoryS3()
+    source = FakeReplaySource(total_examples=0, count_per_call=4)
+
+    uploader = ChunkUploader(
+        generator=source,
+        settings=settings,
+        machine_id="laptop",
+        cursor_path=tmp_path / "cursor.json",
+        chunk_max_examples=4,
+        upload_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    uploader._upload_one_chunk(s3)  # type: ignore[arg-type]
+    listing = s3.list_objects_v2(Bucket="bucket", Prefix=settings.replay_prefix())
+    assert listing["Contents"] == []
+
+
+def test_chunk_downloader_ingests_new_keys(tmp_path: Path, settings: R2Settings) -> None:
+    s3 = InMemoryS3()
+    # Simulate two machines having uploaded a few chunks already.
+    for slice_start in (0, 4, 8):
+        key = settings.replay_chunk_key("laptop", slice_start)
+        payload = json.dumps({"slice_start": slice_start, "n": 4}).encode()
+        s3.put_object(Bucket="bucket", Key=key, Body=payload)
+    for slice_start in (0, 4):
+        key = settings.replay_chunk_key("desktop", slice_start)
+        payload = json.dumps({"slice_start": slice_start, "n": 4}).encode()
+        s3.put_object(Bucket="bucket", Key=key, Body=payload)
+
+    sink = FakeReplaySink()
+    cursor = tmp_path / "download_cursor.json"
+    downloader = ChunkDownloader(
+        generator=sink,
+        settings=settings,
+        cursor_path=cursor,
+        poll_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+
+    assert sorted(sink.ingested) == [(0, 4), (0, 4), (4, 4), (4, 4), (8, 4)]
+    saved = json.loads(cursor.read_text())["per_machine"]
+    assert saved["laptop"].endswith("00000000000000000008.npz")
+    assert saved["desktop"].endswith("00000000000000000004.npz")
+
+    # Adding a new chunk should pull only the new key on next poll.
+    sink.ingested.clear()
+    new_key = settings.replay_chunk_key("laptop", 12)
+    s3.put_object(
+        Bucket="bucket",
+        Key=new_key,
+        Body=json.dumps({"slice_start": 12, "n": 4}).encode(),
+    )
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+    assert sink.ingested == [(12, 4)]
+
+
+def test_uploader_then_downloader_round_trip(tmp_path: Path, settings: R2Settings) -> None:
+    s3 = InMemoryS3()
+    source = FakeReplaySource(total_examples=12, count_per_call=4)
+    sink = FakeReplaySink()
+
+    uploader = ChunkUploader(
+        generator=source,
+        settings=settings,
+        machine_id="laptop",
+        cursor_path=tmp_path / "u_cursor.json",
+        chunk_max_examples=4,
+        upload_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    downloader = ChunkDownloader(
+        generator=sink,
+        settings=settings,
+        cursor_path=tmp_path / "d_cursor.json",
+        poll_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+
+    for _ in range(3):
+        uploader._upload_one_chunk(s3)  # type: ignore[arg-type]
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+
+    assert sink.ingested == [(0, 4), (4, 4), (8, 4)]
+
+
+def test_model_bundle_round_trip(tmp_path: Path, settings: R2Settings) -> None:
+    s3 = InMemoryS3()
+    bundle_dir = tmp_path / "bundle_src"
+    bundle_dir.mkdir()
+    main = bundle_dir / "latest.onnx"
+    main.write_bytes(b"main-bytes")
+    (bundle_dir / "latest.conv.onnx").write_bytes(b"conv-bytes")
+    (bundle_dir / "latest.heads.onnx").write_bytes(b"heads-bytes")
+    (bundle_dir / "latest.fc.bin").write_bytes(b"fc-bytes")
+
+    pointer = upload_model_bundle(
+        settings=settings,
+        onnx_path=main,
+        step=42,
+        nn_value_weight=0.75,
+        client=s3,
+    )
+    assert pointer.step == 42
+    fetched = fetch_model_pointer(settings, client=s3)
+    assert fetched == pointer
+
+    dest_dir = tmp_path / "bundle_dst"
+    main_path = download_model_bundle(
+        settings=settings, pointer=pointer, dest_dir=dest_dir, client=s3
+    )
+    assert main_path.read_bytes() == b"main-bytes"
+    assert (dest_dir / "bundle.conv.onnx").read_bytes() == b"conv-bytes"
+    assert (dest_dir / "bundle.heads.onnx").read_bytes() == b"heads-bytes"
+    assert (dest_dir / "bundle.fc.bin").read_bytes() == b"fc-bytes"
+
+
+def test_model_downloader_calls_sink_once_per_step(tmp_path: Path, settings: R2Settings) -> None:
+    s3 = InMemoryS3()
+    bundle_dir = tmp_path / "bundle_src"
+    bundle_dir.mkdir()
+    (bundle_dir / "latest.onnx").write_bytes(b"main-bytes")
+    upload_model_bundle(
+        settings=settings,
+        onnx_path=bundle_dir / "latest.onnx",
+        step=10,
+        nn_value_weight=0.5,
+        client=s3,
+    )
+
+    sink = FakeModelSink()
+    downloader = ModelDownloader(
+        generator=sink,
+        settings=settings,
+        local_models_dir=tmp_path / "local_models",
+        poll_interval_seconds=10.0,
+        client_factory=lambda: s3,
+    )
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+    assert len(sink.calls) == 1
+    assert sink.calls[0][1] == 10
+    assert sink.calls[0][2] == 0.5
+
+    # Polling again with the same pointer is a no-op.
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+    assert len(sink.calls) == 1
+
+    # Bumping the step should trigger another sync.
+    upload_model_bundle(
+        settings=settings,
+        onnx_path=bundle_dir / "latest.onnx",
+        step=11,
+        nn_value_weight=0.6,
+        client=s3,
+    )
+    downloader._poll_once(s3)  # type: ignore[arg-type]
+    assert len(sink.calls) == 2
+    assert sink.calls[1][1] == 11

@@ -25,6 +25,7 @@ dependencies = [
     "pytest",
     "scipy",
     "pyyaml",
+    "boto3",
 ]
 
 [tool.pyright]

@@ -59,6 +59,11 @@ from tetris_bot.ml.game_metrics import (
     compute_batch_feature_metrics,
 )
 from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
+from tetris_bot.ml.r2_sync import (
+    ChunkDownloader,
+    R2Settings,
+    upload_model_bundle,
+)
 
 from tetris_core.tetris_core import GameGenerator, GameReplay, MCTSConfig
 from tetris_core.tetris_core import evaluate_model
@@ -215,6 +220,9 @@ class Trainer:
         self._runtime_overrides_path = config.run.run_dir / RUNTIME_OVERRIDES_FILENAME
         self._runtime_overrides_last_mtime_ns: int | None = None
         self._next_runtime_overrides_check_time_s: float | None = None
+        self._r2_settings: R2Settings | None = None
+        self._r2_chunk_downloader: ChunkDownloader | None = None
+        self._r2_last_uploaded_step: int = -1
 
         # Create directories
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1532,6 +1540,97 @@ class Trainer:
             batch.masks,
         )
 
+    def _r2_sync_role(self) -> str:
+        return self.config.r2_sync.role
+
+    def _init_r2_sync(self, generator: GameGenerator) -> None:
+        """Resolve R2 settings and start the chunk downloader if enabled.
+
+        Trainer roles that ingest remote replay chunks: 'trainer', 'both'.
+        Trainer roles that push ONNX bundles: 'trainer', 'both'.
+        Role 'generator' is for `run_generator.py`, not this code path; if seen
+        here we treat it as a misconfiguration and disable sync.
+        """
+        role = self._r2_sync_role()
+        if role == "off":
+            return
+        if role == "generator":
+            logger.warning(
+                "trainer.r2_sync_role_unsupported_in_trainer", role=role
+            )
+            return
+        if self.config.run.run_dir is None:
+            return
+        default_run_id = self.config.run.run_dir.name
+        try:
+            self._r2_settings = R2Settings.from_config(
+                self.config.r2_sync, default_run_id=default_run_id
+            )
+        except ValueError as error:
+            logger.warning("trainer.r2_sync_disabled", error=str(error))
+            self._r2_settings = None
+            return
+        cursor_path = self.config.run.run_dir / "r2_ingest_cursor.json"
+        self._r2_chunk_downloader = ChunkDownloader(
+            generator=generator,
+            settings=self._r2_settings,
+            cursor_path=cursor_path,
+            poll_interval_seconds=(
+                self.config.r2_sync.chunk_download_poll_interval_seconds
+            ),
+        )
+        self._r2_chunk_downloader.start()
+        logger.info(
+            "trainer.r2_sync_initialized",
+            role=role,
+            sync_run_id=self._r2_settings.sync_run_id,
+            bucket=self._r2_settings.bucket,
+            endpoint_url=self._r2_settings.endpoint_url,
+        )
+
+    def _shutdown_r2_sync(self) -> None:
+        downloader = self._r2_chunk_downloader
+        if downloader is None:
+            return
+        try:
+            downloader.stop()
+        except Exception:
+            logger.exception("trainer.r2_chunk_downloader_stop_failed")
+        finally:
+            self._r2_chunk_downloader = None
+
+    def _upload_to_r2_if_enabled(
+        self,
+        onnx_path: Path,
+        model_step: int,
+        nn_value_weight: float,
+    ) -> None:
+        if self._r2_settings is None:
+            return
+        if model_step <= self._r2_last_uploaded_step:
+            return
+        if not onnx_path.exists():
+            logger.warning(
+                "trainer.r2_upload_skipped_missing_bundle",
+                path=str(onnx_path),
+                step=model_step,
+            )
+            return
+        try:
+            upload_model_bundle(
+                settings=self._r2_settings,
+                onnx_path=onnx_path,
+                step=model_step,
+                nn_value_weight=nn_value_weight,
+            )
+            self._r2_last_uploaded_step = model_step
+        except Exception:
+            logger.exception(
+                "trainer.r2_upload_failed",
+                path=str(onnx_path),
+                step=model_step,
+            )
+
     def _persist_incumbent_model_artifacts(
         self, generator: GameGenerator
     ) -> tuple[Path | None, str]:
@@ -1547,6 +1646,11 @@ class Trainer:
             source_path_string = str(source_path)
             try:
                 copy_model_artifact_bundle(source_path, destination_path)
+                self._upload_to_r2_if_enabled(
+                    destination_path,
+                    generator.incumbent_model_step(),
+                    generator.incumbent_nn_value_weight(),
+                )
                 return destination_path, source_path_string
             except (FileNotFoundError, RuntimeError) as error:
                 latest_source_path = Path(generator.incumbent_model_path())
@@ -1774,6 +1878,7 @@ class Trainer:
 
         stop_error: BaseException | None = None
         with self._defer_sigint_during_shutdown():
+            self._shutdown_r2_sync()
             try:
                 logger.info("Stopping game generator")
                 generator.stop()
@@ -1944,6 +2049,7 @@ class Trainer:
         )
         wall_time_anchor_s = time.perf_counter()
         generator.start()
+        self._init_r2_sync(generator)
         generator_log_fields: dict[str, object] = {
             "model_path": str(generator_model_path),
             "trainer_parallel_model_path": str(onnx_path),
@@ -2435,6 +2541,12 @@ class Trainer:
                             self.step,
                             synced_nn_value_weight,
                         )
+                        if synced:
+                            self._upload_to_r2_if_enabled(
+                                sync_onnx_path,
+                                self.step,
+                                synced_nn_value_weight,
+                            )
                         sync_now_s = time.perf_counter()
                         next_model_sync_time_s = roll_interval_deadline(
                             next_model_sync_time_s,

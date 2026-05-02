@@ -749,6 +749,68 @@ impl GameGenerator {
         )))
     }
 
+    /// Write a delta slice from the replay buffer directly to an NPZ file.
+    ///
+    /// Used by remote generator workers to upload incremental replay chunks
+    /// without first marshaling Vec<f32> tensors into Python.
+    ///
+    /// Returns None when the buffer is empty. When the requested slice is
+    /// non-empty, writes an NPZ file in the same format as the periodic
+    /// snapshot and returns `(window_start, window_end, slice_start, count)`.
+    /// When `from_index >= window_end` the slice is empty and no file is
+    /// written; the tuple is returned with `count = 0` so the caller can
+    /// advance its cursor.
+    #[pyo3(signature = (filepath, from_index, max_examples))]
+    pub fn dump_replay_delta_to_npz(
+        &self,
+        filepath: String,
+        from_index: u64,
+        max_examples: usize,
+    ) -> PyResult<Option<(u64, u64, u64, usize)>> {
+        if max_examples == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "max_examples must be > 0",
+            ));
+        }
+        let Some((window_start, window_end, slice_start, slice_examples)) =
+            self.buffer.logical_delta_slice(from_index, max_examples)
+        else {
+            return Ok(None);
+        };
+        let count = slice_examples.len();
+        if count == 0 {
+            return Ok(Some((window_start, window_end, slice_start, 0)));
+        }
+        write_examples_to_npz(Path::new(&filepath), &slice_examples).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "Failed to write replay chunk to {}: {}",
+                filepath, e
+            ))
+        })?;
+        Ok(Some((window_start, window_end, slice_start, count)))
+    }
+
+    /// Read training examples from an NPZ file and append them to the replay buffer.
+    ///
+    /// Used by trainer-side ingestion of remote replay chunks fetched from R2.
+    /// Returns the number of examples ingested.
+    #[pyo3(signature = (filepath))]
+    pub fn ingest_examples_from_npz(&self, filepath: String) -> PyResult<usize> {
+        let examples = read_examples_from_npz(Path::new(&filepath)).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Failed to read replay chunk from {}: {}",
+                filepath, e
+            ))
+        })?;
+        let count = examples.len();
+        if count > 0 {
+            self.buffer.add_examples(examples);
+            self.examples_generated
+                .fetch_add(count as u64, Ordering::SeqCst);
+        }
+        Ok(count)
+    }
+
     /// Sample a batch of training data from the replay buffer.
     ///
     /// Returns a tuple of numpy arrays:
