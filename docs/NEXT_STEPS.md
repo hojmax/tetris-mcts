@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Final phase of training with low learning rate, no noise and no stochasticity.
 - [ ]  Auxiliary loss
     - [ ]  Predict next move logits
     - [ ]  Predict value sum over next 1,2,3,4,5 moves

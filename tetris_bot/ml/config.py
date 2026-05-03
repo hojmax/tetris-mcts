@@ -136,10 +136,10 @@ class R2SyncConfig(ConfigModel):
     prefix: str = "tetris-mcts"
     sync_run_id: str | None = None
     active_run_freshness_seconds: float = 300.0
-    chunk_max_examples: int = 4096
-    chunk_upload_interval_seconds: float = 15.0
-    chunk_download_poll_interval_seconds: float = 10.0
-    model_pointer_poll_interval_seconds: float = 20.0
+    chunk_max_examples: int = 16384
+    chunk_upload_interval_seconds: float = 60.0
+    chunk_download_poll_interval_seconds: float = 60.0
+    model_pointer_poll_interval_seconds: float = 60.0
     request_timeout_seconds: float = 30.0
 
 
