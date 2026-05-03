@@ -27,6 +27,7 @@ from tetris_bot.ml.config import (  # noqa: E402
     ResolvedRuntimeOptimizerOverrides,
     ResolvedRuntimeOverrides,
     ResolvedRuntimeRunOverrides,
+    ResolvedRuntimeSelfPlayOverrides,
     TrainingConfig,
     load_training_config,
 )
@@ -190,6 +191,16 @@ def restore_trainer_from_checkpoint(
     runtime_override_checkpoint_interval_seconds = state.get(
         "runtime_override_checkpoint_interval_seconds"
     )
+    # New self-play overrides — older checkpoints will not contain these,
+    # in which case we fall back to the values already on the trainer
+    # (loaded from config.yaml at construction time).
+    runtime_override_add_noise = state.get(
+        "runtime_override_add_noise", trainer.config.self_play.add_noise
+    )
+    runtime_override_visit_sampling_epsilon = state.get(
+        "runtime_override_visit_sampling_epsilon",
+        trainer.config.self_play.visit_sampling_epsilon,
+    )
     if (
         runtime_override_lr_multiplier is not None
         and runtime_override_grad_clip_norm is not None
@@ -214,6 +225,12 @@ def restore_trainer_from_checkpoint(
                         runtime_override_checkpoint_interval_seconds
                     ),
                 ),
+                self_play=ResolvedRuntimeSelfPlayOverrides(
+                    add_noise=bool(runtime_override_add_noise),
+                    visit_sampling_epsilon=float(
+                        runtime_override_visit_sampling_epsilon
+                    ),
+                ),
             ),
             lrs_already_scaled=args.resume_restore_optimizer_scheduler,
         )
@@ -228,6 +245,8 @@ def restore_trainer_from_checkpoint(
             ),
             log_interval_seconds=runtime_override_log_interval_seconds,
             checkpoint_interval_seconds=(runtime_override_checkpoint_interval_seconds),
+            add_noise=runtime_override_add_noise,
+            visit_sampling_epsilon=runtime_override_visit_sampling_epsilon,
         )
 
     incumbent_uses_network = state.get("incumbent_uses_network")

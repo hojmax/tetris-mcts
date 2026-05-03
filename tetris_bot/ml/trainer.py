@@ -32,6 +32,7 @@ from tetris_bot.ml.config import (
     ResolvedRuntimeOptimizerOverrides,
     ResolvedRuntimeOverrides,
     ResolvedRuntimeRunOverrides,
+    ResolvedRuntimeSelfPlayOverrides,
     RuntimeOverrides,
     SelfPlaySnapshot,
     TrainingConfig,
@@ -234,6 +235,10 @@ class Trainer:
             run=ResolvedRuntimeRunOverrides(
                 log_interval_seconds=self.config.run.log_interval_seconds,
                 checkpoint_interval_seconds=self.config.run.checkpoint_interval_seconds,
+            ),
+            self_play=ResolvedRuntimeSelfPlayOverrides(
+                add_noise=self.config.self_play.add_noise,
+                visit_sampling_epsilon=self.config.self_play.visit_sampling_epsilon,
             ),
         )
         self._runtime_overrides_path = config.run.run_dir / RUNTIME_OVERRIDES_FILENAME
@@ -472,6 +477,10 @@ class Trainer:
                 log_interval_seconds=self.config.run.log_interval_seconds,
                 checkpoint_interval_seconds=self.config.run.checkpoint_interval_seconds,
             ),
+            self_play=ResolvedRuntimeSelfPlayOverrides(
+                add_noise=self.config.self_play.add_noise,
+                visit_sampling_epsilon=self.config.self_play.visit_sampling_epsilon,
+            ),
         )
 
     def _resolved_runtime_overrides(
@@ -540,6 +549,18 @@ class Trainer:
                     self._runtime_override_defaults.run.checkpoint_interval_seconds
                     if overrides.run.checkpoint_interval_seconds is None
                     else overrides.run.checkpoint_interval_seconds
+                ),
+            ),
+            self_play=ResolvedRuntimeSelfPlayOverrides(
+                add_noise=(
+                    self._runtime_override_defaults.self_play.add_noise
+                    if overrides.self_play.add_noise is None
+                    else overrides.self_play.add_noise
+                ),
+                visit_sampling_epsilon=(
+                    self._runtime_override_defaults.self_play.visit_sampling_epsilon
+                    if overrides.self_play.visit_sampling_epsilon is None
+                    else overrides.self_play.visit_sampling_epsilon
                 ),
             ),
         )
@@ -629,6 +650,12 @@ class Trainer:
             state.run.checkpoint_interval_seconds,
             strictly_positive=True,
         )
+        self._validate_runtime_override_value(
+            "runtime override self_play.visit_sampling_epsilon",
+            state.self_play.visit_sampling_epsilon,
+            min_value=0.0,
+            max_value=1.0,
+        )
 
         self.config.optimizer.grad_clip_norm = state.optimizer.grad_clip_norm
         self.config.optimizer.weight_decay = state.optimizer.weight_decay
@@ -640,6 +667,10 @@ class Trainer:
         self.config.run.log_interval_seconds = state.run.log_interval_seconds
         self.config.run.checkpoint_interval_seconds = (
             state.run.checkpoint_interval_seconds
+        )
+        self.config.self_play.add_noise = state.self_play.add_noise
+        self.config.self_play.visit_sampling_epsilon = (
+            state.self_play.visit_sampling_epsilon
         )
         if lrs_already_scaled:
             # `param_group["lr"]` was saved as `scheduler_base * multiplier`.
@@ -662,6 +693,7 @@ class Trainer:
         now_s: float,
         next_log_time_s: float | None,
         next_checkpoint_time_s: float | None,
+        generator: GameGenerator | None = None,
         force: bool = False,
     ) -> tuple[float | None, float | None]:
         if (
@@ -720,6 +752,12 @@ class Trainer:
             "runtime override run.checkpoint_interval_seconds",
             resolved.run.checkpoint_interval_seconds,
             strictly_positive=True,
+        )
+        self._validate_runtime_override_value(
+            "runtime override self_play.visit_sampling_epsilon",
+            resolved.self_play.visit_sampling_epsilon,
+            min_value=0.0,
+            max_value=1.0,
         )
 
         if resolved.optimizer.lr_multiplier != current_state.optimizer.lr_multiplier:
@@ -786,6 +824,44 @@ class Trainer:
                 new_interval_s=resolved.run.checkpoint_interval_seconds,
                 now_s=now_s,
             )
+
+        self_play_changed = False
+        if resolved.self_play.add_noise != current_state.self_play.add_noise:
+            changes["self_play.add_noise"] = (
+                current_state.self_play.add_noise,
+                resolved.self_play.add_noise,
+            )
+            self.config.self_play.add_noise = resolved.self_play.add_noise
+            self_play_changed = True
+
+        if (
+            resolved.self_play.visit_sampling_epsilon
+            != current_state.self_play.visit_sampling_epsilon
+        ):
+            changes["self_play.visit_sampling_epsilon"] = (
+                current_state.self_play.visit_sampling_epsilon,
+                resolved.self_play.visit_sampling_epsilon,
+            )
+            self.config.self_play.visit_sampling_epsilon = (
+                resolved.self_play.visit_sampling_epsilon
+            )
+            self_play_changed = True
+
+        if self_play_changed:
+            if generator is not None:
+                try:
+                    generator.update_search_overrides(
+                        add_noise=resolved.self_play.add_noise,
+                        visit_sampling_epsilon=(
+                            resolved.self_play.visit_sampling_epsilon
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to push self-play overrides to GameGenerator; "
+                        "trainer config is updated but live workers may be stale",
+                    )
+            self._republish_self_play_snapshot_to_r2()
 
         if raw_overrides.self_play.force_promote_next_candidate:
             changes["self_play.force_promote_next_candidate"] = (False, True)
@@ -959,6 +1035,10 @@ class Trainer:
             ),
             "runtime_override_checkpoint_interval_seconds": (
                 runtime_overrides.run.checkpoint_interval_seconds
+            ),
+            "runtime_override_add_noise": runtime_overrides.self_play.add_noise,
+            "runtime_override_visit_sampling_epsilon": (
+                runtime_overrides.self_play.visit_sampling_epsilon
             ),
         }
 
@@ -1797,17 +1877,29 @@ class Trainer:
             offset_table=offset_table,
         )
         self._r2_game_stats_downloader.start()
-        snapshot = SelfPlaySnapshot.from_self_play(self.config.self_play)
-        try:
-            upload_self_play_snapshot(settings=self._r2_settings, snapshot=snapshot)
-        except Exception:
-            logger.exception("trainer.r2_self_play_snapshot_upload_failed")
+        self._republish_self_play_snapshot_to_r2()
         logger.info(
             "trainer.r2_sync_initialized",
             sync_run_id=self._r2_settings.sync_run_id,
             bucket=self._r2_settings.bucket,
             endpoint_url=self._r2_settings.endpoint_url,
         )
+
+    def _republish_self_play_snapshot_to_r2(self) -> None:
+        """Push the current `self_play` snapshot to R2 if R2 is enabled.
+
+        Called at startup and whenever runtime overrides change a field
+        that's part of `SelfPlaySnapshot`. Generators poll this snapshot
+        and apply any changes to their local `MCTSConfig` so cross-machine
+        search settings stay in sync without restart.
+        """
+        if self._r2_settings is None:
+            return
+        snapshot = SelfPlaySnapshot.from_self_play(self.config.self_play)
+        try:
+            upload_self_play_snapshot(settings=self._r2_settings, snapshot=snapshot)
+        except Exception:
+            logger.exception("trainer.r2_self_play_snapshot_upload_failed")
 
     def _shutdown_r2_sync(self) -> None:
         chunk_downloader = self._r2_chunk_downloader
@@ -2457,6 +2549,7 @@ class Trainer:
                         now_s=pre_step_time,
                         next_log_time_s=next_log_time_s,
                         next_checkpoint_time_s=next_checkpoint_time_s,
+                        generator=generator,
                     )
                 )
                 if next_log_time_s is None:

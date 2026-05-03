@@ -9,6 +9,7 @@ from tetris_bot.ml.config import (
     ResolvedRuntimeOptimizerOverrides,
     ResolvedRuntimeOverrides,
     ResolvedRuntimeRunOverrides,
+    ResolvedRuntimeSelfPlayOverrides,
     RuntimeOverrides,
     load_runtime_overrides,
     load_training_config,
@@ -44,6 +45,10 @@ def test_trainer_reloads_runtime_overrides_and_reverts_to_defaults(
 ) -> None:
     trainer = _make_trainer(tmp_path)
     overrides_path = tmp_path / RUNTIME_OVERRIDES_FILENAME
+    config_default_add_noise = trainer.config.self_play.add_noise
+    config_default_visit_sampling_epsilon = (
+        trainer.config.self_play.visit_sampling_epsilon
+    )
 
     save_runtime_overrides(
         RuntimeOverrides.model_validate(
@@ -57,6 +62,10 @@ def test_trainer_reloads_runtime_overrides_and_reverts_to_defaults(
                 "run": {
                     "log_interval_seconds": 2.0,
                     "checkpoint_interval_seconds": 100.0,
+                },
+                "self_play": {
+                    "add_noise": False,
+                    "visit_sampling_epsilon": 0.0,
                 },
             }
         ),
@@ -78,6 +87,8 @@ def test_trainer_reloads_runtime_overrides_and_reverts_to_defaults(
     )
     assert trainer.config.run.log_interval_seconds == pytest.approx(2.0)
     assert trainer.config.run.checkpoint_interval_seconds == pytest.approx(100.0)
+    assert trainer.config.self_play.add_noise is False
+    assert trainer.config.self_play.visit_sampling_epsilon == pytest.approx(0.0)
     assert next_log_time_s == pytest.approx(500.0)
     assert next_checkpoint_time_s == pytest.approx(500.0)
 
@@ -97,8 +108,93 @@ def test_trainer_reloads_runtime_overrides_and_reverts_to_defaults(
     )
     assert trainer.config.run.log_interval_seconds == pytest.approx(10.0)
     assert trainer.config.run.checkpoint_interval_seconds == pytest.approx(10800.0)
+    assert trainer.config.self_play.add_noise == config_default_add_noise
+    assert trainer.config.self_play.visit_sampling_epsilon == pytest.approx(
+        config_default_visit_sampling_epsilon
+    )
     assert next_log_time_s == pytest.approx(520.0)
     assert next_checkpoint_time_s == pytest.approx(11_200.0)
+
+
+def test_self_play_overrides_apply_to_generator_and_publish_snapshot(
+    tmp_path: Path,
+) -> None:
+    """Final-phase use case: setting `add_noise=false` and
+    `visit_sampling_epsilon=0` in `runtime_overrides.yaml` mutates the
+    trainer's `self_play` config, pushes the live atomics into the
+    GameGenerator, and re-publishes the SelfPlaySnapshot to R2 (mocked).
+    """
+
+    trainer = _make_trainer(tmp_path)
+    overrides_path = tmp_path / RUNTIME_OVERRIDES_FILENAME
+
+    captured_calls: list[dict[str, object]] = []
+
+    class FakeGenerator:
+        def update_search_overrides(
+            self,
+            *,
+            add_noise: bool | None = None,
+            visit_sampling_epsilon: float | None = None,
+        ) -> None:
+            captured_calls.append(
+                {
+                    "add_noise": add_noise,
+                    "visit_sampling_epsilon": visit_sampling_epsilon,
+                }
+            )
+
+    snapshot_publish_calls = 0
+
+    def _record_publish() -> None:
+        nonlocal snapshot_publish_calls
+        snapshot_publish_calls += 1
+
+    trainer._republish_self_play_snapshot_to_r2 = _record_publish  # type: ignore[method-assign]
+
+    save_runtime_overrides(
+        RuntimeOverrides.model_validate(
+            {
+                "self_play": {
+                    "add_noise": False,
+                    "visit_sampling_epsilon": 0.0,
+                }
+            }
+        ),
+        overrides_path,
+    )
+
+    trainer._maybe_reload_runtime_overrides(
+        now_s=10.0,
+        next_log_time_s=None,
+        next_checkpoint_time_s=None,
+        generator=FakeGenerator(),  # type: ignore[arg-type]
+        force=True,
+    )
+
+    assert trainer.config.self_play.add_noise is False
+    assert trainer.config.self_play.visit_sampling_epsilon == pytest.approx(0.0)
+    assert captured_calls == [{"add_noise": False, "visit_sampling_epsilon": 0.0}]
+    assert snapshot_publish_calls == 1
+
+
+def test_self_play_overrides_validate_visit_sampling_epsilon_range(
+    tmp_path: Path,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    overrides_path = tmp_path / RUNTIME_OVERRIDES_FILENAME
+    save_runtime_overrides(
+        RuntimeOverrides.model_validate({"self_play": {"visit_sampling_epsilon": 1.5}}),
+        overrides_path,
+    )
+
+    with pytest.raises(ValueError, match="visit_sampling_epsilon"):
+        trainer._maybe_reload_runtime_overrides(
+            now_s=0.0,
+            next_log_time_s=None,
+            next_checkpoint_time_s=None,
+            force=True,
+        )
 
 
 def test_lr_multiplier_does_not_compound_across_scheduler_steps(
@@ -194,6 +290,10 @@ def test_restore_trainer_restores_runtime_override_state_with_scheduler_restore(
                 log_interval_seconds=2.0,
                 checkpoint_interval_seconds=100.0,
             ),
+            self_play=ResolvedRuntimeSelfPlayOverrides(
+                add_noise=False,
+                visit_sampling_epsilon=0.0,
+            ),
         ),
         lrs_already_scaled=False,
     )
@@ -225,6 +325,8 @@ def test_restore_trainer_restores_runtime_override_state_with_scheduler_restore(
     )
     assert restored.config.run.log_interval_seconds == pytest.approx(2.0)
     assert restored.config.run.checkpoint_interval_seconds == pytest.approx(100.0)
+    assert restored.config.self_play.add_noise is False
+    assert restored.config.self_play.visit_sampling_epsilon == pytest.approx(0.0)
 
 
 def test_restore_trainer_restores_runtime_override_state_without_scheduler_restore(
@@ -242,6 +344,10 @@ def test_restore_trainer_restores_runtime_override_state_without_scheduler_resto
             run=ResolvedRuntimeRunOverrides(
                 log_interval_seconds=2.0,
                 checkpoint_interval_seconds=100.0,
+            ),
+            self_play=ResolvedRuntimeSelfPlayOverrides(
+                add_noise=False,
+                visit_sampling_epsilon=0.0,
             ),
         ),
         lrs_already_scaled=False,
@@ -278,3 +384,5 @@ def test_restore_trainer_restores_runtime_override_state_without_scheduler_resto
     )
     assert restored.config.run.log_interval_seconds == pytest.approx(2.0)
     assert restored.config.run.checkpoint_interval_seconds == pytest.approx(100.0)
+    assert restored.config.self_play.add_noise is False
+    assert restored.config.self_play.visit_sampling_epsilon == pytest.approx(0.0)

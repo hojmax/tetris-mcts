@@ -261,13 +261,18 @@ class RuntimeRunOverrides(ConfigModel):
 
 
 class RuntimeSelfPlayOverrides(ConfigModel):
-    """One-shot self-play triggers loaded from runtime_overrides.yaml.
+    """Self-play overrides loaded from runtime_overrides.yaml.
 
-    Unlike the optimizer/run override fields, these are consumed once and
-    reset back to their default in the file by the trainer.
+    `force_promote_next_candidate` is one-shot — consumed and reset by
+    the trainer. `add_noise` and `visit_sampling_epsilon` are continuous
+    overrides applied to live MCTS workers and republished as part of
+    the trainer's R2 self-play snapshot, so remote generators converge
+    on the same setting without restart.
     """
 
     force_promote_next_candidate: bool = False
+    add_noise: bool | None = None
+    visit_sampling_epsilon: float | None = None
 
 
 class RuntimeOverrides(ConfigModel):
@@ -294,9 +299,15 @@ class ResolvedRuntimeRunOverrides(ConfigModel):
     checkpoint_interval_seconds: float
 
 
+class ResolvedRuntimeSelfPlayOverrides(ConfigModel):
+    add_noise: bool
+    visit_sampling_epsilon: float
+
+
 class ResolvedRuntimeOverrides(ConfigModel):
     optimizer: ResolvedRuntimeOptimizerOverrides
     run: ResolvedRuntimeRunOverrides
+    self_play: ResolvedRuntimeSelfPlayOverrides
 
 
 def save_training_config(config: TrainingConfig, path: Path) -> None:

@@ -336,11 +336,17 @@ impl GameGenerator {
                 }
             }
 
-            // Play one game
+            // Play one game. Both `add_noise` and `visit_sampling_epsilon`
+            // are read live so trainer/operator overrides take effect on
+            // the next game without rebuilding the agent.
+            let live_add_noise = shared.live_overrides.add_noise.load(Ordering::SeqCst);
+            let live_visit_sampling_epsilon =
+                Self::load_atomic_f32(&shared.live_overrides.visit_sampling_epsilon);
+            agent.set_visit_sampling_epsilon(live_visit_sampling_epsilon);
             let env = TetrisEnv::new(BOARD_WIDTH, BOARD_HEIGHT);
             let replay_seed = env.seed;
             if let Some((result, replay_moves)) =
-                agent.play_game_on_env(env, settings.max_placements, settings.add_noise)
+                agent.play_game_on_env(env, settings.max_placements, live_add_noise)
             {
                 let total_attack = result.total_attack;
                 let num_moves = result.num_moves;

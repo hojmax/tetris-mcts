@@ -449,6 +449,13 @@ impl MCTSAgent {
         self.nn.as_ref()
     }
 
+    /// Live-update the agent's `visit_sampling_epsilon` without rebuilding
+    /// the agent. The runtime worker calls this from the per-game read of
+    /// the shared `LiveSearchOverrides` atomics.
+    pub(crate) fn set_visit_sampling_epsilon(&mut self, value: f32) {
+        self.config.visit_sampling_epsilon = value;
+    }
+
     /// Play a full game on a pre-created environment, returning both the
     /// GameResult (with training examples) and a Vec of ReplayMove for replay.
     pub(crate) fn play_game_on_env(

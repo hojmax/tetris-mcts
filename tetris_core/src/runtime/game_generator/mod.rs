@@ -33,8 +33,9 @@ mod shared;
 mod tests;
 
 use shared::{
-    CandidateModelRequest, CompletedGameResult, IncumbentState, LastGameInfo, ModelEvalEvent,
-    SharedBuffer, SnapshotPersister, WorkerContext, WorkerSettings, WorkerSharedState,
+    CandidateModelRequest, CompletedGameResult, IncumbentState, LastGameInfo, LiveSearchOverrides,
+    ModelEvalEvent, SharedBuffer, SnapshotPersister, WorkerContext, WorkerSettings,
+    WorkerSharedState,
 };
 
 #[pyclass]
@@ -47,8 +48,16 @@ pub struct GameGenerator {
     config: MCTSConfig,
     /// Maximum placements per game (hold actions do not count)
     max_placements: u32,
-    /// Whether to add Dirichlet noise
-    add_noise: bool,
+    /// Live-tunable Dirichlet noise toggle. Stored as `Arc<AtomicBool>`
+    /// so trainer + remote-generator overrides take effect on the next
+    /// game without restarting workers. Candidate-eval games still
+    /// force `false` deterministically inside the worker loop.
+    live_add_noise: Arc<AtomicBool>,
+    /// Live-tunable `visit_sampling_epsilon` (epsilon-greedy at the
+    /// posterior). Stored as `Arc<AtomicU32>` of `f32::to_bits()`; the
+    /// worker stamps it onto the agent's `MCTSConfig` at the top of
+    /// every game.
+    live_visit_sampling_epsilon: Arc<AtomicU32>,
     /// Wall-clock interval between disk saves (for resume capability)
     save_interval_seconds: f64,
     /// Number of worker threads

@@ -54,7 +54,6 @@ impl GameGenerator {
             snapshot_persister,
             config: self.config.clone(),
             max_placements: self.max_placements,
-            add_noise: self.add_noise,
             save_interval_seconds: self.save_interval_seconds,
             num_workers: self.num_workers,
             candidate_eval_seeds: Arc::clone(&self.candidate_eval_seeds),
@@ -82,6 +81,10 @@ impl GameGenerator {
                 death_penalty: Arc::clone(&self.incumbent_death_penalty),
                 overhang_penalty_weight: Arc::clone(&self.incumbent_overhang_penalty_weight),
                 eval_avg_attack: Arc::clone(&self.incumbent_eval_avg_attack),
+            },
+            live_overrides: LiveSearchOverrides {
+                add_noise: Arc::clone(&self.live_add_noise),
+                visit_sampling_epsilon: Arc::clone(&self.live_visit_sampling_epsilon),
             },
         }
     }
@@ -128,6 +131,7 @@ impl GameGenerator {
         let initial_death_penalty_bits = resolved_config.death_penalty.to_bits();
         let initial_overhang_penalty_weight_bits =
             resolved_config.overhang_penalty_weight.to_bits();
+        let initial_visit_sampling_epsilon_bits = resolved_config.visit_sampling_epsilon.to_bits();
         let bootstrap_model_path = PathBuf::from(model_path);
 
         Ok(GameGenerator {
@@ -135,7 +139,10 @@ impl GameGenerator {
             training_data_path: PathBuf::from(training_data_path),
             config: resolved_config,
             max_placements,
-            add_noise,
+            live_add_noise: Arc::new(AtomicBool::new(add_noise)),
+            live_visit_sampling_epsilon: Arc::new(AtomicU32::new(
+                initial_visit_sampling_epsilon_bits,
+            )),
             save_interval_seconds,
             num_workers,
             candidate_gating_enabled,
@@ -364,6 +371,44 @@ impl GameGenerator {
 
     pub fn incumbent_overhang_penalty_weight(&self) -> f32 {
         Self::load_atomic_f32(&self.incumbent_overhang_penalty_weight)
+    }
+
+    /// Current live `add_noise` setting applied to self-play games.
+    pub fn live_add_noise(&self) -> bool {
+        self.live_add_noise.load(Ordering::SeqCst)
+    }
+
+    /// Current live `visit_sampling_epsilon` applied to self-play games.
+    pub fn live_visit_sampling_epsilon(&self) -> f32 {
+        Self::load_atomic_f32(&self.live_visit_sampling_epsilon)
+    }
+
+    /// Live-update self-play search overrides without rebuilding workers.
+    ///
+    /// `None` arguments leave the corresponding setting unchanged. Workers
+    /// pick up new values at the start of the next game. Candidate-eval
+    /// games still force `add_noise=false` and `visit_sampling_epsilon=0`
+    /// inside the worker loop, so this only affects training self-play.
+    #[pyo3(signature = (add_noise=None, visit_sampling_epsilon=None))]
+    pub fn update_search_overrides(
+        &self,
+        add_noise: Option<bool>,
+        visit_sampling_epsilon: Option<f32>,
+    ) -> PyResult<()> {
+        if let Some(epsilon) = visit_sampling_epsilon {
+            if !epsilon.is_finite() || !(0.0..=1.0).contains(&epsilon) {
+                return Err(Self::invalid_generator_arg(format!(
+                    "visit_sampling_epsilon must be in [0, 1] (got {epsilon})"
+                )));
+            }
+        }
+        if let Some(value) = add_noise {
+            self.live_add_noise.store(value, Ordering::SeqCst);
+        }
+        if let Some(epsilon) = visit_sampling_epsilon {
+            Self::store_atomic_f32(&self.live_visit_sampling_epsilon, epsilon);
+        }
+        Ok(())
     }
 
     /// Return whether a candidate is pending or currently being evaluated.
