@@ -33,6 +33,7 @@ from tetris_bot.ml.config import (
     ResolvedRuntimeOverrides,
     ResolvedRuntimeRunOverrides,
     RuntimeOverrides,
+    SelfPlaySnapshot,
     TrainingConfig,
     load_runtime_overrides,
     save_runtime_overrides,
@@ -68,6 +69,7 @@ from tetris_bot.ml.r2_sync import (
     MachineOffsetTable,
     R2Settings,
     upload_model_bundle,
+    upload_self_play_snapshot,
 )
 
 from tetris_core.tetris_core import GameGenerator, GameReplay, MCTSConfig
@@ -282,9 +284,7 @@ class Trainer:
         return self.config.self_play.use_candidate_gating
 
     def _cumulative_wall_time_seconds(self, now_s: float) -> float:
-        return self._cumulative_wall_time_offset_s + (
-            now_s - self._wall_time_anchor_s
-        )
+        return self._cumulative_wall_time_offset_s + (now_s - self._wall_time_anchor_s)
 
     def _cumulative_wall_time_hours(self, now_s: float) -> float:
         return self._cumulative_wall_time_seconds(now_s) / 3600.0
@@ -1023,9 +1023,7 @@ class Trainer:
                 now_s=now_s,
             )
             if promoted:
-                self._publish_incumbent_to_r2_if_enabled(
-                    generator, reason="promotion"
-                )
+                self._publish_incumbent_to_r2_if_enabled(generator, reason="promotion")
             next_candidate_export_delay_seconds = max(
                 0.0, candidate_gate_schedule.next_export_time_s - now_s
             )
@@ -1787,6 +1785,11 @@ class Trainer:
             offset_table=offset_table,
         )
         self._r2_game_stats_downloader.start()
+        snapshot = SelfPlaySnapshot.from_self_play(self.config.self_play)
+        try:
+            upload_self_play_snapshot(settings=self._r2_settings, snapshot=snapshot)
+        except Exception:
+            logger.exception("trainer.r2_self_play_snapshot_upload_failed")
         logger.info(
             "trainer.r2_sync_initialized",
             sync_run_id=self._r2_settings.sync_run_id,
@@ -2698,7 +2701,9 @@ class Trainer:
                             f"throughput/games_per_second/{self._local_machine_id}",
                             0.0,
                         ),
-                        total_games_per_second=metrics["throughput/games_per_second/total"],
+                        total_games_per_second=metrics[
+                            "throughput/games_per_second/total"
+                        ],
                         steps_per_second=metrics["throughput/steps_per_second"],
                         sample_batch_ms=metrics["timing/sample_batch_ms"],
                         replay_sync_ms=metrics["timing/replay_sync_ms"],

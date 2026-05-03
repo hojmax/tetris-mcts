@@ -14,6 +14,12 @@ from typing import Any
 
 import pytest
 
+from tetris_bot.constants import DEFAULT_CONFIG_PATH
+from tetris_bot.ml.config import (
+    SELF_PLAY_SNAPSHOT_FIELDS,
+    SelfPlaySnapshot,
+    load_training_config,
+)
 from tetris_bot.ml.r2_sync import (
     MACHINE_OFFSET_BLOCK_SIZE,
     ChunkDownloader,
@@ -25,7 +31,9 @@ from tetris_bot.ml.r2_sync import (
     R2Settings,
     download_model_bundle,
     fetch_model_pointer,
+    fetch_self_play_snapshot,
     upload_model_bundle,
+    upload_self_play_snapshot,
 )
 
 
@@ -836,9 +844,7 @@ def test_select_sync_run_id_polls_until_run_appears(monkeypatch) -> None:
         if len(sleep_calls) == 2:
             key = f"{prefix}/swift-fox-20260503-0952/models/incumbent.json"
             s3.put_object(Bucket=bucket, Key=key, Body=pointer_body)
-            s3.mtimes[(bucket, key)] = datetime(
-                2026, 5, 3, 9, 52, tzinfo=timezone.utc
-            )
+            s3.mtimes[(bucket, key)] = datetime(2026, 5, 3, 9, 52, tzinfo=timezone.utc)
 
     monkeypatch.setattr("tetris_bot.scripts.run_generator.time.sleep", _fake_sleep)
     monkeypatch.setattr(
@@ -866,3 +872,52 @@ def test_select_sync_run_id_polls_until_run_appears(monkeypatch) -> None:
     # First two attempts saw no runs; the publish happens during the
     # second sleep, so the third discovery returns the run.
     assert len(sleep_calls) == 2
+
+
+def test_self_play_snapshot_round_trip(settings: R2Settings) -> None:
+    s3 = InMemoryS3()
+    config = load_training_config(DEFAULT_CONFIG_PATH)
+    snapshot = SelfPlaySnapshot.from_self_play(config.self_play)
+    upload_self_play_snapshot(settings=settings, snapshot=snapshot, client=s3)
+    fetched = fetch_self_play_snapshot(settings, client=s3)
+    assert fetched == snapshot
+
+
+def test_fetch_self_play_snapshot_returns_none_when_missing(
+    settings: R2Settings,
+) -> None:
+    s3 = InMemoryS3()
+    assert fetch_self_play_snapshot(settings, client=s3) is None
+
+
+def test_self_play_snapshot_apply_to_overrides_only_whitelist() -> None:
+    config = load_training_config(DEFAULT_CONFIG_PATH)
+    self_play = config.self_play
+    # Snapshot taken with bumped values that differ from local config.
+    snapshot_data = {f: getattr(self_play, f) for f in SELF_PLAY_SNAPSHOT_FIELDS}
+    snapshot_data["num_simulations"] = self_play.num_simulations + 1
+    snapshot_data["c_puct"] = self_play.c_puct + 0.25
+    snapshot_data["max_placements"] = self_play.max_placements + 1
+    snapshot_data["death_penalty"] = self_play.death_penalty + 0.1
+    snapshot = SelfPlaySnapshot(**snapshot_data)
+    # Capture per-machine fields that must NOT be touched.
+    pre_num_workers = self_play.num_workers
+    pre_mcts_seed = self_play.mcts_seed
+    pre_use_candidate_gating = self_play.use_candidate_gating
+    pre_save_eval_trees = self_play.save_eval_trees
+    pre_bootstrap_num_simulations = self_play.bootstrap_num_simulations
+    pre_promotion_multiplier = self_play.nn_value_weight_promotion_multiplier
+
+    snapshot.apply_to(self_play)
+
+    assert self_play.num_simulations == snapshot.num_simulations
+    assert self_play.c_puct == snapshot.c_puct
+    assert self_play.max_placements == snapshot.max_placements
+    assert self_play.death_penalty == snapshot.death_penalty
+    # Per-machine + trainer-only fields untouched.
+    assert self_play.num_workers == pre_num_workers
+    assert self_play.mcts_seed == pre_mcts_seed
+    assert self_play.use_candidate_gating == pre_use_candidate_gating
+    assert self_play.save_eval_trees == pre_save_eval_trees
+    assert self_play.bootstrap_num_simulations == pre_bootstrap_num_simulations
+    assert self_play.nn_value_weight_promotion_multiplier == pre_promotion_multiplier

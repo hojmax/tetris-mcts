@@ -80,6 +80,59 @@ class SelfPlayConfig(ConfigModel):
     save_eval_trees: bool
 
 
+SELF_PLAY_SNAPSHOT_FIELDS: tuple[str, ...] = (
+    "num_simulations",
+    "c_puct",
+    "temperature",
+    "dirichlet_alpha",
+    "dirichlet_epsilon",
+    "add_noise",
+    "nn_value_weight",
+    "nn_value_weight_cap",
+    "use_parent_value_for_unvisited_q",
+    "visit_sampling_epsilon",
+    "reuse_tree",
+    "max_placements",
+    "death_penalty",
+    "overhang_penalty_weight",
+)
+
+
+class SelfPlaySnapshot(ConfigModel):
+    """Trainer-authoritative subset of `SelfPlayConfig` published to R2.
+
+    Why: remote generators must run identical per-move MCTS logic to the
+    trainer, but each machine reads its own `config.yaml`. The trainer
+    publishes this snapshot at startup; generators fetch it before
+    constructing `MCTSConfig` and override the listed fields. Fields not
+    in the snapshot stay per-machine (`num_workers`, `mcts_seed`) or are
+    trainer-only (gating, bootstrap, promotion knobs).
+    """
+
+    num_simulations: int
+    c_puct: float
+    temperature: float
+    dirichlet_alpha: float
+    dirichlet_epsilon: float
+    add_noise: bool
+    nn_value_weight: float
+    nn_value_weight_cap: float
+    use_parent_value_for_unvisited_q: bool
+    visit_sampling_epsilon: float
+    reuse_tree: bool
+    max_placements: int
+    death_penalty: float
+    overhang_penalty_weight: float
+
+    @classmethod
+    def from_self_play(cls, self_play: "SelfPlayConfig") -> "SelfPlaySnapshot":
+        return cls(**{f: getattr(self_play, f) for f in SELF_PLAY_SNAPSHOT_FIELDS})
+
+    def apply_to(self, self_play: "SelfPlayConfig") -> None:
+        for field in SELF_PLAY_SNAPSHOT_FIELDS:
+            setattr(self_play, field, getattr(self, field))
+
+
 class ReplayConfig(ConfigModel):
     """Replay buffer and batch sampling hyperparameters."""
 

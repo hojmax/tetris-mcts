@@ -44,8 +44,10 @@ from tetris_bot.constants import (  # noqa: E402
     TRAINING_DATA_FILENAME,
 )
 from tetris_bot.ml.config import (  # noqa: E402
+    SELF_PLAY_SNAPSHOT_FIELDS,
     R2SyncConfig,
     SelfPlayConfig,
+    SelfPlaySnapshot,
     load_training_config,
 )
 from tetris_bot.ml.r2_sync import (  # noqa: E402
@@ -54,9 +56,11 @@ from tetris_bot.ml.r2_sync import (  # noqa: E402
     GameStatsUploader,
     ModelDownloader,
     R2Settings,
+    SelfPlaySnapshotMissing,
     discover_active_runs,
     download_model_bundle,
     fetch_model_pointer,
+    fetch_self_play_snapshot,
     make_s3_client,
 )
 from tetris_bot.run_setup import apply_optimized_runtime_overrides  # noqa: E402
@@ -99,9 +103,9 @@ def _format_discovered_run(run: DiscoveredRun, *, now: datetime) -> str:
     if age_s < 60:
         age_str = f"{age_s:.0f}s ago"
     elif age_s < 3600:
-        age_str = f"{age_s/60:.1f}m ago"
+        age_str = f"{age_s / 60:.1f}m ago"
     else:
-        age_str = f"{age_s/3600:.1f}h ago"
+        age_str = f"{age_s / 3600:.1f}h ago"
     return (
         f"{run.sync_run_id}  step={run.pointer.step}  "
         f"updated={age_str}  ({run.incumbent_modified.isoformat()})"
@@ -172,7 +176,9 @@ def _select_sync_run_id(
     now = datetime.now(timezone.utc)
     fresh_window_s = cfg.active_run_freshness_seconds
     fresh = [
-        r for r in runs if (now - r.incumbent_modified).total_seconds() <= fresh_window_s
+        r
+        for r in runs
+        if (now - r.incumbent_modified).total_seconds() <= fresh_window_s
     ]
     if not fresh:
         # Nothing recent — pick the freshest available and warn.
@@ -232,6 +238,39 @@ def _resolve_r2_settings(
     return R2Settings.from_config(cfg)
 
 
+def _apply_trainer_self_play_snapshot(
+    settings: R2Settings, self_play: SelfPlayConfig
+) -> SelfPlaySnapshot:
+    """Fetch the trainer's self_play snapshot and overwrite local fields.
+
+    Hard-fails if the snapshot is missing: per CLAUDE.md, generators must
+    not silently fall back to local config (that is the drift surface this
+    is designed to remove).
+    """
+    snapshot = fetch_self_play_snapshot(settings)
+    if snapshot is None:
+        raise SelfPlaySnapshotMissing(
+            f"No self_play snapshot at s3://{settings.bucket}"
+            f"/{settings.self_play_snapshot_key()}. The trainer publishes "
+            "this on startup; if missing the trainer is too old or its R2 "
+            "init failed."
+        )
+    overrides = {
+        f: (getattr(self_play, f), getattr(snapshot, f))
+        for f in SELF_PLAY_SNAPSHOT_FIELDS
+        if getattr(self_play, f) != getattr(snapshot, f)
+    }
+    snapshot.apply_to(self_play)
+    logger.info(
+        "run_generator.self_play_snapshot_applied",
+        key=settings.self_play_snapshot_key(),
+        overridden_fields={
+            k: {"local": v[0], "trainer": v[1]} for k, v in overrides.items()
+        },
+    )
+    return snapshot
+
+
 def _wait_for_initial_pointer(settings: R2Settings, timeout_seconds: float):
     """Block until the trainer publishes an incumbent pointer, or raise."""
     deadline = time.monotonic() + timeout_seconds
@@ -281,6 +320,7 @@ def main(args: GeneratorArgs) -> None:
         bucket=settings.bucket,
     )
 
+    _apply_trainer_self_play_snapshot(settings, config.self_play)
     pointer = _wait_for_initial_pointer(settings, args.bootstrap_wait_seconds)
     bundle_dir = models_dir / f"step_{pointer.step:020d}"
     if bundle_dir.exists():
