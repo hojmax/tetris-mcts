@@ -53,6 +53,35 @@ class OptimizerConfig(ConfigModel):
     log_individual_games_to_wandb: bool
 
 
+NNValueWeightScheduleStrategy = Literal["per_promotion", "per_games_interval"]
+
+
+class NNValueWeightScheduleConfig(ConfigModel):
+    """Schedule controlling when the `nn_value_weight` ramp ticks.
+
+    The ramp shape stays the multiplicative + max_delta + cap formula
+    used today (`nn_value_weight_promotion_multiplier`,
+    `nn_value_weight_promotion_max_delta`, `nn_value_weight_cap`).
+    Only the trigger differs:
+      - `per_promotion`: legacy. One tick per promotion (gating mode) or
+        per direct sync (no-gating). Stepped from the current incumbent
+        weight, so missed syncs/non-promotions stall the ramp.
+      - `per_games_interval`: one tick per `games_interval` cumulative
+        completed games, deterministically re-derived from the configured
+        initial `nn_value_weight`. Independent of sync/promotion cadence
+        and resume-deterministic.
+    """
+
+    strategy: NNValueWeightScheduleStrategy = "per_promotion"
+    games_interval: int = 1
+
+    @model_validator(mode="after")
+    def _validate(self) -> "NNValueWeightScheduleConfig":
+        if self.games_interval < 1:
+            raise ValueError("nn_value_weight_schedule.games_interval must be >= 1")
+        return self
+
+
 PenaltyScheduleStrategy = Literal["gated", "constant_then_linear"]
 
 
@@ -105,6 +134,9 @@ class SelfPlayConfig(ConfigModel):
     overhang_penalty_weight: float
     penalty_schedule: PenaltyScheduleConfig = Field(
         default_factory=PenaltyScheduleConfig
+    )
+    nn_value_weight_schedule: NNValueWeightScheduleConfig = Field(
+        default_factory=NNValueWeightScheduleConfig
     )
     use_candidate_gating: bool
     model_promotion_eval_games: int
