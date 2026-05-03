@@ -112,6 +112,8 @@ def _select_sync_run_id(
     *,
     explicit_override: str | None,
     interactive: bool,
+    wait_seconds: float = 600.0,
+    poll_interval_seconds: float = 5.0,
 ) -> str:
     """Determine which sync_run_id to join.
 
@@ -119,10 +121,13 @@ def _select_sync_run_id(
     1. `--sync_run_id` CLI flag (explicit override).
     2. `r2_sync.sync_run_id` set in config (rare; we no longer pin it).
     3. Auto-discovery: list `<prefix>/`, pick the run with the most recent
-       `models/incumbent.json` if one exists. If multiple are fresh
+       `models/incumbent.json` if one exists. Polls for up to
+       `wait_seconds` so a generator can join during the trainer's
+       bootstrap phase (no incumbent.json yet) and start as soon as
+       the first promotion lands. If multiple are fresh
        (`active_run_freshness_seconds`), prompt the user (unless
        `interactive=False`, in which case raise).
-    4. Otherwise raise — there's no run to join.
+    4. Otherwise raise — no run appeared in the wait window.
     """
     if explicit_override is not None:
         return explicit_override
@@ -136,17 +141,30 @@ def _select_sync_run_id(
     discovery_cfg = cfg.model_copy(update={"sync_run_id": "_discovery"})
     discovery_settings = R2Settings.from_config(discovery_cfg)
     client = make_s3_client(discovery_settings)
-    runs = discover_active_runs(
-        bucket=discovery_settings.bucket,
-        prefix=discovery_settings.prefix,
-        client=client,
-    )
-    if not runs:
-        raise RuntimeError(
-            f"No runs found under s3://{discovery_settings.bucket}"
-            f"/{discovery_settings.prefix}/. Start a trainer first, or pass "
-            "--sync_run_id explicitly."
+    deadline = time.monotonic() + wait_seconds
+    runs: list[DiscoveredRun] = []
+    while True:
+        runs = discover_active_runs(
+            bucket=discovery_settings.bucket,
+            prefix=discovery_settings.prefix,
+            client=client,
         )
+        if runs:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"No runs found under s3://{discovery_settings.bucket}"
+                f"/{discovery_settings.prefix}/ after waiting "
+                f"{wait_seconds:.0f}s. Start a trainer first, or pass "
+                "--sync_run_id explicitly."
+            )
+        logger.info(
+            "run_generator.waiting_for_active_run",
+            bucket=discovery_settings.bucket,
+            prefix=discovery_settings.prefix,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        time.sleep(poll_interval_seconds)
 
     from datetime import datetime, timezone
 
@@ -197,13 +215,17 @@ def _resolve_r2_settings(
     *,
     explicit_run_id: str | None,
     interactive: bool,
+    wait_seconds: float = 600.0,
 ) -> R2Settings:
     if not cfg.enabled:
         raise ValueError(
             "r2_sync.enabled must be true in the config used by run_generator.py"
         )
     sync_run_id = _select_sync_run_id(
-        cfg, explicit_override=explicit_run_id, interactive=interactive
+        cfg,
+        explicit_override=explicit_run_id,
+        interactive=interactive,
+        wait_seconds=wait_seconds,
     )
     cfg = cfg.model_copy(update={"sync_run_id": sync_run_id})
     return R2Settings.from_config(cfg)
@@ -238,6 +260,7 @@ def main(args: GeneratorArgs) -> None:
         config.r2_sync,
         explicit_run_id=args.sync_run_id,
         interactive=sys.stdin.isatty(),
+        wait_seconds=args.bootstrap_wait_seconds,
     )
     machine_id = args.machine_id or socket.gethostname().replace(".", "_")
     workspace = args.workspace.resolve()

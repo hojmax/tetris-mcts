@@ -794,3 +794,74 @@ def test_discover_active_runs_returns_empty_for_fresh_bucket() -> None:
     s3 = InMemoryS3()
     runs = discover_active_runs(bucket="bucket", prefix="tetris-mcts", client=s3)  # type: ignore[arg-type]
     assert runs == []
+
+
+def test_select_sync_run_id_polls_until_run_appears(monkeypatch) -> None:
+    """Generator can join during the trainer's bootstrap phase: it polls
+    discovery until at least one run with `models/incumbent.json` appears.
+    """
+    from datetime import datetime, timezone
+
+    from tetris_bot.ml.config import R2SyncConfig
+    from tetris_bot.scripts.run_generator import _select_sync_run_id
+
+    bucket = "bucket"
+    prefix = "tetris-mcts"
+    pointer_body = (
+        b'{"step": 5, "nn_value_weight": 0.2, "bundle_prefix": '
+        b'"tetris-mcts/swift-fox-20260503-0952/models/00000000000000000005/"}'
+    )
+
+    class _MtimeS3(InMemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.mtimes: dict[tuple[str, str], "datetime"] = {}
+
+        def head_object(self, *, Bucket: str, Key: str, **_: Any) -> dict[str, Any]:
+            with self._lock:
+                if (Bucket, Key) not in self._objects:
+                    raise _MockClientError("404")
+                modified = self.mtimes.get((Bucket, Key))
+            return {"LastModified": modified}
+
+    s3 = _MtimeS3()
+
+    sleep_calls: list[float] = []
+
+    def _fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        # Simulate the trainer publishing its first incumbent after the
+        # second sleep — exercises the poll loop.
+        if len(sleep_calls) == 2:
+            key = f"{prefix}/swift-fox-20260503-0952/models/incumbent.json"
+            s3.put_object(Bucket=bucket, Key=key, Body=pointer_body)
+            s3.mtimes[(bucket, key)] = datetime(
+                2026, 5, 3, 9, 52, tzinfo=timezone.utc
+            )
+
+    monkeypatch.setattr("tetris_bot.scripts.run_generator.time.sleep", _fake_sleep)
+    monkeypatch.setattr(
+        "tetris_bot.scripts.run_generator.make_s3_client", lambda _settings: s3
+    )
+
+    cfg = R2SyncConfig(
+        enabled=True,
+        bucket=bucket,
+        prefix=prefix,
+        active_run_freshness_seconds=86400.0,
+    )
+    monkeypatch.setenv("R2_ENDPOINT_URL", "https://mock.r2")
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "secret")
+
+    chosen = _select_sync_run_id(
+        cfg,
+        explicit_override=None,
+        interactive=False,
+        wait_seconds=60.0,
+        poll_interval_seconds=0.1,
+    )
+    assert chosen == "swift-fox-20260503-0952"
+    # First two attempts saw no runs; the publish happens during the
+    # second sleep, so the third discovery returns the run.
+    assert len(sleep_calls) == 2
