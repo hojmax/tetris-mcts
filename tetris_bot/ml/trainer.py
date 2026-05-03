@@ -229,6 +229,13 @@ class Trainer:
         self._r2_last_uploaded_step: int = -1
         self._remote_completed_games_lock = threading.Lock()
         self._remote_completed_games: deque[CompletedGameLogEntry] = deque()
+        # Strictly-monotonic game number used as the W&B-facing identifier.
+        # Buffer/replay game_numbers stay in their per-machine block ranges
+        # (so per-game grouping in the buffer stays unique), but every game
+        # passed to W&B logging gets renumbered into a single 1, 2, 3, …
+        # stream at the drain chokepoint. Counter persists in checkpoints so
+        # resumed runs continue without restarting at 1.
+        self._next_display_game_number: int = 1
 
         # Create directories
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -254,7 +261,17 @@ class Trainer:
             for payload in generator.drain_completed_games()
         ]
         remote = self._drain_remote_completed_games()
-        return local + remote
+        combined = local + remote
+        if not combined:
+            return combined
+        # Sort by completion time so the strictly-sequential display numbers
+        # we stamp next match wall-clock order; this keeps W&B per-game
+        # charts using game_number as x-axis cleanly increasing in time.
+        combined.sort(key=lambda entry: entry.completed_time_s)
+        for entry in combined:
+            entry.game_number = self._next_display_game_number
+            self._next_display_game_number += 1
+        return combined
 
     def _drain_remote_completed_games(self) -> list[CompletedGameLogEntry]:
         with self._remote_completed_games_lock:
@@ -1986,6 +2003,7 @@ class Trainer:
                         if incumbent_model_artifact is not None
                         else None
                     ),
+                    "next_display_game_number": self._next_display_game_number,
                 }
                 extra_checkpoint_state.update(self._runtime_override_checkpoint_state())
                 extra_checkpoint_state.update(
@@ -2682,6 +2700,7 @@ class Trainer:
                                 if incumbent_model_artifact is not None
                                 else None
                             ),
+                            "next_display_game_number": self._next_display_game_number,
                         }
                         | self._runtime_override_checkpoint_state()
                         | self._candidate_gate_checkpoint_state(
