@@ -683,3 +683,114 @@ def test_game_stats_downloader_tolerates_r2_nosuchkey_on_empty_prefix(
     )
     downloader._poll_once(client)  # type: ignore[arg-type]
     assert sink.batches == []
+
+
+# ---------------------------------------------------------------------------
+# discover_active_runs
+# ---------------------------------------------------------------------------
+
+
+def test_discover_active_runs_orders_by_pointer_mtime_desc() -> None:
+    """Auto-discovery picks the freshest run; multiple runs are sortable by mtime."""
+    from datetime import datetime, timezone
+
+    from tetris_bot.ml.r2_sync import discover_active_runs
+
+    bucket = "bucket"
+    prefix = "tetris-mcts"
+    # Three runs, each with an incumbent.json. Mtimes assigned manually.
+    pointers = {
+        "amber-otter-20260503-0930": (
+            b'{"step": 100, "nn_value_weight": 0.1, "bundle_prefix": "tetris-mcts/amber-otter-20260503-0930/models/00000000000000000100/"}',
+            datetime(2026, 5, 3, 9, 30, tzinfo=timezone.utc),
+        ),
+        "swift-fox-20260503-0952": (
+            b'{"step": 200, "nn_value_weight": 0.2, "bundle_prefix": "tetris-mcts/swift-fox-20260503-0952/models/00000000000000000200/"}',
+            datetime(2026, 5, 3, 9, 52, tzinfo=timezone.utc),
+        ),
+        "ancient-yak-20260502-1200": (
+            b'{"step": 50, "nn_value_weight": 0.05, "bundle_prefix": "tetris-mcts/ancient-yak-20260502-1200/models/00000000000000000050/"}',
+            datetime(2026, 5, 2, 12, 0, tzinfo=timezone.utc),
+        ),
+    }
+
+    class _MtimeS3(InMemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.mtimes: dict[tuple[str, str], "datetime"] = {}
+
+        def head_object(self, *, Bucket: str, Key: str, **_: Any) -> dict[str, Any]:
+            with self._lock:
+                if (Bucket, Key) not in self._objects:
+                    raise _MockClientError("404")
+                modified = self.mtimes.get((Bucket, Key))
+            return {"LastModified": modified}
+
+    s3 = _MtimeS3()
+    for run_id, (body, modified) in pointers.items():
+        key = f"{prefix}/{run_id}/models/incumbent.json"
+        s3.put_object(Bucket=bucket, Key=key, Body=body)
+        s3.mtimes[(bucket, key)] = modified
+
+    runs = discover_active_runs(bucket=bucket, prefix=prefix, client=s3)  # type: ignore[arg-type]
+    assert [r.sync_run_id for r in runs] == [
+        "swift-fox-20260503-0952",
+        "amber-otter-20260503-0930",
+        "ancient-yak-20260502-1200",
+    ]
+    assert runs[0].pointer.step == 200
+    assert runs[0].pointer.nn_value_weight == 0.2
+
+
+def test_discover_active_runs_skips_runs_without_pointer() -> None:
+    """Runs that exist as a prefix but have no incumbent.json are dropped."""
+    from datetime import datetime, timezone
+
+    from tetris_bot.ml.r2_sync import discover_active_runs
+
+    bucket = "bucket"
+    prefix = "tetris-mcts"
+
+    class _MtimeS3(InMemoryS3):
+        def __init__(self) -> None:
+            super().__init__()
+            self.mtimes: dict[tuple[str, str], "datetime"] = {}
+
+        def head_object(self, *, Bucket: str, Key: str, **_: Any) -> dict[str, Any]:
+            with self._lock:
+                if (Bucket, Key) not in self._objects:
+                    raise _MockClientError("404")
+                modified = self.mtimes.get((Bucket, Key))
+            return {"LastModified": modified}
+
+    s3 = _MtimeS3()
+    # Two runs visible as prefixes (via games/ keys), only one has incumbent.json.
+    s3.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}/with-pointer-20260503-0930/games/m/0.json",
+        Body=b"{}",
+    )
+    s3.put_object(
+        Bucket=bucket,
+        Key=f"{prefix}/no-pointer-20260503-0931/games/m/0.json",
+        Body=b"{}",
+    )
+    pointer_key = f"{prefix}/with-pointer-20260503-0930/models/incumbent.json"
+    s3.put_object(
+        Bucket=bucket,
+        Key=pointer_key,
+        Body=b'{"step": 1, "nn_value_weight": 0.1, "bundle_prefix": "tetris-mcts/with-pointer-20260503-0930/models/00000000000000000001/"}',
+    )
+    s3.mtimes[(bucket, pointer_key)] = datetime(2026, 5, 3, 9, 30, tzinfo=timezone.utc)
+
+    runs = discover_active_runs(bucket=bucket, prefix=prefix, client=s3)  # type: ignore[arg-type]
+    assert [r.sync_run_id for r in runs] == ["with-pointer-20260503-0930"]
+
+
+def test_discover_active_runs_returns_empty_for_fresh_bucket() -> None:
+    """No runs at all -> empty list, not an error."""
+    from tetris_bot.ml.r2_sync import discover_active_runs
+
+    s3 = InMemoryS3()
+    runs = discover_active_runs(bucket="bucket", prefix="tetris-mcts", client=s3)  # type: ignore[arg-type]
+    assert runs == []

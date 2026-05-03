@@ -39,6 +39,7 @@ import shutil
 import tempfile
 import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -121,7 +122,7 @@ class R2Settings:
         cls, cfg: R2SyncConfig, default_run_id: str | None = None
     ) -> "R2Settings":
         if cfg.bucket is None:
-            raise ValueError("r2_sync.bucket is required when role != 'off'")
+            raise ValueError("r2_sync.bucket is required when r2_sync is enabled")
         sync_run_id = cfg.sync_run_id or default_run_id
         if sync_run_id is None:
             raise ValueError(
@@ -904,6 +905,81 @@ def download_model_bundle(
                 continue
             raise
     return main_path
+
+
+@dataclass(frozen=True)
+class DiscoveredRun:
+    """A run_id discovered under `<prefix>/` along with its incumbent pointer mtime."""
+
+    sync_run_id: str
+    incumbent_modified: datetime  # tz-aware UTC
+    pointer: "ModelPointer"
+
+
+def discover_active_runs(
+    *,
+    bucket: str,
+    prefix: str,
+    client: S3LikeClient,
+) -> list[DiscoveredRun]:
+    """List run_ids under `<prefix>/` and return those with a readable
+    `models/incumbent.json`, sorted by pointer mtime descending.
+
+    Used by `run_generator.py` to auto-discover which run to join. The
+    caller decides freshness — we just return everything we see.
+    """
+    from botocore.exceptions import ClientError
+
+    runs: list[DiscoveredRun] = []
+    continuation: str | None = None
+    canonical_prefix = prefix.strip("/") + "/"
+    while True:
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket,
+            "Prefix": canonical_prefix,
+            "Delimiter": "/",
+        }
+        if continuation is not None:
+            kwargs["ContinuationToken"] = continuation
+        response = _list_objects_v2_safe(client, **kwargs)
+        for entry in response.get("CommonPrefixes", []) or []:
+            sub_prefix = entry.get("Prefix")
+            if not sub_prefix:
+                continue
+            sync_run_id = sub_prefix[len(canonical_prefix) :].rstrip("/")
+            if not sync_run_id:
+                continue
+            pointer_key = f"{canonical_prefix}{sync_run_id}/models/incumbent.json"
+            try:
+                head = client.head_object(Bucket=bucket, Key=pointer_key)
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+                    continue
+                raise
+            try:
+                body = client.get_object(Bucket=bucket, Key=pointer_key)["Body"].read()
+                pointer = ModelPointer.from_json(body)
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+                    continue
+                raise
+            modified = head.get("LastModified")
+            if modified is None:
+                continue
+            if modified.tzinfo is None:
+                modified = modified.replace(tzinfo=timezone.utc)
+            runs.append(
+                DiscoveredRun(
+                    sync_run_id=sync_run_id,
+                    incumbent_modified=modified,
+                    pointer=pointer,
+                )
+            )
+        if not response.get("IsTruncated"):
+            break
+        continuation = response.get("NextContinuationToken")
+    runs.sort(key=lambda r: r.incumbent_modified, reverse=True)
+    return runs
 
 
 def fetch_model_pointer(

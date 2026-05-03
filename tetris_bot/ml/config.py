@@ -115,21 +115,27 @@ class R2SyncConfig(ConfigModel):
     Account-specific values (`R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`,
     `R2_SECRET_ACCESS_KEY`) are sourced from environment variables — typically
     via a `.env` file loaded with `python-dotenv` at process startup. The
-    config object only carries non-secret, run-shared fields like role,
-    bucket name, and sync intervals.
+    config object only carries non-secret, run-shared fields.
 
-    Roles:
-    - "trainer": pushes ONNX bundles, ingests replay chunks
-    - "generator": pushes replay chunks, pulls ONNX bundles
-    - "both": runs trainer locally and also ingests remote chunks (default for
-      Vast.ai trainer that still wants its own local generation alongside remote)
-    - "off": R2 sync disabled (default; existing single-machine workflow)
+    Which sync threads run is determined by the entry point: `train.py`
+    starts the trainer-side downloaders (replay chunks, game stats) and
+    publishes the incumbent bundle; `run_generator.py` starts the
+    generator-side uploaders and the model-pointer poller. The two are
+    not interchangeable, so there is no `role` field here — set
+    `enabled: false` to disable R2 sync entirely.
+
+    `sync_run_id` defaults to a fresh UTC timestamp generated at trainer
+    startup and persisted into `<run_dir>/r2_sync_run_id.txt`, so the
+    same run keeps the same id across resumes. Generators auto-discover
+    active runs from R2 and only prompt when more than one is fresh
+    (within `active_run_freshness_seconds`).
     """
 
-    role: str = "off"
+    enabled: bool = False
     bucket: str | None = None
     prefix: str = "tetris-mcts"
     sync_run_id: str | None = None
+    active_run_freshness_seconds: float = 300.0
     chunk_max_examples: int = 4096
     chunk_upload_interval_seconds: float = 15.0
     chunk_download_poll_interval_seconds: float = 10.0

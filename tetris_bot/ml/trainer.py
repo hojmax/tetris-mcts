@@ -1704,22 +1704,20 @@ class Trainer:
             batch.masks,
         )
 
-    def _r2_sync_role(self) -> str:
-        return self.config.r2_sync.role
-
     def _init_r2_sync(self, generator: GameGenerator) -> None:
-        """Resolve R2 settings and start the chunk downloader if enabled.
+        """Resolve R2 settings and start the trainer-side downloaders.
 
-        Trainer roles that ingest remote replay chunks: 'trainer', 'both'.
-        Trainer roles that push ONNX bundles: 'trainer', 'both'.
-        Role 'generator' is for `run_generator.py`, not this code path; if seen
-        here we treat it as a misconfiguration and disable sync.
+        Gated by `r2_sync.enabled`. The threads started here ingest replay
+        chunks and game stats from remote generators; the trainer pushes
+        its own incumbent bundle through
+        `_publish_incumbent_to_r2_if_enabled` separately.
+
+        `sync_run_id` defaults to the run dir's basename — i.e. the
+        `<adjective>-<animal>-<timestamp>` id assigned when the run was
+        created. That keeps the same id stable across resumes without
+        requiring any config edits.
         """
-        role = self._r2_sync_role()
-        if role == "off":
-            return
-        if role == "generator":
-            logger.warning("trainer.r2_sync_role_unsupported_in_trainer", role=role)
+        if not self.config.r2_sync.enabled:
             return
         if self.config.run.run_dir is None:
             return
@@ -1760,7 +1758,6 @@ class Trainer:
         self._r2_game_stats_downloader.start()
         logger.info(
             "trainer.r2_sync_initialized",
-            role=role,
             sync_run_id=self._r2_settings.sync_run_id,
             bucket=self._r2_settings.bucket,
             endpoint_url=self._r2_settings.endpoint_url,
@@ -2356,6 +2353,7 @@ class Trainer:
         interval_anchor_s = time.perf_counter()
         throughput_window_start_s = interval_anchor_s
         throughput_window_start_games = generator.games_generated()
+        throughput_window_start_total_games = self._next_display_game_number - 1
         throughput_window_start_steps = 0
         next_log_time_s = interval_anchor_s + self.config.run.log_interval_seconds
         next_replay_sync_time_s = interval_anchor_s
@@ -2516,8 +2514,12 @@ class Trainer:
                             time.perf_counter() - extra_metrics_start
                         )
                     games = generator.games_generated()
+                    total_games_seen = self._next_display_game_number - 1
                     window_elapsed_s = post_step_time - throughput_window_start_s
                     games_delta = games - throughput_window_start_games
+                    total_games_delta = (
+                        total_games_seen - throughput_window_start_total_games
+                    )
                     steps_delta = session_step - throughput_window_start_steps
                     metrics["replay/buffer_size"] = generator.buffer_size()
                     metrics["replay/games_generated"] = (
@@ -2544,11 +2546,22 @@ class Trainer:
                     metrics["throughput/games_per_second"] = (
                         games_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
                     )
+                    # `games_per_second` only counts the trainer's local
+                    # self-play workers. `total_games_per_second` derives
+                    # from `_next_display_game_number`, which advances for
+                    # both local *and* remote-ingested games, so connecting
+                    # additional generators visibly bumps this metric.
+                    metrics["throughput/total_games_per_second"] = (
+                        total_games_delta / window_elapsed_s
+                        if window_elapsed_s > 0
+                        else 0.0
+                    )
                     metrics["throughput/steps_per_second"] = (
                         steps_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
                     )
                     throughput_window_start_s = post_step_time
                     throughput_window_start_games = games
+                    throughput_window_start_total_games = total_games_seen
                     throughput_window_start_steps = session_step
                     metrics["timing/sample_batch_ms"] = (
                         1000.0 * sample_batch_time_s / sample_batch_count
@@ -2644,6 +2657,7 @@ class Trainer:
                         buffer_size=generator.buffer_size(),
                         games_generated=self._cumulative_games_generated(generator),
                         games_per_second=metrics["throughput/games_per_second"],
+                        total_games_per_second=metrics["throughput/total_games_per_second"],
                         steps_per_second=metrics["throughput/steps_per_second"],
                         sample_batch_ms=metrics["timing/sample_batch_ms"],
                         replay_sync_ms=metrics["timing/replay_sync_ms"],

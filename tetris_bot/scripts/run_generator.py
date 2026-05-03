@@ -3,8 +3,8 @@
 Run this on a machine that should produce self-play games for a remote trainer.
 The script:
 
-1. Downloads the trainer's current incumbent ONNX bundle from R2 (waiting up to
-   `bootstrap_wait_seconds` if no model has been published yet).
+1. Auto-discovers active runs from R2 (or uses `--sync_run_id` if given) and
+   downloads the trainer's current incumbent ONNX bundle.
 2. Spawns a Rust GameGenerator with `candidate_gating_enabled=False` (the
    trainer is the source of truth for promotion decisions).
 3. Starts a `ChunkUploader` that drains replay deltas to R2.
@@ -16,7 +16,6 @@ Usage:
     R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... \
     python tetris_bot/scripts/run_generator.py \
         --config config.yaml \
-        --sync_run_id v9 \
         --machine_id laptop \
         --num_workers 6
 """
@@ -27,6 +26,7 @@ import signal
 import socket
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import structlog
@@ -50,9 +50,11 @@ from tetris_bot.ml.config import (  # noqa: E402
 )
 from tetris_bot.ml.r2_sync import (  # noqa: E402
     ChunkUploader,
+    DiscoveredRun,
     GameStatsUploader,
     ModelDownloader,
     R2Settings,
+    discover_active_runs,
     download_model_bundle,
     fetch_model_pointer,
     make_s3_client,
@@ -91,15 +93,119 @@ def _build_mcts_config(self_play: SelfPlayConfig) -> MCTSConfig:
     return cfg
 
 
-def _resolve_r2_settings(
-    cfg: R2SyncConfig, sync_run_id_override: str | None
-) -> R2Settings:
-    if sync_run_id_override is not None:
-        cfg = cfg.model_copy(update={"sync_run_id": sync_run_id_override})
-    if cfg.role == "off":
-        raise ValueError(
-            "r2_sync.role must be 'generator' (or 'both') in the config used by run_generator.py"
+def _format_discovered_run(run: DiscoveredRun, *, now: datetime) -> str:
+    age_s = (now - run.incumbent_modified).total_seconds()
+    if age_s < 60:
+        age_str = f"{age_s:.0f}s ago"
+    elif age_s < 3600:
+        age_str = f"{age_s/60:.1f}m ago"
+    else:
+        age_str = f"{age_s/3600:.1f}h ago"
+    return (
+        f"{run.sync_run_id}  step={run.pointer.step}  "
+        f"updated={age_str}  ({run.incumbent_modified.isoformat()})"
+    )
+
+
+def _select_sync_run_id(
+    cfg: R2SyncConfig,
+    *,
+    explicit_override: str | None,
+    interactive: bool,
+) -> str:
+    """Determine which sync_run_id to join.
+
+    Order of precedence:
+    1. `--sync_run_id` CLI flag (explicit override).
+    2. `r2_sync.sync_run_id` set in config (rare; we no longer pin it).
+    3. Auto-discovery: list `<prefix>/`, pick the run with the most recent
+       `models/incumbent.json` if one exists. If multiple are fresh
+       (`active_run_freshness_seconds`), prompt the user (unless
+       `interactive=False`, in which case raise).
+    4. Otherwise raise — there's no run to join.
+    """
+    if explicit_override is not None:
+        return explicit_override
+    if cfg.sync_run_id is not None:
+        return cfg.sync_run_id
+    if cfg.bucket is None:
+        raise ValueError("r2_sync.bucket must be set to auto-discover runs")
+    # Build a temporary settings shim with a placeholder run_id so we can
+    # construct an S3 client using the same config + env-var discovery
+    # as the main path.
+    discovery_cfg = cfg.model_copy(update={"sync_run_id": "_discovery"})
+    discovery_settings = R2Settings.from_config(discovery_cfg)
+    client = make_s3_client(discovery_settings)
+    runs = discover_active_runs(
+        bucket=discovery_settings.bucket,
+        prefix=discovery_settings.prefix,
+        client=client,
+    )
+    if not runs:
+        raise RuntimeError(
+            f"No runs found under s3://{discovery_settings.bucket}"
+            f"/{discovery_settings.prefix}/. Start a trainer first, or pass "
+            "--sync_run_id explicitly."
         )
+
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    fresh_window_s = cfg.active_run_freshness_seconds
+    fresh = [
+        r for r in runs if (now - r.incumbent_modified).total_seconds() <= fresh_window_s
+    ]
+    if not fresh:
+        # Nothing recent — pick the freshest available and warn.
+        chosen = runs[0]
+        logger.warning(
+            "run_generator.no_fresh_runs_using_most_recent",
+            sync_run_id=chosen.sync_run_id,
+            updated=chosen.incumbent_modified.isoformat(),
+            available_count=len(runs),
+        )
+        return chosen.sync_run_id
+    if len(fresh) == 1:
+        chosen = fresh[0]
+        logger.info(
+            "run_generator.auto_selected_run",
+            sync_run_id=chosen.sync_run_id,
+            updated=chosen.incumbent_modified.isoformat(),
+        )
+        return chosen.sync_run_id
+    # Multiple fresh runs — prompt.
+    if not interactive:
+        raise RuntimeError(
+            f"Multiple fresh runs found ({len(fresh)}). Pass --sync_run_id "
+            "explicitly or run interactively. Candidates:\n  "
+            + "\n  ".join(_format_discovered_run(r, now=now) for r in fresh)
+        )
+    print("\nMultiple active runs found. Pick one to join:")
+    for i, r in enumerate(fresh, start=1):
+        print(f"  [{i}] {_format_discovered_run(r, now=now)}")
+    while True:
+        raw = input(f"\nEnter choice [1-{len(fresh)}]: ").strip()
+        if raw.isdigit():
+            idx = int(raw)
+            if 1 <= idx <= len(fresh):
+                return fresh[idx - 1].sync_run_id
+        print("Invalid choice; try again.")
+
+
+def _resolve_r2_settings(
+    cfg: R2SyncConfig,
+    *,
+    explicit_run_id: str | None,
+    interactive: bool,
+) -> R2Settings:
+    if not cfg.enabled:
+        raise ValueError(
+            "r2_sync.enabled must be true in the config used by run_generator.py"
+        )
+    sync_run_id = _select_sync_run_id(
+        cfg, explicit_override=explicit_run_id, interactive=interactive
+    )
+    cfg = cfg.model_copy(update={"sync_run_id": sync_run_id})
     return R2Settings.from_config(cfg)
 
 
@@ -126,7 +232,13 @@ def _wait_for_initial_pointer(settings: R2Settings, timeout_seconds: float):
 
 def main(args: GeneratorArgs) -> None:
     config = load_training_config(args.config.resolve())
-    settings = _resolve_r2_settings(config.r2_sync, args.sync_run_id)
+    import sys
+
+    settings = _resolve_r2_settings(
+        config.r2_sync,
+        explicit_run_id=args.sync_run_id,
+        interactive=sys.stdin.isatty(),
+    )
     machine_id = args.machine_id or socket.gethostname().replace(".", "_")
     workspace = args.workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
@@ -232,9 +344,32 @@ def main(args: GeneratorArgs) -> None:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    log_interval_s = config.run.log_interval_seconds
+    last_log_time_s = time.monotonic()
+    last_log_games = generator.games_generated()
+    last_log_examples = generator.examples_generated()
     try:
         while not stop_event_handled:
             time.sleep(0.5)
+            now_s = time.monotonic()
+            if now_s - last_log_time_s >= log_interval_s:
+                games_now = generator.games_generated()
+                examples_now = generator.examples_generated()
+                window_s = now_s - last_log_time_s
+                games_per_second = (games_now - last_log_games) / window_s
+                examples_per_second = (examples_now - last_log_examples) / window_s
+                logger.info(
+                    "run_generator.progress",
+                    games_generated=games_now,
+                    examples_generated=examples_now,
+                    games_per_second=games_per_second,
+                    examples_per_second=examples_per_second,
+                    buffer_size=generator.buffer_size(),
+                    window_seconds=window_s,
+                )
+                last_log_time_s = now_s
+                last_log_games = games_now
+                last_log_examples = examples_now
     finally:
         logger.info("run_generator.stopping_workers")
         try:

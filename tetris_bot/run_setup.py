@@ -19,17 +19,22 @@ from tetris_bot.ml.config import (
     save_runtime_overrides,
     save_training_config,
 )
+from tetris_bot.run_naming import generate_run_id
 
 
-def get_next_version(base_dir: Path) -> int:
-    if not base_dir.exists():
-        return 0
-    existing = [
-        int(d.name[1:])
-        for d in base_dir.iterdir()
-        if d.is_dir() and d.name.startswith("v") and d.name[1:].isdigit()
-    ]
-    return max(existing, default=-1) + 1
+def _allocate_unique_run_dir(base_dir: Path) -> Path:
+    """Pick a fresh `<adjective>-<animal>-<timestamp>` dir under base_dir.
+
+    Collisions are essentially impossible (same minute + same word pair),
+    but we retry to be safe.
+    """
+    for _ in range(8):
+        candidate = base_dir / generate_run_id()
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(
+        f"Failed to allocate a unique run directory under {base_dir} after 8 tries"
+    )
 
 
 def setup_run_directory(
@@ -38,8 +43,8 @@ def setup_run_directory(
     run_dir: Path | None = None,
 ) -> TrainingConfig:
     if run_dir is None:
-        version = get_next_version(base_dir)
-        run_dir = base_dir / f"v{version}"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        run_dir = _allocate_unique_run_dir(base_dir)
 
     checkpoint_dir = run_dir / CHECKPOINT_DIRNAME
 
