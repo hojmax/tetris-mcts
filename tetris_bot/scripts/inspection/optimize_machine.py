@@ -89,11 +89,11 @@ def detect_cpu_counts() -> tuple[int, int]:
 
 def default_worker_candidates() -> list[int]:
     physical, logical = detect_cpu_counts()
-    preferred = [2, 4, 6, 8, 10, 12, 16, 24, 32, 48, 64]
-    values = [value for value in preferred if 1 < value <= logical]
+    preferred = [6, 8, 10, 12, 16, 24, 32, 48, 64]
+    values = [value for value in preferred if 4 < value <= logical]
     values.append(physical)
     values.append(logical)
-    return sorted(set(value for value in values if value > 1))
+    return sorted(set(value for value in values if value > 4))
 
 
 def resolve_model_path(model_path_arg: Path | None) -> Path:
@@ -471,9 +471,9 @@ def ensure_valid_args(
     workers = sorted(set(args.worker_candidates))
     if not workers:
         raise ValueError("worker_candidates cannot be empty")
-    if any(worker <= 1 for worker in workers):
+    if any(worker <= 4 for worker in workers):
         raise ValueError(
-            f"worker_candidates must all be > 1 for parallel eval (got {workers})"
+            f"worker_candidates must all be > 4 (2 and 4 workers are too low; got {workers})"
         )
 
     compile_profiles = []
