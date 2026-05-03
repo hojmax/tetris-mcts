@@ -331,6 +331,21 @@ def restore_trainer_from_checkpoint(
         incumbent_eval_avg_attack=restored_incumbent_eval_avg_attack,
     )
 
+    next_display_game_number = state.get("next_display_game_number")
+    if next_display_game_number is not None:
+        restored_next_display_game_number = int(next_display_game_number)
+        if restored_next_display_game_number < 1:
+            raise ValueError(
+                "Checkpoint next_display_game_number must be >= 1 "
+                f"(got {restored_next_display_game_number})"
+            )
+        trainer._next_display_game_number = restored_next_display_game_number
+        logger.info(
+            "Restored sequential W&B game-number counter from checkpoint",
+            checkpoint=str(checkpoint),
+            next_display_game_number=restored_next_display_game_number,
+        )
+
     candidate_gate_current_interval = state.get(
         "candidate_gate_current_interval_seconds"
     )
