@@ -62,6 +62,7 @@ from tetris_bot.ml.game_metrics import (
     average_completed_games,
     compute_batch_feature_metrics,
 )
+from tetris_bot.ml.penalty_schedule import scaled_penalties
 from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 from tetris_bot.ml.r2_sync import (
     ChunkDownloader,
@@ -1230,14 +1231,25 @@ class Trainer:
         return mcts_config
 
     def _effective_starting_incumbent_penalties(self) -> tuple[float, float]:
-        if (
-            self.config.self_play.nn_value_weight
-            >= self.config.self_play.nn_value_weight_cap
-        ):
-            return 0.0, 0.0
-        return (
-            self.config.self_play.death_penalty,
-            self.config.self_play.overhang_penalty_weight,
+        return scaled_penalties(
+            self.config.self_play.penalty_schedule,
+            death_penalty=self.config.self_play.death_penalty,
+            overhang_penalty_weight=self.config.self_play.overhang_penalty_weight,
+            cumulative_games=self._cumulative_games_offset,
+            nn_value_weight=self.config.self_play.nn_value_weight,
+            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
+        )
+
+    def _scaled_penalties_for(
+        self, generator: GameGenerator, *, nn_value_weight: float
+    ) -> tuple[float, float]:
+        return scaled_penalties(
+            self.config.self_play.penalty_schedule,
+            death_penalty=self.config.self_play.death_penalty,
+            overhang_penalty_weight=self.config.self_play.overhang_penalty_weight,
+            cumulative_games=self._cumulative_games_generated(generator),
+            nn_value_weight=nn_value_weight,
+            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
         )
 
     def _evaluate_starting_incumbent_avg_attack(self, model_path: Path) -> float:
@@ -1818,6 +1830,8 @@ class Trainer:
         onnx_path: Path,
         model_step: int,
         nn_value_weight: float,
+        death_penalty: float,
+        overhang_penalty_weight: float,
     ) -> None:
         if self._r2_settings is None:
             return
@@ -1836,6 +1850,8 @@ class Trainer:
                 onnx_path=onnx_path,
                 step=model_step,
                 nn_value_weight=nn_value_weight,
+                death_penalty=death_penalty,
+                overhang_penalty_weight=overhang_penalty_weight,
             )
             self._r2_last_uploaded_step = model_step
         except Exception:
@@ -1887,6 +1903,8 @@ class Trainer:
                     destination_path,
                     generator.incumbent_model_step(),
                     generator.incumbent_nn_value_weight(),
+                    generator.incumbent_death_penalty(),
+                    generator.incumbent_overhang_penalty_weight(),
                 )
                 return destination_path, source_path_string
             except (FileNotFoundError, RuntimeError) as error:
@@ -2283,7 +2301,6 @@ class Trainer:
             start_with_network=not self.config.self_play.bootstrap_without_network,
             non_network_num_simulations=self.config.self_play.bootstrap_num_simulations,
             initial_incumbent_eval_avg_attack=self.initial_incumbent_eval_avg_attack,
-            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
             candidate_gating_enabled=candidate_gating_enabled,
             save_eval_trees=self.config.self_play.save_eval_trees,
         )
@@ -2741,10 +2758,18 @@ class Trainer:
                             )
                         )
                         force_promote = self._force_promote_next_candidate
+                        (
+                            candidate_death_penalty,
+                            candidate_overhang_penalty_weight,
+                        ) = self._scaled_penalties_for(
+                            generator, nn_value_weight=candidate_nn_value_weight
+                        )
                         queued = generator.queue_candidate_model(
                             str(candidate_onnx_path),
                             self.step,
                             candidate_nn_value_weight,
+                            candidate_death_penalty,
+                            candidate_overhang_penalty_weight,
                             force_promote=force_promote,
                         )
                         if queued and force_promote:
@@ -2816,16 +2841,26 @@ class Trainer:
                                 config=self.config,
                             )
                         )
+                        (
+                            synced_death_penalty,
+                            synced_overhang_penalty_weight,
+                        ) = self._scaled_penalties_for(
+                            generator, nn_value_weight=synced_nn_value_weight
+                        )
                         synced = generator.sync_model_directly(
                             str(sync_onnx_path),
                             self.step,
                             synced_nn_value_weight,
+                            synced_death_penalty,
+                            synced_overhang_penalty_weight,
                         )
                         if synced:
                             self._upload_to_r2_if_enabled(
                                 sync_onnx_path,
                                 self.step,
                                 synced_nn_value_weight,
+                                synced_death_penalty,
+                                synced_overhang_penalty_weight,
                             )
                         sync_now_s = time.perf_counter()
                         next_model_sync_time_s = roll_interval_deadline(

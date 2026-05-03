@@ -59,7 +59,6 @@ impl GameGenerator {
             num_workers: self.num_workers,
             candidate_eval_seeds: Arc::clone(&self.candidate_eval_seeds),
             non_network_num_simulations: self.non_network_num_simulations,
-            nn_value_weight_cap: self.nn_value_weight_cap,
             save_eval_trees: self.save_eval_trees,
         }
     }
@@ -91,7 +90,7 @@ impl GameGenerator {
 #[pymethods]
 impl GameGenerator {
     #[new]
-    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=0.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, initial_incumbent_eval_avg_attack=0.0, nn_value_weight_cap=1.0, candidate_gating_enabled=true, save_eval_trees=true))]
+    #[pyo3(signature = (model_path, training_data_path, config=None, max_placements=100, add_noise=true, max_examples=100_000, save_interval_seconds=0.0, num_workers=3, initial_model_step=0, candidate_eval_seeds=None, start_with_network=true, non_network_num_simulations=4000, initial_incumbent_eval_avg_attack=0.0, candidate_gating_enabled=true, save_eval_trees=true))]
     pub fn new(
         model_path: String,
         training_data_path: String,
@@ -106,7 +105,6 @@ impl GameGenerator {
         start_with_network: bool,
         non_network_num_simulations: u32,
         initial_incumbent_eval_avg_attack: f32,
-        nn_value_weight_cap: f32,
         candidate_gating_enabled: bool,
         save_eval_trees: bool,
     ) -> PyResult<Self> {
@@ -161,7 +159,6 @@ impl GameGenerator {
             incumbent_overhang_penalty_weight: Arc::new(AtomicU32::new(
                 initial_overhang_penalty_weight_bits,
             )),
-            nn_value_weight_cap,
             incumbent_eval_avg_attack: Arc::new(AtomicU32::new(
                 initial_incumbent_eval_avg_attack.to_bits(),
             )),
@@ -383,12 +380,17 @@ impl GameGenerator {
     /// If another candidate is already pending, it is dropped in favor of this one.
     /// Returns True when the candidate is queued, False when ignored as stale.
     /// `force_promote=True` skips the avg-attack gate for this candidate.
-    #[pyo3(signature = (model_path, model_step, nn_value_weight, force_promote=false))]
+    /// `death_penalty` and `overhang_penalty_weight` are taken verbatim from
+    /// the trainer-computed schedule and applied to candidate eval and (on
+    /// promotion) the incumbent search state.
+    #[pyo3(signature = (model_path, model_step, nn_value_weight, death_penalty, overhang_penalty_weight, force_promote=false))]
     pub fn queue_candidate_model(
         &self,
         model_path: String,
         model_step: u64,
         nn_value_weight: f32,
+        death_penalty: f32,
+        overhang_penalty_weight: f32,
         force_promote: bool,
     ) -> PyResult<bool> {
         if !self.candidate_gating_enabled {
@@ -400,6 +402,16 @@ impl GameGenerator {
         if !nn_value_weight.is_finite() || nn_value_weight < 0.0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "nn_value_weight must be finite and >= 0",
+            ));
+        }
+        if !death_penalty.is_finite() || death_penalty < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "death_penalty must be finite and >= 0",
+            ));
+        }
+        if !overhang_penalty_weight.is_finite() || overhang_penalty_weight < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "overhang_penalty_weight must be finite and >= 0",
             ));
         }
         if !candidate_path.exists() {
@@ -425,6 +437,8 @@ impl GameGenerator {
             model_path: candidate_path.clone(),
             model_step,
             nn_value_weight,
+            death_penalty,
+            overhang_penalty_weight,
             force_promote,
         };
         let replaced = {
@@ -459,6 +473,8 @@ impl GameGenerator {
         model_path: String,
         model_step: u64,
         nn_value_weight: f32,
+        death_penalty: f32,
+        overhang_penalty_weight: f32,
     ) -> PyResult<bool> {
         if self.candidate_gating_enabled {
             return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -469,6 +485,16 @@ impl GameGenerator {
         if !nn_value_weight.is_finite() || nn_value_weight < 0.0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "nn_value_weight must be finite and >= 0",
+            ));
+        }
+        if !death_penalty.is_finite() || death_penalty < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "death_penalty must be finite and >= 0",
+            ));
+        }
+        if !overhang_penalty_weight.is_finite() || overhang_penalty_weight < 0.0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "overhang_penalty_weight must be finite and >= 0",
             ));
         }
         if !synced_model_path.exists() {
@@ -490,15 +516,6 @@ impl GameGenerator {
             return Ok(false);
         }
 
-        let previous_incumbent_death_penalty = Self::load_atomic_f32(&self.incumbent_death_penalty);
-        let previous_incumbent_overhang_penalty_weight =
-            Self::load_atomic_f32(&self.incumbent_overhang_penalty_weight);
-        let (death_penalty, overhang_penalty_weight) = Self::effective_search_penalties(
-            nn_value_weight,
-            self.nn_value_weight_cap,
-            self.config.death_penalty,
-            self.config.overhang_penalty_weight,
-        );
         {
             let mut incumbent_model_path = self.incumbent_model_path.write().unwrap();
             *incumbent_model_path = synced_model_path.clone();
@@ -514,17 +531,6 @@ impl GameGenerator {
             overhang_penalty_weight,
         );
         Self::store_atomic_f32(&self.incumbent_eval_avg_attack, 0.0);
-
-        if (previous_incumbent_death_penalty != 0.0
-            || previous_incumbent_overhang_penalty_weight != 0.0)
-            && death_penalty == 0.0
-            && overhang_penalty_weight == 0.0
-        {
-            eprintln!(
-                "[GameGenerator] Direct sync reached nn_value_weight cap ({:.6}), disabling death_penalty and overhang_penalty_weight",
-                self.nn_value_weight_cap
-            );
-        }
 
         Self::remove_model_artifacts_if_safe(
             &incumbent_path,

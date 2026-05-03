@@ -287,22 +287,6 @@ fn test_build_candidate_eval_config_forces_deterministic_gate_settings() {
 }
 
 #[test]
-fn test_effective_search_penalties_disable_penalties_at_cap() {
-    assert_eq!(
-        GameGenerator::effective_search_penalties(0.99, 1.0, 5.0, 3.0),
-        (5.0, 3.0)
-    );
-    assert_eq!(
-        GameGenerator::effective_search_penalties(1.0, 1.0, 5.0, 3.0),
-        (0.0, 0.0)
-    );
-    assert_eq!(
-        GameGenerator::effective_search_penalties(1.2, 1.0, 5.0, 3.0),
-        (0.0, 0.0)
-    );
-}
-
-#[test]
 fn test_incumbent_eval_rebaseline_only_when_penalties_change_for_network_incumbent() {
     assert!(!GameGenerator::needs_incumbent_eval_rebaseline(
         false,
@@ -439,7 +423,6 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
         true,
         10,
         0.0,
-        1.0,
         true,
         true,
     )
@@ -460,6 +443,8 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
             model_path: pending_path.clone(),
             model_step: 1,
             nn_value_weight: 0.1,
+            death_penalty: 5.0,
+            overhang_penalty_weight: 3.0,
             force_promote: false,
         });
     }
@@ -469,6 +454,8 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
             model_path: evaluating_path.clone(),
             model_step: 2,
             nn_value_weight: 0.2,
+            death_penalty: 5.0,
+            overhang_penalty_weight: 3.0,
             force_promote: false,
         });
     }
@@ -509,7 +496,6 @@ fn test_sync_model_directly_updates_incumbent_when_candidate_gating_disabled() {
         false,
         10,
         0.0,
-        1.0,
         false,
         false,
     )
@@ -521,7 +507,7 @@ fn test_sync_model_directly_updates_incumbent_when_candidate_gating_disabled() {
     let synced_path = unique_temp_path("direct_sync_model").with_extension("onnx");
     fs::write(&synced_path, b"synced").expect("synced model write should succeed");
     let synced = generator
-        .sync_model_directly(synced_path.to_string_lossy().to_string(), 5, 0.75)
+        .sync_model_directly(synced_path.to_string_lossy().to_string(), 5, 0.75, 5.0, 3.0)
         .expect("direct sync should succeed");
 
     assert!(synced);
@@ -537,10 +523,29 @@ fn test_sync_model_directly_updates_incumbent_when_candidate_gating_disabled() {
     assert_eq!(generator.incumbent_eval_avg_attack(), 0.0);
     assert!(!generator.candidate_gate_busy());
 
+    // Direct sync now stores the penalties verbatim — Rust no longer zeros
+    // them when nn_value_weight crosses any internal cap. Trainer is the
+    // sole authority for the schedule.
+    let above_cap_path = unique_temp_path("direct_sync_above_cap").with_extension("onnx");
+    fs::write(&above_cap_path, b"above-cap").expect("above-cap model write should succeed");
+    let above_cap_synced = generator
+        .sync_model_directly(
+            above_cap_path.to_string_lossy().to_string(),
+            6,
+            1.5,
+            7.0,
+            2.0,
+        )
+        .expect("above-cap direct sync should succeed");
+    assert!(above_cap_synced);
+    assert_eq!(generator.incumbent_nn_value_weight(), 1.5);
+    assert_eq!(generator.incumbent_death_penalty(), 7.0);
+    assert_eq!(generator.incumbent_overhang_penalty_weight(), 2.0);
+
     let stale_path = unique_temp_path("direct_sync_stale").with_extension("onnx");
     fs::write(&stale_path, b"stale").expect("stale model write should succeed");
     let stale_synced = generator
-        .sync_model_directly(stale_path.to_string_lossy().to_string(), 4, 0.8)
+        .sync_model_directly(stale_path.to_string_lossy().to_string(), 4, 0.8, 5.0, 3.0)
         .expect("stale direct sync should return cleanly");
 
     assert!(!stale_synced);
