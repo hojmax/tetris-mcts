@@ -227,6 +227,10 @@ fn test_commit_game_results_batch_tags_examples_and_queues_completed_games() {
             overhang_penalty_weight: Arc::new(AtomicU32::new(0.0f32.to_bits())),
             eval_avg_attack: Arc::new(AtomicU32::new(0.0f32.to_bits())),
         },
+        live_overrides: LiveSearchOverrides {
+            add_noise: Arc::new(AtomicBool::new(false)),
+            visit_sampling_epsilon: Arc::new(AtomicU32::new(0.0f32.to_bits())),
+        },
     };
 
     let committed = GameGenerator::commit_game_results_batch(
@@ -548,4 +552,60 @@ fn test_sync_model_directly_updates_incumbent_when_candidate_gating_disabled() {
         !stale_path.exists(),
         "stale direct sync artifacts should be removed"
     );
+}
+
+#[test]
+fn test_update_search_overrides_flips_live_atomics() {
+    let bootstrap_path = unique_temp_path("live_overrides_bootstrap").with_extension("onnx");
+    let training_data_path = unique_temp_path("live_overrides_training_data");
+
+    let mut config = MCTSConfig::default();
+    config.visit_sampling_epsilon = 0.4;
+
+    let generator = GameGenerator::new(
+        bootstrap_path.to_string_lossy().to_string(),
+        training_data_path.to_string_lossy().to_string(),
+        Some(config),
+        100,
+        true, // initial add_noise = true (mirrors trainer default)
+        16,
+        1.0,
+        1,
+        0,
+        Some(vec![0]),
+        true,
+        10,
+        0.0,
+        1.0,
+        true,
+        false,
+    )
+    .expect("generator should construct");
+
+    assert!(generator.live_add_noise());
+    assert_eq!(generator.live_visit_sampling_epsilon(), 0.4);
+
+    generator
+        .update_search_overrides(Some(false), Some(0.0))
+        .expect("update should succeed");
+    assert!(!generator.live_add_noise());
+    assert_eq!(generator.live_visit_sampling_epsilon(), 0.0);
+
+    // None args leave the corresponding setting unchanged.
+    generator
+        .update_search_overrides(None, Some(0.25))
+        .expect("partial update should succeed");
+    assert!(!generator.live_add_noise());
+    assert_eq!(generator.live_visit_sampling_epsilon(), 0.25);
+
+    // Out-of-range epsilon must be rejected and leave state untouched.
+    // PyValueError construction needs the Python interpreter; prepare it
+    // here so this lib-test can exercise the error path.
+    pyo3::prepare_freethreaded_python();
+    let err = generator
+        .update_search_overrides(Some(true), Some(1.5))
+        .expect_err("epsilon > 1 should error");
+    assert!(err.to_string().contains("visit_sampling_epsilon"));
+    assert!(!generator.live_add_noise());
+    assert_eq!(generator.live_visit_sampling_epsilon(), 0.25);
 }

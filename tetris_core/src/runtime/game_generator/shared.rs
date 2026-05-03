@@ -212,6 +212,17 @@ pub(super) struct IncumbentState {
 }
 
 #[derive(Clone)]
+pub(super) struct LiveSearchOverrides {
+    /// Whether to add Dirichlet noise at the search root for self-play.
+    /// Read at the top of each game; candidate-eval games still force false.
+    pub(super) add_noise: Arc<AtomicBool>,
+    /// `MCTSConfig.visit_sampling_epsilon` applied to live workers; stored
+    /// as raw `f32::to_bits()` and re-stamped onto each worker's MCTSAgent
+    /// config at the start of every game.
+    pub(super) visit_sampling_epsilon: Arc<AtomicU32>,
+}
+
+#[derive(Clone)]
 pub(super) struct WorkerSharedState {
     pub(super) buffer: Arc<SharedBuffer>,
     pub(super) running: Arc<AtomicBool>,
@@ -222,6 +233,7 @@ pub(super) struct WorkerSharedState {
     pub(super) evaluating_candidate: Arc<RwLock<Option<CandidateModelRequest>>>,
     pub(super) model_eval_events: Arc<RwLock<VecDeque<ModelEvalEvent>>>,
     pub(super) incumbent: IncumbentState,
+    pub(super) live_overrides: LiveSearchOverrides,
 }
 
 #[derive(Clone)]
@@ -231,7 +243,6 @@ pub(super) struct WorkerSettings {
     pub(super) snapshot_persister: Arc<SnapshotPersister>,
     pub(super) config: MCTSConfig,
     pub(super) max_placements: u32,
-    pub(super) add_noise: bool,
     pub(super) save_interval_seconds: f64,
     pub(super) num_workers: usize,
     pub(super) candidate_eval_seeds: Arc<[u64]>,

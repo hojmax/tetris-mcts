@@ -416,10 +416,60 @@ def main(args: GeneratorArgs) -> None:
     last_log_time_s = start_time_s
     last_log_games = start_games
     last_log_examples = start_examples
+    snapshot_poll_interval_s = config.r2_sync.model_pointer_poll_interval_seconds
+    last_snapshot_poll_s = start_time_s
+    last_applied_add_noise = config.self_play.add_noise
+    last_applied_visit_sampling_epsilon = config.self_play.visit_sampling_epsilon
     try:
         while not stop_event_handled:
             time.sleep(0.5)
             now_s = time.monotonic()
+            if now_s - last_snapshot_poll_s >= snapshot_poll_interval_s:
+                last_snapshot_poll_s = now_s
+                try:
+                    refreshed_snapshot = fetch_self_play_snapshot(settings)
+                except Exception:
+                    logger.exception("run_generator.self_play_snapshot_refresh_failed")
+                    refreshed_snapshot = None
+                if refreshed_snapshot is not None:
+                    new_add_noise = refreshed_snapshot.add_noise
+                    new_visit_sampling_epsilon = (
+                        refreshed_snapshot.visit_sampling_epsilon
+                    )
+                    if (
+                        new_add_noise != last_applied_add_noise
+                        or new_visit_sampling_epsilon
+                        != last_applied_visit_sampling_epsilon
+                    ):
+                        try:
+                            generator.update_search_overrides(
+                                add_noise=new_add_noise,
+                                visit_sampling_epsilon=new_visit_sampling_epsilon,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "run_generator.update_search_overrides_failed",
+                                add_noise=new_add_noise,
+                                visit_sampling_epsilon=new_visit_sampling_epsilon,
+                            )
+                        else:
+                            logger.info(
+                                "run_generator.applied_self_play_snapshot_overrides",
+                                add_noise=new_add_noise,
+                                visit_sampling_epsilon=new_visit_sampling_epsilon,
+                                previous_add_noise=last_applied_add_noise,
+                                previous_visit_sampling_epsilon=(
+                                    last_applied_visit_sampling_epsilon
+                                ),
+                            )
+                            config.self_play.add_noise = new_add_noise
+                            config.self_play.visit_sampling_epsilon = (
+                                new_visit_sampling_epsilon
+                            )
+                            last_applied_add_noise = new_add_noise
+                            last_applied_visit_sampling_epsilon = (
+                                new_visit_sampling_epsilon
+                            )
             if now_s - last_log_time_s >= log_interval_s:
                 games_now = generator.games_generated()
                 examples_now = generator.examples_generated()
