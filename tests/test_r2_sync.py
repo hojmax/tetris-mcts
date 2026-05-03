@@ -225,14 +225,14 @@ class FakeGameStatsSink:
     """Captures pushed game-stats batches with their applied offsets."""
 
     def __init__(self) -> None:
-        self.batches: list[tuple[list[dict], int]] = []
+        self.batches: list[tuple[list[dict], int, str]] = []
         self._lock = threading.Lock()
 
     def push_remote_completed_games(
-        self, entries: list[dict], game_number_offset: int
+        self, entries: list[dict], game_number_offset: int, machine_id: str
     ) -> None:
         with self._lock:
-            self.batches.append((entries, game_number_offset))
+            self.batches.append((entries, game_number_offset, machine_id))
 
 
 class FakeModelSink:
@@ -622,7 +622,8 @@ def test_game_stats_round_trip_applies_machine_offset(
 
     laptop_offset = offset_table.offset_for("laptop")
     assert len(sink.batches) == 1
-    entries, offset = sink.batches[0]
+    entries, offset, source_machine_id = sink.batches[0]
+    assert source_machine_id == "laptop"
     assert offset == laptop_offset
     assert [e["game_number"] for e in entries] == [1, 2]
 

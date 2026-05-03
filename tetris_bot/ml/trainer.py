@@ -242,6 +242,20 @@ class Trainer:
         self._r2_last_uploaded_step: int = -1
         self._remote_completed_games_lock = threading.Lock()
         self._remote_completed_games: deque[CompletedGameLogEntry] = deque()
+        # Per-machine completed-game counts feeding the
+        # `throughput/games_per_second/<machine_id>` W&B series. The
+        # trainer's own self-play workers use the local hostname as their
+        # machine_id; remote generators report theirs through
+        # `push_remote_completed_games`. Updated at the drain chokepoint
+        # and from the GameStatsDownloader thread; protected by a
+        # dedicated lock.
+        import socket as _socket
+
+        self._local_machine_id: str = (
+            _socket.gethostname().replace(".", "_") or "trainer"
+        )
+        self._games_per_machine_lock = threading.Lock()
+        self._games_per_machine: dict[str, int] = {}
         # Strictly-monotonic game number used as the W&B-facing identifier.
         # Buffer/replay game_numbers stay in their per-machine block ranges
         # (so per-game grouping in the buffer stays unique), but every game
@@ -308,6 +322,8 @@ class Trainer:
             CompletedGameLogEntry.model_validate(payload)
             for payload in generator.drain_completed_games()
         ]
+        if local:
+            self._increment_games_per_machine(self._local_machine_id, len(local))
         remote = self._drain_remote_completed_games()
         combined = local + remote
         if not combined:
@@ -321,6 +337,18 @@ class Trainer:
             self._next_display_game_number += 1
         return combined
 
+    def _increment_games_per_machine(self, machine_id: str, count: int) -> None:
+        if count <= 0:
+            return
+        with self._games_per_machine_lock:
+            self._games_per_machine[machine_id] = (
+                self._games_per_machine.get(machine_id, 0) + count
+            )
+
+    def _snapshot_games_per_machine(self) -> dict[str, int]:
+        with self._games_per_machine_lock:
+            return dict(self._games_per_machine)
+
     def _drain_remote_completed_games(self) -> list[CompletedGameLogEntry]:
         with self._remote_completed_games_lock:
             if not self._remote_completed_games:
@@ -330,12 +358,14 @@ class Trainer:
         return drained
 
     def push_remote_completed_games(
-        self, entries: list[dict], game_number_offset: int
+        self, entries: list[dict], game_number_offset: int, machine_id: str
     ) -> None:
         """Sink for `GameStatsDownloader` — applies offset and queues entries.
 
         Called from the downloader background thread; the lock keeps reads
-        from the trainer main loop consistent.
+        from the trainer main loop consistent. `machine_id` is the source
+        generator's id, used to attribute games to per-machine throughput
+        series.
         """
         validated: list[CompletedGameLogEntry] = []
         for entry in entries:
@@ -353,6 +383,7 @@ class Trainer:
             return
         with self._remote_completed_games_lock:
             self._remote_completed_games.extend(validated)
+        self._increment_games_per_machine(machine_id, len(validated))
 
     @staticmethod
     def _prune_recent_completed_replays(
@@ -2352,9 +2383,10 @@ class Trainer:
         replay_mirror: CircularReplayMirror | None = None
         interval_anchor_s = time.perf_counter()
         throughput_window_start_s = interval_anchor_s
-        throughput_window_start_games = generator.games_generated()
-        throughput_window_start_total_games = self._next_display_game_number - 1
         throughput_window_start_steps = 0
+        throughput_window_start_per_machine: dict[str, int] = (
+            self._snapshot_games_per_machine()
+        )
         next_log_time_s = interval_anchor_s + self.config.run.log_interval_seconds
         next_replay_sync_time_s = interval_anchor_s
         candidate_gate_schedule: CandidateGateSchedule | None = None
@@ -2513,13 +2545,7 @@ class Trainer:
                         metrics["timing/extra_metrics_ms"] = 1000.0 * (
                             time.perf_counter() - extra_metrics_start
                         )
-                    games = generator.games_generated()
-                    total_games_seen = self._next_display_game_number - 1
                     window_elapsed_s = post_step_time - throughput_window_start_s
-                    games_delta = games - throughput_window_start_games
-                    total_games_delta = (
-                        total_games_seen - throughput_window_start_total_games
-                    )
                     steps_delta = session_step - throughput_window_start_steps
                     metrics["replay/buffer_size"] = generator.buffer_size()
                     metrics["replay/games_generated"] = (
@@ -2543,16 +2569,29 @@ class Trainer:
                     metrics["incumbent/nn_value_weight"] = (
                         generator.incumbent_nn_value_weight()
                     )
-                    metrics["throughput/games_per_second"] = (
-                        games_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
+                    # Per-machine games/sec breakdown: one W&B series per
+                    # machine_id (trainer's hostname for local self-play,
+                    # remote `machine_id`s for connected generators) plus a
+                    # `/total` series that sums them. Replaces the older
+                    # local-only `games_per_second` and combined
+                    # `total_games_per_second` metrics.
+                    games_per_machine_now = self._snapshot_games_per_machine()
+                    total_per_machine_delta = 0
+                    seen_machine_ids = set(games_per_machine_now.keys()) | set(
+                        throughput_window_start_per_machine.keys()
                     )
-                    # `games_per_second` only counts the trainer's local
-                    # self-play workers. `total_games_per_second` derives
-                    # from `_next_display_game_number`, which advances for
-                    # both local *and* remote-ingested games, so connecting
-                    # additional generators visibly bumps this metric.
-                    metrics["throughput/total_games_per_second"] = (
-                        total_games_delta / window_elapsed_s
+                    for machine_id in seen_machine_ids:
+                        machine_delta = games_per_machine_now.get(
+                            machine_id, 0
+                        ) - throughput_window_start_per_machine.get(machine_id, 0)
+                        total_per_machine_delta += machine_delta
+                        metrics[f"throughput/games_per_second/{machine_id}"] = (
+                            machine_delta / window_elapsed_s
+                            if window_elapsed_s > 0
+                            else 0.0
+                        )
+                    metrics["throughput/games_per_second/total"] = (
+                        total_per_machine_delta / window_elapsed_s
                         if window_elapsed_s > 0
                         else 0.0
                     )
@@ -2560,8 +2599,7 @@ class Trainer:
                         steps_delta / window_elapsed_s if window_elapsed_s > 0 else 0.0
                     )
                     throughput_window_start_s = post_step_time
-                    throughput_window_start_games = games
-                    throughput_window_start_total_games = total_games_seen
+                    throughput_window_start_per_machine = games_per_machine_now
                     throughput_window_start_steps = session_step
                     metrics["timing/sample_batch_ms"] = (
                         1000.0 * sample_batch_time_s / sample_batch_count
@@ -2656,8 +2694,11 @@ class Trainer:
                         learning_rate=metrics["train/learning_rate"],
                         buffer_size=generator.buffer_size(),
                         games_generated=self._cumulative_games_generated(generator),
-                        games_per_second=metrics["throughput/games_per_second"],
-                        total_games_per_second=metrics["throughput/total_games_per_second"],
+                        local_games_per_second=metrics.get(
+                            f"throughput/games_per_second/{self._local_machine_id}",
+                            0.0,
+                        ),
+                        total_games_per_second=metrics["throughput/games_per_second/total"],
                         steps_per_second=metrics["throughput/steps_per_second"],
                         sample_batch_ms=metrics["timing/sample_batch_ms"],
                         replay_sync_ms=metrics["timing/replay_sync_ms"],

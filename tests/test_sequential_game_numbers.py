@@ -73,10 +73,12 @@ def test_drain_assigns_strictly_sequential_display_numbers(tmp_path: Path) -> No
     trainer.push_remote_completed_games(
         [_local_game_payload(7, completed_time_s=11.0, total_attack=20)],
         game_number_offset=1_000_000_000,
+        machine_id="laptop",
     )
     trainer.push_remote_completed_games(
         [_local_game_payload(8, completed_time_s=13.0, total_attack=22)],
         game_number_offset=1_000_000_000,
+        machine_id="laptop",
     )
 
     drained = trainer._drain_completed_games(fake_generator)  # type: ignore[arg-type]
@@ -87,6 +89,12 @@ def test_drain_assigns_strictly_sequential_display_numbers(tmp_path: Path) -> No
     assert [int(e.stats["total_attack"]) for e in drained] == [5, 20, 5, 22]
     # Counter advanced past the highest assigned number.
     assert trainer._next_display_game_number == 5
+    # Per-machine breakdown attributes 2 games to local (the trainer's
+    # hostname) and 2 games to "laptop" (pushed via push_remote_…).
+    breakdown = trainer._snapshot_games_per_machine()
+    assert breakdown[trainer._local_machine_id] == 2
+    assert breakdown["laptop"] == 2
+    assert sum(breakdown.values()) == 4
 
 
 def test_drain_continues_counter_across_calls(tmp_path: Path) -> None:

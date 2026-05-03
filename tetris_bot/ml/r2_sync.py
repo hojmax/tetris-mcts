@@ -622,7 +622,10 @@ class GameStatsSink(Protocol):
     """
 
     def push_remote_completed_games(
-        self, entries: list[dict[str, Any]], game_number_offset: int
+        self,
+        entries: list[dict[str, Any]],
+        game_number_offset: int,
+        machine_id: str,
     ) -> None: ...
 
 
@@ -763,7 +766,9 @@ class GameStatsDownloader:
                 payload_type=type(payload).__name__,
             )
             return
-        self._sink.push_remote_completed_games(payload, game_number_offset)
+        self._sink.push_remote_completed_games(
+            payload, game_number_offset, machine_id
+        )
         self._cursor[machine_id] = key
         self._save_cursor()
         logger.info(
