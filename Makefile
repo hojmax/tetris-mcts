@@ -1,4 +1,4 @@
-.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz viz-policy-grid train replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling compare-offline-spatial-policy compare-warm-start-trunk-sizes sweep-mcts-config warm-start download-wandb-training-data
+.PHONY: run install ensure-rust ensure-system-deps build build-ort build-dev clean rebuild test check play viz viz-policy-grid train run-generator replay profile profile-samply optimize sweep-lr-model eval-nn-value-weight compare-offline-network-scaling compare-offline-spatial-policy compare-warm-start-trunk-sizes sweep-mcts-config warm-start download-wandb-training-data
 
 # Source cargo environment if available
 SHELL := /bin/bash
@@ -339,3 +339,42 @@ train: ensure-rust $(INSTALL_MARKER)
 		$(MAKE) build; \
 	fi; \
 	$(PYTHON) tetris_bot/scripts/train.py $(ARGS)
+
+# Run the generator-only entrypoint for multi-machine training. Same
+# build + optimize-cache logic as `train` so the laptop's self-play uses
+# release-optimized Rust + machine-tuned worker counts. ARGS pass-through
+# lets you set --machine_id, --num_workers, --sync_run_id, etc.
+run-generator: ensure-rust $(INSTALL_MARKER)
+	@if [ -z "$$TMUX" ]; then \
+		echo "Error: tmux is not active. Generator may stop if this terminal closes. Run inside tmux." >&2; \
+		exit 1; \
+	fi
+	@set -euo pipefail; \
+	FINGERPRINT="$$( $(PYTHON) -c "from tetris_bot.scripts.inspection.optimize_machine import machine_profile, machine_type_fingerprint; print(machine_type_fingerprint(machine_profile()))" 2>/dev/null || true )"; \
+	OPT_ENV=""; \
+	if [ -n "$$FINGERPRINT" ]; then \
+		OPT_ENV="$(OPT_CACHE_DIR)/$$FINGERPRINT.env"; \
+	fi; \
+	if [ -z "$$OPT_ENV" ] || [ ! -f "$$OPT_ENV" ]; then \
+		echo "[run-generator] No optimization cache for this machine; running make optimize..."; \
+		if ! $(MAKE) optimize MODEL_OPTIMIZE="$(MODEL_OPTIMIZE)" OPT_GAMES="$(OPT_GAMES)" OPT_SIMS="$(OPT_SIMS)" OPT_REPEATS="$(OPT_REPEATS)" OPT_WORKER_SEARCH="$(OPT_WORKER_SEARCH)" OPT_MAX_WORKER_EVALS="$(OPT_MAX_WORKER_EVALS)" OPTIMIZE_ARGS="$(OPTIMIZE_ARGS)"; then \
+			echo "[run-generator] Optimization failed; falling back to default build/runtime settings."; \
+			OPT_ENV=""; \
+		fi; \
+	fi; \
+	if [ -n "$$OPT_ENV" ] && [ -f "$$OPT_ENV" ]; then \
+		echo "[run-generator] Loading optimized settings from $$OPT_ENV"; \
+		set -a; . "$$OPT_ENV"; set +a; \
+		if [ "$${TETRIS_NN_BACKEND:-tract}" = "ort" ]; then \
+			if ! $(MAKE) build-ort RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; then \
+				echo "[run-generator] ORT build failed; falling back to tract build/runtime settings."; \
+				export TETRIS_NN_BACKEND=tract; \
+				$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+			fi; \
+		else \
+			$(MAKE) build RELEASE_RUSTFLAGS="$${RELEASE_RUSTFLAGS-$(RELEASE_RUSTFLAGS)}" RELEASE_LTO="$${RELEASE_LTO-$(RELEASE_LTO)}" RELEASE_CODEGEN_UNITS="$${RELEASE_CODEGEN_UNITS-$(RELEASE_CODEGEN_UNITS)}"; \
+		fi; \
+	else \
+		$(MAKE) build; \
+	fi; \
+	$(PYTHON) tetris_bot/scripts/run_generator.py $(ARGS)
