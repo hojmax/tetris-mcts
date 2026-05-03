@@ -55,8 +55,9 @@ def _patch_botocore_clienterror(monkeypatch):
     import sys
 
     sys.modules.setdefault("botocore", _DummyBotocore)  # type: ignore[arg-type]
-    sys.modules.setdefault(  # type: ignore[arg-type]
-        "botocore.exceptions", _DummyBotocore.exceptions
+    sys.modules.setdefault(
+        "botocore.exceptions",
+        _DummyBotocore.exceptions,  # type: ignore[arg-type]
     )
     yield
 
