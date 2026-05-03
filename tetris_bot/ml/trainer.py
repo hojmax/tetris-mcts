@@ -957,6 +957,10 @@ class Trainer:
                 promoted=promoted,
                 now_s=now_s,
             )
+            if promoted:
+                self._publish_incumbent_to_r2_if_enabled(
+                    generator, reason="promotion"
+                )
             next_candidate_export_delay_seconds = max(
                 0.0, candidate_gate_schedule.next_export_time_s - now_s
             )
@@ -1776,6 +1780,29 @@ class Trainer:
                 step=model_step,
             )
 
+    def _publish_incumbent_to_r2_if_enabled(
+        self, generator: GameGenerator, *, reason: str
+    ) -> None:
+        """Push the current incumbent bundle + pointer to R2 immediately.
+
+        Why: remote generators block on `models/incumbent.json` to start
+        playing. Without this hook the trainer would only publish at the
+        checkpoint cadence (every few hours) or shutdown, leaving generators
+        idle. Called at startup and after every promotion.
+        """
+        if self._r2_settings is None:
+            return
+        if not generator.incumbent_uses_network():
+            return
+        try:
+            self._persist_incumbent_model_artifacts(generator)
+        except Exception:
+            logger.exception(
+                "trainer.r2_incumbent_publish_failed",
+                reason=reason,
+                step=generator.incumbent_model_step(),
+            )
+
     def _persist_incumbent_model_artifacts(
         self, generator: GameGenerator
     ) -> tuple[Path | None, str]:
@@ -2196,6 +2223,7 @@ class Trainer:
         wall_time_anchor_s = time.perf_counter()
         generator.start()
         self._init_r2_sync(generator)
+        self._publish_incumbent_to_r2_if_enabled(generator, reason="startup")
         generator_log_fields: dict[str, object] = {
             "model_path": str(generator_model_path),
             "trainer_parallel_model_path": str(onnx_path),
