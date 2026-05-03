@@ -715,7 +715,7 @@ impl GameGenerator {
         let auto_promoted = previous_incumbent_avg_attack == 0.0 && !incumbent_uses_network_before;
         let force_promoted = candidate.force_promote;
         let promoted =
-            auto_promoted || force_promoted || candidate_avg_attack > incumbent_avg_attack;
+            auto_promoted || force_promoted || candidate_avg_attack >= incumbent_avg_attack;
         let promoted_nn_value_weight = if promoted {
             candidate.nn_value_weight
         } else {
@@ -792,7 +792,7 @@ impl GameGenerator {
                 ""
             };
             eprintln!(
-                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={}, nn_value_weight {:.6} -> {:.6}, eval trajectories discarded from replay){}",
+                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} >= incumbent {:.3}, games={}, nn_value_weight {:.6} -> {:.6}, eval trajectories discarded from replay){}",
                 candidate.model_step,
                 candidate_avg_attack,
                 incumbent_avg_attack,
@@ -810,7 +810,7 @@ impl GameGenerator {
             );
 
             eprintln!(
-                "[GameGenerator] Rejected candidate step {} (avg_attack {:.3} <= incumbent {:.3}, games={}, candidate_nn_value_weight {:.6}, incumbent_nn_value_weight {:.6})",
+                "[GameGenerator] Rejected candidate step {} (avg_attack {:.3} < incumbent {:.3}, games={}, candidate_nn_value_weight {:.6}, incumbent_nn_value_weight {:.6})",
                 candidate.model_step,
                 candidate_avg_attack,
                 incumbent_avg_attack,
