@@ -370,9 +370,12 @@ def main(args: GeneratorArgs) -> None:
     signal.signal(signal.SIGTERM, _shutdown)
 
     log_interval_s = config.run.log_interval_seconds
-    last_log_time_s = time.monotonic()
-    last_log_games = generator.games_generated()
-    last_log_examples = generator.examples_generated()
+    start_time_s = time.monotonic()
+    start_games = generator.games_generated()
+    start_examples = generator.examples_generated()
+    last_log_time_s = start_time_s
+    last_log_games = start_games
+    last_log_examples = start_examples
     try:
         while not stop_event_handled:
             time.sleep(0.5)
@@ -381,16 +384,22 @@ def main(args: GeneratorArgs) -> None:
                 games_now = generator.games_generated()
                 examples_now = generator.examples_generated()
                 window_s = now_s - last_log_time_s
+                total_s = now_s - start_time_s
                 games_per_second = (games_now - last_log_games) / window_s
                 examples_per_second = (examples_now - last_log_examples) / window_s
+                avg_games_per_second = (games_now - start_games) / total_s
+                avg_examples_per_second = (examples_now - start_examples) / total_s
                 logger.info(
                     "run_generator.progress",
                     games_generated=games_now,
                     examples_generated=examples_now,
                     games_per_second=games_per_second,
                     examples_per_second=examples_per_second,
+                    avg_games_per_second=avg_games_per_second,
+                    avg_examples_per_second=avg_examples_per_second,
                     buffer_size=generator.buffer_size(),
                     window_seconds=window_s,
+                    elapsed_seconds=total_s,
                 )
                 last_log_time_s = now_s
                 last_log_games = games_now
