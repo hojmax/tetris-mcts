@@ -787,6 +787,8 @@ class GameStatsDownloader:
 class ModelPointer:
     step: int
     nn_value_weight: float
+    death_penalty: float
+    overhang_penalty_weight: float
     bundle_prefix: str
 
     def to_json(self) -> bytes:
@@ -794,6 +796,8 @@ class ModelPointer:
             {
                 "step": self.step,
                 "nn_value_weight": self.nn_value_weight,
+                "death_penalty": self.death_penalty,
+                "overhang_penalty_weight": self.overhang_penalty_weight,
                 "bundle_prefix": self.bundle_prefix,
             },
             sort_keys=True,
@@ -805,6 +809,8 @@ class ModelPointer:
         return cls(
             step=int(data["step"]),
             nn_value_weight=float(data["nn_value_weight"]),
+            death_penalty=float(data["death_penalty"]),
+            overhang_penalty_weight=float(data["overhang_penalty_weight"]),
             bundle_prefix=str(data["bundle_prefix"]),
         )
 
@@ -829,6 +835,8 @@ def upload_model_bundle(
     onnx_path: Path,
     step: int,
     nn_value_weight: float,
+    death_penalty: float,
+    overhang_penalty_weight: float,
     client: S3LikeClient | None = None,
 ) -> ModelPointer:
     """Upload a model bundle and atomically swap the incumbent pointer.
@@ -861,6 +869,8 @@ def upload_model_bundle(
     pointer = ModelPointer(
         step=step,
         nn_value_weight=nn_value_weight,
+        death_penalty=death_penalty,
+        overhang_penalty_weight=overhang_penalty_weight,
         bundle_prefix=bundle_prefix,
     )
     client.put_object(
@@ -873,6 +883,8 @@ def upload_model_bundle(
         "r2_sync.model_uploaded",
         step=step,
         nn_value_weight=nn_value_weight,
+        death_penalty=death_penalty,
+        overhang_penalty_weight=overhang_penalty_weight,
         bundle_prefix=bundle_prefix,
         members=list(member_map.keys()),
     )
@@ -1071,7 +1083,12 @@ def fetch_self_play_snapshot(
 
 class ModelSyncSink(Protocol):
     def sync_model_directly(
-        self, model_path: str, model_step: int, nn_value_weight: float
+        self,
+        model_path: str,
+        model_step: int,
+        nn_value_weight: float,
+        death_penalty: float,
+        overhang_penalty_weight: float,
     ) -> bool: ...
 
 
@@ -1145,7 +1162,11 @@ class ModelDownloader:
                 shutil.rmtree(bundle_dir, ignore_errors=True)
             raise
         applied = self._generator.sync_model_directly(
-            str(main_path), pointer.step, pointer.nn_value_weight
+            str(main_path),
+            pointer.step,
+            pointer.nn_value_weight,
+            pointer.death_penalty,
+            pointer.overhang_penalty_weight,
         )
         if applied:
             self._last_synced_step = pointer.step
@@ -1153,6 +1174,8 @@ class ModelDownloader:
                 "r2_sync.model_synced",
                 step=pointer.step,
                 nn_value_weight=pointer.nn_value_weight,
+                death_penalty=pointer.death_penalty,
+                overhang_penalty_weight=pointer.overhang_penalty_weight,
                 local_path=str(main_path),
             )
         else:

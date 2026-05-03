@@ -13,19 +13,6 @@ impl GameGenerator {
         target.store(value.to_bits(), Ordering::SeqCst);
     }
 
-    pub(super) fn effective_search_penalties(
-        nn_value_weight: f32,
-        nn_value_weight_cap: f32,
-        death_penalty: f32,
-        overhang_penalty_weight: f32,
-    ) -> (f32, f32) {
-        if nn_value_weight >= nn_value_weight_cap {
-            (0.0, 0.0)
-        } else {
-            (death_penalty, overhang_penalty_weight)
-        }
-    }
-
     pub(super) fn needs_incumbent_eval_rebaseline(
         incumbent_uses_network: bool,
         current_penalties: (f32, f32),
@@ -482,13 +469,8 @@ impl GameGenerator {
             Self::load_atomic_f32(&shared.incumbent.death_penalty);
         let current_incumbent_overhang_penalty_weight =
             Self::load_atomic_f32(&shared.incumbent.overhang_penalty_weight);
-        let (candidate_death_penalty, candidate_overhang_penalty_weight) =
-            Self::effective_search_penalties(
-                candidate.nn_value_weight,
-                settings.nn_value_weight_cap,
-                current_incumbent_death_penalty,
-                current_incumbent_overhang_penalty_weight,
-            );
+        let candidate_death_penalty = candidate.death_penalty;
+        let candidate_overhang_penalty_weight = candidate.overhang_penalty_weight;
         let candidate_rollout_config = Self::build_rollout_config(
             &eval_config,
             true,
@@ -760,17 +742,6 @@ impl GameGenerator {
                 &shared.incumbent.overhang_penalty_weight,
                 candidate_overhang_penalty_weight,
             );
-            if (candidate_death_penalty, candidate_overhang_penalty_weight) == (0.0, 0.0)
-                && (
-                    current_incumbent_death_penalty,
-                    current_incumbent_overhang_penalty_weight,
-                ) != (0.0, 0.0)
-            {
-                eprintln!(
-                    "[GameGenerator] nn_value_weight reached cap ({:.6}), disabling death_penalty and overhang_penalty_weight",
-                    settings.nn_value_weight_cap
-                );
-            }
             shared
                 .incumbent
                 .model_version

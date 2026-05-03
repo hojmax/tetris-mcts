@@ -245,13 +245,26 @@ class FakeGameStatsSink:
 
 class FakeModelSink:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, int, float]] = []
+        self.calls: list[tuple[str, int, float, float, float]] = []
         self._return_value = True
 
     def sync_model_directly(
-        self, model_path: str, model_step: int, nn_value_weight: float
+        self,
+        model_path: str,
+        model_step: int,
+        nn_value_weight: float,
+        death_penalty: float,
+        overhang_penalty_weight: float,
     ) -> bool:
-        self.calls.append((model_path, model_step, nn_value_weight))
+        self.calls.append(
+            (
+                model_path,
+                model_step,
+                nn_value_weight,
+                death_penalty,
+                overhang_penalty_weight,
+            )
+        )
         return self._return_value
 
 
@@ -437,9 +450,13 @@ def test_model_bundle_round_trip(tmp_path: Path, settings: R2Settings) -> None:
         onnx_path=main,
         step=42,
         nn_value_weight=0.75,
+        death_penalty=4.0,
+        overhang_penalty_weight=2.0,
         client=s3,
     )
     assert pointer.step == 42
+    assert pointer.death_penalty == 4.0
+    assert pointer.overhang_penalty_weight == 2.0
     fetched = fetch_model_pointer(settings, client=s3)
     assert fetched == pointer
 
@@ -465,6 +482,8 @@ def test_model_downloader_calls_sink_once_per_step(
         onnx_path=bundle_dir / "latest.onnx",
         step=10,
         nn_value_weight=0.5,
+        death_penalty=3.0,
+        overhang_penalty_weight=1.5,
         client=s3,
     )
 
@@ -480,6 +499,8 @@ def test_model_downloader_calls_sink_once_per_step(
     assert len(sink.calls) == 1
     assert sink.calls[0][1] == 10
     assert sink.calls[0][2] == 0.5
+    assert sink.calls[0][3] == 3.0
+    assert sink.calls[0][4] == 1.5
 
     # Polling again with the same pointer is a no-op.
     downloader._poll_once(s3)  # type: ignore[arg-type]
@@ -491,6 +512,8 @@ def test_model_downloader_calls_sink_once_per_step(
         onnx_path=bundle_dir / "latest.onnx",
         step=11,
         nn_value_weight=0.6,
+        death_penalty=2.0,
+        overhang_penalty_weight=1.0,
         client=s3,
     )
     downloader._poll_once(s3)  # type: ignore[arg-type]
@@ -710,15 +733,15 @@ def test_discover_active_runs_orders_by_pointer_mtime_desc() -> None:
     # Three runs, each with an incumbent.json. Mtimes assigned manually.
     pointers = {
         "amber-otter-20260503-0930": (
-            b'{"step": 100, "nn_value_weight": 0.1, "bundle_prefix": "tetris-mcts/amber-otter-20260503-0930/models/00000000000000000100/"}',
+            b'{"step": 100, "nn_value_weight": 0.1, "death_penalty": 5.0, "overhang_penalty_weight": 3.0, "bundle_prefix": "tetris-mcts/amber-otter-20260503-0930/models/00000000000000000100/"}',
             datetime(2026, 5, 3, 9, 30, tzinfo=timezone.utc),
         ),
         "swift-fox-20260503-0952": (
-            b'{"step": 200, "nn_value_weight": 0.2, "bundle_prefix": "tetris-mcts/swift-fox-20260503-0952/models/00000000000000000200/"}',
+            b'{"step": 200, "nn_value_weight": 0.2, "death_penalty": 5.0, "overhang_penalty_weight": 3.0, "bundle_prefix": "tetris-mcts/swift-fox-20260503-0952/models/00000000000000000200/"}',
             datetime(2026, 5, 3, 9, 52, tzinfo=timezone.utc),
         ),
         "ancient-yak-20260502-1200": (
-            b'{"step": 50, "nn_value_weight": 0.05, "bundle_prefix": "tetris-mcts/ancient-yak-20260502-1200/models/00000000000000000050/"}',
+            b'{"step": 50, "nn_value_weight": 0.05, "death_penalty": 5.0, "overhang_penalty_weight": 3.0, "bundle_prefix": "tetris-mcts/ancient-yak-20260502-1200/models/00000000000000000050/"}',
             datetime(2026, 5, 2, 12, 0, tzinfo=timezone.utc),
         ),
     }
@@ -788,7 +811,7 @@ def test_discover_active_runs_skips_runs_without_pointer() -> None:
     s3.put_object(
         Bucket=bucket,
         Key=pointer_key,
-        Body=b'{"step": 1, "nn_value_weight": 0.1, "bundle_prefix": "tetris-mcts/with-pointer-20260503-0930/models/00000000000000000001/"}',
+        Body=b'{"step": 1, "nn_value_weight": 0.1, "death_penalty": 5.0, "overhang_penalty_weight": 3.0, "bundle_prefix": "tetris-mcts/with-pointer-20260503-0930/models/00000000000000000001/"}',
     )
     s3.mtimes[(bucket, pointer_key)] = datetime(2026, 5, 3, 9, 30, tzinfo=timezone.utc)
 
@@ -817,7 +840,8 @@ def test_select_sync_run_id_polls_until_run_appears(monkeypatch) -> None:
     bucket = "bucket"
     prefix = "tetris-mcts"
     pointer_body = (
-        b'{"step": 5, "nn_value_weight": 0.2, "bundle_prefix": '
+        b'{"step": 5, "nn_value_weight": 0.2, "death_penalty": 5.0, '
+        b'"overhang_penalty_weight": 3.0, "bundle_prefix": '
         b'"tetris-mcts/swift-fox-20260503-0952/models/00000000000000000005/"}'
     )
 

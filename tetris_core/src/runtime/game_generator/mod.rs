@@ -90,12 +90,13 @@ pub struct GameGenerator {
     incumbent_model_version: Arc<AtomicU64>,
     /// Current nn_value_weight used by incumbent NN-guided rollouts.
     incumbent_nn_value_weight: Arc<AtomicU32>,
-    /// Current death penalty for incumbent search (zeroed when nn_value_weight reaches cap).
+    /// Current death penalty for incumbent search. The trainer is the sole
+    /// authority and pushes new values via `queue_candidate_model` (gating)
+    /// or `sync_model_directly` (no-gating); Rust does not modify this.
     incumbent_death_penalty: Arc<AtomicU32>,
-    /// Current overhang penalty weight for incumbent search (zeroed when nn_value_weight reaches cap).
+    /// Current overhang penalty weight for incumbent search. Trainer-authoritative,
+    /// see `incumbent_death_penalty`.
     incumbent_overhang_penalty_weight: Arc<AtomicU32>,
-    /// Cap at which nn_value_weight triggers penalty removal.
-    nn_value_weight_cap: f32,
     /// Average attack from the evaluation that promoted the current incumbent.
     incumbent_eval_avg_attack: Arc<AtomicU32>,
     /// Whether to persist worst-case eval game trees to disk when candidate gating runs.

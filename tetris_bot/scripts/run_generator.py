@@ -364,7 +364,6 @@ def main(args: GeneratorArgs) -> None:
         start_with_network=True,
         non_network_num_simulations=config.self_play.bootstrap_num_simulations,
         initial_incumbent_eval_avg_attack=0.0,
-        nn_value_weight_cap=config.self_play.nn_value_weight_cap,
         candidate_gating_enabled=False,
         save_eval_trees=False,
     )

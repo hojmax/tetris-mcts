@@ -164,6 +164,11 @@ pub(super) struct CandidateModelRequest {
     pub(super) model_path: PathBuf,
     pub(super) model_step: u64,
     pub(super) nn_value_weight: f32,
+    /// Search penalties to apply during candidate evaluation and to publish on
+    /// promotion. The trainer is the sole authority — Rust no longer derives
+    /// these from `nn_value_weight` vs. cap.
+    pub(super) death_penalty: f32,
+    pub(super) overhang_penalty_weight: f32,
     /// One-shot override: skip the avg-attack gate and promote unconditionally.
     pub(super) force_promote: bool,
 }
@@ -236,7 +241,6 @@ pub(super) struct WorkerSettings {
     pub(super) num_workers: usize,
     pub(super) candidate_eval_seeds: Arc<[u64]>,
     pub(super) non_network_num_simulations: u32,
-    pub(super) nn_value_weight_cap: f32,
     pub(super) save_eval_trees: bool,
 }
 

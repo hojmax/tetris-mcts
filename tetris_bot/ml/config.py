@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ConfigModel(BaseModel):
@@ -52,6 +53,35 @@ class OptimizerConfig(ConfigModel):
     log_individual_games_to_wandb: bool
 
 
+PenaltyScheduleStrategy = Literal["gated", "constant_then_linear"]
+
+
+class PenaltyScheduleConfig(ConfigModel):
+    """Schedule for ramping `death_penalty` and `overhang_penalty_weight` down.
+
+    The two penalties share a single scale factor in [0, 1] applied uniformly.
+    Strategy controls how that scale evolves:
+      - `gated`: scale = 1.0 while `nn_value_weight < nn_value_weight_cap`,
+        else 0.0. Equivalent to the legacy hardcoded "drop at cap" rule, and
+        therefore the default.
+      - `constant_then_linear`: scale = 1.0 for the first `hold_games`
+        cumulative completed games, then linearly decays to 0.0 over the next
+        `decay_games`, then stays at 0.0. Independent of `nn_value_weight`.
+    """
+
+    strategy: PenaltyScheduleStrategy = "gated"
+    hold_games: int = 0
+    decay_games: int = 1
+
+    @model_validator(mode="after")
+    def _validate(self) -> "PenaltyScheduleConfig":
+        if self.hold_games < 0:
+            raise ValueError("penalty_schedule.hold_games must be >= 0")
+        if self.decay_games < 1:
+            raise ValueError("penalty_schedule.decay_games must be >= 1")
+        return self
+
+
 class SelfPlayConfig(ConfigModel):
     """MCTS and self-play generation hyperparameters."""
 
@@ -73,6 +103,9 @@ class SelfPlayConfig(ConfigModel):
     max_placements: int
     death_penalty: float
     overhang_penalty_weight: float
+    penalty_schedule: PenaltyScheduleConfig = Field(
+        default_factory=PenaltyScheduleConfig
+    )
     use_candidate_gating: bool
     model_promotion_eval_games: int
     bootstrap_without_network: bool
@@ -95,6 +128,7 @@ SELF_PLAY_SNAPSHOT_FIELDS: tuple[str, ...] = (
     "max_placements",
     "death_penalty",
     "overhang_penalty_weight",
+    "penalty_schedule",
 )
 
 
@@ -123,6 +157,9 @@ class SelfPlaySnapshot(ConfigModel):
     max_placements: int
     death_penalty: float
     overhang_penalty_weight: float
+    penalty_schedule: PenaltyScheduleConfig = Field(
+        default_factory=PenaltyScheduleConfig
+    )
 
     @classmethod
     def from_self_play(cls, self_play: "SelfPlayConfig") -> "SelfPlaySnapshot":
