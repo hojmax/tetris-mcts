@@ -59,6 +59,7 @@ from tetris_bot.ml.r2_sync import (  # noqa: E402
     fetch_model_pointer,
     make_s3_client,
 )
+from tetris_bot.run_setup import apply_optimized_runtime_overrides  # noqa: E402
 
 logger = structlog.get_logger()
 
@@ -254,6 +255,7 @@ def _wait_for_initial_pointer(settings: R2Settings, timeout_seconds: float):
 
 def main(args: GeneratorArgs) -> None:
     config = load_training_config(args.config.resolve())
+    apply_optimized_runtime_overrides(config)
     import sys
 
     settings = _resolve_r2_settings(

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import structlog
 import torch
 import wandb
 
@@ -20,6 +22,8 @@ from tetris_bot.ml.config import (
     save_training_config,
 )
 from tetris_bot.run_naming import generate_run_id
+
+logger = structlog.get_logger()
 
 
 def _allocate_unique_run_dir(base_dir: Path) -> Path:
@@ -64,6 +68,38 @@ def setup_run_directory(
         save_runtime_overrides(RuntimeOverrides(), runtime_overrides_path)
 
     return config
+
+
+def apply_optimized_runtime_overrides(config: TrainingConfig) -> None:
+    """Override `self_play.num_workers` from `TETRIS_OPT_NUM_WORKERS` if set.
+
+    Populated by `make optimize` (sourced via the optimize-cache env file in
+    the Makefile). Lets generator/trainer entrypoints auto-pick up the
+    machine-tuned worker count without requiring `--num_workers` on every run.
+    """
+    workers_env = os.getenv("TETRIS_OPT_NUM_WORKERS")
+    if workers_env is None or workers_env.strip() == "":
+        return
+
+    try:
+        optimized_workers = int(workers_env)
+    except ValueError as error:
+        raise ValueError(
+            f"TETRIS_OPT_NUM_WORKERS must be an integer (got {workers_env!r})"
+        ) from error
+
+    if optimized_workers <= 0:
+        raise ValueError(
+            f"TETRIS_OPT_NUM_WORKERS must be > 0 (got {optimized_workers})"
+        )
+
+    previous_workers = config.self_play.num_workers
+    config.self_play.num_workers = optimized_workers
+    logger.info(
+        "Applied optimized self-play worker override from environment",
+        previous_num_workers=previous_workers,
+        optimized_num_workers=optimized_workers,
+    )
 
 
 def get_best_device() -> str:

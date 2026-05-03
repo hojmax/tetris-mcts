@@ -1,7 +1,6 @@
 """Training script for Tetris AlphaZero."""
 
 import math
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +31,7 @@ from tetris_bot.ml.config import (  # noqa: E402
     load_training_config,
 )
 from tetris_bot.run_setup import (  # noqa: E402
+    apply_optimized_runtime_overrides,
     configure_wandb,
     get_best_device,
     setup_run_directory,
@@ -512,32 +512,6 @@ def restore_trainer_from_checkpoint(
         learning_rate=trainer.optimizer.param_groups[0]["lr"],
         lr_schedule=config.optimizer.lr_schedule,
         restored_optimizer_scheduler=args.resume_restore_optimizer_scheduler,
-    )
-
-
-def apply_optimized_runtime_overrides(config: TrainingConfig) -> None:
-    workers_env = os.getenv("TETRIS_OPT_NUM_WORKERS")
-    if workers_env is None or workers_env.strip() == "":
-        return
-
-    try:
-        optimized_workers = int(workers_env)
-    except ValueError as error:
-        raise ValueError(
-            f"TETRIS_OPT_NUM_WORKERS must be an integer (got {workers_env!r})"
-        ) from error
-
-    if optimized_workers <= 0:
-        raise ValueError(
-            f"TETRIS_OPT_NUM_WORKERS must be > 0 (got {optimized_workers})"
-        )
-
-    previous_workers = config.self_play.num_workers
-    config.self_play.num_workers = optimized_workers
-    logger.info(
-        "Applied optimized self-play worker override from environment",
-        previous_num_workers=previous_workers,
-        optimized_num_workers=optimized_workers,
     )
 
 
