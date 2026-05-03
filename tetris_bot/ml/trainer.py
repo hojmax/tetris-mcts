@@ -63,6 +63,7 @@ from tetris_bot.ml.game_metrics import (
     average_completed_games,
     compute_batch_feature_metrics,
 )
+from tetris_bot.ml.nn_value_weight_schedule import compute_nn_value_weight
 from tetris_bot.ml.penalty_schedule import scaled_penalties
 from tetris_bot.ml.policy_mirroring import maybe_mirror_training_tensors
 from tetris_bot.ml.r2_sync import (
@@ -1461,17 +1462,18 @@ class Trainer:
     def _compute_candidate_nn_value_weight(
         current_weight: float,
         config: TrainingConfig,
+        *,
+        cumulative_games: int = 0,
     ) -> float:
-        if current_weight < 0.0:
-            raise ValueError(f"current_weight must be >= 0 (got {current_weight})")
-        promotion_delta = current_weight * (
-            config.self_play.nn_value_weight_promotion_multiplier - 1.0
+        return compute_nn_value_weight(
+            config.self_play.nn_value_weight_schedule,
+            current_weight=current_weight,
+            cumulative_games=cumulative_games,
+            initial_weight=config.self_play.nn_value_weight,
+            multiplier=config.self_play.nn_value_weight_promotion_multiplier,
+            max_delta=config.self_play.nn_value_weight_promotion_max_delta,
+            cap=config.self_play.nn_value_weight_cap,
         )
-        delta = min(
-            promotion_delta,
-            config.self_play.nn_value_weight_promotion_max_delta,
-        )
-        return min(config.self_play.nn_value_weight_cap, current_weight + delta)
 
     def _build_training_batch(
         self,
@@ -2848,6 +2850,9 @@ class Trainer:
                             self._compute_candidate_nn_value_weight(
                                 current_weight=incumbent_nn_value_weight,
                                 config=self.config,
+                                cumulative_games=self._cumulative_games_generated(
+                                    generator
+                                ),
                             )
                         )
                         force_promote = self._force_promote_next_candidate
@@ -2932,6 +2937,9 @@ class Trainer:
                             self._compute_candidate_nn_value_weight(
                                 current_weight=incumbent_nn_value_weight,
                                 config=self.config,
+                                cumulative_games=self._cumulative_games_generated(
+                                    generator
+                                ),
                             )
                         )
                         (

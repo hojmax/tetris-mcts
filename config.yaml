@@ -62,6 +62,19 @@ self_play:
     strategy: constant_then_linear
     hold_games: 50000
     decay_games: 10000
+  # Schedule for advancing `nn_value_weight` toward `nn_value_weight_cap`.
+  # Ramp shape (multiplicative + max_delta + cap) is unchanged; only the
+  # trigger differs.
+  # `per_promotion`: legacy. One tick per promotion (gating) or per direct
+  #   sync (no-gating); ramp stalls without those events.
+  # `per_games_interval`: one tick every `games_interval` cumulative games,
+  #   re-derived deterministically from the configured `nn_value_weight`.
+  #   Example: ramp every 500 games:
+  #     strategy: per_games_interval
+  #     games_interval: 500
+  nn_value_weight_schedule:
+    strategy: per_games_interval
+    games_interval: 500
   use_candidate_gating: false
   model_promotion_eval_games: 20
   bootstrap_without_network: true
