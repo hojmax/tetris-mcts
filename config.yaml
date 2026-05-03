@@ -59,8 +59,10 @@ self_play:
   #     hold_games: 40000
   #     decay_games: 10000
   penalty_schedule:
-    strategy: gated
-  use_candidate_gating: true
+    strategy: constant_then_linear
+    hold_games: 50000
+    decay_games: 10000
+  use_candidate_gating: false
   model_promotion_eval_games: 20
   bootstrap_without_network: true
   bootstrap_num_simulations: 4000
