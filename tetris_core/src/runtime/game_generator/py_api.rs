@@ -815,8 +815,7 @@ impl GameGenerator {
         }
         if game_number_offset != 0 {
             for example in examples.iter_mut() {
-                example.game_number =
-                    example.game_number.saturating_add(game_number_offset);
+                example.game_number = example.game_number.saturating_add(game_number_offset);
             }
         }
         self.buffer.add_examples(examples);
