@@ -101,6 +101,83 @@ def test_trainer_reloads_runtime_overrides_and_reverts_to_defaults(
     assert next_checkpoint_time_s == pytest.approx(11_200.0)
 
 
+def test_lr_multiplier_does_not_compound_across_scheduler_steps(
+    tmp_path: Path,
+) -> None:
+    """Re-applying the multiplier on every scheduler step previously caused
+    LR to decay geometrically (e.g. `1e-4 * 0.2^N`) past `lr_decay_steps`."""
+
+    trainer = _make_trainer(tmp_path)
+    # Push the scheduler past its decay window so LinearLR is in the
+    # constant phase where each step is a no-op factor=1.0.
+    trainer.align_scheduler_to_step(trainer.config.optimizer.lr_decay_steps + 1_000)
+    base_lr_at_floor = float(trainer.optimizer.param_groups[0]["lr"])
+
+    trainer._set_lr_multiplier(0.2)
+    expected_effective_lr = base_lr_at_floor * 0.2
+    assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(
+        expected_effective_lr
+    )
+
+    for _ in range(200):
+        trainer._step_scheduler()
+
+    assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(
+        expected_effective_lr
+    )
+
+
+def test_force_promote_next_candidate_latches_and_resets_file(
+    tmp_path: Path,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    overrides_path = tmp_path / RUNTIME_OVERRIDES_FILENAME
+    save_runtime_overrides(
+        RuntimeOverrides.model_validate(
+            {"self_play": {"force_promote_next_candidate": True}}
+        ),
+        overrides_path,
+    )
+
+    trainer._maybe_reload_runtime_overrides(
+        now_s=10.0,
+        next_log_time_s=None,
+        next_checkpoint_time_s=None,
+        force=True,
+    )
+
+    assert trainer._force_promote_next_candidate is True
+    persisted = load_runtime_overrides(overrides_path)
+    assert persisted.self_play.force_promote_next_candidate is False
+
+
+def test_force_promote_next_candidate_no_op_when_gating_disabled(
+    tmp_path: Path,
+) -> None:
+    config = _make_config(tmp_path)
+    config.self_play.use_candidate_gating = False
+    trainer = Trainer(config, device="cpu")
+
+    overrides_path = tmp_path / RUNTIME_OVERRIDES_FILENAME
+    save_runtime_overrides(
+        RuntimeOverrides.model_validate(
+            {"self_play": {"force_promote_next_candidate": True}}
+        ),
+        overrides_path,
+    )
+
+    trainer._maybe_reload_runtime_overrides(
+        now_s=10.0,
+        next_log_time_s=None,
+        next_checkpoint_time_s=None,
+        force=True,
+    )
+
+    assert trainer._force_promote_next_candidate is False
+    persisted = load_runtime_overrides(overrides_path)
+    assert persisted.self_play.force_promote_next_candidate is False
+
+
 def test_restore_trainer_restores_runtime_override_state_with_scheduler_restore(
     tmp_path: Path,
 ) -> None:

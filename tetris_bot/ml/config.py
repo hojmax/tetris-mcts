@@ -164,6 +164,16 @@ class RuntimeRunOverrides(ConfigModel):
     checkpoint_interval_seconds: float | None = None
 
 
+class RuntimeSelfPlayOverrides(ConfigModel):
+    """One-shot self-play triggers loaded from runtime_overrides.yaml.
+
+    Unlike the optimizer/run override fields, these are consumed once and
+    reset back to their default in the file by the trainer.
+    """
+
+    force_promote_next_candidate: bool = False
+
+
 class RuntimeOverrides(ConfigModel):
     """Whitelisted runtime overrides that can change during training."""
 
@@ -171,6 +181,9 @@ class RuntimeOverrides(ConfigModel):
         default_factory=RuntimeOptimizerOverrides
     )
     run: RuntimeRunOverrides = Field(default_factory=RuntimeRunOverrides)
+    self_play: RuntimeSelfPlayOverrides = Field(
+        default_factory=RuntimeSelfPlayOverrides
+    )
 
 
 class ResolvedRuntimeOptimizerOverrides(ConfigModel):

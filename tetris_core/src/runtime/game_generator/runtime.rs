@@ -713,7 +713,9 @@ impl GameGenerator {
         }
 
         let auto_promoted = previous_incumbent_avg_attack == 0.0 && !incumbent_uses_network_before;
-        let promoted = auto_promoted || candidate_avg_attack > incumbent_avg_attack;
+        let force_promoted = candidate.force_promote;
+        let promoted =
+            auto_promoted || force_promoted || candidate_avg_attack > incumbent_avg_attack;
         let promoted_nn_value_weight = if promoted {
             candidate.nn_value_weight
         } else {
@@ -782,14 +784,22 @@ impl GameGenerator {
                 None,
             );
 
+            let promotion_reason = if force_promoted {
+                " (force_promote runtime override)"
+            } else if auto_promoted {
+                " (auto-promoted: no prior network incumbent)"
+            } else {
+                ""
+            };
             eprintln!(
-                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={}, nn_value_weight {:.6} -> {:.6}, eval trajectories discarded from replay)",
+                "[GameGenerator] Promoted candidate step {} (avg_attack {:.3} > incumbent {:.3}, games={}, nn_value_weight {:.6} -> {:.6}, eval trajectories discarded from replay){}",
                 candidate.model_step,
                 candidate_avg_attack,
                 incumbent_avg_attack,
                 candidate_games,
                 incumbent_nn_value_weight_before,
-                candidate.nn_value_weight
+                candidate.nn_value_weight,
+                promotion_reason
             );
         } else {
             Self::remove_model_artifacts_if_safe(
@@ -833,6 +843,7 @@ impl GameGenerator {
                 promoted_overhang_penalty_weight,
                 promoted,
                 auto_promoted,
+                force_promoted,
                 evaluation_seconds,
                 best_game_replay,
                 worst_game_replay,

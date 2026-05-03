@@ -382,11 +382,14 @@ impl GameGenerator {
     ///
     /// If another candidate is already pending, it is dropped in favor of this one.
     /// Returns True when the candidate is queued, False when ignored as stale.
+    /// `force_promote=True` skips the avg-attack gate for this candidate.
+    #[pyo3(signature = (model_path, model_step, nn_value_weight, force_promote=false))]
     pub fn queue_candidate_model(
         &self,
         model_path: String,
         model_step: u64,
         nn_value_weight: f32,
+        force_promote: bool,
     ) -> PyResult<bool> {
         if !self.candidate_gating_enabled {
             return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
@@ -422,6 +425,7 @@ impl GameGenerator {
             model_path: candidate_path.clone(),
             model_step,
             nn_value_weight,
+            force_promote,
         };
         let replaced = {
             let mut pending = self.pending_candidate.write().unwrap();
@@ -622,6 +626,10 @@ impl GameGenerator {
             d.insert(
                 "auto_promoted".into(),
                 (if event.auto_promoted { 1.0 } else { 0.0_f64 }).into_py(py),
+            );
+            d.insert(
+                "force_promoted".into(),
+                (if event.force_promoted { 1.0 } else { 0.0_f64 }).into_py(py),
             );
             d.insert(
                 "evaluation_seconds".into(),
