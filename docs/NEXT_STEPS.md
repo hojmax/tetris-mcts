@@ -1,6 +1,7 @@
 # Next Steps
 
 - [ ] Get rid of gating.
+  - [ ] Do like first 40k games have overhang and terminal state penalty, then linear decay to 0.
 - [ ] Final phase of training with low learning rate, no noise and no stochasticity.
 - [ ]  Auxiliary loss
     - [ ]  Predict next move logits
