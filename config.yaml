@@ -75,3 +75,9 @@ run:
   run_dir: null
   checkpoint_dir: null
   data_dir: null
+r2_sync:
+    role: both           # trainer machine
+    # role: generator    # for run_generator.py on the laptop
+    bucket: tetris-mcts-runs
+    prefix: tetris-mcts
+    sync_run_id: v42      # both machines must agree on this

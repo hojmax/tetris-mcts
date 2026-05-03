@@ -8,9 +8,15 @@ from pathlib import Path
 
 import structlog
 import torch
+from dotenv import load_dotenv
 from simple_parsing import parse
 
-from tetris_bot.constants import (
+# Loaded as early as possible so subsequent imports (e.g., r2_sync) can read
+# R2_ENDPOINT_URL / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY without the user
+# having to `source .env` manually before each run.
+load_dotenv()
+
+from tetris_bot.constants import (  # noqa: E402
     CHECKPOINT_DIRNAME,
     DEFAULT_CONFIG_PATH,
     INCUMBENT_ONNX_FILENAME,
@@ -18,18 +24,25 @@ from tetris_bot.constants import (
     RUNTIME_OVERRIDES_FILENAME,
     TRAINING_DATA_FILENAME,
 )
-from tetris_bot.ml.config import (
+from tetris_bot.ml.config import (  # noqa: E402
     ResolvedRuntimeOptimizerOverrides,
     ResolvedRuntimeOverrides,
     ResolvedRuntimeRunOverrides,
     TrainingConfig,
     load_training_config,
 )
-from tetris_bot.run_setup import configure_wandb, get_best_device, setup_run_directory
-from tetris_bot.ml.trainer import Trainer
-from tetris_bot.ml.artifacts import copy_model_artifact_bundle
-from tetris_bot.ml.wandb_resume import WandbResumeSource, prepare_wandb_resume_source
-from tetris_bot.ml.weights import load_checkpoint
+from tetris_bot.run_setup import (  # noqa: E402
+    configure_wandb,
+    get_best_device,
+    setup_run_directory,
+)
+from tetris_bot.ml.trainer import Trainer  # noqa: E402
+from tetris_bot.ml.artifacts import copy_model_artifact_bundle  # noqa: E402
+from tetris_bot.ml.wandb_resume import (  # noqa: E402
+    WandbResumeSource,
+    prepare_wandb_resume_source,
+)
+from tetris_bot.ml.weights import load_checkpoint  # noqa: E402
 
 logger = structlog.get_logger()
 

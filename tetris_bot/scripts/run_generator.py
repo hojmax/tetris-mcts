@@ -30,16 +30,25 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
+from dotenv import load_dotenv
 from simple_parsing import parse
-from tetris_core.tetris_core import GameGenerator, MCTSConfig
 
-from tetris_bot.constants import DEFAULT_CONFIG_PATH, TRAINING_DATA_FILENAME
-from tetris_bot.ml.config import (
+# Load `.env` (R2_ENDPOINT_URL / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY)
+# before any code that touches `os.environ` for those keys.
+load_dotenv()
+
+from tetris_core.tetris_core import GameGenerator, MCTSConfig  # noqa: E402
+
+from tetris_bot.constants import (  # noqa: E402
+    DEFAULT_CONFIG_PATH,
+    TRAINING_DATA_FILENAME,
+)
+from tetris_bot.ml.config import (  # noqa: E402
     R2SyncConfig,
     SelfPlayConfig,
     load_training_config,
 )
-from tetris_bot.ml.r2_sync import (
+from tetris_bot.ml.r2_sync import (  # noqa: E402
     ChunkUploader,
     GameStatsUploader,
     ModelDownloader,

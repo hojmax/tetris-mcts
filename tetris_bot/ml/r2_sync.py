@@ -122,8 +122,6 @@ class R2Settings:
     def from_config(
         cls, cfg: R2SyncConfig, default_run_id: str | None = None
     ) -> "R2Settings":
-        if cfg.endpoint_url is None:
-            raise ValueError("r2_sync.endpoint_url is required when role != 'off'")
         if cfg.bucket is None:
             raise ValueError("r2_sync.bucket is required when role != 'off'")
         sync_run_id = cfg.sync_run_id or default_run_id
@@ -131,14 +129,25 @@ class R2Settings:
             raise ValueError(
                 "r2_sync.sync_run_id is required (or pass a default_run_id)"
             )
+        endpoint_url = os.environ.get("R2_ENDPOINT_URL", "").strip()
         access_key_id = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
         secret_access_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
-        if not access_key_id or not secret_access_key:
+        missing = [
+            name
+            for name, value in (
+                ("R2_ENDPOINT_URL", endpoint_url),
+                ("R2_ACCESS_KEY_ID", access_key_id),
+                ("R2_SECRET_ACCESS_KEY", secret_access_key),
+            )
+            if not value
+        ]
+        if missing:
             raise ValueError(
-                "R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY env vars must be set"
+                f"Missing required env vars: {', '.join(missing)} "
+                "(set them in the shell or in a .env file loaded at startup)"
             )
         return cls(
-            endpoint_url=cfg.endpoint_url,
+            endpoint_url=endpoint_url,
             bucket=cfg.bucket,
             prefix=cfg.prefix.strip("/"),
             sync_run_id=sync_run_id,

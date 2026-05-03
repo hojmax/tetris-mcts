@@ -26,6 +26,7 @@ dependencies = [
     "scipy",
     "pyyaml",
     "boto3",
+    "python-dotenv",
 ]
 
 [tool.pyright]

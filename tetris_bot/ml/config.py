@@ -112,8 +112,11 @@ class RunConfig(ConfigModel):
 class R2SyncConfig(ConfigModel):
     """Cloudflare R2 (S3-compatible) sync configuration for multi-machine training.
 
-    Auth credentials are sourced from `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
-    environment variables; the config object only carries non-secret fields.
+    Account-specific values (`R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`,
+    `R2_SECRET_ACCESS_KEY`) are sourced from environment variables — typically
+    via a `.env` file loaded with `python-dotenv` at process startup. The
+    config object only carries non-secret, run-shared fields like role,
+    bucket name, and sync intervals.
 
     Roles:
     - "trainer": pushes ONNX bundles, ingests replay chunks
@@ -124,7 +127,6 @@ class R2SyncConfig(ConfigModel):
     """
 
     role: str = "off"
-    endpoint_url: str | None = None
     bucket: str | None = None
     prefix: str = "tetris-mcts"
     sync_run_id: str | None = None
