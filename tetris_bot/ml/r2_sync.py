@@ -45,7 +45,7 @@ from typing import Any, Callable, Protocol
 
 import structlog
 
-from tetris_bot.ml.config import R2SyncConfig
+from tetris_bot.ml.config import R2SyncConfig, SelfPlaySnapshot
 
 logger = structlog.get_logger(__name__)
 
@@ -181,6 +181,9 @@ class R2Settings:
 
     def model_pointer_key(self) -> str:
         return f"{self.model_prefix()}incumbent.json"
+
+    def self_play_snapshot_key(self) -> str:
+        return f"{self.prefix}/{self.sync_run_id}/self_play.json"
 
 
 # ---- boto3 client wrapper -------------------------------------------------
@@ -766,9 +769,7 @@ class GameStatsDownloader:
                 payload_type=type(payload).__name__,
             )
             return
-        self._sink.push_remote_completed_games(
-            payload, game_number_offset, machine_id
-        )
+        self._sink.push_remote_completed_games(payload, game_number_offset, machine_id)
         self._cursor[machine_id] = key
         self._save_cursor()
         logger.info(
@@ -1007,6 +1008,62 @@ def fetch_model_pointer(
         raise
     body = response["Body"].read()
     return ModelPointer.from_json(body)
+
+
+# ---- Self-play snapshot push/pull ---------------------------------------
+
+
+class SelfPlaySnapshotMissing(RuntimeError):
+    """Raised when a generator cannot fetch the trainer's self_play snapshot.
+
+    Why: generators must run identical per-move MCTS logic to the trainer,
+    so we hard-fail rather than silently fall back to the local config.
+    """
+
+
+def upload_self_play_snapshot(
+    *,
+    settings: R2Settings,
+    snapshot: SelfPlaySnapshot,
+    client: S3LikeClient | None = None,
+) -> None:
+    own_client = client is None
+    if own_client:
+        client = make_s3_client(settings)
+    assert client is not None
+    body = json.dumps(snapshot.model_dump(mode="json"), sort_keys=True).encode("utf-8")
+    client.put_object(
+        Bucket=settings.bucket,
+        Key=settings.self_play_snapshot_key(),
+        Body=body,
+        ContentType="application/json",
+    )
+    logger.info(
+        "r2_sync.self_play_uploaded",
+        key=settings.self_play_snapshot_key(),
+    )
+
+
+def fetch_self_play_snapshot(
+    settings: R2Settings, client: S3LikeClient | None = None
+) -> SelfPlaySnapshot | None:
+    own_client = client is None
+    if own_client:
+        client = make_s3_client(settings)
+    assert client is not None
+    from botocore.exceptions import ClientError
+
+    try:
+        response = client.get_object(
+            Bucket=settings.bucket, Key=settings.self_play_snapshot_key()
+        )
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code in ("404", "NoSuchKey"):
+            return None
+        raise
+    body = response["Body"].read()
+    return SelfPlaySnapshot.model_validate_json(body)
 
 
 # ---- Model downloader (generator side) -----------------------------------
