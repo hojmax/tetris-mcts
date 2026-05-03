@@ -200,6 +200,29 @@ class S3LikeClient(Protocol):
     ) -> Any: ...
 
 
+_EMPTY_LIST_RESPONSE: dict[str, Any] = {
+    "Contents": [],
+    "CommonPrefixes": [],
+    "IsTruncated": False,
+}
+
+
+def _list_objects_v2_safe(client: S3LikeClient, **kwargs: Any) -> dict[str, Any]:
+    """Cloudflare R2 returns NoSuchKey for ListObjectsV2 against a prefix that
+    has no objects yet, where AWS S3 returns an empty page. Normalize that to
+    an empty response so callers don't have to special-case fresh runs.
+    """
+    from botocore.exceptions import ClientError
+
+    try:
+        return client.list_objects_v2(**kwargs)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code in ("404", "NoSuchKey"):
+            return dict(_EMPTY_LIST_RESPONSE)
+        raise
+
+
 def make_s3_client(settings: R2Settings) -> S3LikeClient:
     """Create a boto3 S3 client pointed at R2.
 
@@ -431,7 +454,7 @@ class ChunkDownloader:
             }
             if continuation is not None:
                 kwargs["ContinuationToken"] = continuation
-            response = client.list_objects_v2(**kwargs)
+            response = _list_objects_v2_safe(client, **kwargs)
             for entry in response.get("CommonPrefixes", []) or []:
                 sub_prefix = entry.get("Prefix")
                 if not sub_prefix:
@@ -457,7 +480,7 @@ class ChunkDownloader:
                 kwargs["StartAfter"] = start_after
             if continuation is not None:
                 kwargs["ContinuationToken"] = continuation
-            response = client.list_objects_v2(**kwargs)
+            response = _list_objects_v2_safe(client, **kwargs)
             for obj in response.get("Contents", []) or []:
                 if self._stop.is_set():
                     return
@@ -678,7 +701,7 @@ class GameStatsDownloader:
             }
             if continuation is not None:
                 kwargs["ContinuationToken"] = continuation
-            response = client.list_objects_v2(**kwargs)
+            response = _list_objects_v2_safe(client, **kwargs)
             for entry in response.get("CommonPrefixes", []) or []:
                 sub_prefix = entry.get("Prefix")
                 if not sub_prefix:
@@ -705,7 +728,7 @@ class GameStatsDownloader:
                 kwargs["StartAfter"] = start_after
             if continuation is not None:
                 kwargs["ContinuationToken"] = continuation
-            response = client.list_objects_v2(**kwargs)
+            response = _list_objects_v2_safe(client, **kwargs)
             for obj in response.get("Contents", []) or []:
                 if self._stop.is_set():
                     return

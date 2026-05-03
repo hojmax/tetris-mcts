@@ -629,3 +629,57 @@ def test_game_stats_round_trip_applies_machine_offset(
     # Re-poll: cursor should suppress already-ingested keys.
     downloader._poll_once(s3)  # type: ignore[arg-type]
     assert len(sink.batches) == 1
+
+
+class _NoSuchKeyOnListClient:
+    """Wraps an InMemoryS3 but raises NoSuchKey on list_objects_v2.
+
+    Cloudflare R2 returns NoSuchKey for ListObjectsV2 against a prefix that
+    has no objects yet, where AWS S3 returns an empty page. The downloaders
+    must treat that as an empty listing instead of crashing.
+    """
+
+    def __init__(self, inner: InMemoryS3) -> None:
+        self._inner = inner
+
+    def list_objects_v2(self, **_: Any) -> dict[str, Any]:
+        raise _MockClientError("NoSuchKey")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def test_chunk_downloader_tolerates_r2_nosuchkey_on_empty_prefix(
+    tmp_path: Path, settings: R2Settings
+) -> None:
+    client = _NoSuchKeyOnListClient(InMemoryS3())
+    sink = FakeReplaySink()
+    offset_table = MachineOffsetTable(tmp_path / "offsets.json")
+    downloader = ChunkDownloader(
+        generator=sink,
+        settings=settings,
+        cursor_path=tmp_path / "cursor.json",
+        poll_interval_seconds=10.0,
+        offset_table=offset_table,
+        client_factory=lambda: client,  # type: ignore[arg-type]
+    )
+    downloader._poll_once(client)  # type: ignore[arg-type]
+    assert sink.ingested == []
+
+
+def test_game_stats_downloader_tolerates_r2_nosuchkey_on_empty_prefix(
+    tmp_path: Path, settings: R2Settings
+) -> None:
+    client = _NoSuchKeyOnListClient(InMemoryS3())
+    sink = FakeGameStatsSink()
+    offset_table = MachineOffsetTable(tmp_path / "offsets.json")
+    downloader = GameStatsDownloader(
+        sink=sink,
+        settings=settings,
+        cursor_path=tmp_path / "cursor.json",
+        poll_interval_seconds=10.0,
+        offset_table=offset_table,
+        client_factory=lambda: client,  # type: ignore[arg-type]
+    )
+    downloader._poll_once(client)  # type: ignore[arg-type]
+    assert sink.batches == []
