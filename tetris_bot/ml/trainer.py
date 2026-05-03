@@ -32,8 +32,10 @@ from tetris_bot.ml.config import (
     ResolvedRuntimeOptimizerOverrides,
     ResolvedRuntimeOverrides,
     ResolvedRuntimeRunOverrides,
+    RuntimeOverrides,
     TrainingConfig,
     load_runtime_overrides,
+    save_runtime_overrides,
 )
 from tetris_bot.ml.ema import ExponentialMovingAverage
 from tetris_bot.ml.network import TetrisNet
@@ -206,6 +208,17 @@ class Trainer:
         self.recompute_initial_incumbent_eval_avg_attack = False
         self._logged_live_optimizer_step_sanitization = False
         self._lr_multiplier = 1.0
+        # One-shot latch for `self_play.force_promote_next_candidate`: set
+        # when the runtime overrides file says so, consumed (and reset) when
+        # the next candidate is queued.
+        self._force_promote_next_candidate: bool = False
+        # Tracks the un-multiplied LR each scheduler step would have produced.
+        # `param_group["lr"]` is always `_scheduler_base_lrs[i] * _lr_multiplier`.
+        # Keeping the base separate is what prevents the multiplier from
+        # compounding when the scheduler reads `param_group["lr"]` (LinearLR).
+        self._scheduler_base_lrs: list[float] = [
+            float(pg["lr"]) for pg in self.optimizer.param_groups
+        ]
         self._runtime_override_defaults = ResolvedRuntimeOverrides(
             optimizer=ResolvedRuntimeOptimizerOverrides(
                 lr_multiplier=1.0,
@@ -421,9 +434,9 @@ class Trainer:
 
     def _read_runtime_overrides_file(
         self,
-    ) -> tuple[int | None, ResolvedRuntimeOverrides]:
+    ) -> tuple[int | None, ResolvedRuntimeOverrides, RuntimeOverrides]:
         if not self._runtime_overrides_path.exists():
-            return None, self._runtime_override_defaults
+            return None, self._runtime_override_defaults, RuntimeOverrides()
 
         file_mtime_ns = self._runtime_overrides_path.stat().st_mtime_ns
         overrides = load_runtime_overrides(self._runtime_overrides_path)
@@ -463,7 +476,7 @@ class Trainer:
                 ),
             ),
         )
-        return file_mtime_ns, resolved
+        return file_mtime_ns, resolved, overrides
 
     @staticmethod
     def _reschedule_runtime_deadline(
@@ -484,16 +497,33 @@ class Trainer:
     def _set_lr_multiplier(self, lr_multiplier: float) -> None:
         if lr_multiplier == self._lr_multiplier:
             return
-        ratio = lr_multiplier / self._lr_multiplier
-        for param_group in self.optimizer.param_groups:
-            param_group["lr"] *= ratio
         self._lr_multiplier = lr_multiplier
+        for param_group, base_lr in zip(
+            self.optimizer.param_groups, self._scheduler_base_lrs
+        ):
+            param_group["lr"] = base_lr * lr_multiplier
 
-    def _apply_lr_multiplier_after_scheduler_step(self) -> None:
-        if self._lr_multiplier == 1.0:
+    def _step_scheduler(self) -> None:
+        """Step the LR scheduler with the multiplier kept outside its state.
+
+        Schedulers like `LinearLR` compute the next LR from the current
+        `param_group["lr"]`, so we must restore the un-multiplied base before
+        stepping. Otherwise, re-applying the multiplier after each step would
+        compound it geometrically.
+        """
+        if self.scheduler is None:
             return
-        for param_group in self.optimizer.param_groups:
-            param_group["lr"] *= self._lr_multiplier
+        for param_group, base_lr in zip(
+            self.optimizer.param_groups, self._scheduler_base_lrs
+        ):
+            param_group["lr"] = base_lr
+        self.scheduler.step()
+        self._scheduler_base_lrs = [
+            float(pg["lr"]) for pg in self.optimizer.param_groups
+        ]
+        if self._lr_multiplier != 1.0:
+            for param_group in self.optimizer.param_groups:
+                param_group["lr"] *= self._lr_multiplier
 
     def restore_runtime_override_state(
         self,
@@ -545,8 +575,18 @@ class Trainer:
             state.run.checkpoint_interval_seconds
         )
         if lrs_already_scaled:
+            # `param_group["lr"]` was saved as `scheduler_base * multiplier`.
+            # Recover the un-multiplied scheduler base so future scheduler
+            # steps operate on it instead of compounding the multiplier.
             self._lr_multiplier = state.optimizer.lr_multiplier
+            self._scheduler_base_lrs = [
+                float(pg["lr"]) / state.optimizer.lr_multiplier
+                for pg in self.optimizer.param_groups
+            ]
         else:
+            self._scheduler_base_lrs = [
+                float(pg["lr"]) for pg in self.optimizer.param_groups
+            ]
             self._set_lr_multiplier(state.optimizer.lr_multiplier)
 
     def _maybe_reload_runtime_overrides(
@@ -568,7 +608,7 @@ class Trainer:
         )
 
         try:
-            file_mtime_ns, resolved = self._read_runtime_overrides_file()
+            file_mtime_ns, resolved, raw_overrides = self._read_runtime_overrides_file()
         except Exception:
             logger.warning(
                 "Failed to reload runtime overrides; keeping previous values",
@@ -581,7 +621,7 @@ class Trainer:
             return next_log_time_s, next_checkpoint_time_s
 
         current_state = self._current_runtime_override_state()
-        changes: dict[str, tuple[float, float]] = {}
+        changes: dict[str, tuple[object, object]] = {}
 
         self._validate_runtime_override_value(
             "runtime override optimizer.lr_multiplier",
@@ -679,6 +719,30 @@ class Trainer:
                 new_interval_s=resolved.run.checkpoint_interval_seconds,
                 now_s=now_s,
             )
+
+        if raw_overrides.self_play.force_promote_next_candidate:
+            changes["self_play.force_promote_next_candidate"] = (False, True)
+            if not self._candidate_gating_enabled():
+                logger.warning(
+                    "self_play.force_promote_next_candidate set while candidate "
+                    "gating is disabled; clearing without effect",
+                    runtime_overrides_path=str(self._runtime_overrides_path),
+                )
+                self._force_promote_next_candidate = False
+            else:
+                self._force_promote_next_candidate = True
+            raw_overrides.self_play.force_promote_next_candidate = False
+            try:
+                save_runtime_overrides(raw_overrides, self._runtime_overrides_path)
+                file_mtime_ns = self._runtime_overrides_path.stat().st_mtime_ns
+            except Exception:
+                logger.warning(
+                    "Failed to clear force_promote_next_candidate trigger in "
+                    "runtime_overrides.yaml; latch is set in memory but the "
+                    "file still shows true",
+                    runtime_overrides_path=str(self._runtime_overrides_path),
+                    exc_info=True,
+                )
 
         self._runtime_overrides_last_mtime_ns = file_mtime_ns
         if changes:
@@ -951,6 +1015,7 @@ class Trainer:
                 promoted_overhang_penalty_weight=promoted_overhang_penalty_weight,
                 promoted=promoted,
                 auto_promoted=bool(event["auto_promoted"]),
+                force_promoted=bool(event["force_promoted"]),
                 evaluation_seconds=evaluation_seconds,
                 candidate_gate_failed_promotion_streak=(
                     candidate_gate_schedule.failed_promotion_streak
@@ -1004,6 +1069,7 @@ class Trainer:
                 ),
                 "model_gate/promoted": event["promoted"],
                 "model_gate/auto_promoted": event["auto_promoted"],
+                "model_gate/force_promoted": event["force_promoted"],
                 "model_gate/evaluation_seconds": evaluation_seconds,
                 "model_gate/failed_promotion_streak": (
                     candidate_gate_schedule.failed_promotion_streak
@@ -1227,6 +1293,10 @@ class Trainer:
         for param_group, lr in zip(self.optimizer.param_groups, lrs):
             param_group["lr"] = lr
         self.scheduler._last_lr = lrs
+        self._scheduler_base_lrs = list(lrs)
+        if self._lr_multiplier != 1.0:
+            for param_group in self.optimizer.param_groups:
+                param_group["lr"] *= self._lr_multiplier
 
     @staticmethod
     def _compute_candidate_nn_value_weight(
@@ -1547,9 +1617,7 @@ class Trainer:
         self.optimizer.step()
         if self.ema is not None:
             self.ema.update(self._export_model)
-        if self.scheduler:
-            self.scheduler.step()
-            self._apply_lr_multiplier_after_scheduler_step()
+        self._step_scheduler()
 
         if not collect_metrics:
             return {}
@@ -1613,9 +1681,7 @@ class Trainer:
         if role == "off":
             return
         if role == "generator":
-            logger.warning(
-                "trainer.r2_sync_role_unsupported_in_trainer", role=role
-            )
+            logger.warning("trainer.r2_sync_role_unsupported_in_trainer", role=role)
             return
         if self.config.run.run_dir is None:
             return
@@ -1632,9 +1698,7 @@ class Trainer:
         game_stats_cursor_path = (
             self.config.run.run_dir / "r2_game_stats_ingest_cursor.json"
         )
-        offset_table_path = (
-            self.config.run.run_dir / "r2_machine_id_offsets.json"
-        )
+        offset_table_path = self.config.run.run_dir / "r2_machine_id_offsets.json"
         offset_table = MachineOffsetTable(offset_table_path)
         self._r2_chunk_downloader = ChunkDownloader(
             generator=generator,
@@ -2547,16 +2611,21 @@ class Trainer:
                                 config=self.config,
                             )
                         )
+                        force_promote = self._force_promote_next_candidate
                         queued = generator.queue_candidate_model(
                             str(candidate_onnx_path),
                             self.step,
                             candidate_nn_value_weight,
+                            force_promote=force_promote,
                         )
+                        if queued and force_promote:
+                            self._force_promote_next_candidate = False
                         logger.info(
                             "Queued candidate model for evaluator",
                             step=self.step,
                             path=str(candidate_onnx_path),
                             queued=queued,
+                            force_promote=force_promote,
                             onnx_export_ms=onnx_export_ms,
                             incumbent_nn_value_weight=incumbent_nn_value_weight,
                             candidate_nn_value_weight=candidate_nn_value_weight,

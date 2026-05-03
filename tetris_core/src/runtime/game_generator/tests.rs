@@ -460,6 +460,7 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
             model_path: pending_path.clone(),
             model_step: 1,
             nn_value_weight: 0.1,
+            force_promote: false,
         });
     }
     {
@@ -468,6 +469,7 @@ fn test_cleanup_queued_candidate_artifacts_removes_pending_and_evaluating() {
             model_path: evaluating_path.clone(),
             model_step: 2,
             nn_value_weight: 0.2,
+            force_promote: false,
         });
     }
 

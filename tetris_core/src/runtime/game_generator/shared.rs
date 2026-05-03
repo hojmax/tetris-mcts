@@ -164,6 +164,8 @@ pub(super) struct CandidateModelRequest {
     pub(super) model_path: PathBuf,
     pub(super) model_step: u64,
     pub(super) nn_value_weight: f32,
+    /// One-shot override: skip the avg-attack gate and promote unconditionally.
+    pub(super) force_promote: bool,
 }
 
 pub(super) struct ModelEvalEvent {
@@ -181,6 +183,7 @@ pub(super) struct ModelEvalEvent {
     pub(super) promoted_overhang_penalty_weight: f32,
     pub(super) promoted: bool,
     pub(super) auto_promoted: bool,
+    pub(super) force_promoted: bool,
     pub(super) evaluation_seconds: f32,
     /// Best (max attack) game replay, if available.
     pub(super) best_game_replay: Option<GameReplay>,
