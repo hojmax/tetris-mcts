@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Get rid of gating.
 - [ ] Final phase of training with low learning rate, no noise and no stochasticity.
 - [ ]  Auxiliary loss
     - [ ]  Predict next move logits
