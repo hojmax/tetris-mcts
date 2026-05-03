@@ -49,6 +49,15 @@ self_play:
   max_placements: 50
   death_penalty: 10.0
   overhang_penalty_weight: 10.0
+  # Schedule for ramping `death_penalty` and `overhang_penalty_weight` down.
+  # `gated`: scale 1 below `nn_value_weight_cap`, 0 at/above (legacy behavior).
+  # `constant_then_linear`: scale 1 for the first `hold_games` cumulative
+  #   completed games, linearly decays to 0 over `decay_games`, then 0.
+  #   Independent of `nn_value_weight`. Example: hold for 40k games then
+  #   ramp down over the next 10k:
+  #     strategy: constant_then_linear
+  #     hold_games: 40000
+  #     decay_games: 10000
   penalty_schedule:
     strategy: gated
   use_candidate_gating: true
