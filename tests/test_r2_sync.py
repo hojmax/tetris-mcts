@@ -134,16 +134,12 @@ class InMemoryS3:
             "IsTruncated": False,
         }
 
-    def upload_file(
-        self, Filename: str, Bucket: str, Key: str, **_: Any
-    ) -> None:
+    def upload_file(self, Filename: str, Bucket: str, Key: str, **_: Any) -> None:
         data = Path(Filename).read_bytes()
         with self._lock:
             self._objects[(Bucket, Key)] = data
 
-    def download_file(
-        self, Bucket: str, Key: str, Filename: str, **_: Any
-    ) -> None:
+    def download_file(self, Bucket: str, Key: str, Filename: str, **_: Any) -> None:
         with self._lock:
             data = self._objects.get((Bucket, Key))
         if data is None:
@@ -273,7 +269,9 @@ def settings() -> R2Settings:
 # ---------------------------------------------------------------------------
 
 
-def test_chunk_uploader_uploads_and_advances_cursor(tmp_path: Path, settings: R2Settings) -> None:
+def test_chunk_uploader_uploads_and_advances_cursor(
+    tmp_path: Path, settings: R2Settings
+) -> None:
     s3 = InMemoryS3()
     source = FakeReplaySource(total_examples=10, count_per_call=4)
     cursor = tmp_path / "upload_cursor.json"
@@ -303,7 +301,9 @@ def test_chunk_uploader_uploads_and_advances_cursor(tmp_path: Path, settings: R2
     assert json.loads(cursor.read_text())["next_from_index"] == 10
 
 
-def test_chunk_uploader_skips_when_buffer_empty(tmp_path: Path, settings: R2Settings) -> None:
+def test_chunk_uploader_skips_when_buffer_empty(
+    tmp_path: Path, settings: R2Settings
+) -> None:
     s3 = InMemoryS3()
     source = FakeReplaySource(total_examples=0, count_per_call=4)
 
@@ -321,7 +321,9 @@ def test_chunk_uploader_skips_when_buffer_empty(tmp_path: Path, settings: R2Sett
     assert listing["Contents"] == []
 
 
-def test_chunk_downloader_ingests_new_keys(tmp_path: Path, settings: R2Settings) -> None:
+def test_chunk_downloader_ingests_new_keys(
+    tmp_path: Path, settings: R2Settings
+) -> None:
     s3 = InMemoryS3()
     # Simulate two machines having uploaded a few chunks already.
     for slice_start in (0, 4, 8):
@@ -373,7 +375,9 @@ def test_chunk_downloader_ingests_new_keys(tmp_path: Path, settings: R2Settings)
     assert sink.ingested == [(12, 4, laptop_offset)]
 
 
-def test_uploader_then_downloader_round_trip(tmp_path: Path, settings: R2Settings) -> None:
+def test_uploader_then_downloader_round_trip(
+    tmp_path: Path, settings: R2Settings
+) -> None:
     s3 = InMemoryS3()
     source = FakeReplaySource(total_examples=12, count_per_call=4)
     sink = FakeReplaySink()
@@ -440,7 +444,9 @@ def test_model_bundle_round_trip(tmp_path: Path, settings: R2Settings) -> None:
     assert (dest_dir / "bundle.fc.bin").read_bytes() == b"fc-bytes"
 
 
-def test_model_downloader_calls_sink_once_per_step(tmp_path: Path, settings: R2Settings) -> None:
+def test_model_downloader_calls_sink_once_per_step(
+    tmp_path: Path, settings: R2Settings
+) -> None:
     s3 = InMemoryS3()
     bundle_dir = tmp_path / "bundle_src"
     bundle_dir.mkdir()
@@ -558,9 +564,7 @@ def test_game_stats_uploader_writes_json_per_batch(
     uploader._upload_one_batch(s3)  # type: ignore[arg-type]  # empty
     uploader._upload_one_batch(s3)  # type: ignore[arg-type]
 
-    listing = s3.list_objects_v2(
-        Bucket="bucket", Prefix=settings.game_stats_prefix()
-    )
+    listing = s3.list_objects_v2(Bucket="bucket", Prefix=settings.game_stats_prefix())
     keys = [obj["Key"] for obj in listing["Contents"]]
     assert keys == [
         f"{settings.game_stats_machine_prefix('laptop')}{0:020d}.json",

@@ -82,9 +82,7 @@ class MachineOffsetTable:
         self._blocks: dict[str, int] = {
             str(k): int(v) for k, v in blocks.items() if int(v) > 0
         }
-        self._next_block = (
-            max(self._blocks.values()) + 1 if self._blocks else 1
-        )
+        self._next_block = max(self._blocks.values()) + 1 if self._blocks else 1
 
     def offset_for(self, machine_id: str) -> int:
         if not machine_id:
@@ -290,9 +288,7 @@ class ChunkUploader:
         return int(data.get("next_from_index", 0))
 
     def _save_cursor(self) -> None:
-        _save_json_cursor(
-            self._cursor_path, {"next_from_index": self._next_from_index}
-        )
+        _save_json_cursor(self._cursor_path, {"next_from_index": self._next_from_index})
 
     def start(self) -> None:
         if self._thread is not None:
@@ -448,9 +444,7 @@ class ChunkDownloader:
             continuation = response.get("NextContinuationToken")
         return sorted(machine_ids)
 
-    def _ingest_machine_new_chunks(
-        self, client: S3LikeClient, machine_id: str
-    ) -> None:
+    def _ingest_machine_new_chunks(self, client: S3LikeClient, machine_id: str) -> None:
         prefix = self._settings.replay_machine_prefix(machine_id)
         start_after = self._cursor.get(machine_id)
         continuation: str | None = None
@@ -483,9 +477,7 @@ class ChunkDownloader:
         with tempfile.TemporaryDirectory(prefix="r2-ingest-") as tmp_dir:
             tmp_path = Path(tmp_dir) / "chunk.npz"
             client.download_file(self._settings.bucket, key, str(tmp_path))
-            count = self._generator.ingest_examples_from_npz(
-                str(tmp_path), offset
-            )
+            count = self._generator.ingest_examples_from_npz(str(tmp_path), offset)
         self._cursor[machine_id] = key
         self._save_cursor()
         logger.info(
@@ -699,9 +691,7 @@ class GameStatsDownloader:
             continuation = response.get("NextContinuationToken")
         return sorted(machine_ids)
 
-    def _pull_machine_new_batches(
-        self, client: S3LikeClient, machine_id: str
-    ) -> None:
+    def _pull_machine_new_batches(self, client: S3LikeClient, machine_id: str) -> None:
         offset = self._offset_table.offset_for(machine_id)
         prefix = self._settings.game_stats_machine_prefix(machine_id)
         start_after = self._cursor.get(machine_id)

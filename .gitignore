@@ -19,3 +19,4 @@ benchmarks/split_inference_config_compare_32_4_64/
 benchmarks/split_inference_config_compare_fc_hidden_256/
 benchmarks/profiles/optimize_latest.*
 tetris_core/dist/
+benchmarks/

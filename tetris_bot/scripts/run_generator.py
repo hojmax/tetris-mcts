@@ -91,7 +91,9 @@ def _build_mcts_config(self_play: SelfPlayConfig) -> MCTSConfig:
     return cfg
 
 
-def _resolve_r2_settings(cfg: R2SyncConfig, sync_run_id_override: str | None) -> R2Settings:
+def _resolve_r2_settings(
+    cfg: R2SyncConfig, sync_run_id_override: str | None
+) -> R2Settings:
     if sync_run_id_override is not None:
         cfg = cfg.model_copy(update={"sync_run_id": sync_run_id_override})
     if cfg.role == "off":

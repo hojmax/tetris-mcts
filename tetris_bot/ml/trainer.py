@@ -1613,9 +1613,7 @@ class Trainer:
         if role == "off":
             return
         if role == "generator":
-            logger.warning(
-                "trainer.r2_sync_role_unsupported_in_trainer", role=role
-            )
+            logger.warning("trainer.r2_sync_role_unsupported_in_trainer", role=role)
             return
         if self.config.run.run_dir is None:
             return
@@ -1632,9 +1630,7 @@ class Trainer:
         game_stats_cursor_path = (
             self.config.run.run_dir / "r2_game_stats_ingest_cursor.json"
         )
-        offset_table_path = (
-            self.config.run.run_dir / "r2_machine_id_offsets.json"
-        )
+        offset_table_path = self.config.run.run_dir / "r2_machine_id_offsets.json"
         offset_table = MachineOffsetTable(offset_table_path)
         self._r2_chunk_downloader = ChunkDownloader(
             generator=generator,
