@@ -150,6 +150,74 @@ def test_display_counter_round_trips_through_checkpoint(tmp_path: Path) -> None:
     assert fresh._next_display_game_number == 101
 
 
+def test_cumulative_progress_round_trips_through_checkpoint(tmp_path: Path) -> None:
+    trainer = _make_trainer(tmp_path)
+    checkpoint = tmp_path / "latest.pt"
+    save_checkpoint(
+        trainer.model,
+        trainer.ema_model,
+        trainer.optimizer,
+        trainer.scheduler,
+        step=42,
+        filepath=checkpoint,
+        incumbent_uses_network=True,
+        incumbent_nn_value_weight=1.0,
+        incumbent_death_penalty=0.0,
+        incumbent_overhang_penalty_weight=0.0,
+        incumbent_eval_avg_attack=0.0,
+        cumulative_wall_time_seconds=12345.6,
+        cumulative_games_generated=98765,
+        cumulative_examples_generated=4321000,
+    )
+
+    fresh = _make_trainer(tmp_path)
+    assert fresh._cumulative_wall_time_offset_s == 0.0
+    assert fresh._cumulative_games_offset == 0
+    assert fresh._cumulative_examples_offset == 0
+    restore_trainer_from_checkpoint(
+        fresh,
+        ScriptArgs(config=tmp_path / "config.yaml", resume_dir=None),
+        _make_config(tmp_path),
+        checkpoint,
+        incumbent_model_path=None,
+    )
+    assert fresh._cumulative_wall_time_offset_s == 12345.6
+    assert fresh._cumulative_games_offset == 98765
+    assert fresh._cumulative_examples_offset == 4321000
+
+
+def test_legacy_checkpoint_without_cumulative_progress_starts_at_zero(
+    tmp_path: Path,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    checkpoint = tmp_path / "legacy.pt"
+    save_checkpoint(
+        trainer.model,
+        trainer.ema_model,
+        trainer.optimizer,
+        trainer.scheduler,
+        step=10,
+        filepath=checkpoint,
+        incumbent_uses_network=True,
+        incumbent_nn_value_weight=1.0,
+        incumbent_death_penalty=0.0,
+        incumbent_overhang_penalty_weight=0.0,
+        incumbent_eval_avg_attack=0.0,
+    )
+
+    fresh = _make_trainer(tmp_path)
+    restore_trainer_from_checkpoint(
+        fresh,
+        ScriptArgs(config=tmp_path / "config.yaml", resume_dir=None),
+        _make_config(tmp_path),
+        checkpoint,
+        incumbent_model_path=None,
+    )
+    assert fresh._cumulative_wall_time_offset_s == 0.0
+    assert fresh._cumulative_games_offset == 0
+    assert fresh._cumulative_examples_offset == 0
+
+
 def test_legacy_checkpoint_without_counter_starts_at_one(tmp_path: Path) -> None:
     trainer = _make_trainer(tmp_path)
     checkpoint = tmp_path / "legacy.pt"

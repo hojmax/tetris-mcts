@@ -359,6 +359,46 @@ def restore_trainer_from_checkpoint(
             next_display_game_number=restored_next_display_game_number,
         )
 
+    cumulative_wall_time_seconds = state.get("cumulative_wall_time_seconds")
+    cumulative_games_generated = state.get("cumulative_games_generated")
+    cumulative_examples_generated = state.get("cumulative_examples_generated")
+    if cumulative_wall_time_seconds is not None:
+        restored_wall_time_s = float(cumulative_wall_time_seconds)
+        if restored_wall_time_s < 0.0:
+            raise ValueError(
+                f"Checkpoint cumulative_wall_time_seconds must be >= 0 "
+                f"(got {restored_wall_time_s})"
+            )
+        trainer._cumulative_wall_time_offset_s = restored_wall_time_s
+    if cumulative_games_generated is not None:
+        restored_games = int(cumulative_games_generated)
+        if restored_games < 0:
+            raise ValueError(
+                f"Checkpoint cumulative_games_generated must be >= 0 "
+                f"(got {restored_games})"
+            )
+        trainer._cumulative_games_offset = restored_games
+    if cumulative_examples_generated is not None:
+        restored_examples = int(cumulative_examples_generated)
+        if restored_examples < 0:
+            raise ValueError(
+                f"Checkpoint cumulative_examples_generated must be >= 0 "
+                f"(got {restored_examples})"
+            )
+        trainer._cumulative_examples_offset = restored_examples
+    if (
+        cumulative_wall_time_seconds is not None
+        or cumulative_games_generated is not None
+        or cumulative_examples_generated is not None
+    ):
+        logger.info(
+            "Restored cumulative progress offsets from checkpoint",
+            checkpoint=str(checkpoint),
+            cumulative_wall_time_seconds=trainer._cumulative_wall_time_offset_s,
+            cumulative_games_generated=trainer._cumulative_games_offset,
+            cumulative_examples_generated=trainer._cumulative_examples_offset,
+        )
+
     candidate_gate_current_interval = state.get(
         "candidate_gate_current_interval_seconds"
     )

@@ -250,12 +250,47 @@ class Trainer:
         # resumed runs continue without restarting at 1.
         self._next_display_game_number: int = 1
 
+        # Cumulative offsets so resumed runs produce W&B curves that line up
+        # with the prior run on wall-time, games, and examples axes — matching
+        # what `step` and `_next_display_game_number` already do. The anchor
+        # is set when the training loop starts; the offsets are populated
+        # from the checkpoint by the resume path in train.py.
+        self._wall_time_anchor_s: float = 0.0
+        self._cumulative_wall_time_offset_s: float = 0.0
+        self._cumulative_games_offset: int = 0
+        self._cumulative_examples_offset: int = 0
+
         # Create directories
         config.run.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         config.run.data_dir.mkdir(parents=True, exist_ok=True)
 
     def _candidate_gating_enabled(self) -> bool:
         return self.config.self_play.use_candidate_gating
+
+    def _cumulative_wall_time_seconds(self, now_s: float) -> float:
+        return self._cumulative_wall_time_offset_s + (
+            now_s - self._wall_time_anchor_s
+        )
+
+    def _cumulative_wall_time_hours(self, now_s: float) -> float:
+        return self._cumulative_wall_time_seconds(now_s) / 3600.0
+
+    def _cumulative_games_generated(self, generator: GameGenerator) -> int:
+        return self._cumulative_games_offset + generator.games_generated()
+
+    def _cumulative_examples_generated(self, generator: GameGenerator) -> int:
+        return self._cumulative_examples_offset + generator.examples_generated()
+
+    def _cumulative_progress_checkpoint_state(
+        self, generator: GameGenerator, *, now_s: float
+    ) -> dict[str, float | int]:
+        return {
+            "cumulative_wall_time_seconds": self._cumulative_wall_time_seconds(now_s),
+            "cumulative_games_generated": self._cumulative_games_generated(generator),
+            "cumulative_examples_generated": self._cumulative_examples_generated(
+                generator
+            ),
+        }
 
     def _model_sync_interval_seconds(self) -> float:
         model_sync_interval_seconds = self.config.run.model_sync_interval_seconds
@@ -945,7 +980,6 @@ class Trainer:
         *,
         log_to_wandb: bool,
         now_s: float,
-        wall_time_anchor_s: float,
         candidate_gate_schedule: CandidateGateSchedule,
     ) -> None:
         for event in generator.drain_model_eval_events():
@@ -1041,7 +1075,7 @@ class Trainer:
             if not log_to_wandb:
                 continue
 
-            wall_time_hours = (now_s - wall_time_anchor_s) / 3600.0
+            wall_time_hours = self._cumulative_wall_time_hours(now_s)
             wandb_data: dict[str, object] = {
                 "trainer_step": self.step,
                 "wall_time_hours": wall_time_hours,
@@ -2097,10 +2131,16 @@ class Trainer:
                     "next_display_game_number": self._next_display_game_number,
                 }
                 extra_checkpoint_state.update(self._runtime_override_checkpoint_state())
+                shutdown_now_s = time.perf_counter()
                 extra_checkpoint_state.update(
                     self._candidate_gate_checkpoint_state(
                         candidate_gate_schedule,
-                        now_s=time.perf_counter(),
+                        now_s=shutdown_now_s,
+                    )
+                )
+                extra_checkpoint_state.update(
+                    self._cumulative_progress_checkpoint_state(
+                        generator, now_s=shutdown_now_s
                     )
                 )
                 final_saved_paths = self.save(
@@ -2220,7 +2260,7 @@ class Trainer:
             "Starting game generator replay preload if training data exists",
             training_data_path=str(training_data_path),
         )
-        wall_time_anchor_s = time.perf_counter()
+        self._wall_time_anchor_s = time.perf_counter()
         generator.start()
         self._init_r2_sync(generator)
         self._publish_incumbent_to_r2_if_enabled(generator, reason="startup")
@@ -2458,7 +2498,6 @@ class Trainer:
                         generator,
                         log_to_wandb=log_to_wandb,
                         now_s=post_step_time,
-                        wall_time_anchor_s=wall_time_anchor_s,
                         candidate_gate_schedule=candidate_gate_schedule,
                     )
 
@@ -2468,7 +2507,7 @@ class Trainer:
                             "No collected train metrics are available for logging"
                         )
                     metrics = dict(latest_train_metrics)
-                    wall_time_hours = (post_step_time - wall_time_anchor_s) / 3600.0
+                    wall_time_hours = self._cumulative_wall_time_hours(post_step_time)
                     metrics["wall_time_hours"] = wall_time_hours
                     if self.config.optimizer.compute_extra_train_metrics_on_log:
                         extra_metrics_start = time.perf_counter()
@@ -2481,9 +2520,11 @@ class Trainer:
                     games_delta = games - throughput_window_start_games
                     steps_delta = session_step - throughput_window_start_steps
                     metrics["replay/buffer_size"] = generator.buffer_size()
-                    metrics["replay/games_generated"] = games
+                    metrics["replay/games_generated"] = (
+                        self._cumulative_games_generated(generator)
+                    )
                     metrics["replay/examples_generated"] = (
-                        generator.examples_generated()
+                        self._cumulative_examples_generated(generator)
                     )
                     metrics["replay/source"] = 1.0 if use_device_replay_mirror else 0.0
                     if use_device_replay_mirror:
@@ -2601,7 +2642,7 @@ class Trainer:
                         loss=metrics["train/loss"],
                         learning_rate=metrics["train/learning_rate"],
                         buffer_size=generator.buffer_size(),
-                        games_generated=games,
+                        games_generated=self._cumulative_games_generated(generator),
                         games_per_second=metrics["throughput/games_per_second"],
                         steps_per_second=metrics["throughput/steps_per_second"],
                         sample_batch_ms=metrics["timing/sample_batch_ms"],
@@ -2803,6 +2844,9 @@ class Trainer:
                         | self._candidate_gate_checkpoint_state(
                             candidate_gate_schedule,
                             now_s=time.perf_counter(),
+                        )
+                        | self._cumulative_progress_checkpoint_state(
+                            generator, now_s=time.perf_counter()
                         ),
                     )
                     self._async_checkpoint_saver.submit(
