@@ -96,6 +96,3 @@ r2_sync:
     enabled: true
     bucket: tetris-mcts-runs
     prefix: tetris-mcts
-    # sync_run_id: optional override; when omitted the trainer uses the local
-    # run_dir.name (an `<adjective>-<animal>-<timestamp>` id) and generators
-    # auto-discover the most recent active run.

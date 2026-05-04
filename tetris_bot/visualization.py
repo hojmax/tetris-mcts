@@ -646,8 +646,6 @@ def render_board(
         parts = [f"{placement_label}: {placement_number}", f"Attack: {attack}"]
         if value_pred is not None:
             parts.append(f"Vpred: {value_pred:.2f}")
-        if is_terminal:
-            parts.append("TERMINAL")
         info_str = "  ".join(parts)
         bbox_info = font.getbbox(info_str)
         info_tw = bbox_info[2] - bbox_info[0]
