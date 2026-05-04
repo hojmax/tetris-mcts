@@ -922,7 +922,11 @@ def test_self_play_snapshot_apply_to_overrides_only_whitelist() -> None:
     snapshot_data["num_simulations"] = self_play.num_simulations + 1
     snapshot_data["c_puct"] = self_play.c_puct + 0.25
     snapshot_data["max_placements"] = self_play.max_placements + 1
-    snapshot_data["death_penalty"] = self_play.death_penalty + 0.1
+    bumped_penalty_schedule = self_play.penalty_schedule.model_copy(deep=True)
+    bumped_penalty_schedule.death_penalty = (
+        self_play.penalty_schedule.death_penalty + 0.1
+    )
+    snapshot_data["penalty_schedule"] = bumped_penalty_schedule
     snapshot = SelfPlaySnapshot(**snapshot_data)
     # Capture per-machine fields that must NOT be touched.
     pre_num_workers = self_play.num_workers
@@ -930,18 +934,19 @@ def test_self_play_snapshot_apply_to_overrides_only_whitelist() -> None:
     pre_use_candidate_gating = self_play.use_candidate_gating
     pre_save_eval_trees = self_play.save_eval_trees
     pre_bootstrap_num_simulations = self_play.bootstrap_num_simulations
-    pre_promotion_multiplier = self_play.nn_value_weight_promotion_multiplier
 
     snapshot.apply_to(self_play)
 
     assert self_play.num_simulations == snapshot.num_simulations
     assert self_play.c_puct == snapshot.c_puct
     assert self_play.max_placements == snapshot.max_placements
-    assert self_play.death_penalty == snapshot.death_penalty
+    assert (
+        self_play.penalty_schedule.death_penalty
+        == snapshot.penalty_schedule.death_penalty
+    )
     # Per-machine + trainer-only fields untouched.
     assert self_play.num_workers == pre_num_workers
     assert self_play.mcts_seed == pre_mcts_seed
     assert self_play.use_candidate_gating == pre_use_candidate_gating
     assert self_play.save_eval_trees == pre_save_eval_trees
     assert self_play.bootstrap_num_simulations == pre_bootstrap_num_simulations
-    assert self_play.nn_value_weight_promotion_multiplier == pre_promotion_multiplier

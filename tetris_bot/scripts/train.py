@@ -273,7 +273,7 @@ def restore_trainer_from_checkpoint(
         logger.warning(
             "Checkpoint missing incumbent nn_value_weight; using config value",
             checkpoint=str(checkpoint),
-            nn_value_weight=config.self_play.nn_value_weight,
+            nn_value_weight=config.self_play.nn_value_weight_schedule.initial,
         )
     else:
         restored_nn_value_weight = float(incumbent_nn_value_weight)
@@ -284,7 +284,7 @@ def restore_trainer_from_checkpoint(
             raise ValueError(
                 f"Checkpoint incumbent_nn_value_weight must be >= 0 (got {restored_nn_value_weight})"
             )
-        config.self_play.nn_value_weight = restored_nn_value_weight
+        config.self_play.nn_value_weight_schedule.initial = restored_nn_value_weight
         logger.info(
             "Restored incumbent nn_value_weight from checkpoint",
             checkpoint=str(checkpoint),
@@ -314,8 +314,10 @@ def restore_trainer_from_checkpoint(
                 f"(got {restored_overhang_penalty_weight})"
             )
 
-        config.self_play.death_penalty = restored_death_penalty
-        config.self_play.overhang_penalty_weight = restored_overhang_penalty_weight
+        config.self_play.penalty_schedule.death_penalty = restored_death_penalty
+        config.self_play.penalty_schedule.overhang_penalty_weight = (
+            restored_overhang_penalty_weight
+        )
         logger.info(
             "Restored incumbent search penalties from checkpoint",
             checkpoint=str(checkpoint),
@@ -323,24 +325,26 @@ def restore_trainer_from_checkpoint(
             overhang_penalty_weight=restored_overhang_penalty_weight,
         )
     else:
+        nn_value_weight_schedule = config.self_play.nn_value_weight_schedule
+        penalty_schedule = config.self_play.penalty_schedule
         penalties_should_be_disabled = (
-            config.self_play.nn_value_weight >= config.self_play.nn_value_weight_cap
+            nn_value_weight_schedule.initial >= nn_value_weight_schedule.cap
         )
         if penalties_should_be_disabled:
-            config.self_play.death_penalty = 0.0
-            config.self_play.overhang_penalty_weight = 0.0
+            penalty_schedule.death_penalty = 0.0
+            penalty_schedule.overhang_penalty_weight = 0.0
             logger.warning(
                 "Checkpoint missing incumbent penalty state at nn_value_weight cap; inferring zero penalties",
                 checkpoint=str(checkpoint),
-                nn_value_weight=config.self_play.nn_value_weight,
-                nn_value_weight_cap=config.self_play.nn_value_weight_cap,
+                nn_value_weight=nn_value_weight_schedule.initial,
+                nn_value_weight_cap=nn_value_weight_schedule.cap,
             )
         else:
             logger.warning(
                 "Checkpoint missing incumbent penalty state; using config values",
                 checkpoint=str(checkpoint),
-                death_penalty=config.self_play.death_penalty,
-                overhang_penalty_weight=config.self_play.overhang_penalty_weight,
+                death_penalty=penalty_schedule.death_penalty,
+                overhang_penalty_weight=penalty_schedule.overhang_penalty_weight,
             )
 
     incumbent_eval_avg_attack = state.get("incumbent_eval_avg_attack")

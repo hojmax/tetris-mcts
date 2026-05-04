@@ -1300,11 +1300,13 @@ class Trainer:
         )
         mcts_config.seed = self.config.self_play.mcts_seed
         mcts_config.max_placements = self.config.self_play.max_placements
-        mcts_config.death_penalty = self.config.self_play.death_penalty
+        mcts_config.death_penalty = self.config.self_play.penalty_schedule.death_penalty
         mcts_config.overhang_penalty_weight = (
-            self.config.self_play.overhang_penalty_weight
+            self.config.self_play.penalty_schedule.overhang_penalty_weight
         )
-        mcts_config.nn_value_weight = self.config.self_play.nn_value_weight
+        mcts_config.nn_value_weight = (
+            self.config.self_play.nn_value_weight_schedule.initial
+        )
         mcts_config.use_parent_value_for_unvisited_q = (
             self.config.self_play.use_parent_value_for_unvisited_q
         )
@@ -1314,11 +1316,9 @@ class Trainer:
     def _effective_starting_incumbent_penalties(self) -> tuple[float, float]:
         return scaled_penalties(
             self.config.self_play.penalty_schedule,
-            death_penalty=self.config.self_play.death_penalty,
-            overhang_penalty_weight=self.config.self_play.overhang_penalty_weight,
             cumulative_games=self._cumulative_games_offset,
-            nn_value_weight=self.config.self_play.nn_value_weight,
-            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
+            nn_value_weight=self.config.self_play.nn_value_weight_schedule.initial,
+            nn_value_weight_cap=self.config.self_play.nn_value_weight_schedule.cap,
         )
 
     def _scaled_penalties_for(
@@ -1326,11 +1326,9 @@ class Trainer:
     ) -> tuple[float, float]:
         return scaled_penalties(
             self.config.self_play.penalty_schedule,
-            death_penalty=self.config.self_play.death_penalty,
-            overhang_penalty_weight=self.config.self_play.overhang_penalty_weight,
             cumulative_games=self._cumulative_games_generated(generator),
             nn_value_weight=nn_value_weight,
-            nn_value_weight_cap=self.config.self_play.nn_value_weight_cap,
+            nn_value_weight_cap=self.config.self_play.nn_value_weight_schedule.cap,
         )
 
     def _evaluate_starting_incumbent_avg_attack(self, model_path: Path) -> float:
@@ -1469,10 +1467,6 @@ class Trainer:
             config.self_play.nn_value_weight_schedule,
             current_weight=current_weight,
             cumulative_games=cumulative_games,
-            initial_weight=config.self_play.nn_value_weight,
-            multiplier=config.self_play.nn_value_weight_promotion_multiplier,
-            max_delta=config.self_play.nn_value_weight_promotion_max_delta,
-            cap=config.self_play.nn_value_weight_cap,
         )
 
     def _build_training_batch(
@@ -2420,11 +2414,11 @@ class Trainer:
             ),
             "bootstrap_without_network": self.config.self_play.bootstrap_without_network,
             "bootstrap_num_simulations": self.config.self_play.bootstrap_num_simulations,
-            "incumbent_nn_value_weight": self.config.self_play.nn_value_weight,
+            "incumbent_nn_value_weight": self.config.self_play.nn_value_weight_schedule.initial,
             "initial_incumbent_eval_avg_attack": self.initial_incumbent_eval_avg_attack,
-            "nn_value_weight_promotion_multiplier": self.config.self_play.nn_value_weight_promotion_multiplier,
-            "nn_value_weight_promotion_max_delta": self.config.self_play.nn_value_weight_promotion_max_delta,
-            "nn_value_weight_cap": self.config.self_play.nn_value_weight_cap,
+            "nn_value_weight_promotion_multiplier": self.config.self_play.nn_value_weight_schedule.multiplier,
+            "nn_value_weight_promotion_max_delta": self.config.self_play.nn_value_weight_schedule.max_delta,
+            "nn_value_weight_cap": self.config.self_play.nn_value_weight_schedule.cap,
             "model_sync_interval_seconds": self.config.run.model_sync_interval_seconds,
         }
         if candidate_gating_enabled:

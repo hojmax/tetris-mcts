@@ -1,8 +1,11 @@
 """Compute the schedule-driven scale for `death_penalty` / `overhang_penalty_weight`.
 
 Single scalar in [0, 1] applied uniformly to both penalties at every site that
-mutates the incumbent search state (no-gating direct sync, gating candidate
-registration, candidate eval baseline, resumed-run baseline).
+mutates the incumbent search state. The base values
+(`death_penalty`, `overhang_penalty_weight`) live on
+`PenaltyScheduleConfig`. The `gated` strategy compares against the
+nn_value_weight cap, which lives on `NNValueWeightScheduleConfig`, so
+that cap is passed in.
 """
 
 from __future__ import annotations
@@ -32,8 +35,6 @@ def compute_penalty_scale(
 def scaled_penalties(
     schedule: PenaltyScheduleConfig,
     *,
-    death_penalty: float,
-    overhang_penalty_weight: float,
     cumulative_games: int,
     nn_value_weight: float,
     nn_value_weight_cap: float,
@@ -44,4 +45,4 @@ def scaled_penalties(
         nn_value_weight=nn_value_weight,
         nn_value_weight_cap=nn_value_weight_cap,
     )
-    return death_penalty * scale, overhang_penalty_weight * scale
+    return schedule.death_penalty * scale, schedule.overhang_penalty_weight * scale

@@ -56,6 +56,8 @@ def apply_checkpoint_search_overrides(
     checkpoint_state: dict[str, Any],
 ) -> dict[str, Any]:
     resolved = dict(self_play_config)
+    nn_schedule = dict(resolved.get("nn_value_weight_schedule") or {})
+    penalty_schedule = dict(resolved.get("penalty_schedule") or {})
 
     incumbent_nn_value_weight = checkpoint_state.get("incumbent_nn_value_weight")
     if incumbent_nn_value_weight is not None:
@@ -68,7 +70,7 @@ def apply_checkpoint_search_overrides(
                 "Checkpoint incumbent_nn_value_weight must be finite and >= 0 "
                 f"(got {restored_nn_value_weight})"
             )
-        resolved["nn_value_weight"] = restored_nn_value_weight
+        nn_schedule["initial"] = restored_nn_value_weight
 
     incumbent_death_penalty = checkpoint_state.get("incumbent_death_penalty")
     incumbent_overhang_penalty_weight = checkpoint_state.get(
@@ -93,24 +95,17 @@ def apply_checkpoint_search_overrides(
                 "Checkpoint incumbent_overhang_penalty_weight must be finite and >= 0 "
                 f"(got {restored_overhang_penalty_weight})"
             )
-        resolved["death_penalty"] = restored_death_penalty
-        resolved["overhang_penalty_weight"] = restored_overhang_penalty_weight
+        penalty_schedule["death_penalty"] = restored_death_penalty
+        penalty_schedule["overhang_penalty_weight"] = restored_overhang_penalty_weight
     else:
-        nn_value_weight = float(
-            resolved.get(
-                "nn_value_weight", self_play_config.get("nn_value_weight", 0.0)
-            )
-        )
-        nn_value_weight_cap = float(
-            resolved.get(
-                "nn_value_weight_cap",
-                self_play_config.get("nn_value_weight_cap", nn_value_weight),
-            )
-        )
+        nn_value_weight = float(nn_schedule.get("initial", 0.0))
+        nn_value_weight_cap = float(nn_schedule.get("cap", nn_value_weight))
         if nn_value_weight >= nn_value_weight_cap:
-            resolved["death_penalty"] = 0.0
-            resolved["overhang_penalty_weight"] = 0.0
+            penalty_schedule["death_penalty"] = 0.0
+            penalty_schedule["overhang_penalty_weight"] = 0.0
 
+    resolved["nn_value_weight_schedule"] = nn_schedule
+    resolved["penalty_schedule"] = penalty_schedule
     return resolved
 
 
@@ -139,6 +134,9 @@ def build_mcts_config(
 ) -> MCTSConfig:
     config_data = load_effective_self_play_config(run_dir, checkpoint_path)
 
+    nn_schedule = config_data.get("nn_value_weight_schedule") or {}
+    penalty_schedule = config_data.get("penalty_schedule") or {}
+
     config = MCTSConfig()
     config.num_simulations = int(config_data["num_simulations"])
     config.c_puct = float(config_data["c_puct"])
@@ -150,12 +148,12 @@ def build_mcts_config(
     )
     config.max_placements = int(config_data["max_placements"])
     config.reuse_tree = bool(config_data.get("reuse_tree", True))
-    config.nn_value_weight = float(
-        config_data.get("nn_value_weight", config.nn_value_weight)
+    config.nn_value_weight = float(nn_schedule.get("initial", config.nn_value_weight))
+    config.death_penalty = float(
+        penalty_schedule.get("death_penalty", config.death_penalty)
     )
-    config.death_penalty = float(config_data.get("death_penalty", config.death_penalty))
     config.overhang_penalty_weight = float(
-        config_data.get("overhang_penalty_weight", config.overhang_penalty_weight)
+        penalty_schedule.get("overhang_penalty_weight", config.overhang_penalty_weight)
     )
     mcts_seed = config_data.get("mcts_seed")
     config.seed = int(mcts_seed) if mcts_seed is not None else None

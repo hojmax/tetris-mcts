@@ -95,9 +95,9 @@ def test_build_output_config_uses_current_repo_defaults_for_new_run(
         output_run_dir=output_run_dir,
     )
 
-    assert output_config.self_play.nn_value_weight == 1.0
-    assert output_config.self_play.death_penalty == 0.0
-    assert output_config.self_play.overhang_penalty_weight == 0.0
+    assert output_config.self_play.nn_value_weight_schedule.initial == 1.0
+    assert output_config.self_play.penalty_schedule.death_penalty == 0.0
+    assert output_config.self_play.penalty_schedule.overhang_penalty_weight == 0.0
     assert output_config.self_play.bootstrap_without_network is False
     assert (
         output_config.self_play.num_simulations
@@ -164,9 +164,11 @@ def test_build_output_config_uses_current_repo_defaults_for_new_run(
     assert (
         saved_config["optimizer"]["batch_size"] == default_config.optimizer.batch_size
     )
-    assert saved_config["self_play"]["nn_value_weight"] == 1.0
-    assert saved_config["self_play"]["death_penalty"] == 0.0
-    assert saved_config["self_play"]["overhang_penalty_weight"] == 0.0
+    assert saved_config["self_play"]["nn_value_weight_schedule"]["initial"] == 1.0
+    assert saved_config["self_play"]["penalty_schedule"]["death_penalty"] == 0.0
+    assert (
+        saved_config["self_play"]["penalty_schedule"]["overhang_penalty_weight"] == 0.0
+    )
 
 
 def test_validate_args_does_not_require_source_config_when_npz_exists(
