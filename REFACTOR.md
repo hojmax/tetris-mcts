@@ -25,3 +25,5 @@
   - There should never be files that are like 1000+ lines long like the trainer.
   - Drop all backwards compatibility code. Like legacy actions and masks and so on. Like we should just have a fresh start, and no bloat from various formats etc.
   - Also think through if there would be a better format for saving and loading the replay buffers, that would make syncing faster for example or something.
+  - Also tetris_bot is a not great name. Suggest alternatives.
+  - Also the file organisation is not great in tetris_bot, with random top level files, and then just a big dump in tetris_bot/ml.
