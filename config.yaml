@@ -14,7 +14,7 @@ network:
 optimizer:
   total_steps: 100000000000
   batch_size: 2048
-  learning_rate: 0.05
+  learning_rate: 0.005
   weight_decay: 0.00005
   grad_clip_norm: 10.0
   lr_schedule: linear
