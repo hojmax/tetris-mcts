@@ -51,9 +51,9 @@ def test_restore_trainer_restores_search_penalties_from_checkpoint(
     )
 
     # Mutate the config away from the checkpoint values so the restore is observable.
-    config.self_play.nn_value_weight = 0.01
-    config.self_play.death_penalty = 5.0
-    config.self_play.overhang_penalty_weight = 5.0
+    config.self_play.nn_value_weight_schedule.initial = 0.01
+    config.self_play.penalty_schedule.death_penalty = 5.0
+    config.self_play.penalty_schedule.overhang_penalty_weight = 5.0
 
     restore_trainer_from_checkpoint(
         trainer,
@@ -63,9 +63,9 @@ def test_restore_trainer_restores_search_penalties_from_checkpoint(
         incumbent_model_path=None,
     )
 
-    assert config.self_play.nn_value_weight == 1.0
-    assert config.self_play.death_penalty == 0.0
-    assert config.self_play.overhang_penalty_weight == 0.0
+    assert config.self_play.nn_value_weight_schedule.initial == 1.0
+    assert config.self_play.penalty_schedule.death_penalty == 0.0
+    assert config.self_play.penalty_schedule.overhang_penalty_weight == 0.0
     assert trainer.initial_incumbent_eval_avg_attack == 19.54
 
 
@@ -86,9 +86,9 @@ def test_restore_trainer_infers_zero_penalties_for_legacy_cap_checkpoint(
         incumbent_eval_avg_attack=17.0,
     )
 
-    config.self_play.nn_value_weight_cap = 1.0
-    config.self_play.death_penalty = 5.0
-    config.self_play.overhang_penalty_weight = 5.0
+    config.self_play.nn_value_weight_schedule.cap = 1.0
+    config.self_play.penalty_schedule.death_penalty = 5.0
+    config.self_play.penalty_schedule.overhang_penalty_weight = 5.0
 
     restore_trainer_from_checkpoint(
         trainer,
@@ -98,9 +98,9 @@ def test_restore_trainer_infers_zero_penalties_for_legacy_cap_checkpoint(
         incumbent_model_path=None,
     )
 
-    assert config.self_play.nn_value_weight == 1.0
-    assert config.self_play.death_penalty == 0.0
-    assert config.self_play.overhang_penalty_weight == 0.0
+    assert config.self_play.nn_value_weight_schedule.initial == 1.0
+    assert config.self_play.penalty_schedule.death_penalty == 0.0
+    assert config.self_play.penalty_schedule.overhang_penalty_weight == 0.0
 
 
 def test_restore_trainer_can_use_latest_checkpoint_model_as_incumbent(
@@ -184,10 +184,10 @@ def test_evaluate_starting_incumbent_avg_attack_uses_candidate_gate_settings(
     trainer, config = _make_trainer(tmp_path)
     config.self_play.num_workers = 7
     config.self_play.model_promotion_eval_games = 20
-    config.self_play.nn_value_weight = 1.0
-    config.self_play.nn_value_weight_cap = 1.0
-    config.self_play.death_penalty = 5.0
-    config.self_play.overhang_penalty_weight = 6.0
+    config.self_play.nn_value_weight_schedule.initial = 1.0
+    config.self_play.nn_value_weight_schedule.cap = 1.0
+    config.self_play.penalty_schedule.death_penalty = 5.0
+    config.self_play.penalty_schedule.overhang_penalty_weight = 6.0
     config.self_play.visit_sampling_epsilon = 0.25
     config.self_play.mcts_seed = 123
 

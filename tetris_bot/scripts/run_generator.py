@@ -90,9 +90,9 @@ def _build_mcts_config(self_play: SelfPlayConfig) -> MCTSConfig:
     cfg.visit_sampling_epsilon = self_play.visit_sampling_epsilon
     cfg.seed = self_play.mcts_seed
     cfg.max_placements = self_play.max_placements
-    cfg.death_penalty = self_play.death_penalty
-    cfg.overhang_penalty_weight = self_play.overhang_penalty_weight
-    cfg.nn_value_weight = self_play.nn_value_weight
+    cfg.death_penalty = self_play.penalty_schedule.death_penalty
+    cfg.overhang_penalty_weight = self_play.penalty_schedule.overhang_penalty_weight
+    cfg.nn_value_weight = self_play.nn_value_weight_schedule.initial
     cfg.use_parent_value_for_unvisited_q = self_play.use_parent_value_for_unvisited_q
     cfg.reuse_tree = self_play.reuse_tree
     return cfg

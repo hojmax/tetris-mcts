@@ -106,11 +106,15 @@ def test_ctl_independent_of_nn_value_weight_cap():
 
 
 def test_scaled_penalties_applies_uniform_scale():
-    schedule = _ctl(hold=0, decay=10)
-    death, overhang = scaled_penalties(
-        schedule,
+    schedule = PenaltyScheduleConfig(
+        strategy="constant_then_linear",
+        hold_games=0,
+        decay_games=10,
         death_penalty=10.0,
         overhang_penalty_weight=4.0,
+    )
+    death, overhang = scaled_penalties(
+        schedule,
         cumulative_games=5,
         nn_value_weight=0.0,
         nn_value_weight_cap=1.0,

@@ -722,9 +722,9 @@ def build_output_config(
         if base_config is not None
         else load_training_config(DEFAULT_CONFIG_PATH)
     )
-    config.self_play.nn_value_weight = 1.0
-    config.self_play.death_penalty = 0.0
-    config.self_play.overhang_penalty_weight = 0.0
+    config.self_play.nn_value_weight_schedule.initial = 1.0
+    config.self_play.penalty_schedule.death_penalty = 0.0
+    config.self_play.penalty_schedule.overhang_penalty_weight = 0.0
     config.self_play.bootstrap_without_network = False
     config.run.run_name = None
     config.run.run_dir = None
@@ -1416,11 +1416,13 @@ def run_warm_start(
             "incumbent_uses_network": True,
             "incumbent_model_step": 0,
             "incumbent_nn_value_weight": (
-                resolved_output_config.self_play.nn_value_weight
+                resolved_output_config.self_play.nn_value_weight_schedule.initial
             ),
-            "incumbent_death_penalty": resolved_output_config.self_play.death_penalty,
+            "incumbent_death_penalty": (
+                resolved_output_config.self_play.penalty_schedule.death_penalty
+            ),
             "incumbent_overhang_penalty_weight": (
-                resolved_output_config.self_play.overhang_penalty_weight
+                resolved_output_config.self_play.penalty_schedule.overhang_penalty_weight
             ),
             "incumbent_eval_avg_attack": 0.0,
             "incumbent_model_source_path": str(
@@ -1471,10 +1473,14 @@ def run_warm_start(
         mcts_config.use_parent_value_for_unvisited_q = (
             eval_config.use_parent_value_for_unvisited_q
         )
-        mcts_config.nn_value_weight = resolved_output_config.self_play.nn_value_weight
-        mcts_config.death_penalty = resolved_output_config.self_play.death_penalty
+        mcts_config.nn_value_weight = (
+            resolved_output_config.self_play.nn_value_weight_schedule.initial
+        )
+        mcts_config.death_penalty = (
+            resolved_output_config.self_play.penalty_schedule.death_penalty
+        )
         mcts_config.overhang_penalty_weight = (
-            resolved_output_config.self_play.overhang_penalty_weight
+            resolved_output_config.self_play.penalty_schedule.overhang_penalty_weight
         )
         mcts_config.seed = resolved_mcts_seed
 
@@ -1491,10 +1497,10 @@ def run_warm_start(
             num_simulations=eval_num_simulations,
             max_placements=eval_max_placements,
             mcts_seed=resolved_mcts_seed,
-            nn_value_weight=resolved_output_config.self_play.nn_value_weight,
-            death_penalty=resolved_output_config.self_play.death_penalty,
+            nn_value_weight=resolved_output_config.self_play.nn_value_weight_schedule.initial,
+            death_penalty=resolved_output_config.self_play.penalty_schedule.death_penalty,
             overhang_penalty_weight=(
-                resolved_output_config.self_play.overhang_penalty_weight
+                resolved_output_config.self_play.penalty_schedule.overhang_penalty_weight
             ),
         )
         eval_result = evaluate_model(
@@ -1566,11 +1572,13 @@ def run_warm_start(
             incumbent_uses_network=True,
             incumbent_model_step=0,
             incumbent_nn_value_weight=(
-                resolved_output_config.self_play.nn_value_weight
+                resolved_output_config.self_play.nn_value_weight_schedule.initial
             ),
-            incumbent_death_penalty=(resolved_output_config.self_play.death_penalty),
+            incumbent_death_penalty=(
+                resolved_output_config.self_play.penalty_schedule.death_penalty
+            ),
             incumbent_overhang_penalty_weight=(
-                resolved_output_config.self_play.overhang_penalty_weight
+                resolved_output_config.self_play.penalty_schedule.overhang_penalty_weight
             ),
             incumbent_eval_avg_attack=eval_metrics["avg_attack"],
             incumbent_model_source_path=str(incumbent_onnx_path),

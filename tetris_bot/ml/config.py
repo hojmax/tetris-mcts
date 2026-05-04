@@ -57,28 +57,38 @@ NNValueWeightScheduleStrategy = Literal["per_promotion", "per_games_interval"]
 
 
 class NNValueWeightScheduleConfig(ConfigModel):
-    """Schedule controlling when the `nn_value_weight` ramp ticks.
+    """Schedule for the `nn_value_weight` ramp.
 
-    The ramp shape stays the multiplicative + max_delta + cap formula
-    used today (`nn_value_weight_promotion_multiplier`,
-    `nn_value_weight_promotion_max_delta`, `nn_value_weight_cap`).
-    Only the trigger differs:
-      - `per_promotion`: legacy. One tick per promotion (gating mode) or
-        per direct sync (no-gating). Stepped from the current incumbent
-        weight, so missed syncs/non-promotions stall the ramp.
+    Owns both the ramp shape (`initial`, `multiplier`, `max_delta`, `cap` —
+    a multiplicative step capped per-tick by `max_delta`, clamped at `cap`)
+    and the trigger that decides when a tick fires:
+      - `per_promotion`: legacy. One tick per promotion (gating) or per
+        direct sync (no-gating); stepped from the current incumbent weight,
+        so missed syncs/non-promotions stall the ramp.
       - `per_games_interval`: one tick per `games_interval` cumulative
-        completed games, deterministically re-derived from the configured
-        initial `nn_value_weight`. Independent of sync/promotion cadence
-        and resume-deterministic.
+        completed games, deterministically re-derived from `initial`.
+        Independent of sync/promotion cadence and resume-deterministic.
     """
 
     strategy: NNValueWeightScheduleStrategy = "per_promotion"
     games_interval: int = 1
+    initial: float = 0.01
+    multiplier: float = 1.4
+    max_delta: float = 0.1
+    cap: float = 1.0
 
     @model_validator(mode="after")
     def _validate(self) -> "NNValueWeightScheduleConfig":
         if self.games_interval < 1:
             raise ValueError("nn_value_weight_schedule.games_interval must be >= 1")
+        if self.initial < 0.0:
+            raise ValueError("nn_value_weight_schedule.initial must be >= 0")
+        if self.multiplier < 1.0:
+            raise ValueError("nn_value_weight_schedule.multiplier must be >= 1.0")
+        if self.max_delta < 0.0:
+            raise ValueError("nn_value_weight_schedule.max_delta must be >= 0")
+        if self.cap < self.initial:
+            raise ValueError("nn_value_weight_schedule.cap must be >= initial")
         return self
 
 
@@ -86,13 +96,12 @@ PenaltyScheduleStrategy = Literal["gated", "constant_then_linear"]
 
 
 class PenaltyScheduleConfig(ConfigModel):
-    """Schedule for ramping `death_penalty` and `overhang_penalty_weight` down.
+    """Schedule for `death_penalty` and `overhang_penalty_weight`.
 
-    The two penalties share a single scale factor in [0, 1] applied uniformly.
-    Strategy controls how that scale evolves:
-      - `gated`: scale = 1.0 while `nn_value_weight < nn_value_weight_cap`,
-        else 0.0. Equivalent to the legacy hardcoded "drop at cap" rule, and
-        therefore the default.
+    Owns the base penalty values and the ramp-down trigger. The two
+    penalties share a single scale factor in [0, 1] applied uniformly:
+      - `gated`: scale = 1.0 while `nn_value_weight <
+        nn_value_weight_schedule.cap`, else 0.0. Legacy "drop at cap" rule.
       - `constant_then_linear`: scale = 1.0 for the first `hold_games`
         cumulative completed games, then linearly decays to 0.0 over the next
         `decay_games`, then stays at 0.0. Independent of `nn_value_weight`.
@@ -101,6 +110,8 @@ class PenaltyScheduleConfig(ConfigModel):
     strategy: PenaltyScheduleStrategy = "gated"
     hold_games: int = 0
     decay_games: int = 1
+    death_penalty: float = 10.0
+    overhang_penalty_weight: float = 10.0
 
     @model_validator(mode="after")
     def _validate(self) -> "PenaltyScheduleConfig":
@@ -108,6 +119,10 @@ class PenaltyScheduleConfig(ConfigModel):
             raise ValueError("penalty_schedule.hold_games must be >= 0")
         if self.decay_games < 1:
             raise ValueError("penalty_schedule.decay_games must be >= 1")
+        if self.death_penalty < 0.0:
+            raise ValueError("penalty_schedule.death_penalty must be >= 0")
+        if self.overhang_penalty_weight < 0.0:
+            raise ValueError("penalty_schedule.overhang_penalty_weight must be >= 0")
         return self
 
 
@@ -120,18 +135,12 @@ class SelfPlayConfig(ConfigModel):
     dirichlet_alpha: float
     dirichlet_epsilon: float
     add_noise: bool
-    nn_value_weight: float
-    nn_value_weight_promotion_multiplier: float
-    nn_value_weight_promotion_max_delta: float
-    nn_value_weight_cap: float
     use_parent_value_for_unvisited_q: bool
     visit_sampling_epsilon: float
     mcts_seed: int | None
     reuse_tree: bool
     num_workers: int
     max_placements: int
-    death_penalty: float
-    overhang_penalty_weight: float
     penalty_schedule: PenaltyScheduleConfig = Field(
         default_factory=PenaltyScheduleConfig
     )
@@ -152,15 +161,12 @@ SELF_PLAY_SNAPSHOT_FIELDS: tuple[str, ...] = (
     "dirichlet_alpha",
     "dirichlet_epsilon",
     "add_noise",
-    "nn_value_weight",
-    "nn_value_weight_cap",
     "use_parent_value_for_unvisited_q",
     "visit_sampling_epsilon",
     "reuse_tree",
     "max_placements",
-    "death_penalty",
-    "overhang_penalty_weight",
     "penalty_schedule",
+    "nn_value_weight_schedule",
 )
 
 
@@ -172,7 +178,7 @@ class SelfPlaySnapshot(ConfigModel):
     publishes this snapshot at startup; generators fetch it before
     constructing `MCTSConfig` and override the listed fields. Fields not
     in the snapshot stay per-machine (`num_workers`, `mcts_seed`) or are
-    trainer-only (gating, bootstrap, promotion knobs).
+    trainer-only (gating, bootstrap).
     """
 
     num_simulations: int
@@ -181,16 +187,15 @@ class SelfPlaySnapshot(ConfigModel):
     dirichlet_alpha: float
     dirichlet_epsilon: float
     add_noise: bool
-    nn_value_weight: float
-    nn_value_weight_cap: float
     use_parent_value_for_unvisited_q: bool
     visit_sampling_epsilon: float
     reuse_tree: bool
     max_placements: int
-    death_penalty: float
-    overhang_penalty_weight: float
     penalty_schedule: PenaltyScheduleConfig = Field(
         default_factory=PenaltyScheduleConfig
+    )
+    nn_value_weight_schedule: NNValueWeightScheduleConfig = Field(
+        default_factory=NNValueWeightScheduleConfig
     )
 
     @classmethod
