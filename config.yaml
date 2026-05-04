@@ -43,25 +43,15 @@ self_play:
   reuse_tree: true
   num_workers: 32
   max_placements: 50
-  # Penalty values + ramp-down trigger.
-  # `gated`: scale 1 while nn_value_weight < cap, 0 at/above (legacy behavior).
-  # `constant_then_linear`: scale 1 for the first `hold_games` cumulative
-  #   completed games, linearly decays to 0 over `decay_games`, then 0.
-  #   Independent of `nn_value_weight`.
   penalty_schedule:
     strategy: constant_then_linear
     hold_games: 50000
     decay_games: 10000
     death_penalty: 10.0
     overhang_penalty_weight: 10.0
-  # nn_value_weight ramp shape + tick trigger.
-  # `per_promotion`: legacy. One tick per promotion (gating) or per direct
-  #   sync (no-gating); ramp stalls without those events.
-  # `per_games_interval`: one tick every `games_interval` cumulative games,
-  #   re-derived deterministically from `initial`.
   nn_value_weight_schedule:
     strategy: per_games_interval
-    games_interval: 500
+    games_interval: 2000
     initial: 0.01
     multiplier: 1.4
     max_delta: 0.1

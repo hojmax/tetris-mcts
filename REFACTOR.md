@@ -27,3 +27,5 @@
   - Also think through if there would be a better format for saving and loading the replay buffers, that would make syncing faster for example or something.
   - Also tetris_bot is a not great name. Suggest alternatives.
   - Also the file organisation is not great in tetris_bot, with random top level files, and then just a big dump in tetris_bot/ml.
+  - Drop all the gated schedueles.
+  - I also want a runtime override for replay buffer size. if smaller, drop oldest. If larger, just larger.
