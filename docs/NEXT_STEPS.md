@@ -1,6 +1,7 @@
 # Next Steps
 
 - [ ] Get rid of gating.
+- [ ] Try training a simple FFN on auxiliary features, to value. Quantify how much of variance is explained by the auxiliary features, rather than particulars about the board state (where for during tree search, we mostly care about the latter).
   - [ ] Do like first 40k games have overhang and terminal state penalty, then linear decay to 0.
 - [ ] Final phase of training with low learning rate, no noise and no stochasticity.
 - [ ]  Auxiliary loss
