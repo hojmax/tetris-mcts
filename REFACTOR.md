@@ -132,7 +132,7 @@ Surviving commands, all in Python:
 | `tetris_mcts eval` | run the generator with deterministic config, drain N games, aggregate; replaces `evaluate_model` |
 | `tetris_mcts viz` | shell out to the `tetris_viz` Rust binary (live or replay mode). See §15B. |
 
-Deleted entirely: `play`, `viz`, `viz-policy-grid`, `sweep-lr-model`, `eval-nn-value-weight`, `sweep-mcts-config`, `compare-*`, `loss-sensitivity`, `warm-start`, `download-wandb-training-data`, `profile`, `profile-samply`, `rebuild`, `build-ort` (ORT becomes an installer flag, not a separate target). The system-deps bootstrap (`ensure-system-deps`) becomes a Python helper called by `install` only on Linux.
+Deleted entirely: `play`, `viz-policy-grid`, `sweep-lr-model`, `eval-nn-value-weight`, `sweep-mcts-config`, `compare-*`, `loss-sensitivity`, `warm-start`, `download-wandb-training-data`, `profile`, `profile-samply`, `rebuild`, `build-ort` (ORT becomes an installer flag, not a separate target). `viz` survives but as a Rust binary (§15B), shelled out to from `tetris_mcts viz`. The system-deps bootstrap (`ensure-system-deps`) becomes a Python helper called by `install` only on Linux.
 
 The tmux check survives (it's saved many a long run).
 
@@ -269,7 +269,7 @@ Today: 31 test files, ~7000 lines. Most cover code paths that this refactor dele
 
 - `optimize_machine.py` — wired into `tetris_mcts optimize`
 
-Everything else (`mcts_visualizer.py`, `tetris_game.py`, `buffer_viewer.py`, `analyze_training_data.py`, `audit_mcts_tree.py`, `inspect_*.py`, `extract_*.py`, `render_*.py`, `policy_grid_visualizer.py`, `profile_games.py`, `download_wandb_training_data.py`, `value_predictor.py`, `viz_state_presets/`, `tree_playback_artifact.py`, `count_reachable_states.py`, `row_fill_zero_rates.py`, `sweep_num_workers.py`, `measure_bootstrap_tree_reuse.py`, `remap_checkpoint_aux_keys.py`) gets deleted. The Dash/plotly MCTS visualizer goes with this batch. Anything genuinely useful migrates into `tools/` as a single Typer subcommand.
+Everything else (`mcts_visualizer.py`, `tetris_game.py`, `buffer_viewer.py`, `analyze_training_data.py`, `audit_mcts_tree.py`, `inspect_*.py`, `extract_*.py`, `render_*.py`, `policy_grid_visualizer.py`, `profile_games.py`, `download_wandb_training_data.py`, `value_predictor.py`, `viz_state_presets/`, `tree_playback_artifact.py`, `count_reachable_states.py`, `row_fill_zero_rates.py`, `sweep_num_workers.py`, `measure_bootstrap_tree_reuse.py`, `remap_checkpoint_aux_keys.py`) gets deleted. The Dash/plotly MCTS visualizer is **replaced**, not just removed — see §15B for the new Rust + egui viz.
 
 `tetris_bot/scripts/utils/` (3 files) — `eval_utils`, `plot_utils`, `run_search_config` — most consumers are deleted ablations. Audit case-by-case; expect 0–1 files survive.
 
@@ -625,8 +625,9 @@ Suggested implementation order (each step ends in green tests + a working `make 
 10. **Replace Makefile** with the `tetris_mcts` Typer CLI. Drop the Makefile.
 11. **Add runtime override for `replay.buffer_size`** with shrink/grow semantics.
 12. **Re-evaluate metrics list** with the user; delete the dropped Rust `LastGameInfo` fields.
+13. **Build `tetris_viz` Rust crate** (egui + incremental tree state). Replay mode first, then live mode. Wire `tetris_mcts viz` to shell out. See §15B.
 
-After step 5, the working tree is already dramatically simpler. Steps 7–9 are mostly mechanical motion.
+After step 5, the working tree is already dramatically simpler. Steps 7–9 are mostly mechanical motion. Step 13 is its own sustained effort, sequenced last so the trainer/sync stack is stable before tackling it.
 
 ### 20. Resolved decisions
 
@@ -638,6 +639,6 @@ All decisions locked in:
 4. **Replay format: Zstd-NPZ.** `zstandard` dep used by both replay chunks and model archives.
 5. **`model_sync_step_interval` default: 1000 steps.**
 6. **`replay.mirror_replay_on_accelerator` default: `false`.** `replay.buffer_size` default: **10_000_000.** Override exposed for VRAM-flush machines.
-7. **`play.py` and the Dash MCTS visualizer deleted.** Trainer's PIL gif renderer survives for W&B.
+7. **`play.py` deleted.** The Dash/Plotly MCTS visualizer is **replaced** by a fast incremental egui-based Rust binary in a new `tetris_viz/` crate — real-time, thousands of nodes via LOD, keyboard scrubbing, live and replay modes. See §15B. Trainer's PIL gif renderer (separate concern) survives for W&B.
 8. **Model archive format: `.tar.zst`.** Zstd is already in for replay; one dep, two payoffs.
 9. **Warm-start replaced by `--offline_only` trainer flag.** ~30 lines, no early-stopping ceremony, no separate W&B project. Eval after offline training is `tetris_mcts eval`.
