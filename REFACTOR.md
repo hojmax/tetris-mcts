@@ -29,3 +29,4 @@
   - Also the file organisation is not great in tetris_bot, with random top level files, and then just a big dump in tetris_bot/ml.
   - Drop all the gated schedueles.
   - I also want a runtime override for replay buffer size. if smaller, drop oldest. If larger, just larger.
+  - Also the syncing of params to the generators via r2 should not be an afterthought, but done properly.
