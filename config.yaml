@@ -18,7 +18,7 @@ optimizer:
   weight_decay: 0.00005
   grad_clip_norm: 10.0
   lr_schedule: linear
-  lr_decay_steps: 50000
+  lr_decay_steps: 1000000
   lr_min_factor: 0.002
   lr_step_gamma: 0.1
   lr_step_divisor: 3
