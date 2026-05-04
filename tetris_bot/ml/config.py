@@ -41,6 +41,8 @@ class OptimizerConfig(ConfigModel):
     lr_schedule: str
     lr_decay_steps: int
     lr_min_factor: float
+    lr_warmup_steps: int = 0
+    lr_warmup_start_factor: float = 0.0
     lr_step_gamma: float
     lr_step_divisor: int
     value_loss_weight_window: int

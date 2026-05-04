@@ -79,7 +79,7 @@ def test_trainer_reloads_runtime_overrides_and_reverts_to_defaults(
         force=True,
     )
 
-    assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(0.00005)
+    assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(0.0005)
     assert trainer.config.optimizer.grad_clip_norm == pytest.approx(3.0)
     assert trainer.optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.02)
     assert trainer.config.optimizer.mirror_augmentation_probability == pytest.approx(
@@ -100,7 +100,7 @@ def test_trainer_reloads_runtime_overrides_and_reverts_to_defaults(
         force=True,
     )
 
-    assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(0.0005)
+    assert trainer.optimizer.param_groups[0]["lr"] == pytest.approx(0.005)
     assert trainer.config.optimizer.grad_clip_norm == pytest.approx(10.0)
     assert trainer.optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.00005)
     assert trainer.config.optimizer.mirror_augmentation_probability == pytest.approx(
@@ -204,9 +204,13 @@ def test_lr_multiplier_does_not_compound_across_scheduler_steps(
     LR to decay geometrically (e.g. `1e-4 * 0.2^N`) past `lr_decay_steps`."""
 
     trainer = _make_trainer(tmp_path)
-    # Push the scheduler past its decay window so LinearLR is in the
-    # constant phase where each step is a no-op factor=1.0.
-    trainer.align_scheduler_to_step(trainer.config.optimizer.lr_decay_steps + 1_000)
+    # Push the scheduler past its decay window so it is in the constant
+    # floor phase where each step is a no-op factor=lr_min_factor.
+    trainer.align_scheduler_to_step(
+        trainer.config.optimizer.lr_warmup_steps
+        + trainer.config.optimizer.lr_decay_steps
+        + 1_000
+    )
     base_lr_at_floor = float(trainer.optimizer.param_groups[0]["lr"])
 
     trainer._set_lr_multiplier(0.2)
@@ -317,7 +321,7 @@ def test_restore_trainer_restores_runtime_override_state_with_scheduler_restore(
         incumbent_model_path=None,
     )
 
-    assert restored.optimizer.param_groups[0]["lr"] == pytest.approx(0.00005)
+    assert restored.optimizer.param_groups[0]["lr"] == pytest.approx(0.0005)
     assert restored.config.optimizer.grad_clip_norm == pytest.approx(3.0)
     assert restored.optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.02)
     assert restored.config.optimizer.mirror_augmentation_probability == pytest.approx(
@@ -376,7 +380,7 @@ def test_restore_trainer_restores_runtime_override_state_without_scheduler_resto
         incumbent_model_path=None,
     )
 
-    assert restored.optimizer.param_groups[0]["lr"] == pytest.approx(0.00005)
+    assert restored.optimizer.param_groups[0]["lr"] == pytest.approx(0.0005)
     assert restored.config.optimizer.grad_clip_norm == pytest.approx(3.0)
     assert restored.optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.02)
     assert restored.config.optimizer.mirror_augmentation_probability == pytest.approx(

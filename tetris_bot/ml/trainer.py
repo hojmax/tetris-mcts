@@ -111,6 +111,43 @@ class CompletedGameLogEntry(BaseModel):
         return int(self.stats["total_attack"])
 
 
+def _compute_warmup_cosine_factor(
+    *,
+    step: int,
+    warmup_steps: int,
+    decay_steps: int,
+    warmup_start_factor: float,
+    min_factor: float,
+) -> float:
+    """LR multiplier for `warmup_cosine`: linear warmup, cosine decay, then flat.
+
+    `step=0` returns `warmup_start_factor`; the warmup ends at peak (factor 1)
+    after `warmup_steps`, the cosine then decays to `min_factor` over
+    `decay_steps`, and stays at `min_factor` afterward.
+    """
+    if step < 0:
+        raise ValueError(f"step must be >= 0 (got {step})")
+    if warmup_steps < 0:
+        raise ValueError(f"warmup_steps must be >= 0 (got {warmup_steps})")
+    if decay_steps < 0:
+        raise ValueError(f"decay_steps must be >= 0 (got {decay_steps})")
+    if not 0.0 <= warmup_start_factor <= 1.0:
+        raise ValueError(
+            f"warmup_start_factor must be in [0, 1] (got {warmup_start_factor})"
+        )
+    if not 0.0 <= min_factor <= 1.0:
+        raise ValueError(f"min_factor must be in [0, 1] (got {min_factor})")
+
+    if warmup_steps > 0 and step < warmup_steps:
+        progress = step / warmup_steps
+        return warmup_start_factor + (1.0 - warmup_start_factor) * progress
+    if decay_steps == 0:
+        return min_factor
+    decay_progress = min((step - warmup_steps) / decay_steps, 1.0)
+    cosine = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
+    return min_factor + (1.0 - min_factor) * cosine
+
+
 def _candidate_gate_interval_seconds(
     *,
     base_interval_seconds: float,
@@ -1369,7 +1406,7 @@ class Trainer:
 
     def _create_scheduler(self):
         schedule = self.config.optimizer.lr_schedule
-        if schedule not in {"linear", "cosine", "step"}:
+        if schedule not in {"linear", "cosine", "warmup_cosine", "step"}:
             return None
 
         def build_for(inner_optimizer: torch.optim.Optimizer):
@@ -1387,6 +1424,11 @@ class Trainer:
                     eta_min=self.config.optimizer.learning_rate
                     * self.config.optimizer.lr_min_factor,
                 )
+            if schedule == "warmup_cosine":
+                return torch.optim.lr_scheduler.LambdaLR(
+                    inner_optimizer,
+                    lr_lambda=self._warmup_cosine_lr_lambda,
+                )
             return torch.optim.lr_scheduler.StepLR(
                 inner_optimizer,
                 step_size=self.config.optimizer.lr_decay_steps
@@ -1396,6 +1438,15 @@ class Trainer:
 
         return SchedulerBundle(
             tuple(build_for(opt) for opt in self.optimizer.inner_optimizers)
+        )
+
+    def _warmup_cosine_lr_lambda(self, step: int) -> float:
+        return _compute_warmup_cosine_factor(
+            step=step,
+            warmup_steps=self.config.optimizer.lr_warmup_steps,
+            decay_steps=self.config.optimizer.lr_decay_steps,
+            warmup_start_factor=self.config.optimizer.lr_warmup_start_factor,
+            min_factor=self.config.optimizer.lr_min_factor,
         )
 
     def align_scheduler_to_step(self, step: int) -> None:
@@ -1431,6 +1482,16 @@ class Trainer:
                 eta_min + (base_lr - eta_min) * cosine_factor
                 for base_lr in self.scheduler.base_lrs
             ]
+        elif self.config.optimizer.lr_schedule == "warmup_cosine":
+            assert isinstance(first_scheduler, torch.optim.lr_scheduler.LambdaLR)
+            factor = _compute_warmup_cosine_factor(
+                step=step,
+                warmup_steps=self.config.optimizer.lr_warmup_steps,
+                decay_steps=self.config.optimizer.lr_decay_steps,
+                warmup_start_factor=self.config.optimizer.lr_warmup_start_factor,
+                min_factor=self.config.optimizer.lr_min_factor,
+            )
+            lrs = [base_lr * factor for base_lr in self.scheduler.base_lrs]
         elif self.config.optimizer.lr_schedule == "step":
             assert isinstance(first_scheduler, torch.optim.lr_scheduler.StepLR)
             step_size = (
