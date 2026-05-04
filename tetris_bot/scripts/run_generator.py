@@ -342,6 +342,8 @@ def main(args: GeneratorArgs) -> None:
         "run_generator.initial_bundle_ready",
         step=pointer.step,
         nn_value_weight=pointer.nn_value_weight,
+        death_penalty=pointer.death_penalty,
+        overhang_penalty_weight=pointer.overhang_penalty_weight,
         local_path=str(initial_main),
     )
 
@@ -350,6 +352,9 @@ def main(args: GeneratorArgs) -> None:
         raise ValueError("num_workers must be > 0")
 
     mcts_config = _build_mcts_config(config.self_play)
+    mcts_config.nn_value_weight = pointer.nn_value_weight
+    mcts_config.death_penalty = pointer.death_penalty
+    mcts_config.overhang_penalty_weight = pointer.overhang_penalty_weight
     generator = GameGenerator(
         model_path=str(initial_main),
         training_data_path=str(training_data_path),
