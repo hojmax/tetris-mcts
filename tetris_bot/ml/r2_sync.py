@@ -976,11 +976,20 @@ def discover_active_runs(
                 raise
             try:
                 body = client.get_object(Bucket=bucket, Key=pointer_key)["Body"].read()
-                pointer = ModelPointer.from_json(body)
             except ClientError as e:
                 if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
                     continue
                 raise
+            try:
+                pointer = ModelPointer.from_json(body)
+            except (KeyError, ValueError, json.JSONDecodeError) as e:
+                logger.warning(
+                    "r2_sync.discover_active_runs.skip_unparseable_pointer",
+                    sync_run_id=sync_run_id,
+                    pointer_key=pointer_key,
+                    error=repr(e),
+                )
+                continue
             modified = head.get("LastModified")
             if modified is None:
                 continue
