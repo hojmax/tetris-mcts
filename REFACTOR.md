@@ -31,6 +31,7 @@
   - I also want a runtime override for replay buffer size. if smaller, drop oldest. If larger, just larger.
   - Also the syncing of params to the generators via r2 should not be an afterthought, but done properly.
   - Cleaner model syncs with like a .yaml that is associated with each model with the relevant information, instead of putting it on the model itself. And like currently, it generates a ton of different files, wondering if we could zip them or if that would be cleaner?
+- Clean up old incumbents and old runs in R2.
 
 ---
 
