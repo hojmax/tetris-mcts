@@ -1,5 +1,9 @@
 # Next Steps
 
+- [ ] Add repeats off replaybuffer like total observations / buffer length
+- [ ] Block out losing actions (but figure out why necessary?)
+- [ ] Look at training data.
+- [ ] Ramp down the overhang penalty earlier, biases toward tetrises, slows learning
 - [ ] Clean up old incumbents and old runs in R2.
 - [ ] Get rid of gating.
 - [ ] Try training a simple FFN on auxiliary features, to value. Quantify how much of variance is explained by the auxiliary features, rather than particulars about the board state (where for during tree search, we mostly care about the latter).
