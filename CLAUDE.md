@@ -167,6 +167,10 @@ Memory note:
 - Biggest levers: `buffer_size`, `num_workers`, `bootstrap_num_simulations`, replay mirror/staging settings.
 - Rust per-worker caches (`PLACEMENT_CACHE_MAX_ENTRIES`, `BOARD_ANALYSIS_CACHE_MAX_ENTRIES`) scale with worker count.
 
+Disk note:
+
+- At the start of every fresh `wandb.init` call, training prunes `wandb/run-*` directories older than 24h and runs `wandb artifact cache cleanup 0` (without `--remove-temp`, so live artifact uploads are not disturbed). See `_prune_local_wandb_state` in `tetris_bot/run_setup.py`.
+
 ## Common Workflows
 
 ### Change Game Logic

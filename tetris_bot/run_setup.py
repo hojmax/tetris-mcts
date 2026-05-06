@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import structlog
@@ -12,6 +16,7 @@ import wandb
 from tetris_bot.constants import (
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
+    PROJECT_ROOT,
     RUNTIME_OVERRIDES_FILENAME,
     TRAINING_RUNS_DIR,
 )
@@ -110,6 +115,55 @@ def get_best_device() -> str:
     return "cpu"
 
 
+def _prune_local_wandb_state(max_age_hours: float = 24.0) -> None:
+    """Trim local wandb mirrors before starting a fresh run.
+
+    Removes ``wandb/run-*`` directories older than ``max_age_hours`` and
+    evicts the LRU artifact cache. The artifact cleanup skips files
+    referenced by a live run, so it is safe to call when other wandb
+    processes happen to be active. Does not pass ``--remove-temp`` to
+    avoid corrupting any in-flight artifact upload.
+    """
+    wandb_dir = Path(os.environ.get("WANDB_DIR", str(PROJECT_ROOT))) / "wandb"
+    if wandb_dir.is_dir():
+        cutoff = time.time() - max_age_hours * 3600
+        removed = 0
+        for entry in wandb_dir.iterdir():
+            if not entry.is_dir() or not entry.name.startswith("run-"):
+                continue
+            try:
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+            except OSError:
+                continue
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+        if removed:
+            logger.info(
+                "Pruned old local wandb run dirs",
+                wandb_dir=str(wandb_dir),
+                removed=removed,
+                max_age_hours=max_age_hours,
+            )
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "wandb", "artifact", "cache", "cleanup", "0"],
+            check=False,
+            timeout=120,
+            capture_output=True,
+            text=True,
+        )
+        message = (result.stdout or result.stderr or "").strip()
+        logger.info(
+            "wandb artifact cache cleanup",
+            returncode=result.returncode,
+            message=message[-300:],
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        logger.warning("wandb artifact cache cleanup failed", error=str(error))
+
+
 def initialize_or_update_wandb(
     config: TrainingConfig, device: str, resume_dir: Path | None = None
 ) -> None:
@@ -119,6 +173,7 @@ def initialize_or_update_wandb(
         wandb_config["resume_dir"] = str(resume_dir)
 
     if wandb.run is None:
+        _prune_local_wandb_state()
         wandb.init(
             project=config.run.project_name,
             name=config.run.run_name,
