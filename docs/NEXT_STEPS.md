@@ -1,5 +1,6 @@
 # Next Steps
 
+- [ ] Restarting run gives crazy high loss spike (divide by low-value?)
 - [ ] Add repeats off replaybuffer like total observations / buffer length
 - [ ] Block out losing actions (but figure out why necessary?)
 - [ ] Look at training data.

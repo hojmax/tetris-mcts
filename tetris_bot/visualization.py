@@ -586,6 +586,8 @@ def render_board(
     placement_number: int = 0,
     placement_label: str = "Placement",
     attack: int = 0,
+    total_attack: int | None = None,
+    total_placements: int | None = None,
     info_text: str | None = None,
     can_hold: bool | None = None,
     combo: int | None = None,
@@ -641,9 +643,20 @@ def render_board(
     font = _get_font(14)
     label_font = _get_font(11)
 
+    placement_str = (
+        f"{placement_label}: {placement_number}/{total_placements}"
+        if total_placements is not None
+        else f"{placement_label}: {placement_number}"
+    )
+    attack_str = (
+        f"Attack: {attack}/{total_attack}"
+        if total_attack is not None
+        else f"Attack: {attack}"
+    )
+
     if show_piece_info:
         # --- Top info bar ---
-        parts = [f"{placement_label}: {placement_number}", f"Attack: {attack}"]
+        parts = [placement_str, attack_str]
         if value_pred is not None:
             parts.append(f"Vpred: {value_pred:.2f}")
         info_str = "  ".join(parts)
@@ -697,7 +710,7 @@ def render_board(
                 _draw_mini_piece(draw, pt, right_cx, cy)
     else:
         # Simple info line (no sidebars)
-        text = f"{placement_label}: {placement_number}  Attack: {attack}"
+        text = f"{placement_str}  {attack_str}"
         if value_pred is not None:
             text += f"  Vpred: {value_pred:.2f}"
         if info_text:
@@ -716,6 +729,8 @@ def _capture_frame(
     placement_label: str = "Placement",
     predicted_move_overlays: list[PredictedMoveOverlay] | None = None,
     show_ghost_piece: bool = True,
+    total_attack: int | None = None,
+    total_placements: int | None = None,
 ) -> Image.Image:
     board = np.array(env.get_board())
     board_piece_types = env.get_board_piece_types()
@@ -737,6 +752,8 @@ def _capture_frame(
         placement_number=placement_number,
         placement_label=placement_label,
         attack=attack,
+        total_attack=total_attack,
+        total_placements=total_placements,
         can_hold=can_hold,
         combo=env.combo,
         back_to_back=env.back_to_back,
@@ -751,6 +768,8 @@ def _capture_frame(
 
 
 def render_replay(replay: GameReplay) -> list[Image.Image]:
+    final_total_attack, final_total_placements = _compute_replay_totals(replay)
+
     env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, replay.seed)
     frames: list[Image.Image] = []
     total_attack = 0
@@ -759,7 +778,15 @@ def render_replay(replay: GameReplay) -> list[Image.Image]:
         if env.game_over:
             break
 
-        frames.append(_capture_frame(env, env.placement_count, total_attack))
+        frames.append(
+            _capture_frame(
+                env,
+                env.placement_count,
+                total_attack,
+                total_attack=final_total_attack,
+                total_placements=final_total_placements,
+            )
+        )
 
         attack = env.execute_action_index(move.action)
         if attack is None:
@@ -773,10 +800,26 @@ def render_replay(replay: GameReplay) -> list[Image.Image]:
             env.placement_count,
             total_attack,
             is_terminal=env.game_over,
+            total_attack=final_total_attack,
+            total_placements=final_total_placements,
         )
     )
 
     return frames
+
+
+def _compute_replay_totals(replay: GameReplay) -> tuple[int, int]:
+    """Simulate the replay once to determine the final attack and placement counts."""
+    env = TetrisEnv.with_seed(BOARD_WIDTH, BOARD_HEIGHT, replay.seed)
+    total_attack = 0
+    for move in replay.moves:
+        if env.game_over:
+            break
+        attack = env.execute_action_index(move.action)
+        if attack is None:
+            raise ValueError(f"Invalid replay action index: {move.action}")
+        total_attack += move.attack
+    return total_attack, env.placement_count
 
 
 def create_trajectory_gif(
