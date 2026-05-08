@@ -362,6 +362,7 @@ def main(args: ScriptArgs) -> None:
             print_game_buffer_vectors(data, start, end, args.policy_targets_edge_items)
 
         # Render each frame
+        final_placement_number = int(data["placement_counts"][end - 1])
         frames = []
         for i in range(start, end):
             board = data["boards"][i]
@@ -373,7 +374,7 @@ def main(args: ScriptArgs) -> None:
             can_hold = bool(data["hold_available"][i])
             combo = round(float(data["combos"][i]) * COMBO_NORMALIZATION_MAX)
             back_to_back = bool(data["back_to_back"][i])
-            placement_number = int(data["move_numbers"][i])
+            placement_number = int(data["placement_counts"][i])
             value_target = float(data["value_targets"][i])
             # Cumulative attack before this step (starts at 0, increases)
             cumulative_attack = int(round(game_total_attack - value_target))
@@ -411,6 +412,8 @@ def main(args: ScriptArgs) -> None:
                 ghost_cells=ghost_cells,
                 placement_number=placement_number,
                 attack=cumulative_attack,
+                total_attack=game_total_attack,
+                total_placements=final_placement_number,
                 value_pred=value_pred,
                 can_hold=can_hold,
                 combo=combo,
