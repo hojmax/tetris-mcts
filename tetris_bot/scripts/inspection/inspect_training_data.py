@@ -6,10 +6,15 @@ from pathlib import Path
 
 import numpy as np
 import structlog
+import yaml
 from rich.console import Console
 from simple_parsing import parse
 
+from tetris_core import TetrisEnv
+
 from tetris_bot.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
     CHECKPOINT_DIRNAME,
     CONFIG_FILENAME,
     DEFAULT_GIF_FRAME_DURATION_MS,
@@ -153,6 +158,9 @@ class ScriptArgs:
     wandb_game_number: int = (
         -1  # Select by WandB game_number (1-indexed); ignored when -1
     )
+    show_value_pred: bool = (
+        True  # Overlay model Vpred on each frame (requires checkpoint + config)
+    )
     print_buffer_vectors: bool = True  # Print replay vectors/matrices for selected game (policy_targets is truncated)
     policy_targets_edge_items: int = (
         6  # Number of edge items per axis when truncating policy_targets display
@@ -257,13 +265,20 @@ def main(args: ScriptArgs) -> None:
         )
         return
 
-    value_predictor = try_load_value_predictor(checkpoint_path, config_path)
-    if value_predictor is not None:
-        logger.info(
-            "Loaded model predictions",
-            checkpoint_path=str(checkpoint_path),
-            config_path=str(config_path),
-        )
+    with config_path.open() as f:
+        config_yaml = yaml.safe_load(f)
+    max_placements = int(config_yaml["self_play"]["max_placements"])
+
+    if args.show_value_pred:
+        value_predictor = try_load_value_predictor(checkpoint_path, config_path)
+        if value_predictor is not None:
+            logger.info(
+                "Loaded model predictions",
+                checkpoint_path=str(checkpoint_path),
+                config_path=str(config_path),
+            )
+    else:
+        value_predictor = None
 
     # Load data
     with np.load(args.data_path) as data:
@@ -361,8 +376,13 @@ def main(args: ScriptArgs) -> None:
         if args.print_buffer_vectors:
             print_game_buffer_vectors(data, start, end, args.policy_targets_edge_items)
 
-        # Render each frame
-        final_placement_number = int(data["placement_counts"][end - 1])
+        # placement_counts are stored normalized as placements / max_placements;
+        # denormalize for display. The buffer stores pre-move placement counts,
+        # so the true total includes the final move that produces the post-move state.
+        game_placement_counts = (
+            data["placement_counts"][start:end].astype(np.float32) * max_placements
+        )
+        final_placement_number = int(round(float(game_placement_counts[-1]))) + 1
         frames = []
         for i in range(start, end):
             board = data["boards"][i]
@@ -374,7 +394,7 @@ def main(args: ScriptArgs) -> None:
             can_hold = bool(data["hold_available"][i])
             combo = round(float(data["combos"][i]) * COMBO_NORMALIZATION_MAX)
             back_to_back = bool(data["back_to_back"][i])
-            placement_number = int(data["placement_counts"][i])
+            placement_number = int(round(float(game_placement_counts[i - start])))
             value_target = float(data["value_targets"][i])
             # Cumulative attack before this step (starts at 0, increases)
             cumulative_attack = int(round(game_total_attack - value_target))
@@ -424,12 +444,74 @@ def main(args: ScriptArgs) -> None:
             )
             frames.append(frame)
 
+        # Simulate the final move using the Rust engine so the GIF ends on the
+        # post-move state (e.g. 50/50). The chosen action is the argmax of the
+        # MCTS visit distribution stored in policy_targets.
+        last_index = end - 1
+        last_action = int(np.argmax(data["policy_targets"][last_index]))
+        env = TetrisEnv(BOARD_WIDTH, BOARD_HEIGHT)
+        env.set_board(data["boards"][last_index].astype(np.uint8).tolist())
+        last_hold_piece = get_piece_type(data["hold_pieces"][last_index])
+        if last_hold_piece is not None:
+            env.set_hold_piece_type(last_hold_piece)
+        env.set_hold_used(not bool(data["hold_available"][last_index]))
+        env.set_queue(
+            [
+                int(np.argmax(data["next_queue"][last_index][j]))
+                for j in range(QUEUE_SIZE)
+            ]
+        )
+        last_current_piece = get_piece_type(data["current_pieces"][last_index])
+        if last_current_piece is not None:
+            env.set_current_piece_type(last_current_piece)
+        env.execute_action_index(last_action)
+
+        post_board = np.array(env.get_board(), dtype=np.uint8)
+        post_current = env.get_current_piece()
+        post_current_type = post_current.piece_type if post_current is not None else None
+        post_hold = env.get_hold_piece()
+        post_hold_type = post_hold.piece_type if post_hold is not None else None
+        post_queue = list(env.get_queue(QUEUE_SIZE))
+        post_piece_cells = None
+        post_ghost_cells = None
+        if post_current_type is not None and not env.game_over:
+            post_piece_cells, post_ghost_cells = compute_spawn_and_ghost(
+                post_current_type, post_board
+            )
+
+        post_frame = render_board(
+            board=post_board,
+            current_piece_cells=post_piece_cells,
+            current_piece_type=post_current_type,
+            ghost_cells=post_ghost_cells,
+            placement_number=final_placement_number,
+            attack=game_total_attack,
+            total_attack=game_total_attack,
+            total_placements=final_placement_number,
+            value_pred=None,
+            can_hold=not env.is_hold_used(),
+            combo=int(env.combo),
+            back_to_back=bool(env.back_to_back),
+            show_piece_info=True,
+            hold_piece_type=post_hold_type,
+            queue_piece_types=post_queue,
+        )
+        frames.append(post_frame)
+
+        # Per-frame durations: linger 4x on the final post-move frame.
+        durations = [args.frame_duration] * (len(frames) - 1) + [
+            args.frame_duration * 4
+        ]
+
         # Determine save path
         if args.save_path is None:
+            suffix = "" if args.show_value_pred else "_no_vpred"
             if game.wandb_game_number is not None:
-                save_path = OUTPUTS_DIR / f"game_wandb_{game.wandb_game_number}.gif"
+                save_path = (
+                    OUTPUTS_DIR / f"game_wandb_{game.wandb_game_number}{suffix}.gif"
+                )
             else:
-                save_path = OUTPUTS_DIR / f"game_{game.local_index}.gif"
+                save_path = OUTPUTS_DIR / f"game_{game.local_index}{suffix}.gif"
         else:
             save_path = args.save_path
         save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -439,7 +521,7 @@ def main(args: ScriptArgs) -> None:
             save_path,
             save_all=True,
             append_images=frames[1:],
-            duration=args.frame_duration,
+            duration=durations,
             loop=0,
         )
 

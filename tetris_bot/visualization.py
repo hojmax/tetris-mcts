@@ -658,7 +658,7 @@ def render_board(
         # --- Top info bar ---
         parts = [placement_str, attack_str]
         if value_pred is not None:
-            parts.append(f"Vpred: {value_pred:.2f}")
+            parts.append(f"Vpred: {value_pred:.1f}")
         info_str = "  ".join(parts)
         bbox_info = font.getbbox(info_str)
         info_tw = bbox_info[2] - bbox_info[0]
@@ -712,7 +712,7 @@ def render_board(
         # Simple info line (no sidebars)
         text = f"{placement_str}  {attack_str}"
         if value_pred is not None:
-            text += f"  Vpred: {value_pred:.2f}"
+            text += f"  Vpred: {value_pred:.1f}"
         if info_text:
             text += f"  {info_text}"
         draw.text((PADDING, 10), text, fill=TEXT_COLOR, font=font)
