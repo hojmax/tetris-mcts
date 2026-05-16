@@ -1,0 +1,2376 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import dash
+from dash import Input, Output, State, clientside_callback, dcc, html, callback
+import plotly.graph_objects as go
+from simple_parsing import parse
+import structlog
+
+from tetris_bot.action_space import (
+    ACTION_TO_CANONICAL_CELL,
+    CELL_TO_ACTION_INDEX,
+    PIECES_ONE_ROTATIONS,
+    PIECES_TWO_ROTATIONS,
+    ROTATION_LABELS,
+    is_redundant_rotation,
+    placement_grid_flat_index,
+)
+from tetris_bot.constants import (
+    BOARD_HEIGHT,
+    BOARD_WIDTH,
+    PIECE_COLORS,
+    PIECE_NAMES,
+)
+from tetris_bot.ml.policy_mirroring import (
+    FLAT_MIRROR_INDEX_BY_PIECE,
+    FLAT_VALID_INDICES_BY_PIECE,
+    MIRROR_PIECE_TYPE_ORDER,
+)
+
+logger = structlog.get_logger()
+
+
+GRID_CELLS_PER_MAP = BOARD_HEIGHT * BOARD_WIDTH
+AGGREGATE_PIECE_VALUE = "D"
+AGGREGATE_PIECE_LABEL = "D (all layers)"
+
+TETROMINO_CELLS: list[list[list[tuple[int, int]]]] = [
+    [
+        [(0, 1), (1, 1), (2, 1), (3, 1)],
+        [(2, 0), (2, 1), (2, 2), (2, 3)],
+        [(0, 2), (1, 2), (2, 2), (3, 2)],
+        [(1, 0), (1, 1), (1, 2), (1, 3)],
+    ],
+    [
+        [(1, 1), (2, 1), (1, 2), (2, 2)],
+        [(1, 1), (2, 1), (1, 2), (2, 2)],
+        [(1, 1), (2, 1), (1, 2), (2, 2)],
+        [(1, 1), (2, 1), (1, 2), (2, 2)],
+    ],
+    [
+        [(1, 0), (0, 1), (1, 1), (2, 1)],
+        [(1, 0), (1, 1), (2, 1), (1, 2)],
+        [(0, 1), (1, 1), (2, 1), (1, 2)],
+        [(1, 0), (0, 1), (1, 1), (1, 2)],
+    ],
+    [
+        [(1, 0), (2, 0), (0, 1), (1, 1)],
+        [(1, 0), (1, 1), (2, 1), (2, 2)],
+        [(1, 1), (2, 1), (0, 2), (1, 2)],
+        [(0, 0), (0, 1), (1, 1), (1, 2)],
+    ],
+    [
+        [(0, 0), (1, 0), (1, 1), (2, 1)],
+        [(2, 0), (1, 1), (2, 1), (1, 2)],
+        [(0, 1), (1, 1), (1, 2), (2, 2)],
+        [(1, 0), (0, 1), (1, 1), (0, 2)],
+    ],
+    [
+        [(0, 0), (0, 1), (1, 1), (2, 1)],
+        [(1, 0), (2, 0), (1, 1), (1, 2)],
+        [(0, 1), (1, 1), (2, 1), (2, 2)],
+        [(1, 0), (1, 1), (0, 2), (1, 2)],
+    ],
+    [
+        [(2, 0), (0, 1), (1, 1), (2, 1)],
+        [(1, 0), (1, 1), (1, 2), (2, 2)],
+        [(0, 1), (1, 1), (2, 1), (0, 2)],
+        [(0, 0), (1, 0), (1, 1), (1, 2)],
+    ],
+]
+
+
+@dataclass(frozen=True)
+class ScriptArgs:
+    host: str = "127.0.0.1"
+    port: int = 8051
+    debug: bool = False
+
+
+@dataclass(frozen=True)
+class PlacementInfo:
+    piece_type: int
+    rotation: int
+    grid_x: int
+    grid_y: int
+    anchor_x: int
+    anchor_y: int
+    valid: bool
+    occupied_cells: tuple[tuple[int, int], ...]
+    in_bounds_cells: tuple[tuple[int, int], ...]
+    out_of_bounds_cells: tuple[tuple[int, int], ...]
+    width: int
+    height: int
+    min_dx: int
+    max_dx: int
+    min_dy: int
+    max_dy: int
+
+
+@dataclass(frozen=True)
+class AggregateCellInfo:
+    rotation: int
+    grid_x: int
+    grid_y: int
+    active_count: int
+    inactive_count: int
+    active_piece_labels: tuple[str, ...]
+    union_cells: tuple[tuple[int, int], ...]
+
+
+PieceSelection = int | str
+REAL_PIECE_VALUES: list[int] = list(range(len(PIECE_NAMES)))
+PIECE_SELECTOR_VALUES: list[PieceSelection] = REAL_PIECE_VALUES + [
+    AGGREGATE_PIECE_VALUE
+]
+PIECE_SELECTOR_OPTIONS = [
+    {"label": name, "value": index} for index, name in enumerate(PIECE_NAMES)
+] + [{"label": AGGREGATE_PIECE_LABEL, "value": AGGREGATE_PIECE_VALUE}]
+
+
+def _piece_cells(piece_type: int, rotation: int) -> tuple[tuple[int, int], ...]:
+    return tuple(TETROMINO_CELLS[piece_type][rotation])
+
+
+def _piece_bounds(
+    piece_type: int, rotation: int
+) -> tuple[int, int, int, int, int, int]:
+    cells = _piece_cells(piece_type, rotation)
+    xs = [dx for dx, _ in cells]
+    ys = [dy for _, dy in cells]
+    min_dx = min(xs)
+    max_dx = max(xs)
+    min_dy = min(ys)
+    max_dy = max(ys)
+    width = max_dx - min_dx + 1
+    height = max_dy - min_dy + 1
+    return min_dx, max_dx, min_dy, max_dy, width, height
+
+
+def build_placement_info(
+    piece_type: int, rotation: int, grid_x: int, grid_y: int
+) -> PlacementInfo:
+    min_dx, max_dx, min_dy, max_dy, width, height = _piece_bounds(piece_type, rotation)
+    anchor_x = grid_x - min_dx
+    anchor_y = grid_y - min_dy
+    occupied_cells = tuple(
+        (anchor_x + dx, anchor_y + dy) for dx, dy in _piece_cells(piece_type, rotation)
+    )
+    in_bounds_cells = tuple(
+        (x, y)
+        for x, y in occupied_cells
+        if 0 <= x < BOARD_WIDTH and 0 <= y < BOARD_HEIGHT
+    )
+    out_of_bounds_cells = tuple(
+        (x, y)
+        for x, y in occupied_cells
+        if not (0 <= x < BOARD_WIDTH and 0 <= y < BOARD_HEIGHT)
+    )
+    return PlacementInfo(
+        piece_type=piece_type,
+        rotation=rotation,
+        grid_x=grid_x,
+        grid_y=grid_y,
+        anchor_x=anchor_x,
+        anchor_y=anchor_y,
+        valid=len(out_of_bounds_cells) == 0,
+        occupied_cells=occupied_cells,
+        in_bounds_cells=in_bounds_cells,
+        out_of_bounds_cells=out_of_bounds_cells,
+        width=width,
+        height=height,
+        min_dx=min_dx,
+        max_dx=max_dx,
+        min_dy=min_dy,
+        max_dy=max_dy,
+    )
+
+
+def build_aggregate_cell_info(
+    rotation: int, grid_x: int, grid_y: int
+) -> AggregateCellInfo:
+    active_placements: list[PlacementInfo] = []
+    for piece_type in REAL_PIECE_VALUES:
+        info = build_placement_info(piece_type, rotation, grid_x, grid_y)
+        if info.valid:
+            active_placements.append(info)
+
+    union_cells = tuple(
+        sorted(
+            {
+                cell
+                for placement in active_placements
+                for cell in placement.in_bounds_cells
+            }
+        )
+    )
+    active_piece_labels = tuple(
+        PIECE_NAMES[placement.piece_type] for placement in active_placements
+    )
+    active_count = len(active_placements)
+    return AggregateCellInfo(
+        rotation=rotation,
+        grid_x=grid_x,
+        grid_y=grid_y,
+        active_count=active_count,
+        inactive_count=len(REAL_PIECE_VALUES) - active_count,
+        active_piece_labels=active_piece_labels,
+        union_cells=union_cells,
+    )
+
+
+def count_valid_cells(piece_type: int, rotation: int) -> int:
+    valid = 0
+    for grid_y in range(BOARD_HEIGHT):
+        for grid_x in range(BOARD_WIDTH):
+            if build_placement_info(piece_type, rotation, grid_x, grid_y).valid:
+                valid += 1
+    return valid
+
+
+def build_summary_counts() -> list[list[dict[str, int]]]:
+    summary: list[list[dict[str, int]]] = []
+    for piece_type in range(len(PIECE_NAMES)):
+        piece_summary: list[dict[str, int]] = []
+        for rotation in range(4):
+            valid = count_valid_cells(piece_type, rotation)
+            piece_summary.append(
+                {
+                    "valid": valid,
+                    "masked": GRID_CELLS_PER_MAP - valid,
+                }
+            )
+        summary.append(piece_summary)
+    return summary
+
+
+SUMMARY_COUNTS = build_summary_counts()
+AGGREGATE_ROTATION_COUNTS = [
+    {
+        "valid": sum(
+            1
+            for grid_y in range(BOARD_HEIGHT)
+            for grid_x in range(BOARD_WIDTH)
+            if build_aggregate_cell_info(rotation, grid_x, grid_y).active_count > 0
+        )
+    }
+    for rotation in range(4)
+]
+for counts in AGGREGATE_ROTATION_COUNTS:
+    counts["masked"] = GRID_CELLS_PER_MAP - counts["valid"]
+
+AGGREGATE_GRID_COUNTS_BY_ROTATION = [
+    [
+        [
+            build_aggregate_cell_info(rotation, grid_x, grid_y).active_count
+            for grid_x in range(BOARD_WIDTH)
+        ]
+        for grid_y in range(BOARD_HEIGHT)
+    ]
+    for rotation in range(4)
+]
+AGGREGATE_UNION_VALID = sum(
+    1
+    for grid_y in range(BOARD_HEIGHT)
+    for grid_x in range(BOARD_WIDTH)
+    if any(
+        build_aggregate_cell_info(rotation, grid_x, grid_y).active_count > 0
+        for rotation in range(4)
+    )
+)
+AGGREGATE_UNION_MASKED = GRID_CELLS_PER_MAP - AGGREGATE_UNION_VALID
+AGGREGATE_ROTATION_TOTAL_VALID = sum(
+    counts["valid"] for counts in AGGREGATE_ROTATION_COUNTS
+)
+AGGREGATE_ROTATION_TOTAL_MASKED = sum(
+    counts["masked"] for counts in AGGREGATE_ROTATION_COUNTS
+)
+TOTAL_REAL_LAYER_VALID = sum(
+    counts["valid"] for piece_counts in SUMMARY_COUNTS for counts in piece_counts
+)
+TOTAL_REAL_LAYER_MASKED = sum(
+    counts["masked"] for piece_counts in SUMMARY_COUNTS for counts in piece_counts
+)
+
+
+def _format_cells(cells: tuple[tuple[int, int], ...]) -> str:
+    return ", ".join(f"({x}, {y})" for x, y in cells) if cells else "none"
+
+
+def _format_layer_labels(labels: tuple[str, ...]) -> str:
+    return ", ".join(labels) if labels else "none"
+
+
+def make_policy_grid_figure(
+    piece_selection: PieceSelection, rotation: int
+) -> go.Figure:
+    if piece_selection == AGGREGATE_PIECE_VALUE:
+        customdata: list[list[list[str | int]]] = []
+        for grid_y in range(BOARD_HEIGHT):
+            custom_row: list[list[str | int]] = []
+            for grid_x in range(BOARD_WIDTH):
+                aggregate = build_aggregate_cell_info(rotation, grid_x, grid_y)
+                custom_row.append(
+                    [
+                        aggregate.active_count,
+                        aggregate.inactive_count,
+                        _format_cells(aggregate.union_cells),
+                        _format_layer_labels(aggregate.active_piece_labels),
+                    ]
+                )
+            customdata.append(custom_row)
+
+        counts = AGGREGATE_ROTATION_COUNTS[rotation]
+        figure = go.Figure(
+            data=[
+                go.Heatmap(
+                    z=AGGREGATE_GRID_COUNTS_BY_ROTATION[rotation],
+                    x=list(range(BOARD_WIDTH)),
+                    y=list(range(BOARD_HEIGHT)),
+                    customdata=customdata,
+                    showscale=True,
+                    xgap=2,
+                    ygap=2,
+                    zmin=0,
+                    zmax=len(REAL_PIECE_VALUES),
+                    colorbar={"title": "Active<br>pieces"},
+                    colorscale=[
+                        [0.0, "#D7D9CE"],
+                        [0.001, "#F2E7C9"],
+                        [0.25, "#D9C36A"],
+                        [0.6, "#8A9A3A"],
+                        [1.0, "#355E3B"],
+                    ],
+                    hovertemplate=(
+                        "Scheme cell: (%{x}, %{y})<br>"
+                        "Active pieces: %{customdata[0]}<br>"
+                        "Inactive pieces: %{customdata[1]}<br>"
+                        "Union occupied cells: %{customdata[2]}<br>"
+                        "Active pieces at this rotation: %{customdata[3]}<extra></extra>"
+                    ),
+                )
+            ]
+        )
+        figure.update_layout(
+            title=(
+                f"{AGGREGATE_PIECE_LABEL} rotation {ROTATION_LABELS[rotation]}: "
+                f"{counts['valid']} valid, {counts['masked']} masked "
+                f"| all-rotation union: {AGGREGATE_UNION_VALID} ever-active, {AGGREGATE_UNION_MASKED} never-active"
+            ),
+            template="plotly_white",
+            paper_bgcolor="#F7F3E8",
+            plot_bgcolor="#F7F3E8",
+            margin=dict(l=32, r=16, t=56, b=32),
+            font=dict(family="Menlo, Consolas, monospace", color="#2F241F"),
+        )
+        figure.update_xaxes(
+            title="Scheme x",
+            tickmode="array",
+            tickvals=list(range(BOARD_WIDTH)),
+            side="top",
+        )
+        figure.update_yaxes(
+            title="Scheme y",
+            tickmode="array",
+            tickvals=list(range(BOARD_HEIGHT)),
+            autorange="reversed",
+        )
+        return figure
+
+    z_values: list[list[int]] = []
+    customdata: list[list[list[str | int]]] = []
+
+    for grid_y in range(BOARD_HEIGHT):
+        z_row: list[int] = []
+        custom_row: list[list[str | int]] = []
+        for grid_x in range(BOARD_WIDTH):
+            info = build_placement_info(int(piece_selection), rotation, grid_x, grid_y)
+            z_row.append(1 if info.valid else 0)
+            custom_row.append(
+                [
+                    info.anchor_x,
+                    info.anchor_y,
+                    "valid" if info.valid else "masked",
+                    _format_cells(info.occupied_cells),
+                    _format_cells(info.out_of_bounds_cells),
+                ]
+            )
+        z_values.append(z_row)
+        customdata.append(custom_row)
+
+    piece_name = PIECE_NAMES[int(piece_selection)]
+    counts = SUMMARY_COUNTS[int(piece_selection)][rotation]
+    figure = go.Figure(
+        data=[
+            go.Heatmap(
+                z=z_values,
+                x=list(range(BOARD_WIDTH)),
+                y=list(range(BOARD_HEIGHT)),
+                customdata=customdata,
+                showscale=False,
+                xgap=2,
+                ygap=2,
+                colorscale=[
+                    [0.0, "#D7D9CE"],
+                    [0.499, "#D7D9CE"],
+                    [0.5, "#4D7C0F"],
+                    [1.0, "#4D7C0F"],
+                ],
+                hovertemplate=(
+                    "Scheme cell: (%{x}, %{y})<br>"
+                    "Anchor: (%{customdata[0]}, %{customdata[1]})<br>"
+                    "Status: %{customdata[2]}<br>"
+                    "Occupied: %{customdata[3]}<br>"
+                    "Off-board cells: %{customdata[4]}<extra></extra>"
+                ),
+            )
+        ]
+    )
+    figure.update_layout(
+        title=(
+            f"{piece_name} rotation {ROTATION_LABELS[rotation]} "
+            f"({counts['valid']} valid, {counts['masked']} masked)"
+        ),
+        template="plotly_white",
+        paper_bgcolor="#F7F3E8",
+        plot_bgcolor="#F7F3E8",
+        margin=dict(l=32, r=16, t=56, b=32),
+        font=dict(family="Menlo, Consolas, monospace", color="#2F241F"),
+    )
+    figure.update_xaxes(
+        title="Scheme x",
+        tickmode="array",
+        tickvals=list(range(BOARD_WIDTH)),
+        side="top",
+    )
+    figure.update_yaxes(
+        title="Scheme y",
+        tickmode="array",
+        tickvals=list(range(BOARD_HEIGHT)),
+        autorange="reversed",
+    )
+    return figure
+
+
+def make_preview_board(
+    occupied_cells: tuple[tuple[int, int], ...], background_color: str
+) -> html.Div:
+    occupied = set(occupied_cells)
+    grid_children: list[html.Div] = []
+    for y in range(BOARD_HEIGHT):
+        for x in range(BOARD_WIDTH):
+            is_piece = (x, y) in occupied
+            background = background_color if is_piece else "#EFE6D2"
+            grid_children.append(
+                html.Div(
+                    style={
+                        "width": "24px",
+                        "height": "24px",
+                        "border": "1px solid #C8B79C",
+                        "background": background,
+                        "boxSizing": "border-box",
+                    }
+                )
+            )
+
+    return html.Div(
+        grid_children,
+        style={
+            "display": "grid",
+            "gridTemplateColumns": f"repeat({BOARD_WIDTH}, 24px)",
+            "gridTemplateRows": f"repeat({BOARD_HEIGHT}, 24px)",
+            "gap": "1px",
+            "padding": "10px",
+            "background": "#DCCDB6",
+            "border": "1px solid #B89F7A",
+            "borderRadius": "12px",
+            "width": "fit-content",
+        },
+    )
+
+
+def make_summary_table(
+    selected_piece: PieceSelection, selected_rotation: int
+) -> html.Table:
+    header = html.Thead(
+        html.Tr(
+            [
+                html.Th(
+                    "Piece",
+                    style={
+                        "padding": "10px 12px",
+                        "textAlign": "left",
+                        "borderBottom": "2px solid #B89F7A",
+                    },
+                )
+            ]
+            + [
+                html.Th(
+                    f"Rot {label}",
+                    style={
+                        "padding": "10px 12px",
+                        "textAlign": "left",
+                        "borderBottom": "2px solid #B89F7A",
+                    },
+                )
+                for label in ROTATION_LABELS
+            ]
+            + [
+                html.Th(
+                    "Total",
+                    style={
+                        "padding": "10px 12px",
+                        "textAlign": "left",
+                        "borderBottom": "2px solid #B89F7A",
+                    },
+                )
+            ]
+        )
+    )
+
+    body_rows: list[html.Tr] = []
+    for piece_type, piece_name in enumerate(PIECE_NAMES):
+        row_cells = [
+            html.Td(
+                piece_name,
+                style={
+                    "padding": "10px 12px",
+                    "fontWeight": 700,
+                    "borderBottom": "1px solid #D8CBB6",
+                },
+            )
+        ]
+        for rotation in range(4):
+            counts = SUMMARY_COUNTS[piece_type][rotation]
+            is_selected = piece_type == selected_piece and rotation == selected_rotation
+            row_cells.append(
+                html.Td(
+                    [
+                        html.Div(
+                            f"{counts['masked']} masked",
+                            style={"fontWeight": 700, "marginBottom": "2px"},
+                        ),
+                        html.Div(
+                            f"{counts['valid']} valid",
+                            style={"fontSize": "12px", "opacity": 0.8},
+                        ),
+                    ],
+                    style={
+                        "padding": "10px 12px",
+                        "borderBottom": "1px solid #D8CBB6",
+                        "background": "#D9E8BF" if is_selected else "transparent",
+                    },
+                )
+            )
+        total_valid = sum(counts["valid"] for counts in SUMMARY_COUNTS[piece_type])
+        total_masked = sum(counts["masked"] for counts in SUMMARY_COUNTS[piece_type])
+        row_cells.append(
+            html.Td(
+                [
+                    html.Div(
+                        f"{total_valid} valid total",
+                        style={"fontWeight": 700, "marginBottom": "2px"},
+                    ),
+                    html.Div(
+                        f"{total_masked} masked total",
+                        style={"fontSize": "12px", "opacity": 0.8},
+                    ),
+                ],
+                style={
+                    "padding": "10px 12px",
+                    "borderBottom": "1px solid #D8CBB6",
+                    "background": "#D9E8BF"
+                    if piece_type == selected_piece
+                    else "transparent",
+                },
+            )
+        )
+        body_rows.append(html.Tr(row_cells))
+
+    aggregate_selected = selected_piece == AGGREGATE_PIECE_VALUE
+    aggregate_row = [
+        html.Td(
+            AGGREGATE_PIECE_LABEL,
+            style={
+                "padding": "10px 12px",
+                "fontWeight": 700,
+                "borderBottom": "1px solid #D8CBB6",
+            },
+        )
+    ]
+    for rotation in range(4):
+        counts = AGGREGATE_ROTATION_COUNTS[rotation]
+        aggregate_row.append(
+            html.Td(
+                [
+                    html.Div(
+                        f"{counts['masked']} masked",
+                        style={"fontWeight": 700, "marginBottom": "2px"},
+                    ),
+                    html.Div(
+                        f"{counts['valid']} valid",
+                        style={"fontSize": "12px", "opacity": 0.8},
+                    ),
+                ],
+                style={
+                    "padding": "10px 12px",
+                    "borderBottom": "1px solid #D8CBB6",
+                    "background": "#D9E8BF"
+                    if aggregate_selected and rotation == selected_rotation
+                    else "transparent",
+                },
+            )
+        )
+    aggregate_row.append(
+        html.Td(
+            [
+                html.Div(
+                    f"{AGGREGATE_ROTATION_TOTAL_VALID} valid total",
+                    style={"fontWeight": 700, "marginBottom": "2px"},
+                ),
+                html.Div(
+                    f"{AGGREGATE_ROTATION_TOTAL_MASKED} masked total",
+                    style={"fontSize": "12px", "opacity": 0.8},
+                ),
+            ],
+            style={
+                "padding": "10px 12px",
+                "borderBottom": "1px solid #D8CBB6",
+                "background": "#D9E8BF" if aggregate_selected else "transparent",
+            },
+        )
+    )
+    body_rows.append(html.Tr(aggregate_row))
+
+    return html.Table(
+        [header, html.Tbody(body_rows)],
+        style={
+            "width": "100%",
+            "borderCollapse": "collapse",
+            "fontFamily": "Menlo, Consolas, monospace",
+            "fontSize": "13px",
+        },
+    )
+
+
+def make_hover_details(
+    piece_selection: PieceSelection,
+    placement_info: PlacementInfo | None = None,
+    aggregate_info: AggregateCellInfo | None = None,
+) -> html.Div:
+    if piece_selection == AGGREGATE_PIECE_VALUE:
+        if aggregate_info is None:
+            raise ValueError("aggregate_info is required for aggregate selection")
+        return html.Div(
+            [
+                html.H3(
+                    f"{AGGREGATE_PIECE_LABEL} rot {ROTATION_LABELS[aggregate_info.rotation]} @ scheme ({aggregate_info.grid_x}, {aggregate_info.grid_y})",
+                    style={"margin": "0 0 12px 0", "fontSize": "20px"},
+                ),
+                html.P(
+                    f"Active pieces: {aggregate_info.active_count} of {len(REAL_PIECE_VALUES)}",
+                    style={"margin": "0 0 8px 0"},
+                ),
+                html.P(
+                    f"Inactive pieces at this rotation here: {aggregate_info.inactive_count}",
+                    style={"margin": "0 0 8px 0"},
+                ),
+                html.P(
+                    f"Union occupied cells: {_format_cells(aggregate_info.union_cells)}",
+                    style={"margin": "0 0 8px 0"},
+                ),
+                html.P(
+                    f"Active pieces at this rotation: {_format_layer_labels(aggregate_info.active_piece_labels)}",
+                    style={"margin": "0"},
+                ),
+            ]
+        )
+
+    if placement_info is None:
+        raise ValueError("placement_info is required for real piece selection")
+    piece_name = PIECE_NAMES[placement_info.piece_type]
+    return html.Div(
+        [
+            html.H3(
+                f"{piece_name} @ scheme ({placement_info.grid_x}, {placement_info.grid_y})",
+                style={"margin": "0 0 12px 0", "fontSize": "20px"},
+            ),
+            html.P(
+                f"Rotation {ROTATION_LABELS[placement_info.rotation]} | anchor=({placement_info.anchor_x}, {placement_info.anchor_y}) | status={'valid' if placement_info.valid else 'masked'}",
+                style={"margin": "0 0 8px 0"},
+            ),
+            html.P(
+                f"Bounding box: {placement_info.width}x{placement_info.height} from local x=[{placement_info.min_dx}, {placement_info.max_dx}] y=[{placement_info.min_dy}, {placement_info.max_dy}]",
+                style={"margin": "0 0 8px 0"},
+            ),
+            html.P(
+                f"In-bounds occupied cells: {_format_cells(placement_info.in_bounds_cells)}",
+                style={"margin": "0 0 8px 0"},
+            ),
+            html.P(
+                f"Off-board occupied cells: {_format_cells(placement_info.out_of_bounds_cells)}",
+                style={"margin": "0"},
+            ),
+        ]
+    )
+
+
+MINI_CELL_PX = 8
+MINI_GAP_PX = 1
+
+
+def _is_canonical_action_cell(rotation: int, x: int, y: int) -> bool:
+    flat_index = placement_grid_flat_index(rotation, x, y)
+    return int(CELL_TO_ACTION_INDEX[flat_index]) >= 0
+
+
+def _make_mini_placement_grid(piece_type: int, rotation: int) -> html.Div:
+    """Small 20x10 heatmap grid showing valid/masked placements.
+
+    Four visual states:
+    - Green: valid placement for this piece/rotation.
+    - Light gray: invalid for this piece, but at least one other piece can be placed here.
+    - Black: no piece can ever be placed here at this rotation (universally masked),
+      OR force-masked for additional action-space compression.
+    """
+    children: list[html.Div] = []
+    for y in range(BOARD_HEIGHT):
+        for x in range(BOARD_WIDTH):
+            if not _is_canonical_action_cell(rotation, x, y):
+                bg = "#1A1A1A"
+            elif build_placement_info(piece_type, rotation, x, y).valid:
+                bg = "#4D7C0F"
+            elif AGGREGATE_GRID_COUNTS_BY_ROTATION[rotation][y][x] == 0:
+                bg = "#1A1A1A"
+            else:
+                bg = "#D7D9CE"
+            children.append(
+                html.Div(
+                    style={
+                        "width": f"{MINI_CELL_PX}px",
+                        "height": f"{MINI_CELL_PX}px",
+                        "background": bg,
+                        "boxSizing": "border-box",
+                    }
+                )
+            )
+    return html.Div(
+        children,
+        style={
+            "display": "grid",
+            "gridTemplateColumns": f"repeat({BOARD_WIDTH}, {MINI_CELL_PX}px)",
+            "gridTemplateRows": f"repeat({BOARD_HEIGHT}, {MINI_CELL_PX}px)",
+            "gap": f"{MINI_GAP_PX}px",
+            "background": "#C8B79C",
+        },
+    )
+
+
+def _make_disabled_grid() -> html.Div:
+    """Fully grayed-out grid for a redundant rotation."""
+    children: list[html.Div] = []
+    for _ in range(BOARD_HEIGHT * BOARD_WIDTH):
+        children.append(
+            html.Div(
+                style={
+                    "width": f"{MINI_CELL_PX}px",
+                    "height": f"{MINI_CELL_PX}px",
+                    "background": "#B8B8B8",
+                    "boxSizing": "border-box",
+                }
+            )
+        )
+    return html.Div(
+        children,
+        style={
+            "display": "grid",
+            "gridTemplateColumns": f"repeat({BOARD_WIDTH}, {MINI_CELL_PX}px)",
+            "gridTemplateRows": f"repeat({BOARD_HEIGHT}, {MINI_CELL_PX}px)",
+            "gap": f"{MINI_GAP_PX}px",
+            "background": "#A0A0A0",
+        },
+    )
+
+
+def _make_piece_preview_mini(piece_type: int) -> html.Div:
+    """Small 20x10 board preview with the piece drawn at a centered position."""
+    cells = _piece_cells(piece_type, 0)
+    anchor_x, anchor_y = 4, 9
+    occupied = {(anchor_x + dx, anchor_y + dy) for dx, dy in cells}
+    pc = PIECE_COLORS[piece_type]
+    color = f"rgb({pc[0]}, {pc[1]}, {pc[2]})"
+    children: list[html.Div] = []
+    for y in range(BOARD_HEIGHT):
+        for x in range(BOARD_WIDTH):
+            children.append(
+                html.Div(
+                    style={
+                        "width": f"{MINI_CELL_PX}px",
+                        "height": f"{MINI_CELL_PX}px",
+                        "background": color if (x, y) in occupied else "#EFE6D2",
+                        "boxSizing": "border-box",
+                    }
+                )
+            )
+    return html.Div(
+        children,
+        style={
+            "display": "grid",
+            "gridTemplateColumns": f"repeat({BOARD_WIDTH}, {MINI_CELL_PX}px)",
+            "gridTemplateRows": f"repeat({BOARD_HEIGHT}, {MINI_CELL_PX}px)",
+            "gap": f"{MINI_GAP_PX}px",
+            "background": "#C8B79C",
+        },
+    )
+
+
+def make_exploded_placement_section() -> html.Div:
+    """Build a 7-row x 5-column exploded view of all piece/rotation placement grids."""
+    col_headers = (
+        [
+            html.Div(
+                "Piece",
+                style={
+                    "fontWeight": 700,
+                    "textAlign": "center",
+                    "padding": "4px",
+                },
+            )
+        ]
+        + [
+            html.Div(
+                f"Rot {label}",
+                style={
+                    "fontWeight": 700,
+                    "textAlign": "center",
+                    "padding": "4px",
+                },
+            )
+            for label in ROTATION_LABELS
+        ]
+        + [
+            html.Div(
+                "Preview",
+                style={
+                    "fontWeight": 700,
+                    "textAlign": "center",
+                    "padding": "4px",
+                },
+            )
+        ]
+    )
+
+    rows: list[html.Div] = []
+    rows.append(
+        html.Div(
+            col_headers,
+            style={
+                "display": "grid",
+                "gridTemplateColumns": "60px repeat(5, 1fr)",
+                "gap": "10px",
+                "alignItems": "center",
+            },
+        )
+    )
+
+    for piece_type, piece_name in enumerate(PIECE_NAMES):
+        pc = PIECE_COLORS[piece_type]
+        label_color = f"rgb({pc[0]}, {pc[1]}, {pc[2]})"
+        row_children: list[html.Div] = [
+            html.Div(
+                piece_name,
+                style={
+                    "fontWeight": 700,
+                    "fontSize": "16px",
+                    "textAlign": "center",
+                    "color": label_color,
+                },
+            )
+        ]
+        for rotation in range(4):
+            is_disabled = is_redundant_rotation(piece_type, rotation)
+            if is_disabled:
+                grid = _make_disabled_grid()
+                caption = "redundant"
+            else:
+                grid = _make_mini_placement_grid(piece_type, rotation)
+                counts = SUMMARY_COUNTS[piece_type][rotation]
+                caption = f"{counts['valid']}v / {counts['masked']}m"
+            row_children.append(
+                html.Div(
+                    [
+                        grid,
+                        html.Div(
+                            caption,
+                            style={
+                                "fontSize": "10px",
+                                "textAlign": "center",
+                                "marginTop": "2px",
+                                "color": "#888" if is_disabled else "#2F241F",
+                            },
+                        ),
+                    ],
+                    style={
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "alignItems": "center",
+                    },
+                )
+            )
+        row_children.append(
+            html.Div(
+                [
+                    _make_piece_preview_mini(piece_type),
+                    html.Div(
+                        piece_name,
+                        style={
+                            "fontSize": "10px",
+                            "textAlign": "center",
+                            "marginTop": "2px",
+                        },
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "flexDirection": "column",
+                    "alignItems": "center",
+                },
+            )
+        )
+        rows.append(
+            html.Div(
+                row_children,
+                style={
+                    "display": "grid",
+                    "gridTemplateColumns": "60px repeat(5, 1fr)",
+                    "gap": "10px",
+                    "alignItems": "center",
+                    "padding": "6px 0",
+                    "borderBottom": "1px solid #D8CBB6",
+                },
+            )
+        )
+
+    return html.Div(
+        [
+            html.H2(
+                "Exploded Placement Grids (All Pieces x Rotations)",
+                style={
+                    "margin": "0 0 14px 0",
+                    "fontFamily": "Georgia, Times New Roman, serif",
+                },
+            ),
+            html.Div(
+                "Grayed-out rotations are redundant: O uses only rot 0 (all shapes identical), "
+                "I/S/Z use rotations 0 and R only (rot 2/L mirror 0/R). Only T, J, L use all four.",
+                style={"marginBottom": "14px", "fontSize": "13px", "lineHeight": 1.5},
+            ),
+            *rows,
+        ],
+        style={
+            "marginTop": "18px",
+            "padding": "18px",
+            "background": "#FFF9EE",
+            "border": "1px solid #D0BFA2",
+            "borderRadius": "18px",
+        },
+    )
+
+
+EXPLODED_SECTION = make_exploded_placement_section()
+
+# ---------------------------------------------------------------------------
+# Flattened action-space section
+# ---------------------------------------------------------------------------
+
+# For each rotation, the list of (x, y) cells that are in the action space,
+# enumerated in row-major order (top-to-bottom, left-to-right).
+FLAT_ACTION_CELLS: list[list[tuple[int, int]]] = []
+for rotation in range(4):
+    FLAT_ACTION_CELLS.append(
+        [
+            (grid_x, grid_y)
+            for cell_rotation, grid_x, grid_y in ACTION_TO_CANONICAL_CELL
+            if cell_rotation == rotation
+        ]
+    )
+
+FLAT_TOTAL_CELLS = sum(len(cells) for cells in FLAT_ACTION_CELLS)
+
+# Piece dropdown options for the flat section (real pieces only, no aggregate).
+FLAT_PIECE_OPTIONS = [
+    {"label": name, "value": idx} for idx, name in enumerate(PIECE_NAMES)
+]
+MIRROR_HEAT_COLORSCALE = [
+    [0.0, "#D7D9CE"],
+    [0.239, "#D7D9CE"],
+    [0.24, "#355C7D"],
+    [0.38, "#5E4FA2"],
+    [0.52, "#2C7BB6"],
+    [0.66, "#00A6CA"],
+    [0.8, "#F18F01"],
+    [0.9, "#F55D3E"],
+    [1.0, "#C51B7D"],
+]
+FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL: list[list[int]] = []
+FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX: list[tuple[int, int]] = []
+_flat_global_index = 0
+for _rotation, _cells in enumerate(FLAT_ACTION_CELLS):
+    _row_global_indices: list[int] = []
+    for _local_index, _cell in enumerate(_cells):
+        _row_global_indices.append(_flat_global_index)
+        FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX.append((_rotation, _local_index))
+        _flat_global_index += 1
+    FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL.append(_row_global_indices)
+if _flat_global_index != FLAT_TOTAL_CELLS:
+    raise ValueError(
+        "Flat action indexing drifted while building global-index tables: "
+        f"expected {FLAT_TOTAL_CELLS}, got {_flat_global_index}"
+    )
+
+MIRROR_SOURCE_RANK_BY_PIECE: list[dict[int, int]] = [
+    {global_index: rank for rank, global_index in enumerate(valid_indices)}
+    for valid_indices in FLAT_VALID_INDICES_BY_PIECE
+]
+MIRROR_SOURCE_INDEX_BY_TARGET_INDEX: list[dict[int, int]] = []
+for _source_piece, _valid_indices in enumerate(FLAT_VALID_INDICES_BY_PIECE):
+    _inverse_map: dict[int, int] = {}
+    for _source_index in _valid_indices:
+        _target_index = int(FLAT_MIRROR_INDEX_BY_PIECE[_source_piece, _source_index])
+        if _target_index in _inverse_map:
+            raise ValueError(
+                "Mirror mapping is not injective for piece "
+                f"{_source_piece}: target {_target_index}"
+            )
+        _inverse_map[_target_index] = _source_index
+    MIRROR_SOURCE_INDEX_BY_TARGET_INDEX.append(_inverse_map)
+
+
+def _piece_color_string(piece_type: int) -> str:
+    color = PIECE_COLORS[piece_type]
+    return f"rgb({color[0]}, {color[1]}, {color[2]})"
+
+
+def _empty_flat_preview_figure() -> dict:
+    return _make_flat_preview_figure([], "#EFE6D2")
+
+
+def _normalize_pair_heat(rank: int, total: int) -> float:
+    if total <= 1:
+        return 1.0
+    return 0.24 + (0.76 * (rank / (total - 1)))
+
+
+def _make_flat_row_highlight_trace(local_index: int, cell_size: int) -> go.Scatter:
+    return go.Scatter(
+        x=[local_index],
+        y=[0],
+        mode="markers",
+        marker={
+            "symbol": "square-open",
+            "size": cell_size + 6,
+            "color": "rgba(0,0,0,0)",
+            "line": {"color": "#2F241F", "width": 2.5},
+        },
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+
+def _mirror_row_figure(
+    *,
+    source_piece: int,
+    display_piece: int,
+    rotation: int,
+    side: str,
+    highlight_global_index: int | None,
+) -> go.Figure:
+    cells = FLAT_ACTION_CELLS[rotation]
+    n = len(cells)
+    if n == 0:
+        return make_flat_row_figure(rotation, None)
+
+    pair_count = len(FLAT_VALID_INDICES_BY_PIECE[source_piece])
+    source_ranks = MIRROR_SOURCE_RANK_BY_PIECE[source_piece]
+    inverse_map = MIRROR_SOURCE_INDEX_BY_TARGET_INDEX[source_piece]
+    display_valid_indices = set(FLAT_VALID_INDICES_BY_PIECE[display_piece])
+
+    z_row: list[float] = []
+    custom: list[list[int | str]] = []
+    for local_index, (grid_x, grid_y) in enumerate(cells):
+        global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[rotation][local_index]
+        if side == "left":
+            source_index = global_index if global_index in source_ranks else None
+            counterpart_index = (
+                int(FLAT_MIRROR_INDEX_BY_PIECE[source_piece, global_index])
+                if source_index is not None
+                else -1
+            )
+        else:
+            source_index = inverse_map.get(global_index)
+            counterpart_index = source_index if source_index is not None else -1
+
+        if source_index is None or global_index not in display_valid_indices:
+            z_row.append(0.0)
+            pair_rank = -1
+            status = "masked"
+        else:
+            pair_rank = source_ranks[source_index]
+            z_row.append(_normalize_pair_heat(pair_rank, pair_count))
+            status = "mapped"
+
+        custom.append(
+            [
+                grid_x,
+                grid_y,
+                global_index,
+                counterpart_index,
+                pair_rank,
+                status,
+            ]
+        )
+
+    hover_label = "Mirror idx" if side == "left" else "Source idx"
+    hover_template = (
+        "Action idx %{customdata[2]}<br>"
+        "Grid: (%{customdata[0]}, %{customdata[1]})<br>"
+        f"{hover_label}: "
+        "%{customdata[3]}<br>"
+        "Pair rank: %{customdata[4]}<br>"
+        "Status: %{customdata[5]}"
+        "<extra></extra>"
+    )
+
+    fig = go.Figure(
+        data=[
+            go.Heatmap(
+                z=[z_row],
+                x=list(range(n)),
+                y=[0],
+                customdata=[custom],
+                showscale=False,
+                xgap=1,
+                ygap=0,
+                zmin=0,
+                zmax=1,
+                colorscale=MIRROR_HEAT_COLORSCALE,
+                hovertemplate=hover_template,
+            )
+        ]
+    )
+    cell_w = max(6, min(10, 1400 // n))
+    if highlight_global_index is not None:
+        highlight_rotation, highlight_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+            highlight_global_index
+        ]
+        if highlight_rotation == rotation:
+            fig.add_trace(_make_flat_row_highlight_trace(highlight_local_index, cell_w))
+    fig.update_layout(
+        height=cell_w + 18,
+        width=n * (cell_w + 1) + 40,
+        margin=dict(l=0, r=0, t=0, b=0),
+        template="plotly_white",
+        paper_bgcolor="#F7F3E8",
+        plot_bgcolor="#F7F3E8",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+    )
+    return fig
+
+
+def _build_mirror_selection(
+    source_piece: int,
+    hover_data_by_id: dict[str, dict | None],
+) -> tuple[int | None, int | None, int | None, int | None]:
+    ctx = dash.callback_context
+    hovered_side: int | None = None
+    hovered_global_index: int | None = None
+    if ctx.triggered:
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        hover_data = hover_data_by_id.get(triggered_id)
+        if (
+            hover_data
+            and hover_data.get("points")
+            and isinstance(hover_data["points"][0].get("x"), (int, float))
+        ):
+            local_index = int(hover_data["points"][0]["x"])
+            if triggered_id.startswith("mirror-left-row-"):
+                rotation = int(triggered_id.removeprefix("mirror-left-row-"))
+                if 0 <= local_index < len(FLAT_ACTION_CELLS[rotation]):
+                    hovered_side = 0
+                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[
+                        rotation
+                    ][local_index]
+            elif triggered_id.startswith("mirror-right-row-"):
+                rotation = int(triggered_id.removeprefix("mirror-right-row-"))
+                if 0 <= local_index < len(FLAT_ACTION_CELLS[rotation]):
+                    hovered_side = 1
+                    hovered_global_index = FLAT_GLOBAL_INDEX_BY_ROTATION_LOCAL[
+                        rotation
+                    ][local_index]
+
+    if hovered_side is None or hovered_global_index is None:
+        source_global_index = FLAT_VALID_INDICES_BY_PIECE[source_piece][0]
+        target_global_index = int(
+            FLAT_MIRROR_INDEX_BY_PIECE[source_piece, source_global_index]
+        )
+        return (
+            source_global_index,
+            target_global_index,
+            source_global_index,
+            target_global_index,
+        )
+
+    if hovered_side == 0:
+        source_global_index = (
+            hovered_global_index
+            if hovered_global_index in MIRROR_SOURCE_RANK_BY_PIECE[source_piece]
+            else None
+        )
+        if source_global_index is None:
+            return hovered_global_index, None, hovered_global_index, None
+        target_global_index = int(
+            FLAT_MIRROR_INDEX_BY_PIECE[source_piece, source_global_index]
+        )
+        return (
+            source_global_index,
+            target_global_index,
+            source_global_index,
+            target_global_index,
+        )
+
+    source_global_index = MIRROR_SOURCE_INDEX_BY_TARGET_INDEX[source_piece].get(
+        hovered_global_index
+    )
+    if source_global_index is None:
+        return None, hovered_global_index, None, hovered_global_index
+    return (
+        source_global_index,
+        hovered_global_index,
+        source_global_index,
+        hovered_global_index,
+    )
+
+
+def _mirror_hover_details(
+    *,
+    source_piece: int,
+    target_piece: int,
+    source_global_index: int | None,
+    target_global_index: int | None,
+) -> html.Div:
+    if source_global_index is None or target_global_index is None:
+        return html.Div(
+            [
+                html.H3(
+                    "Mirror Mapping", style={"margin": "0 0 8px 0", "fontSize": "18px"}
+                ),
+                html.Div(
+                    "The hovered cell is outside the selected piece's valid logit support, so there is no mirrored partner to show.",
+                    style={"lineHeight": 1.5},
+                ),
+            ]
+        )
+
+    source_rotation, source_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+        source_global_index
+    ]
+    source_grid_x, source_grid_y = FLAT_ACTION_CELLS[source_rotation][
+        source_local_index
+    ]
+    target_rotation, target_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+        target_global_index
+    ]
+    target_grid_x, target_grid_y = FLAT_ACTION_CELLS[target_rotation][
+        target_local_index
+    ]
+    pair_rank = MIRROR_SOURCE_RANK_BY_PIECE[source_piece][source_global_index]
+    total_pairs = len(FLAT_VALID_INDICES_BY_PIECE[source_piece])
+    return html.Div(
+        [
+            html.H3(
+                "Mirror Mapping", style={"margin": "0 0 10px 0", "fontSize": "18px"}
+            ),
+            html.Div(
+                f"{PIECE_NAMES[source_piece]} -> {PIECE_NAMES[target_piece]} | pair rank {pair_rank + 1} / {total_pairs}",
+                style={"fontWeight": 700, "marginBottom": "8px"},
+            ),
+            html.Div(
+                f"Left: idx {source_global_index} | rot {ROTATION_LABELS[source_rotation]} | grid ({source_grid_x}, {source_grid_y})",
+                style={"marginBottom": "6px"},
+            ),
+            html.Div(
+                f"Right: idx {target_global_index} | rot {ROTATION_LABELS[target_rotation]} | grid ({target_grid_x}, {target_grid_y})"
+            ),
+        ]
+    )
+
+
+def _mirror_section_layout() -> html.Div:
+    empty_board = _empty_flat_preview_figure()
+    paired_rows: list[html.Div] = []
+    for rotation, cells in enumerate(FLAT_ACTION_CELLS):
+        paired_rows.append(
+            html.Div(
+                [
+                    html.Div(
+                        f"Rot {ROTATION_LABELS[rotation]}",
+                        style={
+                            "width": "54px",
+                            "fontWeight": 700,
+                            "fontSize": "12px",
+                            "paddingTop": "18px",
+                            "flexShrink": 0,
+                        },
+                    ),
+                    html.Div(
+                        dcc.Graph(
+                            id=f"mirror-left-row-{rotation}",
+                            clear_on_unhover=True,
+                            config={"displayModeBar": False},
+                        ),
+                        style={"overflowX": "auto", "flex": "1"},
+                    ),
+                    html.Div(
+                        dcc.Graph(
+                            id=f"mirror-right-row-{rotation}",
+                            clear_on_unhover=True,
+                            config={"displayModeBar": False},
+                        ),
+                        style={"overflowX": "auto", "flex": "1"},
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "gap": "14px",
+                    "alignItems": "start",
+                    "marginBottom": "8px",
+                },
+            )
+        )
+
+    return html.Div(
+        [
+            html.H2(
+                "Mirror Mapping",
+                style={
+                    "margin": "0 0 10px 0",
+                    "fontFamily": "Georgia, Times New Roman, serif",
+                },
+            ),
+            html.Div(
+                "Hover a colored action cell on either side. The visualizer highlights the mirrored partner, and the two board previews show the corresponding placement before and after left-right mirroring.",
+                style={"marginBottom": "14px", "lineHeight": 1.5},
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Label(
+                                "Source Piece",
+                                style={"display": "block", "marginBottom": "4px"},
+                            ),
+                            dcc.Dropdown(
+                                id="mirror-piece-dropdown",
+                                options=FLAT_PIECE_OPTIONS,  # type: ignore[arg-type]
+                                value=2,
+                                clearable=False,
+                                style={"width": "180px"},
+                            ),
+                        ],
+                        style={"display": "inline-block", "marginRight": "18px"},
+                    ),
+                    html.Div(
+                        id="mirror-piece-summary",
+                        style={
+                            "display": "inline-block",
+                            "fontWeight": 700,
+                            "fontSize": "13px",
+                            "lineHeight": "38px",
+                        },
+                    ),
+                ],
+                style={"marginBottom": "14px"},
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        "Original Logit Space",
+                        style={"fontWeight": 700, "marginLeft": "68px", "flex": "1"},
+                    ),
+                    html.Div(
+                        "Mirrored Logit Space",
+                        style={"fontWeight": 700, "flex": "1"},
+                    ),
+                ],
+                style={"display": "flex", "gap": "14px", "marginBottom": "6px"},
+            ),
+            *paired_rows,
+            html.Div(
+                [
+                    html.Div(
+                        id="mirror-hover-details",
+                        style={
+                            "padding": "14px 16px",
+                            "background": "#FFF9EE",
+                            "border": "1px solid #D0BFA2",
+                            "borderRadius": "16px",
+                            "minWidth": "300px",
+                            "flex": "1",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                "Original Placement",
+                                style={"fontWeight": 700, "marginBottom": "8px"},
+                            ),
+                            dcc.Graph(
+                                id="mirror-left-preview-graph",
+                                figure=empty_board,
+                                config={"displayModeBar": False},
+                                style={"width": "282px", "height": "540px"},
+                            ),
+                        ],
+                        style={
+                            "padding": "14px 16px",
+                            "background": "#FFF9EE",
+                            "border": "1px solid #D0BFA2",
+                            "borderRadius": "16px",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                "Mirrored Placement",
+                                style={"fontWeight": 700, "marginBottom": "8px"},
+                            ),
+                            dcc.Graph(
+                                id="mirror-right-preview-graph",
+                                figure=empty_board,
+                                config={"displayModeBar": False},
+                                style={"width": "282px", "height": "540px"},
+                            ),
+                        ],
+                        style={
+                            "padding": "14px 16px",
+                            "background": "#FFF9EE",
+                            "border": "1px solid #D0BFA2",
+                            "borderRadius": "16px",
+                        },
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "gap": "16px",
+                    "flexWrap": "wrap",
+                    "marginTop": "14px",
+                },
+            ),
+        ],
+        style={
+            "marginTop": "18px",
+            "padding": "18px",
+            "background": "#FFF9EE",
+            "border": "1px solid #D0BFA2",
+            "borderRadius": "18px",
+        },
+    )
+
+
+def make_flat_row_figure(rotation: int, piece_type: int | None) -> go.Figure:
+    """Build a 1-row heatmap for one rotation's flattened action cells."""
+    cells = FLAT_ACTION_CELLS[rotation]
+    n = len(cells)
+    if n == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            height=40,
+            margin=dict(l=0, r=0, t=0, b=0),
+            template="plotly_white",
+            paper_bgcolor="#F7F3E8",
+            plot_bgcolor="#F7F3E8",
+            annotations=[
+                dict(
+                    text="empty (redundant rotation)",
+                    xref="paper",
+                    yref="paper",
+                    x=0.5,
+                    y=0.5,
+                    showarrow=False,
+                    font=dict(
+                        size=12,
+                        color="#888",
+                        family="Menlo, Consolas, monospace",
+                    ),
+                )
+            ],
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+        )
+        return fig
+
+    # Determine per-cell validity for the selected piece.
+    z_row: list[int] = []
+    custom: list[list[int]] = []
+    piece_redundant_rotation = piece_type is not None and is_redundant_rotation(
+        piece_type, rotation
+    )
+    valid_count = 0
+    for x, y in cells:
+        if piece_type is None:
+            val = 1
+        elif piece_redundant_rotation:
+            val = 0
+        else:
+            val = 1 if build_placement_info(piece_type, rotation, x, y).valid else 0
+        z_row.append(val)
+        custom.append([x, y])
+        valid_count += val
+
+    fig = go.Figure(
+        data=[
+            go.Heatmap(
+                z=[z_row],
+                x=list(range(n)),
+                y=[0],
+                customdata=[custom],
+                showscale=False,
+                xgap=1,
+                ygap=0,
+                zmin=0,
+                zmax=1,
+                colorscale=[
+                    [0.0, "#D7D9CE"],
+                    [0.499, "#D7D9CE"],
+                    [0.5, "#4D7C0F"],
+                    [1.0, "#4D7C0F"],
+                ],
+                hovertemplate=(
+                    "Action idx %{x}<br>"
+                    "Grid: (%{customdata[0]}, %{customdata[1]})"
+                    "<extra></extra>"
+                ),
+            )
+        ]
+    )
+    cell_w = max(6, min(10, 1400 // n))
+    fig.update_layout(
+        height=cell_w + 16,
+        width=n * (cell_w + 1) + 40,
+        margin=dict(l=0, r=0, t=0, b=0),
+        template="plotly_white",
+        paper_bgcolor="#F7F3E8",
+        plot_bgcolor="#F7F3E8",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+    )
+    return fig
+
+
+def _make_flat_preview_figure(
+    occupied: list[tuple[int, int]], piece_color: str
+) -> dict:
+    """Return a plotly figure dict for the flat-section board preview."""
+    z = [[0] * BOARD_WIDTH for _ in range(BOARD_HEIGHT)]
+    for x, y in occupied:
+        if 0 <= x < BOARD_WIDTH and 0 <= y < BOARD_HEIGHT:
+            z[y][x] = 1
+    return {
+        "data": [
+            {
+                "type": "heatmap",
+                "z": z,
+                "x": list(range(BOARD_WIDTH)),
+                "y": list(range(BOARD_HEIGHT)),
+                "showscale": False,
+                "xgap": 2,
+                "ygap": 2,
+                "zmin": 0,
+                "zmax": 1,
+                "colorscale": [
+                    [0.0, "#EFE6D2"],
+                    [0.499, "#EFE6D2"],
+                    [0.5, piece_color],
+                    [1.0, piece_color],
+                ],
+                "hoverinfo": "skip",
+            }
+        ],
+        "layout": {
+            "template": "plotly_white",
+            "paper_bgcolor": "#FFF9EE",
+            "plot_bgcolor": "#FFF9EE",
+            "margin": {"l": 24, "r": 8, "t": 8, "b": 8},
+            "font": {"family": "Menlo, Consolas, monospace", "color": "#2F241F"},
+            "xaxis": {
+                "visible": False,
+                "range": [-0.5, BOARD_WIDTH - 0.5],
+            },
+            "yaxis": {
+                "visible": False,
+                "autorange": "reversed",
+                "range": [-0.5, BOARD_HEIGHT - 0.5],
+            },
+        },
+    }
+
+
+def _flat_section_layout() -> html.Div:
+    """Build the flattened action-space section layout."""
+    rows: list[html.Div] = []
+    for rot in range(4):
+        n = len(FLAT_ACTION_CELLS[rot])
+        label = f"Rot {ROTATION_LABELS[rot]}: {n} cells"
+        rows.append(
+            html.Div(
+                [
+                    html.Div(
+                        label,
+                        style={
+                            "fontWeight": 700,
+                            "fontSize": "12px",
+                            "marginBottom": "2px",
+                        },
+                    ),
+                    html.Div(
+                        dcc.Graph(
+                            id=f"flat-row-{rot}",
+                            clear_on_unhover=True,
+                            config={"displayModeBar": False},
+                        ),
+                        style={"overflowX": "auto"},
+                    ),
+                ],
+                style={"marginBottom": "8px"},
+            )
+        )
+
+    # Precompute data for the clientside hover callback.
+    precomputed = {
+        "flat_cells": [[[x, y] for x, y in cells] for cells in FLAT_ACTION_CELLS],
+        "tetromino_cells": [
+            [[[dx, dy] for dx, dy in rot] for rot in piece] for piece in TETROMINO_CELLS
+        ],
+        "two_rot_pieces": sorted(PIECES_TWO_ROTATIONS),
+        "one_rot_pieces": sorted(PIECES_ONE_ROTATIONS),
+        "piece_colors": [list(c) for c in PIECE_COLORS],
+    }
+
+    # Empty board figure used as initial state.
+    empty_board = _make_flat_preview_figure([], "#EFE6D2")
+
+    return html.Div(
+        [
+            dcc.Store(id="flat-precomputed", data=precomputed),
+            html.H2(
+                "Flattened Action Space",
+                style={
+                    "margin": "0 0 10px 0",
+                    "fontFamily": "Georgia, Times New Roman, serif",
+                },
+            ),
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Label(
+                                "Piece",
+                                style={"display": "block", "marginBottom": "4px"},
+                            ),
+                            dcc.Dropdown(
+                                id="flat-piece-dropdown",
+                                options=FLAT_PIECE_OPTIONS,  # type: ignore[arg-type]
+                                value=2,
+                                clearable=False,
+                                style={"width": "160px"},
+                            ),
+                        ],
+                        style={"display": "inline-block", "marginRight": "24px"},
+                    ),
+                    html.Div(
+                        f"Total action-space cells: {FLAT_TOTAL_CELLS}  "
+                        f"({' + '.join(str(len(c)) for c in FLAT_ACTION_CELLS)})",
+                        style={
+                            "display": "inline-block",
+                            "fontWeight": 700,
+                            "fontSize": "13px",
+                            "verticalAlign": "bottom",
+                            "lineHeight": "38px",
+                        },
+                    ),
+                ],
+                style={"marginBottom": "14px"},
+            ),
+            *rows,
+            html.Div(
+                [
+                    html.H3(
+                        "Board Preview",
+                        style={"margin": "0 0 8px 0", "fontSize": "18px"},
+                    ),
+                    dcc.Graph(
+                        id="flat-preview-graph",
+                        figure=empty_board,
+                        config={"displayModeBar": False},
+                        style={"width": "282px", "height": "540px"},
+                    ),
+                ],
+                style={"marginTop": "12px"},
+            ),
+        ],
+        style={
+            "marginTop": "18px",
+            "padding": "18px",
+            "background": "#FFF9EE",
+            "border": "1px solid #D0BFA2",
+            "borderRadius": "18px",
+        },
+    )
+
+
+FLAT_SECTION = _flat_section_layout()
+MIRROR_SECTION = _mirror_section_layout()
+
+
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
+app.title = "Policy Grid Visualizer"
+
+app.layout = html.Div(
+    [
+        html.Div(id="keyboard-target", tabIndex="0", style={"outline": "none"}),
+        dcc.Store(id="keyboard-event", data={"key": "", "timestamp": 0}),
+        html.Div(
+            [
+                html.H1(
+                    "Policy Grid Visualizer",
+                    style={
+                        "margin": "0 0 8px 0",
+                        "fontFamily": "Georgia, Times New Roman, serif",
+                        "fontSize": "36px",
+                        "letterSpacing": "-0.02em",
+                    },
+                ),
+                html.P(
+                    "Inspect the normalized 20x10x4 placement scheme: each grid cell is a normalized translation slot for the selected piece and rotation. After collapsing redundant piece rotations and dropping permanently inactive cells, the runtime action space keeps 671 placement cells plus hold.",
+                    style={"margin": "0", "maxWidth": "900px", "lineHeight": 1.5},
+                ),
+            ],
+            style={
+                "padding": "24px 28px 18px 28px",
+                "background": "linear-gradient(135deg, #F1E5C8 0%, #E7D7B3 100%)",
+                "border": "1px solid #C8B79C",
+                "borderRadius": "20px",
+                "marginBottom": "18px",
+            },
+        ),
+        html.Div(
+            [
+                html.Div(
+                    [
+                        html.Label(
+                            "Current Piece",
+                            style={"display": "block", "marginBottom": "8px"},
+                        ),
+                        dcc.Dropdown(
+                            id="piece-dropdown",
+                            options=PIECE_SELECTOR_OPTIONS,  # type: ignore[arg-type]
+                            value=2,
+                            clearable=False,
+                        ),
+                    ],
+                    style={"minWidth": "200px", "flex": "1"},
+                ),
+                html.Div(
+                    [
+                        html.Label(
+                            "Rotation",
+                            style={"display": "block", "marginBottom": "8px"},
+                        ),
+                        dcc.RadioItems(
+                            id="rotation-radio",
+                            options=[
+                                {"label": label, "value": rotation}
+                                for rotation, label in enumerate(ROTATION_LABELS)
+                            ],
+                            value=0,
+                            inline=True,
+                            inputStyle={"marginRight": "6px", "marginLeft": "12px"},
+                            labelStyle={"marginRight": "8px"},
+                        ),
+                    ],
+                    style={"minWidth": "240px", "flex": "1"},
+                ),
+                html.Div(
+                    [
+                        html.Div(
+                            "Hold Action",
+                            style={"fontWeight": 700, "marginBottom": "6px"},
+                        ),
+                        html.Div(
+                            "Recommended encoding: keep hold as a separate non-spatial logit from pooled fused features, then append it after the 671 canonical placement logits.",
+                            style={"lineHeight": 1.45, "fontSize": "13px"},
+                        ),
+                    ],
+                    style={
+                        "flex": "2",
+                        "padding": "14px 16px",
+                        "background": "#EFE6D2",
+                        "border": "1px solid #D0BFA2",
+                        "borderRadius": "14px",
+                    },
+                ),
+                html.Div(
+                    [
+                        html.Div(
+                            "Keys",
+                            style={"fontWeight": 700, "marginBottom": "6px"},
+                        ),
+                        html.Div(
+                            "Left/Right: rotation, Up/Down: piece, 1-7 real pieces, 8 selects D aggregate.",
+                            style={"lineHeight": 1.45, "fontSize": "13px"},
+                        ),
+                    ],
+                    style={
+                        "flex": "1.4",
+                        "padding": "14px 16px",
+                        "background": "#EFE6D2",
+                        "border": "1px solid #D0BFA2",
+                        "borderRadius": "14px",
+                    },
+                ),
+            ],
+            style={
+                "display": "flex",
+                "gap": "16px",
+                "alignItems": "end",
+                "flexWrap": "wrap",
+                "marginBottom": "18px",
+            },
+        ),
+        html.Div(
+            [
+                html.Div(
+                    dcc.Graph(
+                        id="policy-grid",
+                        clear_on_unhover=False,
+                        config={"displayModeBar": False},
+                    ),
+                    style={
+                        "flex": "1.2",
+                        "minWidth": "460px",
+                        "padding": "14px",
+                        "background": "#FFF9EE",
+                        "border": "1px solid #D0BFA2",
+                        "borderRadius": "18px",
+                    },
+                ),
+                html.Div(
+                    [
+                        html.Div(
+                            id="hover-details",
+                            style={
+                                "padding": "14px 16px",
+                                "background": "#FFF9EE",
+                                "border": "1px solid #D0BFA2",
+                                "borderRadius": "18px",
+                                "marginBottom": "16px",
+                            },
+                        ),
+                        html.Div(
+                            id="preview-board",
+                            style={
+                                "padding": "14px 16px",
+                                "background": "#FFF9EE",
+                                "border": "1px solid #D0BFA2",
+                                "borderRadius": "18px",
+                            },
+                        ),
+                    ],
+                    style={"flex": "1", "minWidth": "360px"},
+                ),
+            ],
+            style={"display": "flex", "gap": "18px", "flexWrap": "wrap"},
+        ),
+        html.Div(
+            [
+                html.H2(
+                    "Mask Counts By Piece And Rotation",
+                    style={
+                        "margin": "0 0 14px 0",
+                        "fontFamily": "Georgia, Times New Roman, serif",
+                    },
+                ),
+                html.Div(id="summary-table"),
+                html.Div(
+                    [
+                        html.Div(
+                            f"Across all 28 real piece/rotation maps: {TOTAL_REAL_LAYER_MASKED} masked / {TOTAL_REAL_LAYER_VALID} valid",
+                            style={"fontWeight": 700},
+                        ),
+                        html.Div(
+                            f"Aggregate D union: {AGGREGATE_UNION_VALID} ever-active cells / {AGGREGATE_UNION_MASKED} never-active cells. This still only reflects board-boundary masking under the normalized 20x10 scheme, not collisions with an actual board state.",
+                            style={"marginTop": "6px", "fontSize": "13px"},
+                        ),
+                    ],
+                    style={"marginTop": "14px"},
+                ),
+            ],
+            style={
+                "marginTop": "18px",
+                "padding": "18px",
+                "background": "#FFF9EE",
+                "border": "1px solid #D0BFA2",
+                "borderRadius": "18px",
+            },
+        ),
+        EXPLODED_SECTION,
+        FLAT_SECTION,
+        MIRROR_SECTION,
+    ],
+    style={
+        "minHeight": "100vh",
+        "padding": "24px",
+        "background": "linear-gradient(180deg, #F7F3E8 0%, #EDE2C9 100%)",
+        "color": "#2F241F",
+        "fontFamily": "Menlo, Consolas, monospace",
+    },
+)
+
+
+clientside_callback(
+    """
+    function(nClicks) {
+        if (!window._policyGridKeyboardListenerSet) {
+            window._policyGridKeyboardListenerSet = true;
+            document.addEventListener('keydown', function(e) {
+                var tagName = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
+                var isTypingTarget = tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+                if (isTypingTarget) {
+                    return;
+                }
+
+                var allowed = [
+                    'ArrowLeft',
+                    'ArrowRight',
+                    'ArrowUp',
+                    'ArrowDown',
+                    '1',
+                    '2',
+                    '3',
+                    '4',
+                    '5',
+                    '6',
+                    '7',
+                    '8'
+                ];
+                if (!allowed.includes(e.key)) {
+                    return;
+                }
+
+                e.preventDefault();
+                window._lastPolicyGridKeyEvent = {key: e.key, timestamp: Date.now()};
+                document.getElementById('keyboard-target').click();
+            });
+        }
+        return window._lastPolicyGridKeyEvent || {key: '', timestamp: 0};
+    }
+    """,
+    Output("keyboard-event", "data"),
+    Input("keyboard-target", "n_clicks"),
+)
+
+
+@callback(
+    Output("policy-grid", "figure"),
+    Output("summary-table", "children"),
+    Input("piece-dropdown", "value"),
+    Input("rotation-radio", "value"),
+)
+def update_grid_and_summary(
+    piece_type: int, rotation: int
+) -> tuple[go.Figure, html.Table]:
+    return make_policy_grid_figure(piece_type, rotation), make_summary_table(
+        piece_type, rotation
+    )
+
+
+@callback(
+    Output("piece-dropdown", "value"),
+    Output("rotation-radio", "value"),
+    Input("keyboard-event", "data"),
+    State("piece-dropdown", "value"),
+    State("rotation-radio", "value"),
+    prevent_initial_call=True,
+)
+def handle_keyboard_event(
+    keyboard_event: dict[str, int | str] | None,
+    current_piece: PieceSelection,
+    current_rotation: int,
+) -> tuple[PieceSelection, int]:
+    if not keyboard_event:
+        return current_piece, current_rotation
+
+    key = keyboard_event.get("key")
+    if not isinstance(key, str) or not key:
+        return current_piece, current_rotation
+
+    if key == "ArrowLeft":
+        return current_piece, (current_rotation - 1) % 4
+    if key == "ArrowRight":
+        return current_piece, (current_rotation + 1) % 4
+    current_index = PIECE_SELECTOR_VALUES.index(current_piece)
+    if key == "ArrowUp":
+        return PIECE_SELECTOR_VALUES[
+            (current_index - 1) % len(PIECE_SELECTOR_VALUES)
+        ], current_rotation
+    if key == "ArrowDown":
+        return PIECE_SELECTOR_VALUES[
+            (current_index + 1) % len(PIECE_SELECTOR_VALUES)
+        ], current_rotation
+    if key in {"1", "2", "3", "4", "5", "6", "7"}:
+        return int(key) - 1, current_rotation
+    if key == "8":
+        return AGGREGATE_PIECE_VALUE, current_rotation
+
+    return current_piece, current_rotation
+
+
+@callback(
+    Output("hover-details", "children"),
+    Output("preview-board", "children"),
+    Input("piece-dropdown", "value"),
+    Input("rotation-radio", "value"),
+    Input("policy-grid", "hoverData"),
+)
+def update_hover_preview(
+    piece_type: PieceSelection, rotation: int, hover_data: dict | None
+) -> tuple[html.Div, html.Div]:
+    if hover_data and hover_data.get("points"):
+        point = hover_data["points"][0]
+        grid_x = int(point["x"])
+        grid_y = int(point["y"])
+    else:
+        grid_x = 0
+        grid_y = 0
+
+    if piece_type == AGGREGATE_PIECE_VALUE:
+        aggregate_info = build_aggregate_cell_info(rotation, grid_x, grid_y)
+        details = make_hover_details(piece_type, aggregate_info=aggregate_info)
+        preview_body = make_preview_board(
+            aggregate_info.union_cells,
+            background_color="#9C6644",
+        )
+        preview_title = (
+            "Board Preview (union across active pieces at selected rotation)"
+        )
+    else:
+        placement_info = build_placement_info(int(piece_type), rotation, grid_x, grid_y)
+        details = make_hover_details(piece_type, placement_info=placement_info)
+        piece_color = PIECE_COLORS[int(piece_type)]
+        preview_body = make_preview_board(
+            placement_info.in_bounds_cells,
+            background_color=f"rgb({piece_color[0]}, {piece_color[1]}, {piece_color[2]})",
+        )
+        preview_title = "Board Preview"
+
+    preview = html.Div(
+        [
+            html.H3(
+                preview_title,
+                style={"margin": "0 0 12px 0", "fontSize": "20px"},
+            ),
+            preview_body,
+        ]
+    )
+    return details, preview
+
+
+# ---------------------------------------------------------------------------
+# Flattened action-space callbacks
+# ---------------------------------------------------------------------------
+
+
+@callback(
+    Output("flat-row-0", "figure"),
+    Output("flat-row-1", "figure"),
+    Output("flat-row-2", "figure"),
+    Output("flat-row-3", "figure"),
+    Input("flat-piece-dropdown", "value"),
+)
+def update_flat_rows(
+    piece_type: int,
+) -> tuple[go.Figure, go.Figure, go.Figure, go.Figure]:
+    return tuple(make_flat_row_figure(rot, piece_type) for rot in range(4))  # type: ignore[return-value]
+
+
+@callback(
+    Output("mirror-piece-summary", "children"),
+    Output("mirror-hover-details", "children"),
+    Output("mirror-left-preview-graph", "figure"),
+    Output("mirror-right-preview-graph", "figure"),
+    Output("mirror-left-row-0", "figure"),
+    Output("mirror-left-row-1", "figure"),
+    Output("mirror-left-row-2", "figure"),
+    Output("mirror-left-row-3", "figure"),
+    Output("mirror-right-row-0", "figure"),
+    Output("mirror-right-row-1", "figure"),
+    Output("mirror-right-row-2", "figure"),
+    Output("mirror-right-row-3", "figure"),
+    Input("mirror-piece-dropdown", "value"),
+    Input("mirror-left-row-0", "hoverData"),
+    Input("mirror-left-row-1", "hoverData"),
+    Input("mirror-left-row-2", "hoverData"),
+    Input("mirror-left-row-3", "hoverData"),
+    Input("mirror-right-row-0", "hoverData"),
+    Input("mirror-right-row-1", "hoverData"),
+    Input("mirror-right-row-2", "hoverData"),
+    Input("mirror-right-row-3", "hoverData"),
+)
+def update_mirror_section(
+    source_piece: int,
+    left_hover_0: dict | None,
+    left_hover_1: dict | None,
+    left_hover_2: dict | None,
+    left_hover_3: dict | None,
+    right_hover_0: dict | None,
+    right_hover_1: dict | None,
+    right_hover_2: dict | None,
+    right_hover_3: dict | None,
+) -> tuple[
+    str,
+    html.Div,
+    dict,
+    dict,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+    go.Figure,
+]:
+    target_piece = MIRROR_PIECE_TYPE_ORDER[source_piece]
+    hover_data_by_id = {
+        "mirror-left-row-0": left_hover_0,
+        "mirror-left-row-1": left_hover_1,
+        "mirror-left-row-2": left_hover_2,
+        "mirror-left-row-3": left_hover_3,
+        "mirror-right-row-0": right_hover_0,
+        "mirror-right-row-1": right_hover_1,
+        "mirror-right-row-2": right_hover_2,
+        "mirror-right-row-3": right_hover_3,
+    }
+    (
+        source_global_index,
+        target_global_index,
+        left_highlight_global_index,
+        right_highlight_global_index,
+    ) = _build_mirror_selection(source_piece, hover_data_by_id)
+
+    if source_global_index is not None and target_global_index is not None:
+        source_rotation, source_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+            source_global_index
+        ]
+        source_grid_x, source_grid_y = FLAT_ACTION_CELLS[source_rotation][
+            source_local_index
+        ]
+        target_rotation, target_local_index = FLAT_ROTATION_LOCAL_BY_GLOBAL_INDEX[
+            target_global_index
+        ]
+        target_grid_x, target_grid_y = FLAT_ACTION_CELLS[target_rotation][
+            target_local_index
+        ]
+        source_info = build_placement_info(
+            source_piece,
+            source_rotation,
+            source_grid_x,
+            source_grid_y,
+        )
+        target_info = build_placement_info(
+            target_piece,
+            target_rotation,
+            target_grid_x,
+            target_grid_y,
+        )
+        left_preview = _make_flat_preview_figure(
+            list(source_info.in_bounds_cells),
+            _piece_color_string(source_piece),
+        )
+        right_preview = _make_flat_preview_figure(
+            list(target_info.in_bounds_cells),
+            _piece_color_string(target_piece),
+        )
+    else:
+        left_preview = _empty_flat_preview_figure()
+        right_preview = _empty_flat_preview_figure()
+
+    left_figures = tuple(
+        _mirror_row_figure(
+            source_piece=source_piece,
+            display_piece=source_piece,
+            rotation=rotation,
+            side="left",
+            highlight_global_index=left_highlight_global_index,
+        )
+        for rotation in range(4)
+    )
+    right_figures = tuple(
+        _mirror_row_figure(
+            source_piece=source_piece,
+            display_piece=target_piece,
+            rotation=rotation,
+            side="right",
+            highlight_global_index=right_highlight_global_index,
+        )
+        for rotation in range(4)
+    )
+
+    return (
+        f"{PIECE_NAMES[source_piece]} mirrors to {PIECE_NAMES[target_piece]}",
+        _mirror_hover_details(
+            source_piece=source_piece,
+            target_piece=target_piece,
+            source_global_index=source_global_index,
+            target_global_index=target_global_index,
+        ),
+        left_preview,
+        right_preview,
+        left_figures[0],
+        left_figures[1],
+        left_figures[2],
+        left_figures[3],
+        right_figures[0],
+        right_figures[1],
+        right_figures[2],
+        right_figures[3],
+    )
+
+
+clientside_callback(
+    """
+    function(hover0, hover1, hover2, hover3, pieceType, precomputed) {
+        var BOARD_W = 10, BOARD_H = 20;
+        var emptyColor = '#EFE6D2', bgColor = '#FFF9EE';
+
+        function emptyBoard() {
+            var z = [];
+            for (var r = 0; r < BOARD_H; r++) {
+                z.push(new Array(BOARD_W).fill(0));
+            }
+            return {
+                data: [{
+                    type: 'heatmap', z: z,
+                    x: Array.from({length: BOARD_W}, (_, i) => i),
+                    y: Array.from({length: BOARD_H}, (_, i) => i),
+                    showscale: false, xgap: 2, ygap: 2, zmin: 0, zmax: 1,
+                    colorscale: [[0, emptyColor], [1, emptyColor]],
+                    hoverinfo: 'skip'
+                }],
+                layout: {
+                    template: 'plotly_white',
+                    paper_bgcolor: bgColor, plot_bgcolor: bgColor,
+                    margin: {l: 24, r: 8, t: 8, b: 8},
+                    font: {family: 'Menlo, Consolas, monospace', color: '#2F241F'},
+                    xaxis: {visible: false, range: [-0.5, BOARD_W - 0.5]},
+                    yaxis: {visible: false, autorange: 'reversed', range: [-0.5, BOARD_H - 0.5]}
+                }
+            };
+        }
+
+        // Determine which row triggered.
+        var ctx = dash_clientside.callback_context;
+        if (!ctx || !ctx.triggered || !ctx.triggered.length) return emptyBoard();
+        var trigId = ctx.triggered[0].prop_id.split('.')[0];
+        var hovMap = {'flat-row-0': [0, hover0], 'flat-row-1': [1, hover1],
+                      'flat-row-2': [2, hover2], 'flat-row-3': [3, hover3]};
+        if (!(trigId in hovMap)) return emptyBoard();
+        var rotation = hovMap[trigId][0];
+        var hd = hovMap[trigId][1];
+        if (!hd || !hd.points || !hd.points.length) return emptyBoard();
+
+        var flatIdx = hd.points[0].x;
+        var cells = precomputed.flat_cells[rotation];
+        if (flatIdx < 0 || flatIdx >= cells.length) return emptyBoard();
+
+        // Redundant rotation for this piece?
+        // Check if this rotation is redundant for the selected piece.
+        var isRedundant = (precomputed.one_rot_pieces.indexOf(pieceType) >= 0 && rotation >= 1)
+            || (precomputed.two_rot_pieces.indexOf(pieceType) >= 0 && rotation >= 2);
+        if (isRedundant)
+            return emptyBoard();
+
+        var gridX = cells[flatIdx][0], gridY = cells[flatIdx][1];
+        var pCells = precomputed.tetromino_cells[pieceType][rotation];
+
+        // Compute anchor.
+        var minDx = Infinity;
+        var minDy = Infinity;
+        for (var i = 0; i < pCells.length; i++) {
+            if (pCells[i][0] < minDx) minDx = pCells[i][0];
+            if (pCells[i][1] < minDy) minDy = pCells[i][1];
+        }
+        var ax = gridX - minDx, ay = gridY - minDy;
+
+        // Place cells, check bounds.
+        var occupied = [];
+        for (var i = 0; i < pCells.length; i++) {
+            var bx = ax + pCells[i][0], by = ay + pCells[i][1];
+            if (bx < 0 || bx >= BOARD_W || by < 0 || by >= BOARD_H) return emptyBoard();
+            occupied.push([bx, by]);
+        }
+
+        // Build z-array.
+        var z = [];
+        for (var r = 0; r < BOARD_H; r++) z.push(new Array(BOARD_W).fill(0));
+        for (var i = 0; i < occupied.length; i++) z[occupied[i][1]][occupied[i][0]] = 1;
+
+        var pc = precomputed.piece_colors[pieceType];
+        var colorStr = 'rgb(' + pc[0] + ',' + pc[1] + ',' + pc[2] + ')';
+
+        return {
+            data: [{
+                type: 'heatmap', z: z,
+                x: Array.from({length: BOARD_W}, (_, i) => i),
+                y: Array.from({length: BOARD_H}, (_, i) => i),
+                showscale: false, xgap: 2, ygap: 2, zmin: 0, zmax: 1,
+                colorscale: [[0, emptyColor], [0.499, emptyColor], [0.5, colorStr], [1, colorStr]],
+                hoverinfo: 'skip'
+            }],
+            layout: {
+                template: 'plotly_white',
+                paper_bgcolor: bgColor, plot_bgcolor: bgColor,
+                margin: {l: 24, r: 8, t: 8, b: 8},
+                font: {family: 'Menlo, Consolas, monospace', color: '#2F241F'},
+                xaxis: {visible: false, range: [-0.5, BOARD_W - 0.5]},
+                yaxis: {visible: false, autorange: 'reversed', range: [-0.5, BOARD_H - 0.5]}
+            }
+        };
+    }
+    """,
+    Output("flat-preview-graph", "figure"),
+    Input("flat-row-0", "hoverData"),
+    Input("flat-row-1", "hoverData"),
+    Input("flat-row-2", "hoverData"),
+    Input("flat-row-3", "hoverData"),
+    State("flat-piece-dropdown", "value"),
+    State("flat-precomputed", "data"),
+    prevent_initial_call=True,
+)
+
+
+def main(args: ScriptArgs) -> None:
+    logger.info(
+        "Starting policy grid visualizer",
+        host=args.host,
+        port=args.port,
+        url=f"http://{args.host}:{args.port}",
+    )
+    app.run(host=args.host, port=args.port, debug=args.debug)
+
+
+if __name__ == "__main__":
+    main(parse(ScriptArgs))

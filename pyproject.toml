@@ -1,0 +1,43 @@
+[project]
+name = "tetris-mcts"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "pygame",
+    "maturin",
+    "numpy",
+    "torch",
+    "wandb",
+    "ruff",
+    "pyright",
+    "structlog",
+    "simple-parsing",
+    "pydantic",
+    "onnx>=1.20.0",
+    "onnxscript>=0.5.7",
+    "dash",
+    "dash-cytoscape",
+    "matplotlib",
+    "pillow",
+    "onnxruntime>=1.23.2",
+    "rich",
+    "pytest",
+    "scipy",
+    "pyyaml",
+    "boto3",
+    "python-dotenv",
+]
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+reportAttributeAccessIssue = "none"  # tetris_core is a native module
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tetris_bot"]
